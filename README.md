@@ -1,0 +1,19 @@
+# Baseline
+
+A recovery-aware **HYROX / hybrid training coach** for iOS.
+
+Take a morning HRV reading from a chest strap → get a readiness score → Baseline prescribes or modulates **today's** training across the **engine** (energy systems), the **stations**, strength, and the **chassis** (joints / tendons / mobility), dosing it to your recovery.
+
+It's the bridge no one else builds: HRV apps stop at the number, plans don't adapt, and the recovery → *what to train today* decision is left to you. Baseline makes that decision daily — and turns a low-recovery day into productive chassis work instead of "rest."
+
+## Status
+Design + spec phase (pre-build).
+- **Project guide / canonical context:** [`CLAUDE.md`](CLAUDE.md)
+- **v0 build spec:** [`docs/v0-spec.md`](docs/v0-spec.md)
+- **Design system, screens & decisions:** [`docs/design.md`](docs/design.md)
+- **Figma:** https://www.figma.com/design/CCVlatyKW7MSHRGE3PK50i
+
+## Stack
+iOS 17+ · Swift 6 · SwiftUI (`@Observable`) · SwiftData · Firebase · HealthKit · CoreBluetooth (chest strap) · RevenueCat + SuperWall.
+
+Solo dev: Tyler Pavay.
