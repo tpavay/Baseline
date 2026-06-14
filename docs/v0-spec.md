@@ -1,57 +1,43 @@
 # Baseline — v0 Build Spec
 
-**One-liner:** *One reading. One decision. The recovery-aware HYROX coach that tells you exactly what to train today — and why.*
+**One-liner:** *One reading. One decision. The recovery-aware HYROX coach that tells you what to train today — and why.*
+
+> Scope + build order. Engine / data-model / catalog detail: `docs/engine-and-data-model.md`. Design: `docs/design.md`. **Evolving** — the current plan, not a contract.
+
+## The reshape (how v0 actually works)
+- **Import-first, not authored-program-first.** Writing a full program is too much work, and most athletes already get programming elsewhere. So the primary content path is **type or photograph a workout → native, loggable Routine** (on-device Apple Foundation Models; free). Baseline's own authored program is deferred.
+- **Firebase Auth + Firestore backend from day one** (same setup as Ascend).
+- **Build-for-self first** (Tyler), then open up.
+- **The engine modulates by recovery in layers** (A: dose-pick coach content · B: classify → do/sub/recover · C: built-in library) — see the engine doc.
+- **Live in-session HR zones** is a flagship, not a nice-to-have — one app, no more Polar Flow.
+- **Monetization deferred** to the end; **not** forced by AI cost (import runs on-device for free).
+
+## Priority stack (build order)
+1. **The spine** — Reading → readiness score → "what to do today." HRV (✅ validated on H10) + readiness composite + recommendation. Real on day one by recommending from the **built-in chassis/recovery/aerobic library**.
+2. **Usable daily** — exercise catalog + heterogeneous logging + **live HR zones** + complete → **calendar / streak**. (Off Polar Flow immediately.)
+3. **Import: text → Routine** (on-device FM) + auto day-type classification.
+4. **Import: photo → Routine** (Vision OCR now / native image input on iOS 27).
+5. **Recovery modulation** — dose-pick (A) + do/sub/recover (B/C).
+6. **Auto-reorder** the loaded week.
+7. **Trends** depth + the age/gender **bell-curve** positioning.
 
 ## What v0 ships
-Morning reading → readiness score → today's session at the right **dose**, in zone language, with the **why** — for **one track**, with the **chassis red-day pivot** as the signature differentiator, and full in-app logging.
+The spine (1) + a daily-usable logger with live zones (2) + text/photo import (3–4) + recovery modulation (5), for **one athlete (you) first**, with the **chassis/recovery library** as the built-in differentiator.
 
 ## What v0 defers (YAGNI)
-Video movement analysis · nutrition · social/community · the MDV leaderboard · multi-block periodization · the 2nd/3rd tracks · camera/wearable capture (strap-first for v0).
+Baseline's own authored periodized program · auto-reorder polish · multi-block periodization · 2nd/3rd tracks · video movement analysis · nutrition · social/community · leaderboards · camera/wearable capture (strap-first) · the paywall.
 
-## The engine (the answer to "how does it know what to advise?")
-```
-1. Onboard → pick TRACK by limiting factor (Running / Strength-endurance / Open)
-2. Each day in the track = ONE session authored at 3 cumulative doses (MED / +HPL / +MDV)
-3. Morning RECOVERY reading picks the dose:
-     ≥80%  → intensity OK (programmed/full), scaled to recent weekly volume
-     60–79% → aerobic / sub-threshold (MED-leaning); defer scheduled intensity later in week
-     <40–60% → active recovery / CHASSIS pivot
-   Hard constraints: never two hard days in a row; batch intensity.
-   Subjective overrides: high stress / high soreness can outrank a good HRV.
-4. Present the chosen dose as a session card + the "why" + zone targets + substitutions.
-```
-Each authored day carries metadata: `{ type, microcycleRole, doses:{MED,HPL,MDV} }`. Recovery % picks the dose; the plan's structure constrains which is wise.
+## Reading flow (locked — see design.md)
+live preview → guided breathing **2:30 @ 5s/5s** (dark; orb cue; single R-R curve building across with bpm Y-axis + seconds X-axis; live HR/HRV) → **averages** → **quick check** (mood / energy / stress / soreness; Save & continue / Skip) → **recommended session**.
 
-## Recovery capture
-- **Chest-strap-first** (BLE HRS `0x180D`, R-R intervals → artifact-correct → RMSSD). Wearable-via-HealthKit fallback; no-device → recommend a strap.
-- Reading flow: **live preview** (clean-signal check) → guided breathing **2:30 @ 5s/5s** resonance (dark; orb cue top-middle; single R-R curve building across with bpm Y-axis + seconds X-axis; live HR/HRV) → **averages** (HRV + HR) → **quick check** (mood/energy/stress/soreness; interactive; Save & continue / Skip) → **recommended session**.
-- Cold-start: first ~10–14 readings show "calibrating," run the plan unmodulated / conservative. Don't fake a baseline.
-- Don't mix sources in a baseline.
-
-## Screens (built in Figma)
-- **Daily Home** — readiness gauge (zone color), today's session card, violet CTA, bottom nav. States: Pre-reading / High (green) / Moderate (amber) / Low (red → chassis).
-- **Morning Reading flow** — preview → 6 breathing states → averages → quick check → recommended.
-- **Day recommendations** — same screen across input combinations (prime / sore-legs / moderate / high-stress override / low chassis / recovered-but-sore), showing how the check reshapes the call.
-- **Session detail** (next) — Goal / Warm-up / Work (zones) / Why / substitutions; proposed-but-editable (add from bank or custom, reorder, log reps/load/time/holds).
-
-## Logging & exercise bank
-- Session = ordered, editable exercise list. Engine proposes pre-filled; athlete owns it.
-- Tagged exercise bank + create-custom. Log reps / load / time / isometric holds. Add + reorder within the session.
-- Lean on HealthKit / existing loggers for detailed strength history where sensible; Baseline owns the reading, session selection, completion, runs/stations/chassis.
-
-## Programs
-- Source-agnostic. Flagship = Baseline's authored HYROX program (full modulation). Coach-administered / own-notes / imported = log + recovery-guidance overlay + chassis recommendations.
+## Information architecture (proposed)
+Tabs: **Today / Train / Trends**, with **Profile + Settings** behind a gear. (Confirm as we design.)
 
 ## Monetization & legal
-- Subscription (RevenueCat); free trial that lets the daily loop be felt before the wall (SuperWall).
-- Medical disclaimer + PAR-Q at onboarding + HYROX® trademark disclaimer. Lawyer-reviewed ToS.
+- Subscription later (RevenueCat + SuperWall); on-device import means no cost pressure to gate early.
+- Ship the **medical disclaimer** + **PAR-Q** at onboarding + **HYROX® trademark disclaimer**; lawyer-reviewed ToS. (Baseline prescribes intensity → cardiac-risk surface.)
 
-## Build sequence
-- **v0.1** strap capture + reading (with cold-start) → one Open-track program (dose-structured days) → daily home → session card → completion + logging.
-- **v0.2** chassis red-day pivot + the subjective check overrides.
-- **v0.3** Running / Strength-endurance tracks + weakness diagnosis + LLM "why" narration.
-- **v0.4** paywall + polish + the why-education curriculum.
-
-## Open decisions
-- Who authors the program (Tyler + HYROX L1 cert vs. partner a coach).
-- Launch track (recommend **Open / once-a-day** — the serious-amateur audience, not 2-a-day pros).
+## Open decisions (smaller now)
+- True max HR / LTHR known, or seed-from-Health + refine? (no blocker — defaults to seed.)
+- v0 launch device/OS floor (on-device AI needs a recent iPhone; image input needs iOS 27).
+- Eventually: who authors Baseline's own program (you + HYROX L1 vs. partner a coach), and HYROX-naming caution in copy/ASO.

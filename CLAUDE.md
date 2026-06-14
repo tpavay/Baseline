@@ -24,7 +24,7 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 - **Recovery** — the morning reading decides which pillar/dose runs today.
 
 **Readiness score (composite, with a baseline ramp):**
-- Inputs: HRV (chest-strap RMSSD), resting HR, trend, sleep, and a quick subjective check (mood / energy / stress / soreness).
+- Inputs: HRV (chest-strap RMSSD vs. rolling baseline), resting HR, 7-day trend, **sleep (Apple Health)**, **prior-day training load**, and a quick subjective check (mood / energy / stress / soreness — soreness can capture body region to target the chassis pivot). Output: a **0–100 score mapped to a recovery band** → "how recovered you are + what to do today."
 - **Cold-start:** for the first ~10–14 readings there is no reliable personal baseline — be conservative, lean on absolute values + age-population norms + the subjective check, and show "calibrating" bands. Do NOT be absolute against a baseline that doesn't exist yet.
 - **Established:** once the 7-day rolling baseline is solid, score precisely against it. A good HRV day can still score low (stress / poor sleep / soreness) — the score is a composite, not raw HRV.
 
@@ -36,17 +36,18 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 - **Subjective overrides:** high stress or high soreness can outrank a good HRV (recovered HRV + heavy DOMS → chassis / low-impact, not quality).
 - **Automate the week:** Baseline surfaces *today's* session by applying these rules — automating the manual week-reordering a coach otherwise hands back to the athlete.
 
-**Programs are source-agnostic; the session is the atomic unit:**
-- A **session** = an ordered, *editable* list of exercises (each: target sets / reps / load / time / zone + a "why"). A **program** = an ordered set of sessions.
-- Sources: (1) **Baseline's authored HYROX program** — flagship; we own the dose/zone metadata so the recovery engine fully modulates it. (2) **Coach-administered** (e.g., FITR) — can't integrate directly; support as logging + a recovery-guidance overlay + chassis recommendations. (3) **Own notes.** (4) **Imported logs.** Full modulation on our program; graceful "log + overlay" for the rest. Start with our program.
-- **Proposed but owned:** the engine *proposes* the session pre-filled; the athlete *owns* it — add exercises (from the bank or custom), reorder, swap, and log actuals (reps / load / **time / holds**).
+**Content is import-first; the session is the atomic unit** (full detail: `docs/engine-and-data-model.md`):
+- **Vocabulary:** a **Routine** = a reusable, editable *template*; a **Session** = a dated *instance* the athlete actually does and logs; a **Plan/Week** = Routines assigned to days (what the engine reshuffles).
+- **Primary path = import.** Most athletes get programming elsewhere (a coach, their own notes), so the main way workouts enter Baseline is **type or photograph a workout → translate to a native, loggable Routine** (workout- and exercise-level notes, title, tags), persisted and fully editable. Baseline's own authored program is deferred — not the v0 flagship.
+- **The recovery engine applies in layers:** (A) imports that already carry dose structure (a coach's MED/HPL/MDV) → the morning score *picks the dose*; (B) classified imports (day-type: active-recovery / aerobic / intensity / strength) → do / sub-lighter / recover; (C) no plan → recommend from Baseline's built-in chassis/recovery/aerobic library. Import is **incremental** (day/week at a time), so the engine reasons over a rolling window, not a macrocycle.
+- **Proposed but owned:** the engine *proposes* a session pre-filled; the athlete *owns* it — add / swap / reorder exercises and log actuals — during planning *and* mid-session.
 
-**Exercise bank:** a tagged, content-driven library (engine / chassis / strength / station / mobility), with the ability to create custom exercises. Logging supports reps, load, time, and isometric holds.
+**Exercise catalog:** base = **free-exercise-db** (public domain) + a **curated Baseline extension** (the 8 HYROX stations, common CrossFit movements, cardio modalities, and the mobility/chassis/warm-up library); content-driven (grows without app releases), create-custom supported. Unified schema with a per-exercise **logging type** — `repsLoad · reps · timeHold · distance · distanceLoad · calories · timeZone` (HYROX needs distance/load/calories, not just reps/load/time). **Cardio is one modality + a structured *intent*** (easy / threshold / intervals / long / race) so trends slice by intent without separate entries. A rich **alias map** is the key to import matching (RDL ≠ generic deadlift). Detail: `docs/engine-and-data-model.md`.
 
 ## Reading & Sensors
 - **Chest-strap-first.** Connect a BLE Heart Rate Service (`0x180D`) strap (Polar H10 etc.), read **R-R intervals** (HR Measurement char `0x2A37`), artifact-correct, compute **RMSSD / lnRMSSD**. Wearable-via-HealthKit is the fallback; no-device → strongly recommend a strap. (Wrist optical is not sufficient for HRV — chest ECG is the standard.)
 - **Morning reading:** a guided **2:30** read at **5s inhale / 5s exhale** resonance breathing (≈6 breaths/min) on a dark screen, with a live **R-R curve building across the screen** (bpm Y-axis, time-in-seconds X-axis), current HR + HRV shown live, and **averages at the end**. No "signal quality" copy. The read both standardizes the measurement and is itself a parasympathetic intervention.
-- One strap connection serves two modes: the morning HRV read, and live in-session HR-zone tracking.
+- **One strap, two modes:** the morning HRV read *and* live in-session **HR-zone tracking** (kills the "stare at Polar Flow mid-workout" problem) — live zone per segment, per-segment zone history stored. Zones are computed by Baseline via **Heart-Rate-Reserve / Karvonen** from Health inputs (age + resting HR + observed max from workout history), with a Tanaka age-estimate fallback, refined over time, and **overridable** with a tested max HR or **LTHR zones (Friel)** for run training. (We compute from raw Health data, not by reading Apple's zone config.) See `docs/engine-and-data-model.md`.
 - **Don't mix sources in a baseline** — build the rolling baseline from one source; switching sources recalibrates (re-enter cold-start).
 - **Architecture:** sensor capture behind a service layer; the HRV computation is a **pure function (unit-testable without hardware)**; sensor callbacks run off-main and marshal UI updates back to main explicitly.
 
@@ -55,14 +56,14 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 - **Recovery zone colors (semantic):** blue `#4C8DFF`, green `#34D27B`, amber `#F5A623`, red `#FF5247`. The brand accent must stay *out* of these hue families so a control is never confused for a recovery state.
 - Type: **Inter** (Regular / Medium / Semi Bold / Bold). Big display numbers for readiness / HR / HRV.
 - Figma source of truth: https://www.figma.com/design/CCVlatyKW7MSHRGE3PK50i
-- See `docs/design.md` for screens (home states, reading flow, day recommendations) and rationale.
+- See `docs/design.md` for screens + rationale, `docs/engine-and-data-model.md` for engine / data-model / catalog detail, and `docs/v0-spec.md` for v0 scope + the build-order priority stack.
 
 ## Tech Stack
 - **iOS 17+**, **Swift 6** strict concurrency, **SwiftUI**, `@Observable` (mark shared `@Observable` state `@MainActor`).
 - **SwiftData** on-device (editing surface / source of truth for in-flight UX).
 - **Firebase** (Auth, Firestore, Cloud Functions, Storage) for sync, content delivery, and the bounded LLM "why" narration.
 - **RevenueCat** (subscriptions) + **SuperWall** (onboarding / paywall).
-- **HealthKit** (recovery/workout reads, wearable fallback). **CoreBluetooth** (chest strap). **Claude API** via a Cloud Function for per-session "why" generation (bounded, structured — NOT open-ended chat).
+- **HealthKit** (recovery/workout reads, wearable fallback, baseline + HR-zone seeding). **CoreBluetooth** (chest strap; R-R pipeline validated on a Polar H10). **Apple Foundation Models** (on-device, `@Generable`) + **Vision** OCR for **text/photo → workout import** — free, on-device, private (native image input lands iOS 27); cloud **Claude API** is the fallback for hard parses and the bounded per-session "why" narration (structured, not open chat).
 - **Content-driven:** programs, sessions, the exercise bank, and the chassis library are hosted/versioned content — *adding content must not require an app release.*
 
 ## Surfaces & Integrations
