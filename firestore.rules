@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Locked by default. Per-collection rules with strict hasOnly/hasAll
+    // validation are added alongside each model (see CLAUDE.md Firestore rule).
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
