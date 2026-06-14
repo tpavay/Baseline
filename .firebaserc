@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "baseline-app-dev",
+    "dev": "baseline-app-dev",
+    "prod": "baseline-app-prod"
+  }
+}
