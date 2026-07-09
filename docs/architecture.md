@@ -10,7 +10,8 @@
 ## Core philosophy (the invariants)
 - **Structured state is the source of truth.** Conversation is an *interface, not a datastore* — it matters, but it is not where truth lives. The Context Engine extracts durable information from conversation into structured state, and the Decision Engine operates *exclusively* on that structured state.
 - **The Decision Engine owns truth.** Deterministic, auditable, never guesses. Everything else feeds it or interprets it — nothing overrides its caps or invents its scores.
-- **Conversation is the primary input mechanism.** Not "forms plus a chat" — a conversation the app extracts structure from.
+- **Conversation is the primary interface.** Not "forms plus a chat" — the user interacts with Baseline through conversation (input, onboarding, explanation, negotiation, coaching), and the app extracts structure from it.
+- **Ask for the minimum information necessary.** Infer first, observe second, ask last — the Context Engine requests more only when it would materially improve today's plan.
 - **Natural before structured.** Encourage natural communication; Baseline extracts the structure. Structured controls (pickers, toggles, sliders, quick replies) are used only when they're faster, clearer, or less ambiguous than talking.
 - **Today's plan is the hero.** Readiness, certainty, limiter, and evidence support it — they don't share top billing.
 - **Recommendations are always explainable.** Every recommendation is traceable to the evidence, context, and rules that produced it — "Zone 2 because your 7-day load is elevated, HRV is suppressed, and your Achilles constraint is active," never an opaque "don't run today."

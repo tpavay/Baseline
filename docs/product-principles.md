@@ -14,9 +14,9 @@ Scores, domains, caps, constraints, and load are computed by deterministic, audi
 - **Rules in:** pure, unit-tested scoring; AI calling validated tools that recompute.
 - **Rules out:** an LLM emitting a readiness number; AI relaxing a safety cap because the user pushed back.
 
-### 3. Conversation is the primary input mechanism
-We don't have "forms plus a chat." We have a conversation the app extracts structure from. Design the input as talking first.
-- **Rules in:** free text / dictation as the default way to give goals, context, pain, constraints.
+### 3. Conversation is the primary interface
+We don't have "forms plus a chat." Conversation is how the user interacts with Baseline — it is input *and* onboarding, explanation, negotiation, clarification, coaching, and reflection — and the app extracts structure from it.
+- **Rules in:** free text / dictation as the default way to give goals, context, pain, constraints; talking to understand and adjust a plan.
 - **Rules out:** long rigid onboarding forms as the primary path.
 
 ### 4. Natural before structured
@@ -24,34 +24,45 @@ Encourage natural communication; Baseline is responsible for extracting the stru
 - **Rules in:** a slider for a 1–5 soreness rating; a quick "yes/no" chip when that's fastest.
 - **Rules out:** forcing everything into chat *or* everything into forms — use whichever fits the moment.
 
-### 5. Today's plan is the hero
+### 5. Ask for the minimum information necessary
+Every question has a cost. Baseline **infers first, observes second, asks last** — the Context Engine requests more only when it would materially improve today's plan.
+- **Rules in:** using HealthKit before asking; reusing known context; skipping redundant questions; follow-ups only when they improve the plan.
+- **Rules out:** daily questionnaires for things already known; asking the same question twice; collecting data "just in case."
+
+### 6. Today's plan is the hero
 The output is a decision, not a dashboard. The plan leads; readiness, certainty, limiter, and evidence support it.
 - **Rules in:** home screen that opens with the plan, then its justification.
 - **Rules out:** a big readiness number as the headline with the recommendation buried below.
 
-### 6. Recommendations are always explainable
+### 7. Recommendations are always explainable
 Every plan is traceable to the evidence, context, and rules that produced it. Transparency is part of the product.
 - **Say:** "Zone 2 because your 7-day load is elevated, HRV is suppressed, and your Achilles constraint is active."
 - **Never:** an opaque "don't run today."
 
-### 7. Communicate uncertainty; never manufacture confidence
+### 8. Communicate uncertainty; never manufacture confidence
 When evidence is thin (first day, no HRV, no sleep, no workouts, no context), Baseline says so. Not-knowing is a first-class output.
 - **Affects:** AI prompts, recommendation rules, UI, onboarding, confidence, error handling.
 - **Rules out:** a confident-looking recommendation built on almost no evidence.
 
-### 8. Certainty = evidence available today
+### 9. Certainty = evidence available today
 Confidence reflects how much *useful evidence* exists right now — not merely that a permission was granted. More signals present → higher certainty.
 - **Rules out:** "Apple Health connected, therefore high confidence."
 
-### 9. Injuries are constraints, not just lower scores
+### 10. Injuries are constraints, not just lower scores
 A constraint shapes the plan directly and can gate it even on a high-readiness day (readiness 88 + Achilles pain → hard upper-body/bike, avoid running/jumping). Constraints override the score-derived choice and contribute the avoid list.
 - **Rules out:** treating an injury purely as a number that drags the score down and disappears into the average.
 
-### 10. Simple UI, complex backend
+### 11. Simple UI, complex backend
 The user sees a plan, its limiter, its certainty, and a way to add context. All complexity — HealthKit, load models, caps, extraction — hides behind that.
 
-### 11. Start hybrid-specific, design generic
+### 12. Start hybrid-specific, design generic
 The first experience is tuned for HYROX / hybrid athletes; the engines are goal-agnostic underneath so other athletes slot in later without a rewrite.
+
+### 13. Every engine is independently testable
+Each engine has a single responsibility and can be tested on its own. External integrations (HealthKit, AI, Firebase, wearables) are **thin adapters around deterministic logic**, not woven through it.
+- **Rules in:** pure functions; unit-tested engines; swappable integrations.
+- **Rules out:** business logic embedded in views; AI calls mixed with scoring; HealthKit dependencies inside planning logic.
+- *Not just an engineering preference — it's what lets Baseline evolve over years.*
 
 ---
 
