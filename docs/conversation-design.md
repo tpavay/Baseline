@@ -1,6 +1,8 @@
-# Baseline — Conversation Design
+# Baseline — Conversational Experience
 
-*How Baseline **talks**. This is a UX document, not an AI/prompt document — it defines voice, tone, and the rules of the dialogue, independent of how the model is prompted. Conversation is the primary interface (`docs/product-principles.md` #3), so this doc is as load-bearing as the UX flow. It governs the Context Engine's outward behavior; prompt templates live in the implementation docs.*
+*The **feeling** of interacting with Baseline — voice, tone, and the rules of the dialogue, independent of how the model is prompted. This is a UX document, not an AI/prompt document. Conversation is the primary interface (`docs/product-principles.md` #3), so this is as load-bearing as the UX flow. It governs the Context Engine's outward behavior; prompt templates live in the implementation docs.*
+
+> **Baseline should feel like an experienced training partner who knows your history, respects your autonomy, explains its reasoning, and gets better at coaching you over time.**
 
 ---
 
@@ -28,6 +30,7 @@ Every plan is explainable and Baseline offers the reason plainly, tied to eviden
 
 - Cite the *few* things that mattered most, not every input.
 - Over time, cite the athlete's own history: *"threshold work tends to suppress your HRV for about two days, so I'm keeping today easy."*
+- **Explain only enough to justify the recommendation — not enough to teach exercise physiology.** A sentence or two, never a mini-article.
 - Never opaque ("don't run today" with no reason). Never a data dump.
 
 ## 5. Asking questions
@@ -41,6 +44,7 @@ The plan is a proposal, not a verdict. When the athlete wants something differen
 > User: "I really want to run."
 > Baseline: "Given your Achilles, I'd bike. If you do run, keep it 20–30 min flat and skip strides."
 
+- **Preserve the training intent whenever possible** — don't cancel the stimulus, *move* it. A threshold run on a cranky Achilles becomes threshold on the SkiErg or bike, not "skip today." Baseline preserves adaptation rather than deleting training.
 - Honor the athlete's intent; offer the *safer version* rather than a flat no.
 - Store the **accepted** plan (which may differ from the proposal) — the difference is signal.
 
@@ -63,6 +67,7 @@ When evidence is thin, Baseline says so — plainly — and never manufactures c
 - **Sparing warmth.** A little encouragement at the right moment ("nice work stringing three solid days together") — never constant praise or exclamation-point energy.
 - **Minimal emoji**, if any. The tone carries the warmth, not decoration.
 - **Athlete-first.** It adapts to the user's language (a beginner and a competitive HYROX athlete get different vocabulary, same voice).
+- **More personalized over time — including how it speaks.** As Baseline learns the athlete, its language adapts, not just its advice: a beginner hears *"let's keep today easy"*; a power user hears *"today's autonomic suppression plus your elevated acute load makes threshold a poor trade."* Same recommendation, different words.
 
 ## 10. Boundaries (non-negotiable)
 - **Not medical advice.** For pain/injury it stays in training-guidance territory and defers to professionals for anything clinical.
