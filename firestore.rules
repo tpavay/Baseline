@@ -6,5 +6,63 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if false;
     }
+
+    // The athlete's profile + readiness configuration, written by onboarding and by
+    // Readiness Setup. Field list must stay in lock-step with UserRepository.swift.
+    match /users/{userId} {
+      function isOwner() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      function userKeys() {
+        return ['name', 'objective', 'acquisition',
+                'experience', 'biologicalSex', 'ageYears', 'heightCm', 'weightKg',
+                'metricHeight', 'metricWeight', 'config',
+                'reminderHour', 'reminderMinute', 'reminderWeekdays', 'reminderScheduled',
+                'onboardingCompleted', 'createdAt', 'lastUpdated'];
+      }
+
+      function configKeys() {
+        return ['heartReadingEnabled', 'heartSource', 'sleepEnabled',
+                'checkInEnabled', 'checkInComponents'];
+      }
+
+      function validUser(data) {
+        return data.keys().hasOnly(userKeys())
+          && data.keys().hasAll(userKeys())
+          && data.name is string && data.name.size() <= 100
+          && data.objective in ['', 'optimizeLoad', 'preventInjury', 'competitive', 'longevity']
+          && data.acquisition in ['', 'friendsFamily', 'tiktok', 'instagram', 'appStore', 'other']
+          && data.experience in ['', 'recreational', 'dedicated', 'competitive', 'elite']
+          && data.biologicalSex in ['', 'male', 'female', 'other']
+          && data.ageYears is int && data.ageYears >= 0 && data.ageYears <= 120
+          && data.heightCm is number && data.heightCm >= 0 && data.heightCm <= 300
+          && data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 500
+          && data.metricHeight is bool
+          && data.metricWeight is bool
+          && data.config is map
+          && data.config.keys().hasOnly(configKeys())
+          && data.config.keys().hasAll(configKeys())
+          && data.config.heartReadingEnabled is bool
+          && data.config.heartSource in ['', 'strap', 'camera']
+          && data.config.sleepEnabled is bool
+          && data.config.checkInEnabled is bool
+          && data.config.checkInComponents is list
+          && data.reminderHour is int && data.reminderHour >= 0 && data.reminderHour <= 23
+          && data.reminderMinute is int && data.reminderMinute >= 0 && data.reminderMinute <= 59
+          && data.reminderWeekdays is list && data.reminderWeekdays.size() <= 7
+          && data.reminderScheduled is bool
+          && data.onboardingCompleted is bool
+          && data.createdAt is timestamp
+          && data.lastUpdated is timestamp;
+      }
+
+      allow read: if isOwner();
+      allow create: if isOwner() && validUser(request.resource.data);
+      allow update: if isOwner()
+        && validUser(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
   }
 }

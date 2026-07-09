@@ -27,9 +27,11 @@ Job: answer "what should I train today, given my recovery?" — automating the w
 **Auto-reorder:** when it reshuffles a *loaded* week it **just does it** (not a suggestion) and shows the why — but it's a later feature (needs a populated week). For the incremental/coach-fed case the mechanism is dose-pick (A) + subbing recovery, not rescheduling days not yet received.
 
 ## Readiness score
-- **Inputs:** lnRMSSD vs. personal rolling baseline (primary) · resting HR · 7-day trend · **sleep (Apple Health)** · **prior-day training load** · subjective check (mood / energy / stress / soreness, soreness optionally by body region to target the chassis pivot).
-- **Cold-start ramp:** first ~10–14 readings have no reliable baseline → be conservative, lean on absolute values + age-population norms + the subjective check, show "calibrating." Never be absolute against a baseline that doesn't exist yet.
-- **Output:** a **0–100 score mapped to a recovery band** (green ≥80 / amber 60–79 / red <60), surfaced as "how recovered you are + what to do today."
+> **Full spec: `docs/readiness-score.md`** — configurable inputs, capture sources, questionnaire, and the scoring math. Summary below.
+- **Inputs (MVP):** lnRMSSD vs. personal rolling baseline (primary) · resting HR · **sleep (Apple Health, else the subjective sleep item)** · the **wellness questionnaire** (McLean 5: soreness / mood / energy / sleep / stress, oriented so 5 = best, + notes). **Prior-day training load is deferred from MVP** (needs logging + live zones first; then normalized sRPE / Edwards-TRIMP). Configurable = the athlete toggles *which inputs count*, not the weights.
+- **Composite:** each present input → signed z-score vs baseline → weighted blend (HRV 0.50 / subjective 0.25 / RHR 0.15 / sleep 0.10), re-normalized over whatever's enabled → `50 + 22·z` clamped 0–100. High soreness/stress **hard-floors** the band at amber.
+- **Cold-start ramp:** first ~14 readings have no reliable baseline → be conservative, lean on absolute values + age-population norms + the subjective check, show "calibrating." Never be absolute against a baseline that doesn't exist yet.
+- **Output:** a **0–100 score mapped to a recovery band** (green ≥80 / amber 60–79 / red <60), surfaced as "how recovered you are + what to do today," which gates the dose (and later modulates target HR zones, Morpheus-style).
 
 ## Recovery capture (HRV)
 - **Chest-strap-first.** BLE Heart Rate Service `0x180D`, Heart Rate Measurement characteristic `0x2A37`; R-R intervals (units 1/1024 s → ms = raw×1000/1024) → artifact-correct → **RMSSD / lnRMSSD**. **Validated on a Polar H10.**

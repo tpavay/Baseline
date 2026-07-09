@@ -1,7 +1,7 @@
 # Baseline — Project Guide
 
 ## What Baseline Is
-Baseline is a recovery-aware HYROX / hybrid training coach for iOS. Each morning the athlete takes a guided HRV reading from a chest strap; Baseline computes a readiness score and then **prescribes or modulates today's training** — running, HYROX stations, strength, and the "chassis" (joints, tendons, mobility) — adjusting the *dose* to the athlete's recovery.
+Baseline is a recovery-aware HYROX / hybrid training coach for iOS. Each morning the athlete does a quick check (a guided HRV reading via chest strap or phone camera, sleep from Apple Health, and/or a subjective check-in — the inputs are athlete-configurable); Baseline computes a readiness score and then **prescribes or modulates today's training** — running, HYROX stations, strength, and the "chassis" (joints, tendons, mobility) — adjusting the *dose* to the athlete's recovery.
 
 The job it does: remove the daily "am I training the right thing today?" anxiety for self-coached hybrid athletes by automating the one judgment even elite coaches hand back to the athlete — *which dose to do today, given recovery*.
 
@@ -13,7 +13,7 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 - **Not a measurement instrument that stops at the number (Elite HRV).** The reading → readiness → *what to train today* bridge is the whole point.
 - **Not a static plan / PDF (Warrior Lab).** The program adapts daily to recovery.
 - **Not a generic logger.** Logging exists to serve the recovery-aware coaching loop.
-- **Not hardware-locked (Morpheus).** Works with a chest strap the athlete already owns (or a wearable via HealthKit).
+- **Not hardware-locked (Morpheus).** Works with a chest strap the athlete already owns, the phone camera, or no HRV hardware at all (a sleep-only score is valid).
 
 ## Core Product Model
 **The daily loop:** morning reading → readiness score → today's session (proposed, editable) → log → the log feeds tomorrow's readiness/recommendation.
@@ -23,8 +23,8 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 - **Chassis** — joints, tendons, mobility, durability. The differentiator. On low-recovery days this is the *productive* answer (the "red-day pivot"), and there is a dedicated **base/durability phase** for athletes building tissue capacity before running volume.
 - **Recovery** — the morning reading decides which pillar/dose runs today.
 
-**Readiness score (composite, with a baseline ramp):**
-- Inputs: HRV (chest-strap RMSSD vs. rolling baseline), resting HR, 7-day trend, **sleep (Apple Health)**, **prior-day training load**, and a quick subjective check (mood / energy / stress / soreness — soreness can capture body region to target the chassis pivot). Output: a **0–100 score mapped to a recovery band** → "how recovered you are + what to do today."
+**Readiness score (composite, user-configurable, with a baseline ramp):**
+- **The athlete builds their own score ("your logic").** Inputs are individually toggleable: **HRV reading** (strap or camera — RMSSD vs. rolling baseline, plus resting HR and 7-day trend), **sleep (Apple Health)**, **daily check-in** (mood / energy / stress / soreness — each component individually configurable; soreness can capture body region to target the chassis pivot), and **activity impact** (prior-day training load; post-v0). At least one input required; HRV is the recommended default but **not required** — a sleep-only score is valid. Onboarding pre-checks a recommended config (HRV + check-in + sleep) from quiz answers rather than presenting a blank config. Output: a **0–100 score mapped to a recovery band** → "how recovered you are + what to do today."
 - **Cold-start:** for the first ~10–14 readings there is no reliable personal baseline — be conservative, lean on absolute values + age-population norms + the subjective check, and show "calibrating" bands. Do NOT be absolute against a baseline that doesn't exist yet.
 - **Established:** once the 7-day rolling baseline is solid, score precisely against it. A good HRV day can still score low (stress / poor sleep / soreness) — the score is a composite, not raw HRV.
 
@@ -45,8 +45,8 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 **Exercise catalog:** base = **free-exercise-db** (public domain) + a **curated Baseline extension** (the 8 HYROX stations, common CrossFit movements, cardio modalities, and the mobility/chassis/warm-up library); content-driven (grows without app releases), create-custom supported. Unified schema with a per-exercise **logging type** — `repsLoad · reps · timeHold · distance · distanceLoad · calories · timeZone` (HYROX needs distance/load/calories, not just reps/load/time). **Cardio is one modality + a structured *intent*** (easy / threshold / intervals / long / race) so trends slice by intent without separate entries. A rich **alias map** is the key to import matching (RDL ≠ generic deadlift). Detail: `docs/engine-and-data-model.md`.
 
 ## Reading & Sensors
-- **Chest-strap-first.** Connect a BLE Heart Rate Service (`0x180D`) strap (Polar H10 etc.), read **R-R intervals** (HR Measurement char `0x2A37`), artifact-correct, compute **RMSSD / lnRMSSD**. Wearable-via-HealthKit is the fallback; no-device → strongly recommend a strap. (Wrist optical is not sufficient for HRV — chest ECG is the standard.)
-- **Morning reading:** a guided **2:30** read at **5s inhale / 5s exhale** resonance breathing (≈6 breaths/min) on a dark screen, with a live **R-R curve building across the screen** (bpm Y-axis, time-in-seconds X-axis), current HR + HRV shown live, and **averages at the end**. No "signal quality" copy. The read both standardizes the measurement and is itself a parasympathetic intervention.
+- **Chest strap recommended; phone camera is the official secondary source.** Strap: connect a BLE Heart Rate Service (`0x180D`) strap (Polar H10 etc.), read **R-R intervals** (HR Measurement char `0x2A37`), artifact-correct, compute **RMSSD / lnRMSSD**. Camera: fingertip PPG (lens + flash) driving the same 2:30 guided reading. Wearable-via-HealthKit remains for history/context seeding, not the reading. (Chest ECG is the gold standard; present the strap as the upgrade for serious athletes, the camera as the no-hardware on-ramp.)
+- **Morning reading:** a quiet **2:30 timed read, breathing naturally** — **no paced-breathing cues** (resonance-frequency pacing inflates RSA and adds compliance noise; decided 2026-07-07) — on a dark screen, with a live **R-R curve building across the screen** (bpm Y-axis, time-in-seconds X-axis), current HR + HRV shown live, a **bell + haptic at the end**, and **averages at the end**. No "signal quality" copy. Standardization comes from consistent time + posture + natural breath, not breath control.
 - **One strap, two modes:** the morning HRV read *and* live in-session **HR-zone tracking** (kills the "stare at Polar Flow mid-workout" problem) — live zone per segment, per-segment zone history stored. Zones are computed by Baseline via **Heart-Rate-Reserve / Karvonen** from Health inputs (age + resting HR + observed max from workout history), with a Tanaka age-estimate fallback, refined over time, and **overridable** with a tested max HR or **LTHR zones (Friel)** for run training. (We compute from raw Health data, not by reading Apple's zone config.) See `docs/engine-and-data-model.md`.
 - **Don't mix sources in a baseline** — build the rolling baseline from one source; switching sources recalibrates (re-enter cold-start).
 - **Architecture:** sensor capture behind a service layer; the HRV computation is a **pure function (unit-testable without hardware)**; sensor callbacks run off-main and marshal UI updates back to main explicitly.
@@ -120,7 +120,7 @@ The job it does: remove the daily "am I training the right thing today?" anxiety
 
 # Privacy & Compliance
 - Keep `PrivacyInfo.xcprivacy`, the privacy policy, the App Store privacy questionnaire, and `NS*UsageDescription` strings in sync.
-- Because Baseline prescribes training **intensity** (HR-zone work = cardiac risk): ship a **medical disclaimer** (not medical advice / assumption of risk / consult a physician / stop if symptoms), a **PAR-Q** screen at onboarding, and the **HYROX® trademark disclaimer** ("registered trademark of its owner; not affiliated with / endorsed by HYROX"). Get a lawyer to review the ToS.
+- Because Baseline prescribes training **intensity**: keep risk language lightweight but present — an assumption-of-risk / not-medical-advice clause lives in the ToS, accepted via a one-line footnote at the onboarding commitment step, plus a contextual "training guidance, not medical advice — stop if you feel unwell" line on prescription surfaces. **No standalone disclaimer screen and no PAR-Q** (decided 2026-07: cut for onboarding friction). Keep the **HYROX® trademark disclaimer** ("registered trademark of its owner; not affiliated with / endorsed by HYROX"). Get a lawyer to review the ToS.
 
 ---
 
