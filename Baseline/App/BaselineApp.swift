@@ -1,10 +1,14 @@
 import FirebaseCore
 import GoogleSignIn
+import SwiftData
 import SwiftUI
 
 @main
 struct BaselineApp: App {
     @State private var authVM: AuthViewModel
+    @State private var settings = AppSettings()
+    @State private var bluetooth = BluetoothManager()
+    @State private var health = HealthService()
 
     init() {
         FirebaseApp.configure()
@@ -21,5 +25,9 @@ struct BaselineApp: App {
                 }
         }
         .environment(authVM)
+        .environment(settings)
+        .environment(bluetooth)
+        .environment(health)
+        .modelContainer(for: [Reading.self, ReadinessEntry.self])
     }
 }
