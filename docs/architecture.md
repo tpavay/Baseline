@@ -59,11 +59,12 @@ Home surfaces **today's plan first**, followed by the evidence supporting it: re
 **Local-first.** Health data and app state stay on device; only **derived daily summaries** sync (later). The **structured state is the source of truth** — training profile (long-lived), daily context (resets), constraints (persist until resolved), daily readiness/plan entries, and chat *summaries*. Never the raw chat log.
 
 ## Roadmap
-- **P1 — Decision + Planning Engines + training-load MVP.** Domain scores, caps, constraints, certainty, plan; HealthKit training load + HR zones; home; local persistence.
-- **P2 — Context Engine.** Conversational onboarding and always-on context capture → structured state → recompute; explain / modify / alternatives; backend proxy; derived summaries sync.
-- **P3 — Adaptive Decision Engine (Learning Engine).** Feedback loop from completed workouts; per-athlete personalization.
-- **P4 — History & trends.** Weekly readiness / load / HRV / sleep / constraints + summaries.
-- **P5 — Program upload.** Text/image/PDF → structured workouts (Context extraction) → planned-workout × readiness swap (Planning).
+**v1 is the whole loop — the conversation included.** The conversation *is* the interface; a person opens Baseline and talks to it. Shipping the engines without it would be a different, lesser product (just another HRV/readiness app). So v1 spans Evidence + Context + Decision + Planning, chat-forward from the first open. Later phases add personalization, trends, and program ingestion — never the core interaction.
+- **v1 — the working loop.** Decision + Planning engines + training-load MVP (HealthKit, HR zones) **and** the Context Engine — conversational onboarding and always-on context → structured state → recompute, over a backend AI proxy. Local persistence. This is what a person opens every morning.
+  - *Sensible build order within v1:* the deterministic engine first (the truth the conversation speaks about — the engine owns truth, the conversation never invents it), then the conversational layer on top. Both ship as v1.
+- **Next — Learning / Adaptive Decision Engine.** Feedback from completed workouts; per-athlete personalization.
+- **Then — History & trends.** Weekly readiness / load / HRV / sleep / constraints + summaries.
+- **Later — Program upload.** Text/image/PDF → structured workouts (Context extraction) → planned-workout × readiness swap (Planning).
 
 ## Companion docs
 Design docs (experience level):
