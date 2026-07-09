@@ -25,7 +25,7 @@ Encourage natural communication; Baseline is responsible for extracting the stru
 - **Rules out:** forcing everything into chat *or* everything into forms — use whichever fits the moment.
 
 ### 5. Ask for the minimum information necessary
-Every question has a cost. Baseline **infers first, observes second, asks last** — the Context Engine requests more only when it would materially improve today's plan.
+**The user should never feel like they are "feeding the app."** Every question has a cost, so Baseline **infers first, observes second, asks last** — every question, permission, and interaction has an immediately understandable benefit to *today's plan*, and the Context Engine asks for more only when it would materially improve it.
 - **Rules in:** using HealthKit before asking; reusing known context; skipping redundant questions; follow-ups only when they improve the plan.
 - **Rules out:** daily questionnaires for things already known; asking the same question twice; collecting data "just in case."
 

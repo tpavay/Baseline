@@ -15,7 +15,7 @@ The goal of first run: **reach a first, honest plan with the least effort** — 
 ### 1. Welcome
 One line on the promise: *"Baseline tells you what to train today — from your body, your training, and your goals."* Single CTA: **Set up Baseline**. No feature tour.
 
-### 2. Meet Baseline (conversational onboarding) **[C]**
+### 2. Meet Baseline for the first time (conversational onboarding) **[C]**
 Not a form — the Context Engine's first session. Opens as Baseline itself (the brand, not "your AI coach"):
 > "Hi, I'm Baseline. Before I start making recommendations, tell me what you're trying to accomplish."
 
@@ -72,6 +72,20 @@ The plan is not the end — it leads into training. Even before real workout tra
 Today's Plan → Start Workout → Workout Complete → Reflection ("how did it feel?") → Learning
 ```
 The **Reflection** is what feeds the Learning Engine (and closes the Proposed → Accepted → workout → feedback loop). We don't build tracking now, but the plan screen points forward to it rather than dead-ending on a card.
+
+### Continuity — you're not starting over
+Baseline doesn't reset each morning; it **continues the conversation.** It references recent context so mornings feel alive, not blank:
+> "Good morning. Yesterday you only had time for a short workout — back to your normal schedule today?"
+
+The user picks up where they left off instead of re-establishing everything daily. Opening should feel less like *"receive today's plan"* and more like *"continue the conversation."*
+
+### Returning after time away
+When the user has been gone, Baseline re-orients gently rather than pretending nothing happened — and never guilt-trips:
+> "Welcome back — I haven't seen a morning reading in four days. Want today's plan based on what I know, or update me first?"
+
+> "Looks like you've been away a week. Anything major change? · Injury · Travel · New goal · Nothing"
+
+It offers a plan from known state (honest about the lower certainty) plus an easy way to refresh context. Never a hard reset.
 
 ---
 
