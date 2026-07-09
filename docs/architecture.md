@@ -39,6 +39,14 @@ Its responsibility is **not merely conversation**: it continuously **converts un
 - It is the **primary interface between the user and the Decision Engine.**
 - **Guardrails:** extract, explain, modify workouts, generate alternatives, parse plans — never invent scores or override caps. It talks to the Decision Engine through validated tools.
 
+**Internal pipeline** — the LLM only understands language; the app decides what happens:
+```
+conversation → intent detection → structured extraction → validation → Decision Engine
+```
+The model turns words into *candidate* structured updates; the app validates them; the deterministic engine decides. 
+
+**Conversation Runtime (provider-agnostic).** The intelligence sits behind a `ConversationService` abstraction — never a `ClaudeService`. The runtime decides *where* a request runs (on-device for lightweight extraction / intent / summaries; cloud for coaching, negotiation, explanation, complex reasoning) and *which* provider — the Context Engine and everything downstream never know or care. This keeps Baseline model-agnostic (Claude / GPT / Gemini / Apple / next) for years without touching Decision or Planning.
+
 ### Decision Engine — the deterministic core
 Structured state → **domain scores** (autonomic, sleep, musculoskeletal, subjective, training load) → **caps + constraints** → **readiness + band + primary/secondary limiter + certainty**. Deterministic and unit-testable end to end. Constraints can gate the outcome even when the score is high.
 
@@ -60,8 +68,10 @@ Home surfaces **today's plan first**, followed by the evidence supporting it: re
 
 ## Roadmap
 **v1 is the whole loop — the conversation included.** The conversation *is* the interface; a person opens Baseline and talks to it. Shipping the engines without it would be a different, lesser product (just another HRV/readiness app). So v1 spans Evidence + Context + Decision + Planning, chat-forward from the first open. Later phases add personalization, trends, and program ingestion — never the core interaction.
-- **v1 — the working loop.** Decision + Planning engines + training-load MVP (HealthKit, HR zones) **and** the Context Engine — conversational onboarding and always-on context → structured state → recompute, over a backend AI proxy. Local persistence. This is what a person opens every morning.
-  - *Sensible build order within v1:* the deterministic engine first (the truth the conversation speaks about — the engine owns truth, the conversation never invents it), then the conversational layer on top. Both ship as v1.
+- **v1 — the working loop.** Decision + Planning engines + training-load MVP (HealthKit, HR zones) **and** a conversational shell for onboarding + context. The conversation is present from day one, but v1's version is a **thin, mostly-deterministic script** that stores structured state — so it *feels* like talking to Baseline without a frontier model yet. The `ConversationService` abstraction is in place so the real LLM slots in behind it with no change to Decision/Planning. Local persistence. This is what a person opens every morning.
+  - *Build order within v1:* the deterministic engine first (the truth the conversation speaks about — the engine owns truth, the conversation never invents it), then the conversational shell on top.
+
+**AI lands in stages, behind the Conversation Runtime — conversational UX from day one, implementation gets smarter:** (1) conversation UX, deterministic, no LLM; (2) structured extraction (LLM: free text → structured state); (3) negotiation & explanation (LLM); (4) learning (LLM). Every stage is transparent to the Decision & Planning engines.
 - **Next — Learning / Adaptive Decision Engine.** Feedback from completed workouts; per-athlete personalization.
 - **Then — History & trends.** Weekly readiness / load / HRV / sleep / constraints + summaries.
 - **Later — Program upload.** Text/image/PDF → structured workouts (Context extraction) → planned-workout × readiness swap (Planning).
