@@ -10,11 +10,13 @@ Legend: **[E]** Evidence · **[C]** Context · **[D]** Decision · **[P]** Plann
 
 The goal of first run: **reach a first, honest plan with the least effort** — and be upfront when evidence is still thin.
 
+> **The user should never feel like they are "feeding the app."** Every question, permission request, and interaction has an immediately understandable benefit to *today's plan*.
+
 ### 1. Welcome
 One line on the promise: *"Baseline tells you what to train today — from your body, your training, and your goals."* Single CTA: **Set up Baseline**. No feature tour.
 
-### 2. Meet your coach (conversational onboarding) **[C]**
-Not a form — the Context Engine's first session. Opens like a coach:
+### 2. Meet Baseline (conversational onboarding) **[C]**
+Not a form — the Context Engine's first session. Opens as Baseline itself (the brand, not "your AI coach"):
 > "Hi, I'm Baseline. Before I start making recommendations, tell me what you're trying to accomplish."
 
 With tappable example prompts ("I'm training for HYROX", "I want to get stronger", "I've never really worked out"), and **type or dictate**. The engine **adapts**:
@@ -64,6 +66,13 @@ Leads with **today's plan**, then: readiness, certainty, primary limiter/constra
 ### Detail / breakdown
 Tapping through shows the **domain breakdown** (autonomic, sleep, musculoskeletal, subjective, training load) and the constraints — the full evidence behind the plan.
 
+### From plan to execution
+The plan is not the end — it leads into training. Even before real workout tracking exists, the UX must acknowledge the arc, or the product feels like it stops before the user actually trains:
+```
+Today's Plan → Start Workout → Workout Complete → Reflection ("how did it feel?") → Learning
+```
+The **Reflection** is what feeds the Learning Engine (and closes the Proposed → Accepted → workout → feedback loop). We don't build tracking now, but the plan screen points forward to it rather than dead-ending on a card.
+
 ---
 
 ## Part 3 — Context update → updated plan (negotiation)
@@ -81,6 +90,18 @@ User: "I really want to run."
 User: "Okay."  → Accepted Plan stored (differs from the first proposal — that difference is signal).
 ```
 Other everyday updates that recompute: *"quads feel fine today"*, *"I'm traveling"*, *"signed up for a marathon"*, *"my Achilles hurts"* (→ creates/updates a **constraint** that persists until resolved, and future days ask *"how's the Achilles today?"* rather than re-asking generically).
+
+---
+
+## Part 4 — Living with Baseline (Day 30)
+
+The product changes once it has learned the athlete. Early on, recommendations lean on **general physiology**; over days and weeks they become increasingly **personalized** to how this specific athlete responds (via the Learning Engine):
+- "You consistently recover well after Zone 2 days."
+- "Threshold sessions suppress your HRV for roughly 48 hours."
+- "Your legs recover faster than your autonomic system."
+- "You tend to perform poorly after travel days."
+
+The experience evolves from a generic coach into one that understands the individual — plans reference the athlete's own patterns, and explanations cite them ("I'm keeping today easy because threshold work tends to suppress your HRV for about two days"). This is the long-term differentiation; the UX should have room for it to surface without a redesign.
 
 ---
 

@@ -66,6 +66,9 @@ Home surfaces **today's plan first**, followed by the evidence supporting it: re
 - **P5 — Program upload.** Text/image/PDF → structured workouts (Context extraction) → planned-workout × readiness swap (Planning).
 
 ## Companion docs
+Design docs (experience level):
 - **Product Principles** (`docs/product-principles.md`) — the invariants above, expanded.
-- **UX Flow** (`docs/ux-flow.md`) — first launch → onboarding → Health sync → HRV scan → first plan → context update → updated plan.
-- Per-responsibility implementation docs (field-level): Decision Engine · Planning Engine · Evidence & HealthKit · Training Load · Context Engine · Backend · Prompt Engineering · Data Model · UI/UX. These supersede/reconcile the earlier `readiness-score.md`, `engine-and-data-model.md`, and `v0-spec.md`.
+- **UX Flow** (`docs/ux-flow.md`) — first launch → onboarding → Health sync → HRV scan → first plan → context update → updated plan → living with Baseline.
+- **Conversation Design** (`docs/conversation-design.md`, next) — how Baseline talks: greeting, verbosity, explanation, negotiation, admitting uncertainty, when it stops asking, personality. A UX doc, not an AI/prompt doc.
+
+Implementation docs (field level): Decision Engine · Planning Engine · Evidence & HealthKit · Training Load · Context Engine · Backend · Data Model · UI Spec. These supersede/reconcile the earlier `readiness-score.md`, `engine-and-data-model.md`, and `v0-spec.md`.
