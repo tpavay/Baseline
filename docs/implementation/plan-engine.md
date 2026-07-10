@@ -64,8 +64,9 @@ Without this model the AI can only rewrite text. With it, the AI becomes a real 
 No layer is a dead end — each supports both structural and fine-grained edits:
 - **Workout:** rename · change overall goal · add/remove/reorder blocks · move blocks · duplicate · split or merge workouts.
 - **Workout Block:** rename · change goal/intent · add/remove/reorder exercises · move an exercise into another block · duplicate · delete · change dose or priority.
-- **Exercise:** add · delete · substitute · reorder · move between blocks · update sets/reps/load/duration/rest/pace/zone/tempo · edit Coach Guidance · add notes.
-- **Set / Interval:** change one set without touching the rest · add/remove a set · change load or reps for a single set · log actual performance separately from the planned prescription.
+- **Exercise:** add · delete · substitute · reorder · move between blocks · update prescription · edit Coach Guidance.
+- **Performed Exercise:** add Athlete Notes and actual execution data through Workout Execution (a different engine — never mixed into the plan).
+- **Set / Interval:** change one planned set without touching the rest · add/remove a set · change load or reps for a single set. Actual performance is logged separately from the planned prescription (Workout Execution).
 
 ## 4. Preserve adaptation (the defining philosophy)
 Most coaching apps, when life interferes, **cancel or delay** ("skip today's run"). Baseline should instead **preserve the adaptation** — keep the intended physiological stimulus while respecting the constraint. That's a fundamentally different philosophy, and it may be Baseline's defining feature.
