@@ -232,28 +232,19 @@ final class AgentTools {
             return workoutResponse(prefix: "Added block \"\(name)\".")
         case .addExercise(let block, let name, let sets, let reps, let load, let dur):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur) else {
-                return Response(text: "I couldn't find a block called \"\(block)\" (or there's no workout yet).", decision: nil, plan: nil)
-            }
-            return workoutResponse(prefix: "Added \(name) to \(block).")
+            return outcome(workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur),
+                           success: "Added \(name) to \(block).")
         case .moveExercise(let exercise, let toBlock):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.moveExercise(named: exercise, toBlockNamed: toBlock) else {
-                return Response(text: "I couldn't find \"\(exercise)\" or the block \"\(toBlock)\".", decision: nil, plan: nil)
-            }
-            return workoutResponse(prefix: "Moved \(exercise) to \(toBlock).")
+            return outcome(workouts.moveExercise(named: exercise, toBlockNamed: toBlock),
+                           success: "Moved \(exercise) to \(toBlock).")
         case .removeExercise(let exercise):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.removeExercise(named: exercise) else {
-                return Response(text: "I couldn't find \"\(exercise)\" in the workout.", decision: nil, plan: nil)
-            }
-            return workoutResponse(prefix: "Removed \(exercise).")
+            return outcome(workouts.removeExercise(named: exercise), success: "Removed \(exercise).")
         case .updateSet(let exercise, let n, let reps, let load, let dur, let rpe):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.updateSet(exerciseNamed: exercise, setNumber: n, reps: reps, load: load, durationSeconds: dur, rpe: rpe) else {
-                return Response(text: "I couldn't update set \(n) of \"\(exercise)\" — check the exercise name and set number.", decision: nil, plan: nil)
-            }
-            return workoutResponse(prefix: "Updated set \(n) of \(exercise).")
+            return outcome(workouts.updateSet(exerciseNamed: exercise, setNumber: n, reps: reps, load: load, durationSeconds: dur, rpe: rpe),
+                           success: "Updated set \(n) of \(exercise).")
         case .getCurrentWorkout:
             guard let workouts else { return workoutUnavailable() }
             return Response(text: workouts.summary, decision: nil, plan: nil)
@@ -265,6 +256,15 @@ final class AgentTools {
 
     private func workoutUnavailable() -> Response {
         Response(text: "Workout editing isn't available in this context.", decision: nil, plan: nil)
+    }
+
+    /// Turn a name-resolved edit into a reply: on success echo the refreshed workout; on not-found
+    /// or ambiguity, hand the model the message so it asks the athlete which one (never guesses).
+    private func outcome(_ o: WorkoutStore.EditOutcome, success: String) -> Response {
+        switch o {
+        case .done: return workoutResponse(prefix: success)
+        case .notFound(let m), .ambiguous(let m): return Response(text: m, decision: nil, plan: nil)
+        }
     }
 
     /// After a workout edit, hand the model the refreshed structure so its reply reflects the truth.
