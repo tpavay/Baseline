@@ -17,9 +17,11 @@ enum PlanningEngine {
     struct DailyFactors: Sendable {
         var timeAvailableMinutes: Int?
         var traveling: Bool?
-        init(timeAvailableMinutes: Int? = nil, traveling: Bool? = nil) {
+        var limitedEquipment: Bool?
+        init(timeAvailableMinutes: Int? = nil, traveling: Bool? = nil, limitedEquipment: Bool? = nil) {
             self.timeAvailableMinutes = timeAvailableMinutes
             self.traveling = traveling
+            self.limitedEquipment = limitedEquipment
         }
     }
 
@@ -93,6 +95,7 @@ enum PlanningEngine {
         var out: [String] = []
         if let m = d.timeAvailableMinutes, m < 40 { out.append("You've got ~\(m) min — compress it and keep the main stimulus.") }
         if d.traveling == true { out.append("Traveling — a run, bodyweight circuit, or hotel gym all work.") }
+        else if d.limitedEquipment == true { out.append("Limited equipment — bodyweight, a run, or the machines you've got will do.") }
         return out
     }
 

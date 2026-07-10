@@ -86,18 +86,19 @@ enum DecisionEngine {
         // Training load — acute:chronic (7:28) ratio; nil until HealthKit lands
         var loadRatio: Double?
         // Context
+        var illness: Bool?
         var constraints: [Constraint]
 
         init(lnRMSSD: Double? = nil, hrvBaseline: ReadinessScore.Baseline? = nil,
              restingHR: Double? = nil, rhrBaseline: ReadinessScore.Baseline? = nil,
              sleepScore: Double? = nil, sleepHours: Double? = nil,
              energy: Double? = nil, mood: Double? = nil, stress: Double? = nil, soreness: Double? = nil,
-             loadRatio: Double? = nil, constraints: [Constraint] = []) {
+             loadRatio: Double? = nil, illness: Bool? = nil, constraints: [Constraint] = []) {
             self.lnRMSSD = lnRMSSD; self.hrvBaseline = hrvBaseline
             self.restingHR = restingHR; self.rhrBaseline = rhrBaseline
             self.sleepScore = sleepScore; self.sleepHours = sleepHours
             self.energy = energy; self.mood = mood; self.stress = stress; self.soreness = soreness
-            self.loadRatio = loadRatio; self.constraints = constraints
+            self.loadRatio = loadRatio; self.illness = illness; self.constraints = constraints
         }
     }
 
@@ -234,6 +235,7 @@ enum DecisionEngine {
         if let s = i.soreness, s <= 2 { add(.musculoskeletal, 60, "severeSoreness") }
         if let e = i.energy, e <= 2 { add(.subjective, 60, "veryLowEnergy") }
         if let st = i.stress, st <= 2 { add(.subjective, 70, "highStress") }
+        if i.illness == true { add(.autonomic, 40, "illness") }   // sick → recovery, never intensity
         if let h = i.sleepHours, h < 4.5 { add(.sleep, 55, "poorSleep") }
         // Genuine suppression = low HRV AND elevated resting HR (both z negative). The opposite
         // case — low HRV with a *low* RHR — is vagal saturation, softened by the guard, not capped.

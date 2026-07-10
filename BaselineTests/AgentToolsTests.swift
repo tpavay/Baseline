@@ -51,6 +51,24 @@ struct AgentToolsTests {
         #expect(r.text.localizedCaseInsensitiveContains("location"))
     }
 
+    @Test func illnessDowngradesThePlan() {
+        let r = tools(base: greenBase).dispatch(.setIllness(true))
+        #expect(r.decision?.band == .red)
+        #expect(r.plan?.type == .activeRecovery)           // sick user no longer gets "intensity on"
+    }
+
+    @Test func resolvingMissingConstraintReportsFailure() {
+        let r = tools(base: greenBase).dispatch(.resolveConstraint(id: UUID()))
+        #expect(r.plan == nil)                             // nothing mutated
+        #expect(r.text.localizedCaseInsensitiveContains("couldn't find"))
+    }
+
+    @Test func negativeTimeIsSanitizedInTheMessage() {
+        let r = tools(base: greenBase).dispatch(.setTimeAvailable(-20))
+        #expect(!r.text.contains("-20"))                   // no lie: stored 0, reports 0
+        #expect(r.text.contains("0 min"))
+    }
+
     @Test func explainDescribesLimiterAndAvoid() {
         // A capped day so there's a limiter to explain.
         let base = DecisionEngine.Inputs(lnRMSSD: 5.0, energy: 5, mood: 5, stress: 5, soreness: 1)

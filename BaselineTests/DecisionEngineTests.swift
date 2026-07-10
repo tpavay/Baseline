@@ -172,6 +172,22 @@ struct DecisionEngineTests {
         #expect(travel.why.contains { $0.localizedCaseInsensitiveContains("traveling") })
     }
 
+    @Test func illnessCapsToRecovery() {
+        let r = DE.compute(DE.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5,
+                                     soreness: 5, illness: true))
+        #expect(r.score <= 40)
+        #expect(r.appliedCaps.contains { $0.reason == "illness" })
+        #expect(PE.plan(for: r).type == .activeRecovery)   // sick → recovery, never intensity
+    }
+
+    @Test func limitedEquipmentAddsANoteButFullGymDoesNot() {
+        let base = DE.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5)
+        let limited = PlanAssembler.assemble(base: base, dailyContext: .init(equipment: ["bodyweight"]))
+        #expect(limited.plan.why.contains { $0.localizedCaseInsensitiveContains("limited equipment") })
+        let full = PlanAssembler.assemble(base: base, dailyContext: .init(equipment: ["gym", "barbell"]))
+        #expect(!full.plan.why.contains { $0.localizedCaseInsensitiveContains("limited equipment") })
+    }
+
     @Test func planAssemblerLayersContextOntoBase() {
         let base = DE.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5)
         let constraint = DE.Constraint(kind: .injury, location: "Achilles", severity: 2)

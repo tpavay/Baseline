@@ -14,12 +14,23 @@ enum PlanAssembler {
     ) -> (decision: DecisionEngine.Result, plan: PlanningEngine.Plan) {
         var inputs = base
         inputs.constraints = constraints
+        inputs.illness = dailyContext.illness ?? inputs.illness
         let decision = DecisionEngine.compute(inputs)
         let daily = PlanningEngine.DailyFactors(
             timeAvailableMinutes: dailyContext.timeAvailableMinutes,
-            traveling: dailyContext.traveling
+            traveling: dailyContext.traveling,
+            limitedEquipment: limitedEquipment(dailyContext.equipment)
         )
         let plan = PlanningEngine.plan(for: decision, daily: daily, style: style)
         return (decision, plan)
+    }
+
+    /// A listed equipment set with nothing gym-grade → limited. Unknown (nil/empty) → no claim.
+    private static func limitedEquipment(_ equipment: [String]?) -> Bool? {
+        guard let eq = equipment, !eq.isEmpty else { return nil }
+        let gym: Set<String> = ["gym", "full gym", "commercial gym", "barbell", "rack", "squat rack",
+                                "machine", "machines", "dumbbells", "sled", "skierg", "cable"]
+        let hasGym = eq.contains { gym.contains($0.lowercased()) }
+        return hasGym ? false : true
     }
 }

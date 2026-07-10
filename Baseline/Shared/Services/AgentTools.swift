@@ -51,8 +51,9 @@ final class AgentTools {
             let (d, p) = today()
             return Response(text: explanation(d, p), decision: d, plan: p)
         case .setTimeAvailable(let minutes):
-            store.setTimeAvailable(minutes.map { max(0, $0) })
-            return respond(prefix: minutes.map { "\($0) min today." } ?? "Time cleared.")
+            let clamped = minutes.map { max(0, $0) }
+            store.setTimeAvailable(clamped)
+            return respond(prefix: clamped.map { "\($0) min today." } ?? "Time cleared.")
         case .setEquipment(let equipment):
             store.setEquipment(equipment)
             return respond(prefix: "Equipment updated.")
@@ -73,7 +74,9 @@ final class AgentTools {
             store.upsertConstraint(id: id, kind: kind, location: loc, severity: severity, affectsTraining: affects)
             return respond(prefix: "Logged \(loc) — \(kind.rawValue), severity \(min(max(severity, 0), 3))\(affects ? "" : " (not affecting training)").")
         case .resolveConstraint(let id):
-            store.resolveConstraint(id: id)
+            guard store.resolveConstraint(id: id) else {
+                return Response(text: "I couldn't find that one to resolve.", decision: nil, plan: nil)
+            }
             return respond(prefix: "Marked resolved.")
         }
     }

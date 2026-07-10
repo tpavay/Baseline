@@ -81,10 +81,13 @@ final class TrainingContextStore {
         return c.id
     }
 
-    func resolveConstraint(id: UUID) {
-        guard let idx = constraints.firstIndex(where: { $0.id == id }) else { return }
+    /// Returns whether a matching constraint existed (so callers can report honestly).
+    @discardableResult
+    func resolveConstraint(id: UUID) -> Bool {
+        guard let idx = constraints.firstIndex(where: { $0.id == id }) else { return false }
         constraints[idx].resolved = true
         constraints[idx].updatedAt = .now
+        return true
     }
 
     // MARK: - Read for the engine
