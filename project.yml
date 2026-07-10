@@ -34,6 +34,8 @@ targets:
         product: FirebaseAuth
       - package: Firebase
         product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseFunctions
       - package: GoogleSignIn
         product: GoogleSignIn
     info:

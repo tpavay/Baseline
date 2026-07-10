@@ -13,7 +13,7 @@ final class AgentTools {
 
     /// A validated operation the assistant can request. The backend maps the LLM's JSON tool-calls
     /// into these; nothing else can mutate state through the conversation.
-    enum Call: Sendable {
+    enum Call: Sendable, Equatable {
         case getToday
         case explain
         case setTimeAvailable(Int?)
