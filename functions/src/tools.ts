@@ -52,8 +52,30 @@ export const TOOLS = [
     },
   },
   {
+    name: "set_sleep",
+    description: "Record how long the athlete slept last night, in hours, when they tell you (e.g. 'four hours' -> 4, 'about seven and a half' -> 7.5). This DOES affect the plan. Pass null to clear.",
+    input_schema: {
+      type: "object",
+      properties: { hours: { type: ["number", "null"], description: "Hours slept, e.g. 4 or 7.5. null to clear." } },
+      required: ["hours"],
+    },
+  },
+  {
+    name: "set_checkin",
+    description: "Record the athlete's subjective check-in from how they describe feeling. This DOES affect the plan (unlike set_note). Each field is 1-5 where 5 is best/most recovered. Include ONLY the fields they actually described; omit the rest so you don't overwrite earlier answers.",
+    input_schema: {
+      type: "object",
+      properties: {
+        energy: { type: ["number", "null"], description: "1 = exhausted/wiped, 5 = fully energized." },
+        mood: { type: ["number", "null"], description: "1 = terrible, 5 = great." },
+        stress: { type: ["number", "null"], description: "1 = extremely stressed, 5 = totally calm. High stress is a LOW number." },
+        soreness: { type: ["number", "null"], description: "1 = very sore / bad DOMS, 5 = no soreness. Very sore is a LOW number." },
+      },
+    },
+  },
+  {
     name: "set_note",
-    description: "Store a free-text note for today (does not change the plan).",
+    description: "Store a free-text note for today. Use ONLY for context that should NOT change the plan. For sleep or how they feel, use set_sleep / set_checkin instead.",
     input_schema: {
       type: "object",
       properties: { note: { type: "string" } },

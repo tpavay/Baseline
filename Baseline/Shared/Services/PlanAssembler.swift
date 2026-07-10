@@ -15,6 +15,16 @@ enum PlanAssembler {
         var inputs = base
         inputs.constraints = constraints
         inputs.illness = dailyContext.illness ?? inputs.illness
+        // Reported sleep + subjective check-in from the conversation override the automatic base
+        // (they're more current — the athlete just told us). Absent → keep whatever base had.
+        if let hours = dailyContext.sleepHours {
+            inputs.sleepHours = hours
+            inputs.sleepScore = ReadinessScore.sleepScore(hours: hours)
+        }
+        inputs.energy = dailyContext.energy ?? inputs.energy
+        inputs.mood = dailyContext.mood ?? inputs.mood
+        inputs.stress = dailyContext.stress ?? inputs.stress
+        inputs.soreness = dailyContext.soreness ?? inputs.soreness
         let decision = DecisionEngine.compute(inputs)
         let daily = PlanningEngine.DailyFactors(
             timeAvailableMinutes: dailyContext.timeAvailableMinutes,

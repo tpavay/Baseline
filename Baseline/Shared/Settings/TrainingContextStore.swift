@@ -18,6 +18,14 @@ final class TrainingContextStore {
         var traveling: Bool?
         var illness: Bool?
         var note: String?
+        // Reported sleep + subjective check-in (1–5, 5 = most recovered — matches DecisionEngine).
+        // These are context the athlete *reports* in conversation and they feed the score, unlike a
+        // free-text `note`.
+        var sleepHours: Double?
+        var energy: Double?
+        var mood: Double?
+        var stress: Double?
+        var soreness: Double?
     }
 
     /// A persistent injury/pain constraint — survives until resolved; gates the plan even on a
@@ -61,6 +69,18 @@ final class TrainingContextStore {
     func setTraveling(_ traveling: Bool?) { rolloverIfNeeded(); daily.date = .now; daily.traveling = traveling }
     func setIllness(_ illness: Bool?) { rolloverIfNeeded(); daily.date = .now; daily.illness = illness }
     func setNote(_ note: String?) { rolloverIfNeeded(); daily.date = .now; daily.note = note }
+    func setSleep(hours: Double?) { rolloverIfNeeded(); daily.date = .now; daily.sleepHours = hours.map { max(0, $0) } }
+
+    /// Partial update — only the fields the athlete actually described are set, so "I'm stressed"
+    /// doesn't wipe a previously-logged energy. Each clamps to 1–5.
+    func setCheckIn(energy: Double? = nil, mood: Double? = nil, stress: Double? = nil, soreness: Double? = nil) {
+        rolloverIfNeeded(); daily.date = .now
+        if let energy { daily.energy = clamp15(energy) }
+        if let mood { daily.mood = clamp15(mood) }
+        if let stress { daily.stress = clamp15(stress) }
+        if let soreness { daily.soreness = clamp15(soreness) }
+    }
+    private func clamp15(_ v: Double) -> Double { min(max(v, 1), 5) }
 
     /// Create or update a constraint. Returns its id. Passing an existing `id` updates it.
     @discardableResult

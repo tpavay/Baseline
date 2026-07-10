@@ -20,6 +20,11 @@ enum ToolCallMapper {
         case "set_illness":
             guard let b = boolOrNil(input["illness"]) else { return nil }
             return .setIllness(b)
+        case "set_sleep":
+            return .setSleep(hours: doubleOrNil(input["hours"]))
+        case "set_checkin":
+            return .setCheckIn(energy: doubleOrNil(input["energy"]), mood: doubleOrNil(input["mood"]),
+                               stress: doubleOrNil(input["stress"]), soreness: doubleOrNil(input["soreness"]))
         case "set_note":
             guard let s = input["note"] as? String else { return nil }
             return .setNote(s)
@@ -45,6 +50,13 @@ enum ToolCallMapper {
         if let i = v as? Int { return i }
         if let d = v as? Double { return Int(d) }
         if let n = v as? NSNumber { return n.intValue }
+        return nil
+    }
+    private static func doubleOrNil(_ v: Any?) -> Double? {
+        if v == nil || v is NSNull { return nil }
+        if let d = v as? Double { return d }
+        if let i = v as? Int { return Double(i) }
+        if let n = v as? NSNumber { return n.doubleValue }
         return nil
     }
     private static func boolOrNil(_ v: Any?) -> Bool? {

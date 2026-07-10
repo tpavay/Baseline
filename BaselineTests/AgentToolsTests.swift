@@ -14,6 +14,31 @@ struct AgentToolsTests {
         DecisionEngine.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5)
     }
 
+    @Test func checkInFromChatMovesOffNoEvidence() {
+        // Day-one user with no HRV/sleep — "wiped out, super stressed" must produce a real plan,
+        // not evaporate into a note. This is the conversation-first promise.
+        let t = tools(base: DecisionEngine.Inputs())
+        #expect(t.dispatch(.getToday).decision?.evidenceTier == DecisionEngine.EvidenceTier.none)
+        let r = t.dispatch(.setCheckIn(energy: 1, mood: 2, stress: 1, soreness: nil))
+        #expect(r.decision?.evidenceTier != DecisionEngine.EvidenceTier.none)
+        #expect(r.decision?.domains.contains { $0.domain == .subjective } == true)
+        #expect(r.text.contains("Check-in"))
+    }
+
+    @Test func reportedShortSleepCapsThePlan() {
+        let t = tools(base: DecisionEngine.Inputs())
+        let r = t.dispatch(.setSleep(hours: 4))
+        #expect(r.decision?.appliedCaps.contains { $0.reason == "poorSleep" } == true)
+        #expect(r.decision?.domains.contains { $0.domain == .sleep } == true)
+    }
+
+    @Test func emptyCheckInAsksRatherThanLogs() {
+        let t = tools(base: DecisionEngine.Inputs())
+        let r = t.dispatch(.setCheckIn(energy: nil, mood: nil, stress: nil, soreness: nil))
+        #expect(r.decision == nil)                              // nothing logged
+        #expect(r.text.localizedCaseInsensitiveContains("tell me"))
+    }
+
     @Test func getTodayReturnsThePlan() {
         let r = tools(base: greenBase).dispatch(.getToday)
         #expect(r.plan != nil)

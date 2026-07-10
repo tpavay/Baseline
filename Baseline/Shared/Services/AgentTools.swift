@@ -20,6 +20,8 @@ final class AgentTools {
         case setEquipment([String]?)
         case setTraveling(Bool?)
         case setIllness(Bool?)
+        case setSleep(hours: Double?)
+        case setCheckIn(energy: Double?, mood: Double?, stress: Double?, soreness: Double?)
         case setNote(String?)
         case upsertConstraint(id: UUID?, kind: DecisionEngine.Constraint.Kind, location: String, severity: Int, affectsTraining: Bool)
         case resolveConstraint(id: UUID)
@@ -63,6 +65,15 @@ final class AgentTools {
         case .setIllness(let ill):
             store.setIllness(ill)
             return respond(prefix: ill == true ? "Sorry you're under the weather — noted." : "Glad you're well.")
+        case .setSleep(let hours):
+            store.setSleep(hours: hours)
+            return respond(prefix: hours.map { "Logged \(String(format: "%g", max(0, $0))) h sleep." } ?? "Sleep cleared.")
+        case .setCheckIn(let energy, let mood, let stress, let soreness):
+            guard energy != nil || mood != nil || stress != nil || soreness != nil else {
+                return Response(text: "Tell me what you felt (energy, mood, stress, or soreness) and I'll log it.", decision: nil, plan: nil)
+            }
+            store.setCheckIn(energy: energy, mood: mood, stress: stress, soreness: soreness)
+            return respond(prefix: "Check-in logged.")
         case .setNote(let note):
             store.setNote(note)
             return respond(prefix: "Noted.")

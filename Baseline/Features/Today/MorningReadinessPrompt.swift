@@ -110,4 +110,3 @@ struct MorningReadinessPromptView: View {
     }
 
 }
-

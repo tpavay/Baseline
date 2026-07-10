@@ -12,6 +12,15 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "set_note", input: ["note": "slept badly"]) == .setNote("slept badly"))
     }
 
+    @Test func mapsSleepAndCheckIn() {
+        #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": 6.5]) == .setSleep(hours: 6.5))
+        #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": 4]) == .setSleep(hours: 4))
+        #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": NSNull()]) == .setSleep(hours: nil))
+        // Partial check-in: only the fields the athlete described.
+        #expect(ToolCallMapper.map(name: "set_checkin", input: ["energy": 2, "stress": 1])
+                == .setCheckIn(energy: 2, mood: nil, stress: 1, soreness: nil))
+    }
+
     @Test func mapsTimeIncludingNullAndDouble() {
         #expect(ToolCallMapper.map(name: "set_time_available", input: ["minutes": 30]) == .setTimeAvailable(30))
         #expect(ToolCallMapper.map(name: "set_time_available", input: ["minutes": 30.0]) == .setTimeAvailable(30))
