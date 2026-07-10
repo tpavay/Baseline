@@ -177,7 +177,11 @@ struct DecisionEngineTests {
                                      soreness: 5, illness: true))
         #expect(r.score <= 40)
         #expect(r.appliedCaps.contains { $0.reason == "illness" })
-        #expect(PE.plan(for: r).type == .activeRecovery)   // sick → recovery, never intensity
+        let plan = PE.plan(for: r)
+        #expect(plan.type == .activeRecovery)              // sick → recovery, never intensity
+        // …and the explanation names the real reason, not the generic autonomic phrase.
+        #expect(plan.why.contains { $0.localizedCaseInsensitiveContains("under the weather") })
+        #expect(!plan.why.contains { $0.localizedCaseInsensitiveContains("systemic stress") })
     }
 
     @Test func limitedEquipmentAddsANoteButFullGymDoesNot() {

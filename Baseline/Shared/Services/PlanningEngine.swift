@@ -122,7 +122,13 @@ enum PlanningEngine {
 
     private static func why(_ d: DecisionEngine.Result, state: TrainingState) -> [String] {
         var out: [String] = []
-        if let p = d.primaryLimiter { out.append("Mainly limited by \(limiterPhrase(p)).") }
+        // The primary reason is cap-aware: a cap that doesn't map cleanly to its domain (illness →
+        // autonomic) gets its own honest copy instead of the generic limiter phrase.
+        if d.appliedCaps.contains(where: { $0.reason == "illness" }) {
+            out.append("You're under the weather, so today stays in recovery — not training.")
+        } else if let p = d.primaryLimiter {
+            out.append("Mainly limited by \(limiterPhrase(p)).")
+        }
         if let s = d.secondaryLimiter { out.append("Also weighing \(limiterPhrase(s)).") }
         if let c = d.constraints.first(where: { $0.affectsTraining && $0.severity >= 2 }) {
             out.append("Working around your \(c.location.lowercased()) — keeping load off it.")
