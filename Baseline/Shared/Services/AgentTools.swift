@@ -25,6 +25,7 @@ final class AgentTools {
         case setNote(String?)
         case upsertConstraint(id: UUID?, kind: DecisionEngine.Constraint.Kind, location: String, severity: Int, affectsTraining: Bool)
         case resolveConstraint(id: UUID)
+        case openAppleHealthSetup
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
         /// inspector's activity feed, so the behind-the-scenes mutations are visible.
@@ -45,6 +46,7 @@ final class AgentTools {
                 return "Constraint → \(location) (\(kind.rawValue), sev \(severity))\(affects ? "" : ", not limiting")"
             case .setNote: return "Saved a note"
             case .resolveConstraint: return "Resolved a constraint"
+            case .openAppleHealthSetup: return "Opened Apple Health setup"
             }
         }
     }
@@ -59,10 +61,19 @@ final class AgentTools {
     var base: DecisionEngine.Inputs             // today's evidence; refreshed by the app after a reading
     var style: PlanningEngine.Style
 
-    init(store: TrainingContextStore, base: DecisionEngine.Inputs = .init(), style: PlanningEngine.Style = .balanced) {
+    /// Live app state the model needs to answer "how do I…" and to *do* things (not just describe
+    /// them). `health` powers Apple Health capability status + the connect action; `hrvConfigured`
+    /// reflects whether a reading source is set up.
+    private let health: HealthService?
+    private let hrvConfigured: Bool
+
+    init(store: TrainingContextStore, base: DecisionEngine.Inputs = .init(), style: PlanningEngine.Style = .balanced,
+         health: HealthService? = nil, hrvConfigured: Bool = false) {
         self.store = store
         self.base = base
         self.style = style
+        self.health = health
+        self.hrvConfigured = hrvConfigured
     }
 
     // MARK: - Dispatch
@@ -111,6 +122,12 @@ final class AgentTools {
                 return Response(text: "I couldn't find that one to resolve.", decision: nil, plan: nil)
             }
             return respond(prefix: "Marked resolved.")
+        case .openAppleHealthSetup:
+            guard let health, health.isAvailable else {
+                return Response(text: "Apple Health isn't available on this device.", decision: nil, plan: nil)
+            }
+            Task { await health.requestReadAccess() }
+            return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
         }
     }
 
@@ -154,7 +171,26 @@ final class AgentTools {
         if constraints.isEmpty && ctx.isEmpty {
             lines.append("Nothing else has been recorded yet — no injuries, sleep, check-in, or context on file.")
         }
+
+        lines.append(capabilityLine())
         return lines.joined(separator: "\n")
+    }
+
+    /// Live capability state, so the model answers "how do I…" from fact — not guesses — and knows
+    /// which action tools it can invoke.
+    private func capabilityLine() -> String {
+        var caps: [String] = []
+        if let health {
+            if !health.isAvailable {
+                caps.append("Apple Health not available on this device")
+            } else if health.requested {
+                caps.append("Apple Health supported and connected")
+            } else {
+                caps.append("Apple Health supported but NOT connected — call open_apple_health_setup to connect it (imports sleep + resting HR, raises certainty)")
+            }
+        }
+        caps.append("HRV reading supported via chest strap or phone camera\(hrvConfigured ? " (set up)" : " (not set up yet)") — a 2:30 morning reading on the Today screen adds autonomic evidence")
+        return "Baseline capabilities right now: " + caps.joined(separator: "; ") + "."
     }
 
     private func respond(prefix: String?) -> Response {

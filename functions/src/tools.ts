@@ -106,4 +106,9 @@ export const TOOLS = [
       required: ["id"],
     },
   },
+  {
+    name: "open_apple_health_setup",
+    description: "Start the Apple Health connection flow on the athlete's device (presents the system permission sheet to import sleep, resting HR, and history). Call this when they want to connect Apple Health — don't just tell them where the button is. Only when the capability state says Apple Health is supported and not yet connected.",
+    input_schema: { type: "object", properties: {} },
+  },
 ];

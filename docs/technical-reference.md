@@ -74,6 +74,12 @@ Current implementation direction:
 - Import should extract more than exercise names: day type, intensity, targets, duration, dose layers when present, and confidence.
 - Low-confidence imports should be confirmed before becoming planned work.
 
+## App Capabilities In Conversation
+- Baseline injects **live capability state** into the conversation (supported? current status? which action tool?), not static prose — the model must answer "how do I…/can I…" from runtime state, never from documentation that can go stale (e.g. claiming Health is disconnected when it's connected, or describing a moved control).
+- Current: Apple Health (supported via `HKHealthStore.isHealthDataAvailable()`; connected approximated by whether access was requested — HealthKit hides read-authorization status) and HRV reading (supported; chest strap / camera; configured from the reading source). Exposed as a "Baseline capabilities right now" line.
+- Action tools let Baseline *do*, not just describe: `open_apple_health_setup` presents the system Health permission sheet. Planned: `open_hrv_setup`, `open_settings_section` (need chat→screen navigation plumbing).
+- Rule: speak as the product; never punt to "support" for built-in functionality; only say something is unavailable when capability state says so.
+
 ## Conversation Context Assembly
 - **Current (prototype):** the app sends the full durable structured state — today's plan plus all active constraints and today's logged context — to the model on every message. Acceptable for now: simplest correct behavior, and the state is still small.
 - **Target:** assemble a *relevant* snapshot by intent instead of shipping the whole state every turn:

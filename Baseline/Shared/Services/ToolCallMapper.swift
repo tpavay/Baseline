@@ -39,6 +39,8 @@ enum ToolCallMapper {
         case "resolve_constraint":
             guard let idStr = input["id"] as? String, let id = UUID(uuidString: idStr) else { return nil }
             return .resolveConstraint(id: id)
+        case "open_apple_health_setup":
+            return .openAppleHealthSetup
         default:
             return nil
         }

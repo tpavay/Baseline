@@ -7,6 +7,7 @@ import SwiftData
 struct AskBaselineSheet: View {
     @Environment(TrainingContextStore.self) private var context
     @Environment(HealthService.self) private var health
+    @Environment(OnboardingStore.self) private var profile
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
@@ -50,7 +51,9 @@ struct AskBaselineSheet: View {
         guard service == nil else { return }
         let today = entries.first { Calendar.current.isDateInToday($0.date) }
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
-        service = ConversationService(tools: AgentTools(store: context, base: base))
+        let tools = AgentTools(store: context, base: base,
+                               health: health, hrvConfigured: profile.draft.config.heartSource != nil)
+        service = ConversationService(tools: tools)
     }
 }
 

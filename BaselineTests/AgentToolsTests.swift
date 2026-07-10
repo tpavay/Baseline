@@ -45,6 +45,17 @@ struct AgentToolsTests {
         #expect(store.activeConstraintRecords.first?.affectsTraining == false)
     }
 
+    @Test func contextSummaryReportsCapabilities() {
+        // With a health service present, the model is told Apple Health status + the connect action.
+        let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let t = AgentTools(store: store, base: DecisionEngine.Inputs(), health: HealthService(), hrvConfigured: false)
+        let summary = t.contextSummary()
+        #expect(summary.localizedCaseInsensitiveContains("Apple Health"))
+        #expect(summary.localizedCaseInsensitiveContains("HRV reading"))
+        // Mapper accepts the action tool.
+        #expect(ToolCallMapper.map(name: "open_apple_health_setup", input: [:]) == .openAppleHealthSetup)
+    }
+
     @Test func contextSummaryDoesNotInventUnknowns() {
         let summary = tools(base: DecisionEngine.Inputs()).contextSummary()
         #expect(summary.localizedCaseInsensitiveContains("nothing"))   // says nothing is on file
