@@ -2,7 +2,7 @@
   "name": "baseline-functions",
   "description": "Baseline Conversation Runtime — provider-agnostic LLM proxy for the Context Engine.",
   "private": true,
-  "engines": { "node": "20" },
+  "engines": { "node": "22" },
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",
