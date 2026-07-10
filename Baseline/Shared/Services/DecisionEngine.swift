@@ -28,6 +28,13 @@ enum DecisionEngine {
     enum Band: String, Sendable { case green, amber, red }
     enum Certainty: String, Sendable { case low, medium, high }
 
+    /// How much the Today screen has *earned the right to say*. Drives the home's branch: with no
+    /// evidence Baseline leads with the conversation (Context Engine) instead of manufacturing a
+    /// score; with partial evidence it shows a plan + certainty but withholds the precise number;
+    /// only an established evidence base earns the readiness number. See docs/architecture.md
+    /// ("communicate uncertainty rather than manufacture confidence").
+    enum EvidenceTier: String, Sendable { case none, partial, established }
+
     /// A present domain's 0–100 subscore (neutral = 50) and its effective (renormalized) weight.
     struct DomainScore: Equatable, Sendable {
         let domain: Domain
@@ -272,6 +279,19 @@ enum DecisionEngine {
     private static func subscore(fromZ z: Double) -> Int { clampScore(50 + ReadinessScore.subscoreScale * z) }
     private static func clampScore(_ v: Double) -> Int { Int(v.rounded()).clampedInt(0...100) }
     private static func clampZ(_ z: Double) -> Double { min(max(z, -3), 3) }
+}
+
+extension DecisionEngine.Result {
+    /// Did anything real feed the engine today? A present domain, a fired cap, or a live constraint.
+    /// When false, the score fell back to a neutral placeholder and must NOT be shown as a verdict.
+    var hasEvidence: Bool { !domains.isEmpty || !appliedCaps.isEmpty || !constraints.isEmpty }
+
+    /// The Today branch: `none` → conversation leads; `partial` → plan without the number;
+    /// `established` → full plan + readiness number.
+    var evidenceTier: DecisionEngine.EvidenceTier {
+        guard hasEvidence else { return .none }
+        return certainty == .high ? .established : .partial
+    }
 }
 
 private extension Int {

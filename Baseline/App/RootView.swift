@@ -9,9 +9,10 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if !onboarding.isComplete {
-                OnboardingContainerView(store: onboarding)
-            } else if authVM.state == .authenticated {
+            // Onboarding temporarily bypassed — go straight from auth into the app so a fresh
+            // install lands on the auth screen, then the tabs. Restore by re-adding the
+            // `if !onboarding.isComplete { OnboardingContainerView(store: onboarding) } else if` gate.
+            if authVM.state == .authenticated {
                 MainTabView()
                     .environment(onboarding)
             } else {

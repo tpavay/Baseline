@@ -18,6 +18,38 @@ struct DecisionEngineTests {
         #expect(r.primaryLimiter == nil)
     }
 
+    // MARK: - Evidence tier (the Today branch)
+
+    @Test func noEvidenceIsTierNone() {
+        let r = DE.compute(DE.Inputs())
+        #expect(r.hasEvidence == false)
+        #expect(r.evidenceTier == .none)
+    }
+
+    @Test func aLoneConstraintCountsAsEvidence() {
+        // "My Achilles hurts" via chat — no HRV/sleep/check-in, but there's something to stand on.
+        let r = DE.compute(DE.Inputs(constraints: [.init(kind: .injury, location: "achilles", severity: 2)]))
+        #expect(r.hasEvidence)
+        #expect(r.evidenceTier == .partial)
+    }
+
+    @Test func partialEvidenceStaysBelowEstablished() {
+        // Sleep only — a plan is possible, but not enough to earn the number.
+        let r = DE.compute(DE.Inputs(sleepScore: 80, sleepHours: 7.5))
+        #expect(r.evidenceTier == .partial)
+    }
+
+    @Test func fullEvidenceWithBaselineIsEstablished() {
+        let base = ReadinessScore.Baseline(mean: 3.9, sd: 0.3, count: 30)
+        let r = DE.compute(DE.Inputs(lnRMSSD: 4.0, hrvBaseline: base,
+                                     restingHR: 50, rhrBaseline: .init(mean: 52, sd: 3, count: 30),
+                                     sleepScore: 85, sleepHours: 7.5,
+                                     energy: 4, mood: 4, stress: 4, soreness: 4,
+                                     loadRatio: 1.0))
+        #expect(r.certainty == .high)
+        #expect(r.evidenceTier == .established)
+    }
+
     @Test func allGoodReadsGreen() {
         let r = DE.compute(DE.Inputs(lnRMSSD: 5.0, sleepScore: 100,
                                      energy: 5, mood: 5, stress: 5, soreness: 5))
