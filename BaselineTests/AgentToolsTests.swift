@@ -45,6 +45,27 @@ struct AgentToolsTests {
         #expect(store.activeConstraintRecords.first?.affectsTraining == false)
     }
 
+    // MARK: - Retrieval (retrieve-don't-memorize)
+
+    @Test func retrievesHRVReadingsFromTheStore() async {
+        let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let r = Reading(); r.rmssd = 88; r.meanHR = 52
+        let t = AgentTools(store: store, base: DecisionEngine.Inputs(), readings: [r])
+        let resp = await t.execute(.getHRVReadings(limit: 5))
+        #expect(resp.text.contains("88"))
+    }
+
+    @Test func retrievesEmptyReadingsHonestly() async {
+        let resp = await tools(base: DecisionEngine.Inputs()).execute(.getHRVReadings(limit: 5))
+        #expect(resp.text.localizedCaseInsensitiveContains("no HRV readings"))
+    }
+
+    @Test func sleepRetrievalWithoutHealthReportsUnavailable() async {
+        // No HealthService wired → honest "can't pull", never a fabricated number.
+        let resp = await tools(base: DecisionEngine.Inputs()).execute(.getSleep(nightsAgo: 0))
+        #expect(resp.text.localizedCaseInsensitiveContains("apple health"))
+    }
+
     @Test func contextSummaryReportsCapabilities() {
         // With a health service present, the model is told Apple Health status + the connect action.
         let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)

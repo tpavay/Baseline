@@ -80,6 +80,14 @@ Current implementation direction:
 - Action tools let Baseline *do*, not just describe: `open_apple_health_setup` presents the system Health permission sheet. Planned: `open_hrv_setup`, `open_settings_section` (need chat→screen navigation plumbing).
 - Rule: speak as the product; never punt to "support" for built-in functionality; only say something is unavailable when capability state says so.
 
+## Retrieval Tools (agent architecture)
+Baseline is retrieval-first, not memory-first. Implementation principle: **never answer from memory (injected state) if a tool can answer more accurately.** When the athlete asks about current or historical data, the model calls a retrieval tool rather than answering from the context block or claiming it doesn't have the data.
+- **Split execution (iOS constraint):** the cloud model *proposes* a tool call; the **iOS app validates and executes it locally** — HealthKit lives on-device and the Firebase function cannot query it — then returns a structured result the model answers from. This is the real agent loop, already present in `ConversationService` (`execute`).
+- **Current retrieval tools:** `get_sleep(nights_ago)` (HealthKit sleep stages/durations + Baseline's own computed score, kept distinct), `get_hrv_readings(limit)` (Baseline's reading store).
+- **Expanding surface:** `get_resting_heart_rate`, `get_hrv_history` (HealthKit), and — once Workout Execution lands — `get_workout_history`, `get_heart_rate_zone_minutes`, `get_readiness(date)`, `get_current_plan`, `get_constraint_history`.
+- **Raw vs. derived:** Apple Health supplies stages/durations, not a universal "sleep score." Any score is Baseline's derivation; never present a Baseline score as an Apple metric.
+- **No inference of absence:** don't conclude a signal is missing from low certainty — check the source with a retrieval tool.
+
 ## Conversation Context Assembly
 - **Current (prototype):** the app sends the full durable structured state — today's plan plus all active constraints and today's logged context — to the model on every message. Acceptable for now: simplest correct behavior, and the state is still small.
 - **Target:** assemble a *relevant* snapshot by intent instead of shipping the whole state every turn:

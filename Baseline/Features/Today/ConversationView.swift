@@ -52,7 +52,8 @@ struct AskBaselineSheet: View {
         let today = entries.first { Calendar.current.isDateInToday($0.date) }
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
         let tools = AgentTools(store: context, base: base,
-                               health: health, hrvConfigured: profile.draft.config.heartSource != nil)
+                               health: health, hrvConfigured: profile.draft.config.heartSource != nil,
+                               readings: readings)
         service = ConversationService(tools: tools)
     }
 }
@@ -74,6 +75,7 @@ private struct ConversationView: View {
                     .padding(16)
                     Color.clear.frame(height: 1).id("bottom")
                 }
+                .scrollDismissesKeyboard(.interactively)   // swipe down on the chat to hide the keyboard
                 .onChange(of: service.log.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: service.isThinking) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
             }

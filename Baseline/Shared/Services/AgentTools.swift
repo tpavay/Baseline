@@ -26,6 +26,10 @@ final class AgentTools {
         case upsertConstraint(id: UUID?, kind: DecisionEngine.Constraint.Kind, location: String, severity: Int, affectsTraining: Bool)
         case resolveConstraint(id: UUID)
         case openAppleHealthSetup
+        // Retrieval — the model asks; the app fetches the truth (HealthKit / the reading store)
+        // rather than answering from memory. Executed via `execute` (async).
+        case getSleep(nightsAgo: Int)
+        case getHRVReadings(limit: Int)
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
         /// inspector's activity feed, so the behind-the-scenes mutations are visible.
@@ -47,6 +51,8 @@ final class AgentTools {
             case .setNote: return "Saved a note"
             case .resolveConstraint: return "Resolved a constraint"
             case .openAppleHealthSetup: return "Opened Apple Health setup"
+            case .getSleep(let n): return "Retrieved sleep (\(n == 0 ? "last night" : "\(n) nights ago")) from Apple Health"
+            case .getHRVReadings(let l): return "Retrieved \(l) recent HRV readings"
             }
         }
     }
@@ -66,14 +72,60 @@ final class AgentTools {
     /// reflects whether a reading source is set up.
     private let health: HealthService?
     private let hrvConfigured: Bool
+    private let readings: [Reading]              // recent HRV readings, newest first — for retrieval
 
     init(store: TrainingContextStore, base: DecisionEngine.Inputs = .init(), style: PlanningEngine.Style = .balanced,
-         health: HealthService? = nil, hrvConfigured: Bool = false) {
+         health: HealthService? = nil, hrvConfigured: Bool = false, readings: [Reading] = []) {
         self.store = store
         self.base = base
         self.style = style
         self.health = health
         self.hrvConfigured = hrvConfigured
+        self.readings = readings
+    }
+
+    // MARK: - Async execution (retrieval tools do real I/O; state tools stay synchronous)
+
+    /// The entry point the conversation runtime calls. Retrieval tools fetch from HealthKit / the
+    /// reading store; everything else falls through to the synchronous `dispatch`.
+    func execute(_ call: Call) async -> Response {
+        switch call {
+        case .getSleep(let nightsAgo): return await retrieveSleep(nightsAgo: nightsAgo)
+        case .getHRVReadings(let limit): return retrieveReadings(limit: limit)
+        default: return dispatch(call)
+        }
+    }
+
+    private func retrieveSleep(nightsAgo: Int) async -> Response {
+        guard let health, health.isAvailable else {
+            return Response(text: "Apple Health isn't available on this device, so I can't pull sleep.", decision: nil, plan: nil)
+        }
+        let when = nightsAgo == 0 ? "last night" : "\(nightsAgo) night\(nightsAgo == 1 ? "" : "s") ago"
+        guard let s = await health.sleepSummary(nightsAgo: nightsAgo) else {
+            return Response(text: "Apple Health has no sleep recorded for \(when).", decision: nil, plan: nil)
+        }
+        // Raw Apple Health numbers, kept distinct from Baseline's own computed score.
+        let h = Int(s.hours), m = Int((s.hours - Double(h)) * 60)
+        var parts = ["\(h)h \(m)m asleep"]
+        if let d = s.deepHours { parts.append("\(Int((d * 60).rounded())) min deep") }
+        if let r = s.remHours { parts.append("\(Int((r * 60).rounded())) min REM") }
+        if let e = s.efficiency { parts.append("\(Int((e * 100).rounded()))% efficiency") }
+        var text = "Apple Health, \(when): " + parts.joined(separator: ", ") + "."
+        if let score = ReadinessScore.sleepScore(hours: s.hours, efficiency: s.efficiency) {
+            text += " Baseline's own sleep score (computed from this, not an Apple number): \(Int(score.rounded()))/100."
+        }
+        return Response(text: text, decision: nil, plan: nil)
+    }
+
+    private func retrieveReadings(limit: Int) -> Response {
+        let recent = readings.prefix(max(1, min(limit, 30)))
+        guard !recent.isEmpty else {
+            return Response(text: "No HRV readings are on file yet — the athlete hasn't taken one in Baseline.", decision: nil, plan: nil)
+        }
+        let list = recent.map {
+            "\($0.date.formatted(date: .abbreviated, time: .shortened)) — RMSSD \(Int($0.rmssd.rounded())) ms, HR \(Int($0.meanHR.rounded())) bpm (\($0.kind.title))"
+        }.joined(separator: "; ")
+        return Response(text: "Recent Baseline HRV readings, newest first: \(list).", decision: nil, plan: nil)
     }
 
     // MARK: - Dispatch
@@ -128,6 +180,9 @@ final class AgentTools {
             }
             Task { await health.requestReadAccess() }
             return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
+        case .getSleep, .getHRVReadings:
+            // Retrieval is async — routed through `execute`, never here.
+            return Response(text: "", decision: nil, plan: nil)
         }
     }
 

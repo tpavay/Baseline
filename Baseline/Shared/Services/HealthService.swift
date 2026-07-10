@@ -61,18 +61,30 @@ final class HealthService {
         try? store.biologicalSex().biologicalSex
     }
 
-    /// Last night's sleep: total asleep hours and efficiency (asleep / in-bed). Looks back from
-    /// noon yesterday to now so a morning reading captures the night just passed. Returns nil if
-    /// Health is unavailable or there's no sleep sample for the window.
-    func lastNightSleep() async -> (hours: Double, efficiency: Double?)? {
+    /// Raw Apple Health sleep for one night — hours asleep, per-stage breakdown, and efficiency.
+    /// These are Apple's numbers; any "sleep score" is Baseline's own derivation, not from Health.
+    struct SleepSummary: Sendable {
+        let hours: Double
+        let deepHours: Double?
+        let remHours: Double?
+        let coreHours: Double?
+        let efficiency: Double?
+    }
+
+    /// Sleep for the night ending on the morning `nightsAgo` days back (0 = last night). Window is
+    /// that day's noon-to-noon straddle so an overnight sleep lands in one bucket. Returns nil when
+    /// Health is unavailable or no sample exists for the window — the caller reports "none recorded",
+    /// never infers absence from elsewhere.
+    func sleepSummary(nightsAgo: Int = 0) async -> SleepSummary? {
         guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else { return nil }
 
         let now = Date()
         let calendar = Calendar.current
-        // Window: yesterday 12:00 → now, so an early-morning reading includes last night.
         let startOfToday = calendar.startOfDay(for: now)
-        let windowStart = calendar.date(byAdding: .hour, value: -12, to: startOfToday) ?? startOfToday
-        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: now, options: .strictEndDate)
+        guard let dayStart = calendar.date(byAdding: .day, value: -max(0, nightsAgo), to: startOfToday) else { return nil }
+        let windowStart = calendar.date(byAdding: .hour, value: -12, to: dayStart) ?? dayStart
+        let windowEnd = min(now, calendar.date(byAdding: .hour, value: 12, to: dayStart) ?? now)
+        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: windowEnd, options: .strictEndDate)
 
         let samples: [HKCategorySample] = await withCheckedContinuation { continuation in
             let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, results, _ in
@@ -82,23 +94,32 @@ final class HealthService {
         }
         guard !samples.isEmpty else { return nil }
 
-        // "Asleep" = any of the asleep phases (core/deep/REM) or the legacy generic asleep value.
+        func hoursOf(_ value: HKCategoryValueSleepAnalysis) -> Double {
+            samples.filter { $0.value == value.rawValue }
+                .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) } / 3600
+        }
+        let deep = hoursOf(.asleepDeep), rem = hoursOf(.asleepREM), core = hoursOf(.asleepCore)
         let asleepValues: Set<Int> = [
-            HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
-            HKCategoryValueSleepAnalysis.asleepCore.rawValue,
-            HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
-            HKCategoryValueSleepAnalysis.asleepREM.rawValue,
-        ]
-        let inBedValue = HKCategoryValueSleepAnalysis.inBed.rawValue
-
+            HKCategoryValueSleepAnalysis.asleepUnspecified, .asleepCore, .asleepDeep, .asleepREM,
+        ].map(\.rawValue).reduce(into: Set<Int>()) { $0.insert($1) }
         let asleep = samples.filter { asleepValues.contains($0.value) }
-            .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+            .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) } / 3600
         guard asleep > 0 else { return nil }
 
-        let inBed = samples.filter { $0.value == inBedValue }
-            .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
-        let efficiency = inBed > asleep ? asleep / inBed : nil
+        let inBed = samples.filter { $0.value == HKCategoryValueSleepAnalysis.inBed.rawValue }
+            .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) } / 3600
+        return SleepSummary(
+            hours: asleep,
+            deepHours: deep > 0 ? deep : nil,
+            remHours: rem > 0 ? rem : nil,
+            coreHours: core > 0 ? core : nil,
+            efficiency: inBed > asleep ? asleep / inBed : nil
+        )
+    }
 
-        return (hours: asleep / 3600, efficiency: efficiency)
+    /// Last night's asleep hours + efficiency, for the daily readiness pipeline.
+    func lastNightSleep() async -> (hours: Double, efficiency: Double?)? {
+        guard let s = await sleepSummary(nightsAgo: 0) else { return nil }
+        return (s.hours, s.efficiency)
     }
 }

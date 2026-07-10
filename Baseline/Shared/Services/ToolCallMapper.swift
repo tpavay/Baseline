@@ -41,6 +41,10 @@ enum ToolCallMapper {
             return .resolveConstraint(id: id)
         case "open_apple_health_setup":
             return .openAppleHealthSetup
+        case "get_sleep":
+            return .getSleep(nightsAgo: max(0, intOrNil(input["nights_ago"]) ?? 0))
+        case "get_hrv_readings":
+            return .getHRVReadings(limit: intOrNil(input["limit"]) ?? 7)
         default:
             return nil
         }

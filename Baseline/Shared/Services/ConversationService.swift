@@ -83,7 +83,7 @@ final class ConversationService {
             for tu in toolUses {
                 let resultText: String
                 if let call = ToolCallMapper.map(name: tu.name, input: tu.input) {
-                    let response = tools.dispatch(call)
+                    let response = await tools.execute(call)   // retrieval tools query HealthKit / the store
                     resultText = response.text
                     record(call, response)
                 } else {
