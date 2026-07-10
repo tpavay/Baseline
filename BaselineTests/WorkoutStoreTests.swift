@@ -60,6 +60,21 @@ struct WorkoutStoreTests {
         #expect(s.current?.allExercises.count == 2)
     }
 
+    @Test func startWorkoutAndLoggedActualsPersistWithoutTouchingPlan() {
+        let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
+        let s1 = WorkoutStore(defaults: d)
+        s1.create(title: "x", goal: nil)
+        s1.addBlock(name: "A", intent: nil)
+        s1.addExercise(name: "Squat", toBlockNamed: "A", sets: 1, reps: 5, load: 100, durationSeconds: nil)
+        s1.startWorkout()
+        let exID = s1.current!.allExercises.first!.id
+        s1.editLog { $0.logSet(SetLog(reps: 5, load: 105), forPlanned: exID, name: "Squat") }
+        // Reload from disk: performed log restored, plan intact and separate.
+        let s2 = WorkoutStore(defaults: d)
+        #expect(s2.currentLog?.performed(forPlanned: exID)?.setLogs.first?.load == 105)
+        #expect(s2.current?.allExercises.first?.prescription.sets.first?.load == 100)
+    }
+
     @Test func persistsAcrossInstances() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
         let s1 = WorkoutStore(defaults: d)

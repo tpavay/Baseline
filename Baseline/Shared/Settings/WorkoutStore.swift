@@ -11,15 +11,45 @@ import Observation
 @MainActor
 @Observable
 final class WorkoutStore {
-    private(set) var current: Workout? { didSet { persist() } }
+    private(set) var current: Workout? { didSet { persist(current, Self.key) } }
+    /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
+    /// from `current` (the plan) — logging never mutates the plan.
+    private(set) var currentLog: WorkoutLog? { didSet { persist(currentLog, Self.logKey) } }
 
     private let defaults: UserDefaults
     private static let key = "workout.current"
+    private static let logKey = "workout.currentLog"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         current = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Workout.self, from: $0) }
+        currentLog = defaults.data(forKey: Self.logKey).flatMap { try? JSONDecoder().decode(WorkoutLog.self, from: $0) }
     }
+
+    // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
+
+    /// Apply an id-based structural edit to the plan (add/remove/reorder/move/substitute) and persist.
+    func edit(_ transform: (inout Workout) -> Void) {
+        guard var w = current else { return }
+        transform(&w)
+        current = w
+    }
+
+    /// Begin performing: create the performed log from the current plan (linked, read-only over it).
+    func startWorkout() {
+        guard let w = current, currentLog == nil else { return }
+        currentLog = w.startLog()
+    }
+
+    /// Apply an edit to the performed log (log a set, skip/complete, note) and persist.
+    func editLog(_ transform: (inout WorkoutLog) -> Void) {
+        guard var l = currentLog else { return }
+        transform(&l)
+        currentLog = l
+    }
+
+    func completeWorkout() { editLog { $0.isComplete = true } }
+    func discardLog() { currentLog = nil }
 
     /// Result of a name-resolved edit — so the tool layer asks the athlete to disambiguate (exactly
     /// what a coach does with two same-named movements) instead of silently guessing.
@@ -201,11 +231,11 @@ final class WorkoutStore {
 
     // MARK: - Persistence
 
-    private func persist() {
-        if let current, let data = try? JSONEncoder().encode(current) {
-            defaults.set(data, forKey: Self.key)
-        } else if current == nil {
-            defaults.removeObject(forKey: Self.key)
+    private func persist<T: Encodable>(_ value: T?, _ key: String) {
+        if let value, let data = try? JSONEncoder().encode(value) {
+            defaults.set(data, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
         }
     }
 }

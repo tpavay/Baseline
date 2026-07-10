@@ -110,6 +110,28 @@ struct WorkoutModelTests {
         #expect(w.allExercises.first?.prescription.sets.first?.load == 60)
     }
 
+    @Test func performedLogRecordsActualsSeparately() {
+        let (w, _, _, bench) = sample()          // bench planned: 2 sets @ 60
+        var log = w.startLog()
+        log.logSet(SetLog(reps: 8, load: 62.5), forPlanned: bench, name: "Bench press")
+        log.setStatus(.completed, forPlanned: bench, name: "Bench press")
+        log.addNote("felt good", forPlanned: bench, name: "Bench press")
+        let perf = log.performed(forPlanned: bench)
+        #expect(perf?.setLogs.first?.load == 62.5)
+        #expect(perf?.status == .completed)
+        #expect(perf?.athleteNotes == ["felt good"])
+        // Plan is untouched by logging actuals.
+        #expect(w.allExercises.first?.prescription.sets.first?.load == 60)
+    }
+
+    @Test func loggingAnAdHocExerciseCreatesAPerformedRecord() {
+        let (w, _, _, _) = sample()
+        var log = w.startLog()
+        let adhoc = UUID()
+        log.logSet(SetLog(reps: 10), forPlanned: adhoc, name: "Ad-hoc curl")
+        #expect(log.performed(forPlanned: adhoc)?.exerciseName == "Ad-hoc curl")
+    }
+
     // MARK: - Validation
 
     @Test func invalidEditsReturnFalse() {

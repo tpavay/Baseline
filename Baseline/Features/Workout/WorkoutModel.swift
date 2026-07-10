@@ -265,6 +265,45 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     var plannedWorkoutID: UUID?
     var exercises: [PerformedExercise] = []
     var athleteNotes: [String] = []
+    var isComplete = false
+}
+
+extension WorkoutLog {
+    /// The performed record for a planned exercise, creating a pending one if absent (e.g. an
+    /// exercise added to the plan mid-session).
+    private mutating func index(forPlanned plannedID: UUID, name: String) -> Int {
+        if let i = exercises.firstIndex(where: { $0.plannedExerciseID == plannedID }) { return i }
+        exercises.append(PerformedExercise(plannedExerciseID: plannedID, exerciseName: name))
+        return exercises.count - 1
+    }
+
+    func performed(forPlanned plannedID: UUID) -> PerformedExercise? {
+        exercises.first { $0.plannedExerciseID == plannedID }
+    }
+
+    mutating func logSet(_ set: SetLog, forPlanned plannedID: UUID, name: String) {
+        exercises[index(forPlanned: plannedID, name: name)].setLogs.append(set)
+    }
+
+    mutating func setStatus(_ status: PerformedStatus, forPlanned plannedID: UUID, name: String, reason: String? = nil) {
+        let i = index(forPlanned: plannedID, name: name)
+        exercises[i].status = status
+        if let reason { exercises[i].reason = reason }
+    }
+
+    mutating func addNote(_ note: String, forPlanned plannedID: UUID, name: String) {
+        exercises[index(forPlanned: plannedID, name: name)].athleteNotes.append(note)
+    }
+
+    mutating func updateSetLog(_ id: UUID, _ transform: (inout SetLog) -> Void) {
+        for e in exercises.indices {
+            if let s = exercises[e].setLogs.firstIndex(where: { $0.id == id }) { transform(&exercises[e].setLogs[s]); return }
+        }
+    }
+
+    mutating func removeSetLog(_ id: UUID) {
+        for e in exercises.indices { exercises[e].setLogs.removeAll { $0.id == id } }
+    }
 }
 
 extension Workout {
