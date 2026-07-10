@@ -111,7 +111,7 @@ final class ConversationService {
         let today = tools.dispatch(.getToday)
         latestDecision = today.decision
         latestPlan = today.plan
-        let contextSummary = today.text
+        let contextSummary = tools.contextSummary()   // full durable state = the model's memory
         // The transcript is heterogeneous JSON (non-Sendable), so ship it as a string; the request
         // dict is then [String: String] (Sendable) and safe to send across the callable boundary.
         guard let data = try? JSONSerialization.data(withJSONObject: transcript),

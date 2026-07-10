@@ -121,6 +121,42 @@ final class AgentTools {
         return PlanAssembler.assemble(base: base, dailyContext: store.daily, constraints: store.activeConstraints, style: style)
     }
 
+    /// The model's **memory**: today's plan plus the durable structured state that persists across
+    /// conversations (constraints + logged context). The raw transcript resets each session by
+    /// design — this is what makes a fresh conversation still know the athlete. Sent as the system
+    /// context on every request.
+    func contextSummary() -> String {
+        let (d, p) = today()
+        var lines = [planLine(d, p)]
+
+        let constraints = store.activeConstraints
+        if !constraints.isEmpty {
+            let list = constraints.map {
+                "\($0.location) (\($0.kind.rawValue), severity \($0.severity)/3\($0.affectsTraining ? "" : ", not limiting training"))"
+            }.joined(separator: "; ")
+            lines.append("Active constraints (persist until resolved): \(list).")
+        }
+
+        let dc = store.daily
+        var ctx: [String] = []
+        if let s = dc.sleepHours { ctx.append("slept \(String(format: "%g", s))h") }
+        if let e = dc.energy { ctx.append("energy \(Int(e))/5") }
+        if let m = dc.mood { ctx.append("mood \(Int(m))/5") }
+        if let s = dc.stress { ctx.append("stress \(Int(s))/5") }
+        if let so = dc.soreness { ctx.append("soreness \(Int(so))/5") }
+        if let t = dc.timeAvailableMinutes { ctx.append("\(t) min available") }
+        if let eq = dc.equipment, !eq.isEmpty { ctx.append("equipment: \(eq.joined(separator: ", "))") }
+        if dc.traveling == true { ctx.append("traveling") }
+        if dc.illness == true { ctx.append("feeling unwell") }
+        if let n = dc.note, !n.isEmpty { ctx.append("note: \(n)") }
+        if !ctx.isEmpty { lines.append("Logged for today: \(ctx.joined(separator: "; ")).") }
+
+        if constraints.isEmpty && ctx.isEmpty {
+            lines.append("Nothing else has been recorded yet — no injuries, sleep, check-in, or context on file.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func respond(prefix: String?) -> Response {
         let (d, p) = today()
         let text = [prefix, planLine(d, p)].compactMap { $0 }.joined(separator: " ")
