@@ -25,6 +25,28 @@ final class AgentTools {
         case setNote(String?)
         case upsertConstraint(id: UUID?, kind: DecisionEngine.Constraint.Kind, location: String, severity: Int, affectsTraining: Bool)
         case resolveConstraint(id: UUID)
+
+        /// A short human-readable summary of what this call did — for the "what Baseline knows"
+        /// inspector's activity feed, so the behind-the-scenes mutations are visible.
+        var activityLabel: String {
+            switch self {
+            case .getToday: return "Read today's state"
+            case .explain: return "Explained the plan"
+            case .setTimeAvailable(let m): return m.map { "Time available → \($0) min" } ?? "Cleared time available"
+            case .setEquipment(let e): return "Equipment → \(e?.joined(separator: ", ") ?? "cleared")"
+            case .setTraveling(let t): return t == true ? "Traveling → yes" : "Traveling → no"
+            case .setIllness(let i): return i == true ? "Marked unwell" : "Marked well"
+            case .setSleep(let h): return h.map { "Sleep → \(String(format: "%g", $0)) h" } ?? "Cleared sleep"
+            case .setCheckIn(let e, let m, let s, let so):
+                let parts = [("energy", e), ("mood", m), ("stress", s), ("soreness", so)]
+                    .compactMap { label, v in v.map { "\(label) \(Int($0))" } }
+                return "Check-in → " + (parts.isEmpty ? "—" : parts.joined(separator: ", "))
+            case .upsertConstraint(_, let kind, let location, let severity, let affects):
+                return "Constraint → \(location) (\(kind.rawValue), sev \(severity))\(affects ? "" : ", not limiting")"
+            case .setNote: return "Saved a note"
+            case .resolveConstraint: return "Resolved a constraint"
+            }
+        }
     }
 
     struct Response: Sendable {

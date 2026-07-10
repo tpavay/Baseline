@@ -12,6 +12,7 @@ struct AskBaselineSheet: View {
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
 
     @State private var service: ConversationService?
+    @State private var showInspector = false
 
     var body: some View {
         NavigationStack {
@@ -27,12 +28,22 @@ struct AskBaselineSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showInspector = true } label: {
+                        Image(systemName: "sparkles.rectangle.stack")
+                    }
+                    .foregroundStyle(BaselineColor.accent)
+                    .disabled(service == nil)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.foregroundStyle(BaselineColor.accent)
                 }
             }
         }
         .task { await setUp() }
+        .sheet(isPresented: $showInspector) {
+            if let service { StateInspectorView(service: service, context: context) }
+        }
     }
 
     private func setUp() async {
@@ -127,5 +138,139 @@ private struct ConversationView: View {
         let text = draft
         draft = ""
         Task { await service.send(text) }
+    }
+}
+
+/// "What Baseline knows" — the honest window into the structured state the conversation is building.
+/// Structured state is the source of truth; this makes it visible so the athlete can see what was
+/// logged, the plan it produces, and every behind-the-scenes tool the model invoked.
+private struct StateInspectorView: View {
+    let service: ConversationService
+    let context: TrainingContextStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                BaselineColor.base.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        planSection
+                        knownSection
+                        constraintsSection
+                        activitySection
+                    }
+                    .padding(16)
+                }
+            }
+            .navigationTitle("What Baseline knows")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(BaselineColor.base, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }.foregroundStyle(BaselineColor.accent)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var planSection: some View {
+        card("TODAY'S PLAN") {
+            if let d = service.latestDecision, let p = service.latestPlan {
+                Text(p.summary).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider().overlay(BaselineColor.line)
+                row("Readiness", "\(d.score)")
+                row("Band", d.band.rawValue)
+                row("Certainty", d.calibrating ? "calibrating" : d.certainty.rawValue)
+                row("Evidence", d.evidenceTier.rawValue)
+                row("Limiter", d.primaryLimiter?.title.lowercased() ?? "none")
+            } else {
+                empty("No plan yet — say hello to Baseline.")
+            }
+        }
+    }
+
+    @ViewBuilder private var knownSection: some View {
+        card("CONTEXT TODAY") {
+            let rows = knownRows
+            if rows.isEmpty {
+                empty("Nothing logged for today yet.")
+            } else {
+                ForEach(rows, id: \.0) { row($0.0, $0.1) }
+            }
+        }
+    }
+
+    @ViewBuilder private var constraintsSection: some View {
+        let constraints = context.activeConstraints
+        card("CONSTRAINTS") {
+            if constraints.isEmpty {
+                empty("No active injuries or pain.")
+            } else {
+                ForEach(Array(constraints.enumerated()), id: \.offset) { _, c in
+                    row("\(c.location) · \(c.kind.rawValue)",
+                        "sev \(c.severity)\(c.affectsTraining ? "" : " · not limiting")")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var activitySection: some View {
+        card("ACTIVITY THIS CHAT") {
+            if service.toolActivity.isEmpty {
+                empty("No changes yet — Baseline hasn't logged anything.")
+            } else {
+                ForEach(service.toolActivity.reversed()) { event in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "arrow.turn.down.right").font(.system(size: 11)).foregroundStyle(BaselineColor.accent).padding(.top, 3)
+                        Text(event.label).font(.system(size: 13.5)).foregroundStyle(BaselineColor.textMid)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private var knownRows: [(String, String)] {
+        let d = context.daily
+        var out: [(String, String)] = []
+        if let s = d.sleepHours { out.append(("Sleep", "\(fmt(s)) h")) }
+        if let e = d.energy { out.append(("Energy", "\(Int(e))/5")) }
+        if let m = d.mood { out.append(("Mood", "\(Int(m))/5")) }
+        if let s = d.stress { out.append(("Stress", "\(Int(s))/5")) }
+        if let so = d.soreness { out.append(("Soreness", "\(Int(so))/5")) }
+        if let t = d.timeAvailableMinutes { out.append(("Time available", "\(t) min")) }
+        if let eq = d.equipment, !eq.isEmpty { out.append(("Equipment", eq.joined(separator: ", "))) }
+        if let tr = d.traveling { out.append(("Traveling", tr ? "Yes" : "No")) }
+        if let ill = d.illness { out.append(("Illness", ill ? "Yes" : "No")) }
+        if let n = d.note, !n.isEmpty { out.append(("Note", n)) }
+        return out
+    }
+
+    private func fmt(_ v: Double) -> String { String(format: "%g", v) }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label).font(.system(size: 13.5)).foregroundStyle(BaselineColor.textFaint)
+            Spacer(minLength: 12)
+            Text(value).font(.system(size: 13.5, weight: .medium)).foregroundStyle(BaselineColor.textHi)
+                .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func empty(_ text: String) -> some View {
+        Text(text).font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func card<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.accent)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
     }
 }

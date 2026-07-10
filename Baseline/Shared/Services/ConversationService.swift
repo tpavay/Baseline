@@ -17,8 +17,21 @@ final class ConversationService {
         let text: String
     }
 
+    /// One behind-the-scenes tool the model actually invoked — surfaced in the state inspector so
+    /// the athlete can see what the conversation logged, not just what it said.
+    struct ToolEvent: Identifiable, Sendable {
+        let id = UUID()
+        let label: String
+    }
+
     private(set) var log: [Message] = []
     private(set) var isThinking = false
+
+    // Observability: the structured state + plan the conversation is building, exposed for the
+    // "What Baseline knows" inspector.
+    private(set) var latestDecision: DecisionEngine.Result?
+    private(set) var latestPlan: PlanningEngine.Plan?
+    private(set) var toolActivity: [ToolEvent] = []
 
     private let tools: AgentTools
     private let functions: Functions
@@ -68,8 +81,14 @@ final class ConversationService {
             // Execute each requested tool on-device and feed results back for the model's follow-up.
             var results: [[String: Any]] = []
             for tu in toolUses {
-                let resultText = ToolCallMapper.map(name: tu.name, input: tu.input)
-                    .map { tools.dispatch($0).text } ?? "That tool call wasn't valid."
+                let resultText: String
+                if let call = ToolCallMapper.map(name: tu.name, input: tu.input) {
+                    let response = tools.dispatch(call)
+                    resultText = response.text
+                    record(call, response)
+                } else {
+                    resultText = "That tool call wasn't valid."
+                }
                 results.append(["type": "tool_result", "tool_use_id": tu.id, "content": resultText])
             }
             transcript.append(["role": "user", "content": results])
@@ -77,8 +96,22 @@ final class ConversationService {
         log.append(Message(role: .baseline, text: "Let's take that one step at a time — ask me again?"))
     }
 
+    /// Keep the inspector's live view in sync: refresh the plan snapshot, and log mutations (not
+    /// the automatic reads) to the activity feed.
+    private func record(_ call: AgentTools.Call, _ response: AgentTools.Response) {
+        if let d = response.decision { latestDecision = d }
+        if let p = response.plan { latestPlan = p }
+        switch call {
+        case .getToday, .explain: break
+        default: toolActivity.append(ToolEvent(label: call.activityLabel))
+        }
+    }
+
     private func callFunction() async -> [[String: Any]]? {
-        let contextSummary = tools.dispatch(.getToday).text
+        let today = tools.dispatch(.getToday)
+        latestDecision = today.decision
+        latestPlan = today.plan
+        let contextSummary = today.text
         // The transcript is heterogeneous JSON (non-Sendable), so ship it as a string; the request
         // dict is then [String: String] (Sendable) and safe to send across the callable boundary.
         guard let data = try? JSONSerialization.data(withJSONObject: transcript),
