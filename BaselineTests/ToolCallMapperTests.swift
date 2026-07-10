@@ -20,6 +20,19 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "open_apple_health_setup", input: [:]) == .openAppleHealthSetup)
     }
 
+    @Test func mapsWorkoutTools() {
+        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", goal: nil))
+        #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength"]) == .addBlock(name: "Strength", intent: nil))
+        #expect(ToolCallMapper.map(name: "add_exercise", input: ["block": "Strength", "name": "Bench", "sets": 3])
+                == .addExercise(block: "Strength", name: "Bench", sets: 3, reps: nil, load: nil, durationSeconds: nil))
+        #expect(ToolCallMapper.map(name: "move_exercise", input: ["exercise": "Bench", "to_block": "Warm-up"])
+                == .moveExercise(exercise: "Bench", toBlock: "Warm-up"))
+        #expect(ToolCallMapper.map(name: "update_set", input: ["exercise": "Bench", "set_number": 2, "load": 70])
+                == .updateSet(exercise: "Bench", setNumber: 2, reps: nil, load: 70, durationSeconds: nil, rpe: nil))
+        #expect(ToolCallMapper.map(name: "get_current_workout", input: [:]) == .getCurrentWorkout)
+        #expect(ToolCallMapper.map(name: "create_workout", input: [:]) == nil)   // missing title → rejected
+    }
+
     @Test func mapsSleepAndCheckIn() {
         #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": 6.5]) == .setSleep(hours: 6.5))
         #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": 4]) == .setSleep(hours: 4))

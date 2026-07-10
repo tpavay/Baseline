@@ -10,6 +10,7 @@ struct BaselineApp: App {
     @State private var bluetooth = BluetoothManager()
     @State private var health = HealthService()
     @State private var context = TrainingContextStore()
+    @State private var workouts = WorkoutStore()
 
     init() {
         FirebaseApp.configure()
@@ -30,6 +31,7 @@ struct BaselineApp: App {
         .environment(bluetooth)
         .environment(health)
         .environment(context)
+        .environment(workouts)
         .modelContainer(for: [Reading.self, ReadinessEntry.self])
     }
 }

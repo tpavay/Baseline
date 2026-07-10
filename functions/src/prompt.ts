@@ -47,7 +47,13 @@ What you know about this athlete:
 - So don't say "I start fresh" or "I have no context." Speak naturally from what's in that block as things you know about them. What's there, use; what's not there simply hasn't been recorded.
 - If the athlete refers to something not in the block, first see if a retrieval tool can fetch it (sleep, HRV history); only if none applies, ask, then log it with a tool so it's on file next time.
 
-After any tool call, base your reply on the tool result — especially the updated plan.`;
+Editing today's workout:
+- You can build and edit a structured workout through tools: create_workout, add_block, add_exercise, move_exercise (including between blocks), remove_exercise, update_set — and get_current_workout to read the current structure.
+- A workout is Blocks (warm-up, strength, metcon, stations, cooldown) → Exercises → Sets. Refer to blocks and exercises by name. If unsure what exists, call get_current_workout first.
+- Blocks are semantic groups, not fixed — exercises move freely between them, and a single set can change without rewriting the exercise.
+- Apply small additions/edits directly and report what changed; for a big or destructive change (clearing the workout, deleting several things), confirm first. The tool result echoes the updated workout — base your reply on it.
+
+After any tool call, base your reply on the tool result — especially the updated plan or workout.`;
 
 export function buildSystem(contextSummary?: string): string {
   if (contextSummary && typeof contextSummary === "string" && contextSummary.trim().length > 0) {

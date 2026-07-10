@@ -135,4 +135,77 @@ export const TOOLS = [
       properties: { days: { type: "integer", minimum: 1, maximum: 90, description: "How many days back to look (default 7)." } },
     },
   },
+  {
+    name: "get_current_workout",
+    description: "Read the current structured workout (blocks → exercises → sets). Call before editing when you're unsure of the structure, or to answer what today's workout is.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "create_workout",
+    description: "Create/replace today's workout as an empty shell. Then add blocks and exercises. Refer to blocks and exercises by name in later calls.",
+    input_schema: {
+      type: "object",
+      properties: { title: { type: "string" }, goal: { type: "string", description: "Optional overall goal." } },
+      required: ["title"],
+    },
+  },
+  {
+    name: "add_block",
+    description: "Add a semantic block to the workout (e.g. 'Warm-up', 'Strength', 'Metcon', 'Stations', 'Cooldown').",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string" }, intent: { type: "string", description: "Optional purpose, e.g. 'hypertrophy'." } },
+      required: ["name"],
+    },
+  },
+  {
+    name: "add_exercise",
+    description: "Add an exercise to a named block, optionally with a uniform set scheme. e.g. block 'Strength', name 'Bench press', sets 3, reps 8, load 60.",
+    input_schema: {
+      type: "object",
+      properties: {
+        block: { type: "string", description: "Name of an existing block." },
+        name: { type: "string", description: "Exercise name." },
+        sets: { type: "integer", minimum: 1, description: "How many sets (default 1)." },
+        reps: { type: "integer" },
+        load: { type: "number", description: "Resistance per set." },
+        duration_seconds: { type: "integer", description: "For time-based work / holds." },
+      },
+      required: ["block", "name"],
+    },
+  },
+  {
+    name: "move_exercise",
+    description: "Move an exercise into another block (blocks are semantic groups, not fixed — exercises move freely).",
+    input_schema: {
+      type: "object",
+      properties: { exercise: { type: "string" }, to_block: { type: "string" } },
+      required: ["exercise", "to_block"],
+    },
+  },
+  {
+    name: "remove_exercise",
+    description: "Remove an exercise from the workout by name.",
+    input_schema: {
+      type: "object",
+      properties: { exercise: { type: "string" } },
+      required: ["exercise"],
+    },
+  },
+  {
+    name: "update_set",
+    description: "Change a single set of an exercise without rewriting the others. set_number is 1-based. Only the fields you pass change.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string" },
+        set_number: { type: "integer", minimum: 1 },
+        reps: { type: "integer" },
+        load: { type: "number" },
+        duration_seconds: { type: "integer" },
+        rpe: { type: "number" },
+      },
+      required: ["exercise", "set_number"],
+    },
+  },
 ];

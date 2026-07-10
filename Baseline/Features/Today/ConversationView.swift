@@ -8,6 +8,7 @@ struct AskBaselineSheet: View {
     @Environment(TrainingContextStore.self) private var context
     @Environment(HealthService.self) private var health
     @Environment(OnboardingStore.self) private var profile
+    @Environment(WorkoutStore.self) private var workouts
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
@@ -43,7 +44,7 @@ struct AskBaselineSheet: View {
         }
         .task { await setUp() }
         .sheet(isPresented: $showInspector) {
-            if let service { StateInspectorView(service: service, context: context) }
+            if let service { StateInspectorView(service: service, context: context, workouts: workouts) }
         }
     }
 
@@ -53,7 +54,7 @@ struct AskBaselineSheet: View {
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
         let tools = AgentTools(store: context, base: base,
                                health: health, hrvConfigured: profile.draft.config.heartSource != nil,
-                               readings: readings)
+                               readings: readings, workouts: workouts)
         service = ConversationService(tools: tools)
     }
 }
@@ -152,6 +153,7 @@ private struct ConversationView: View {
 private struct StateInspectorView: View {
     let service: ConversationService
     let context: TrainingContextStore
+    let workouts: WorkoutStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -161,6 +163,7 @@ private struct StateInspectorView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         planSection
+                        workoutSection
                         knownSection
                         constraintsSection
                         activitySection
@@ -194,6 +197,36 @@ private struct StateInspectorView: View {
                 empty("No plan yet — say hello to Baseline.")
             }
         }
+    }
+
+    @ViewBuilder private var workoutSection: some View {
+        card("TODAY'S WORKOUT") {
+            if let w = workouts.current {
+                Text(w.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                if let g = w.goal { row("Goal", g) }
+                ForEach(w.blocks) { block in
+                    Text(block.name.uppercased() + (block.intent.map { " · \($0)" } ?? ""))
+                        .font(.system(size: 11, weight: .semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
+                        .padding(.top, 2)
+                    if block.exercises.isEmpty {
+                        empty("(empty)")
+                    } else {
+                        ForEach(block.exercises) { ex in
+                            row(ex.exerciseName, setsLabel(ex.prescription))
+                        }
+                    }
+                }
+            } else {
+                empty("No workout yet — ask Baseline to build one.")
+            }
+        }
+    }
+
+    private func setsLabel(_ p: Prescription) -> String {
+        guard !p.sets.isEmpty else { return "no sets" }
+        let s = p.sets.first!
+        let scheme = [s.reps.map { "\($0)" }, s.load.map { "@\(Int($0))" }].compactMap { $0 }.joined(separator: " ")
+        return "\(p.sets.count)×\(scheme.isEmpty ? "set" : scheme)"
     }
 
     @ViewBuilder private var knownSection: some View {

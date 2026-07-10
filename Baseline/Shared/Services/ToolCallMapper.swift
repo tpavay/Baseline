@@ -47,6 +47,30 @@ enum ToolCallMapper {
             return .getHRVReadings(limit: intOrNil(input["limit"]) ?? 7)
         case "get_resting_heart_rate":
             return .getRestingHeartRate(days: intOrNil(input["days"]) ?? 7)
+        case "create_workout":
+            guard let title = input["title"] as? String else { return nil }
+            return .createWorkout(title: title, goal: input["goal"] as? String)
+        case "add_block":
+            guard let name = input["name"] as? String else { return nil }
+            return .addBlock(name: name, intent: input["intent"] as? String)
+        case "add_exercise":
+            guard let block = input["block"] as? String, let name = input["name"] as? String else { return nil }
+            return .addExercise(block: block, name: name,
+                                sets: intOrNil(input["sets"]), reps: intOrNil(input["reps"]),
+                                load: doubleOrNil(input["load"]), durationSeconds: intOrNil(input["duration_seconds"]))
+        case "move_exercise":
+            guard let exercise = input["exercise"] as? String, let toBlock = input["to_block"] as? String else { return nil }
+            return .moveExercise(exercise: exercise, toBlock: toBlock)
+        case "remove_exercise":
+            guard let exercise = input["exercise"] as? String else { return nil }
+            return .removeExercise(exercise: exercise)
+        case "update_set":
+            guard let exercise = input["exercise"] as? String, let n = intOrNil(input["set_number"]) else { return nil }
+            return .updateSet(exercise: exercise, setNumber: n,
+                              reps: intOrNil(input["reps"]), load: doubleOrNil(input["load"]),
+                              durationSeconds: intOrNil(input["duration_seconds"]), rpe: doubleOrNil(input["rpe"]))
+        case "get_current_workout":
+            return .getCurrentWorkout
         default:
             return nil
         }
