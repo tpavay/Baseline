@@ -31,6 +31,17 @@ Today            Plan             Workout          Profile
 
 *Status: the Today and Workout (execution) tabs exist. Plan, Workout Detail (goal/context ordering), and Exercise Detail are designed here and build on the Plan Engine + workout-history persistence.*
 
+### Adding an exercise is catalog-first
+Selecting a stable **Exercise Definition** must come before typing, or identity/aliases/history break at the first input. Flow: **tap Add exercise (block inherited) → search / recent / all → configure prescription → save.** Free text creates a *custom definition* only after explicit confirmation ("Create '…'") — never by default, so typos don't fragment history. The prescription editor is **modality-aware**: it renders only the exercise's default metrics (Bench: sets/reps/load/RPE; Bike: duration/distance/…; Isometric: sets/duration/load/RPE) with an **Add metric** action for others it supports, and human-readable inputs (`1:00`, `60 lb`) — not raw seconds or an implementation unit. *(Built; favorites + block-relevant suggestions are follow-ons.)*
+
+### Two creation modes — conversation to create, controls to correct
+**Use conversation to create and reshape; use controls to inspect, correct, and execute.** Same agent, three presentations by task complexity:
+1. **Inline bar** — quick scoped questions/edits during a workout ("add one set", "why this exercise?", "log 3×8 at 225").
+2. **Bottom sheet** — scoped edits to the current object (drag-to-peek; already the Ask Baseline presentation).
+3. **Full-screen "Build with Baseline"** — creating or restructuring a whole workout/week. A **split interaction**: conversation + a **live structured preview** using the *same* Block/Exercise cards as the real Plan. On iPhone, stacked: conversation ─ draft workout cards ─ **Apply changes**. Nothing commits until applied ("Build Thursday: 45 min Z2 bike, then 3 rounds of carries + Copenhagen planks" → a structured draft with **Add to Thursday / Edit / Ask a question**). This is the right place for complex creation — not the tiny composer.
+
+The **Plan** tab exposes both: `[ Build with Baseline ]` + `[ + Add manually ]` at the top; each day card has `Open / Ask Baseline / •••`; Workout Detail has `Edit with Baseline` which opens chat **already scoped to that workout**. *(The full-screen builder + Plan surfaces build on the Plan Engine.)*
+
 ---
 
 ## Part 1 — First launch → first plan

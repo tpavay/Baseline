@@ -175,6 +175,25 @@ struct WorkoutStoreTests {
         #expect(msg.localizedCaseInsensitiveContains("pace"))
     }
 
+    // MARK: - Catalog-first add (search / custom / recent)
+
+    @Test func searchCustomAndRecentTracking() {
+        let s = store()
+        #expect(s.searchDefinitions("bike").contains { $0.id == "stationary_bike" })
+        #expect(s.searchDefinitions("").count >= ExerciseCatalog.definitions.count)   // empty → all
+        // Custom is deliberate and resolvable by name.
+        let def = s.createCustomDefinition(name: "Sled Drag", category: .carry, supported: [.distance, .load])
+        #expect(def.id.hasPrefix("custom_"))
+        #expect(s.searchDefinitions("sled").contains { $0.id == def.id })
+        #expect(s.resolveDefinition("Sled Drag").id == def.id)
+        #expect(s.createCustomDefinition(name: "Sled Drag", category: .carry, supported: []).id == def.id)  // dedup by name
+        // Adding tracks recents.
+        s.create(title: "x", goal: nil); s.addBlock(name: "A", intent: nil)
+        var ex = PlannedExercise(exerciseName: "Deadlift"); ex.definitionId = "deadlift"
+        s.addExercise(ex, toBlockID: s.current!.blocks.first!.id)
+        #expect(s.recentExerciseIds.first == "deadlift")
+    }
+
     @Test func createStampsTodayAndClearsLog() {
         let s = store()
         s.create(title: "a", goal: nil)

@@ -264,12 +264,10 @@ struct WorkoutView: View {
         case .addBlock:
             AddBlockSheet { name, intent in store.edit { $0.addBlock(name: name, intent: intent) } }
         case .addExercise(let blockID):
-            AddExerciseSheet(blocks: store.current?.blocks ?? [], preferredBlock: blockID) { targetBlockID, ex in
-                var e = ex
-                let def = ExerciseCatalog.resolve(e.exerciseName)      // manual add gets catalog identity too
-                e.definitionId = def.id == ExerciseCatalog.generic.id ? nil : def.id
-                if e.selectedMetrics.isEmpty { e.selectedMetrics = MetricType.allCases.filter { def.defaults.contains($0) } }
-                store.edit { $0.addExercise(e, toBlock: targetBlockID) }
+            if let target = blockID ?? store.current?.blocks.first?.id {
+                AddExerciseFlow(blockID: target)      // catalog-first: block inherited, pick → configure
+            } else {
+                Text("Add a block first.").font(.system(size: 15)).foregroundStyle(BaselineColor.textMid).padding(40)
             }
         case .substitute(let id, let current):
             SubstituteSheet(currentName: current) { name, prescription in

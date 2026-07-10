@@ -20,52 +20,6 @@ struct AddBlockSheet: View {
     }
 }
 
-// MARK: - Add exercise
-
-struct AddExerciseSheet: View {
-    let blocks: [WorkoutBlock]
-    let preferredBlock: UUID?
-    let onSave: (UUID, PlannedExercise) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var blockID: UUID?
-    @State private var name = ""
-    @State private var sets = 3
-    @State private var reps = ""
-    @State private var load = ""
-    @State private var duration = ""
-    @State private var distance = ""
-
-    var body: some View {
-        SheetScaffold(title: "Add exercise", canSave: blockID != nil && !name.trimmed.isEmpty, onSave: save, onCancel: { dismiss() }) {
-            if blocks.isEmpty {
-                Text("Add a block first.").font(.system(size: 14)).foregroundStyle(BaselineColor.textMid)
-            } else {
-                labeled("Block") {
-                    Picker("", selection: $blockID) {
-                        ForEach(blocks) { b in Text(b.name).tag(Optional(b.id)) }
-                    }.pickerStyle(.menu).tint(BaselineColor.accent)
-                }
-                SheetField("Exercise", text: $name, prompt: "Bench press, SkiErg…")
-                labeled("Sets") { Stepper("\(sets)", value: $sets, in: 1...20).foregroundStyle(BaselineColor.textHi) }
-                SheetField("Reps (optional)", text: $reps, prompt: "8", keyboard: .numberPad)
-                SheetField("Load (optional)", text: $load, prompt: "60", keyboard: .decimalPad)
-                SheetField("Duration sec (optional)", text: $duration, prompt: "3600", keyboard: .numberPad)
-                SheetField("Distance m (optional)", text: $distance, prompt: "150", keyboard: .numberPad)
-            }
-        }
-        .onAppear { blockID = preferredBlock ?? blocks.first?.id }
-    }
-
-    private func save() {
-        guard let blockID else { return }
-        var ex = PlannedExercise(exerciseName: name.trimmed)
-        ex.prescription.sets = (0..<max(1, sets)).map { _ in
-            PlannedSet(reps: Int(reps), load: Double(load), duration: Int(duration), distance: Double(distance))
-        }
-        onSave(blockID, ex); dismiss()
-    }
-}
-
 // MARK: - Substitute
 
 struct SubstituteSheet: View {
@@ -184,7 +138,7 @@ struct MetricConfigSheet: View {
 
 // MARK: - Shared scaffold
 
-private struct SheetScaffold<Content: View>: View {
+struct SheetScaffold<Content: View>: View {
     let title: String
     let canSave: Bool
     let onSave: () -> Void
@@ -211,14 +165,14 @@ private struct SheetScaffold<Content: View>: View {
     }
 }
 
-private func labeled<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+func labeled<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: 6) {
         Text(label.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.textFaint)
         content()
     }
 }
 
-private struct SheetField: View {
+struct SheetField: View {
     let label: String
     @Binding var text: String
     let prompt: String

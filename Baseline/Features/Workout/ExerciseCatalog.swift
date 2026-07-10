@@ -3,7 +3,7 @@ import Foundation
 /// A stable **exercise definition** — identity + the metrics the modality supports + a default
 /// metric selection + an activity category + casual-language aliases. Global and stable: how one
 /// workout logs an exercise never edits this. See docs/engine-and-data-model.md.
-struct ExerciseDefinition: Identifiable, Equatable, Sendable {
+struct ExerciseDefinition: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let name: String
     let category: ActivityCategory

@@ -26,17 +26,76 @@ final class WorkoutStore {
     enum PreferenceScope: String, Sendable { case exercise, category }
 
     private(set) var preferences: ExercisePreferences { didSet { persist(preferences, Self.prefKey) } }
+    /// Athlete-created exercise definitions (deliberate — never auto-created from a typo).
+    private(set) var customDefinitions: [ExerciseDefinition] { didSet { persist(customDefinitions, Self.customKey) } }
+    /// Recently-added exercise ids, most-recent first — for the catalog picker's "Recent" section.
+    private(set) var recentExerciseIds: [String] { didSet { persist(recentExerciseIds, Self.recentKey) } }
 
     private let defaults: UserDefaults
     private static let key = "workout.current"
     private static let logKey = "workout.currentLog"
     private static let prefKey = "workout.preferences"
+    private static let customKey = "workout.customDefinitions"
+    private static let recentKey = "workout.recentExercises"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         current = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Workout.self, from: $0) }
         currentLog = defaults.data(forKey: Self.logKey).flatMap { try? JSONDecoder().decode(WorkoutLog.self, from: $0) }
         preferences = defaults.data(forKey: Self.prefKey).flatMap { try? JSONDecoder().decode(ExercisePreferences.self, from: $0) } ?? ExercisePreferences()
+        customDefinitions = defaults.data(forKey: Self.customKey).flatMap { try? JSONDecoder().decode([ExerciseDefinition].self, from: $0) } ?? []
+        recentExerciseIds = defaults.data(forKey: Self.recentKey).flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
+    }
+
+    // MARK: - Exercise catalog (curated + custom)
+
+    var allDefinitions: [ExerciseDefinition] { ExerciseCatalog.definitions + customDefinitions }
+
+    /// Catalog matches for a query — name, alias, or category. Empty query → all, curated first.
+    func searchDefinitions(_ query: String) -> [ExerciseDefinition] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return allDefinitions }
+        return allDefinitions.filter { d in
+            d.name.lowercased().contains(q) || d.aliases.contains { $0.contains(q) } || d.category.rawValue.contains(q)
+        }
+    }
+
+    var recentDefinitions: [ExerciseDefinition] {
+        recentExerciseIds.compactMap { id in allDefinitions.first { $0.id == id } }
+    }
+
+    /// Resolve a name to a definition, checking custom first (so agent-added custom exercises keep
+    /// their identity), else the curated catalog (generic fallback).
+    func resolveDefinition(_ name: String) -> ExerciseDefinition {
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let c = customDefinitions.first(where: { $0.name.lowercased() == key || $0.aliases.contains(key) }) { return c }
+        return ExerciseCatalog.resolve(name)
+    }
+
+    /// Deliberately create a custom definition (reuses one with the same name if it exists).
+    @discardableResult
+    func createCustomDefinition(name: String, category: ActivityCategory, supported: [MetricType]) -> ExerciseDefinition {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = customDefinitions.first(where: { $0.name.lowercased() == trimmed.lowercased() }) { return existing }
+        let metrics = supported.isEmpty ? [.reps, .load] : supported
+        let def = ExerciseDefinition(id: "custom_\(UUID().uuidString.prefix(8))", name: trimmed, category: category,
+                                     supported: metrics, defaults: metrics, aliases: [trimmed.lowercased()])
+        customDefinitions.append(def)
+        return def
+    }
+
+    /// Add a fully-built planned exercise (from the catalog picker) to a block, tracking recents.
+    func addExercise(_ exercise: PlannedExercise, toBlockID blockID: UUID) {
+        guard var w = current else { return }
+        _ = w.addExercise(exercise, toBlock: blockID)
+        current = w
+        if let id = exercise.definitionId { noteRecent(id) }
+    }
+
+    private func noteRecent(_ id: String) {
+        recentExerciseIds.removeAll { $0 == id }
+        recentExerciseIds.insert(id, at: 0)
+        if recentExerciseIds.count > 12 { recentExerciseIds = Array(recentExerciseIds.prefix(12)) }
     }
 
     /// The display unit for a metric on a planned exercise: this-instance override → per-exercise
@@ -131,7 +190,7 @@ final class WorkoutStore {
 
         // Resolve stable identity + the metrics this instance should log: the definition's defaults,
         // plus any metric actually provided. Uncurated movements fall back to reps/load.
-        let def = ExerciseCatalog.resolve(name)
+        let def = resolveDefinition(name)
         exercise.definitionId = def.id == ExerciseCatalog.generic.id ? nil : def.id
         // A saved per-exercise metric preference wins over the catalog default for new instances.
         var selected = Set(preferences.selectedByExercise[def.id] ?? def.defaults)
@@ -147,6 +206,7 @@ final class WorkoutStore {
         }
         _ = w.addExercise(exercise, toBlock: blockID)
         current = w
+        if let id = exercise.definitionId { noteRecent(id) }
         return .done
     }
 
