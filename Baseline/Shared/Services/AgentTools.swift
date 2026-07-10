@@ -30,6 +30,7 @@ final class AgentTools {
         // rather than answering from memory. Executed via `execute` (async).
         case getSleep(nightsAgo: Int)
         case getHRVReadings(limit: Int)
+        case getRestingHeartRate(days: Int)
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
         /// inspector's activity feed, so the behind-the-scenes mutations are visible.
@@ -53,6 +54,7 @@ final class AgentTools {
             case .openAppleHealthSetup: return "Opened Apple Health setup"
             case .getSleep(let n): return "Retrieved sleep (\(n == 0 ? "last night" : "\(n) nights ago")) from Apple Health"
             case .getHRVReadings(let l): return "Retrieved \(l) recent HRV readings"
+            case .getRestingHeartRate(let d): return "Retrieved resting HR (\(d)-day) from Apple Health"
             }
         }
     }
@@ -92,6 +94,7 @@ final class AgentTools {
         switch call {
         case .getSleep(let nightsAgo): return await retrieveSleep(nightsAgo: nightsAgo)
         case .getHRVReadings(let limit): return retrieveReadings(limit: limit)
+        case .getRestingHeartRate(let days): return await retrieveRestingHR(days: days)
         default: return dispatch(call)
         }
     }
@@ -126,6 +129,20 @@ final class AgentTools {
             "\($0.date.formatted(date: .abbreviated, time: .shortened)) — RMSSD \(Int($0.rmssd.rounded())) ms, HR \(Int($0.meanHR.rounded())) bpm (\($0.kind.title))"
         }.joined(separator: "; ")
         return Response(text: "Recent Baseline HRV readings, newest first: \(list).", decision: nil, plan: nil)
+    }
+
+    private func retrieveRestingHR(days: Int) async -> Response {
+        guard let health, health.isAvailable else {
+            return Response(text: "Apple Health isn't available on this device, so I can't pull resting heart rate.", decision: nil, plan: nil)
+        }
+        let d = max(1, min(days, 90))
+        let samples = await health.restingHeartRate(days: d)
+        guard let latest = samples.first else {
+            return Response(text: "Apple Health has no resting heart-rate samples in the last \(d) days.", decision: nil, plan: nil)
+        }
+        let avg = samples.map(\.bpm).reduce(0, +) / Double(samples.count)
+        let list = samples.prefix(7).map { "\($0.date.formatted(date: .abbreviated, time: .omitted)): \(Int($0.bpm.rounded())) bpm" }.joined(separator: "; ")
+        return Response(text: "Apple Health resting HR — latest \(Int(latest.bpm.rounded())) bpm, \(d)-day average \(Int(avg.rounded())) bpm. Recent: \(list).", decision: nil, plan: nil)
     }
 
     // MARK: - Dispatch
@@ -180,7 +197,7 @@ final class AgentTools {
             }
             Task { await health.requestReadAccess() }
             return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
-        case .getSleep, .getHRVReadings:
+        case .getSleep, .getHRVReadings, .getRestingHeartRate:
             // Retrieval is async — routed through `execute`, never here.
             return Response(text: "", decision: nil, plan: nil)
         }
@@ -228,7 +245,19 @@ final class AgentTools {
         }
 
         lines.append(capabilityLine())
+        lines.append(retrievableLine())
         return lines.joined(separator: "\n")
+    }
+
+    /// The honest menu of what the model can actually fetch on request — so it offers exactly these
+    /// and never over-claims (e.g. promising resting-HR retrieval it has no tool for).
+    private func retrievableLine() -> String {
+        var items = ["recent HRV readings (get_hrv_readings)"]
+        if let health, health.isAvailable {
+            items.insert("sleep for a recent night (get_sleep)", at: 0)
+            items.append("resting heart-rate trend (get_resting_heart_rate)")
+        }
+        return "You can look these up when the athlete asks — nothing else: " + items.joined(separator: ", ") + "."
     }
 
     /// Live capability state, so the model answers "how do I…" from fact — not guesses — and knows

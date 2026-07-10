@@ -66,6 +66,18 @@ struct AgentToolsTests {
         #expect(resp.text.localizedCaseInsensitiveContains("apple health"))
     }
 
+    @Test func restingHRRetrievalWithoutHealthReportsUnavailable() async {
+        let resp = await tools(base: DecisionEngine.Inputs()).execute(.getRestingHeartRate(days: 7))
+        #expect(resp.text.localizedCaseInsensitiveContains("resting heart rate"))
+    }
+
+    @Test func retrievableLineOffersOnlyWhatItCanFetch() {
+        // Without Health, only HRV readings are retrievable (no sleep/RHR over-claim).
+        let noHealth = tools(base: DecisionEngine.Inputs()).contextSummary()
+        #expect(noHealth.localizedCaseInsensitiveContains("get_hrv_readings"))
+        #expect(!noHealth.localizedCaseInsensitiveContains("get_resting_heart_rate"))
+    }
+
     @Test func contextSummaryReportsCapabilities() {
         // With a health service present, the model is told Apple Health status + the connect action.
         let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)

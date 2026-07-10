@@ -127,4 +127,12 @@ export const TOOLS = [
       properties: { limit: { type: "integer", minimum: 1, maximum: 30, description: "How many recent readings to return (default 7)." } },
     },
   },
+  {
+    name: "get_resting_heart_rate",
+    description: "Retrieve the athlete's resting heart rate trend from Apple Health (latest value + recent daily values + average). ALWAYS call this to answer questions about resting HR instead of guessing.",
+    input_schema: {
+      type: "object",
+      properties: { days: { type: "integer", minimum: 1, maximum: 90, description: "How many days back to look (default 7)." } },
+    },
+  },
 ];

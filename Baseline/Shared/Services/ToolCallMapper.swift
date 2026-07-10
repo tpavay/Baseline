@@ -45,6 +45,8 @@ enum ToolCallMapper {
             return .getSleep(nightsAgo: max(0, intOrNil(input["nights_ago"]) ?? 0))
         case "get_hrv_readings":
             return .getHRVReadings(limit: intOrNil(input["limit"]) ?? 7)
+        case "get_resting_heart_rate":
+            return .getRestingHeartRate(days: intOrNil(input["days"]) ?? 7)
         default:
             return nil
         }

@@ -122,4 +122,21 @@ final class HealthService {
         guard let s = await sleepSummary(nightsAgo: 0) else { return nil }
         return (s.hours, s.efficiency)
     }
+
+    /// Recent resting heart-rate samples from Apple Health, newest first (typically one per day).
+    func restingHeartRate(days: Int = 7) async -> [(date: Date, bpm: Double)] {
+        guard isAvailable, let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return [] }
+        let now = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -max(1, days), to: now) ?? now
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: now, options: .strictEndDate)
+        let sort = [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
+        let samples: [HKQuantitySample] = await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: sort) { _, results, _ in
+                continuation.resume(returning: (results as? [HKQuantitySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        return samples.map { (date: $0.endDate, bpm: $0.quantity.doubleValue(for: unit)) }
+    }
 }
