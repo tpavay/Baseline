@@ -33,6 +33,9 @@ struct TodayView: View {
                         content
                     }
                     .padding(20)
+                    // Clear the floating tab bar so no content — the Ask Baseline entry especially —
+                    // gets trapped under it and becomes un-tappable.
+                    .padding(.bottom, 72)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)

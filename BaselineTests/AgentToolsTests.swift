@@ -14,6 +14,34 @@ struct AgentToolsTests {
         DecisionEngine.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5)
     }
 
+    // MARK: - Context summary (the model's durable state — verification for the memory fix)
+
+    @Test func contextSummarySurfacesSavedConstraintAndContext() {
+        let t = tools(base: DecisionEngine.Inputs())
+        t.dispatch(.upsertConstraint(id: nil, kind: .injury, location: "right achilles", severity: 2, affectsTraining: true))
+        t.dispatch(.setSleep(hours: 4))
+        let summary = t.contextSummary()
+        #expect(summary.localizedCaseInsensitiveContains("achilles"))
+        #expect(summary.contains("slept 4h"))
+    }
+
+    @Test func freshToolsOnSameStoreStillKnowTheConstraint() {
+        // Starting a new conversation must not erase structured context.
+        let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        AgentTools(store: store, base: DecisionEngine.Inputs())
+            .dispatch(.upsertConstraint(id: nil, kind: .pain, location: "left calf", severity: 2, affectsTraining: true))
+        // A brand-new AgentTools (i.e. a fresh chat) over the same store still sees it.
+        let summary = AgentTools(store: store, base: DecisionEngine.Inputs()).contextSummary()
+        #expect(summary.localizedCaseInsensitiveContains("calf"))
+    }
+
+    @Test func contextSummaryDoesNotInventUnknowns() {
+        let summary = tools(base: DecisionEngine.Inputs()).contextSummary()
+        #expect(summary.localizedCaseInsensitiveContains("nothing"))   // says nothing is on file
+        #expect(!summary.localizedCaseInsensitiveContains("achilles"))
+        #expect(!summary.localizedCaseInsensitiveContains("slept"))
+    }
+
     @Test func checkInFromChatMovesOffNoEvidence() {
         // Day-one user with no HRV/sleep — "wiped out, super stressed" must produce a real plan,
         // not evaporate into a note. This is the conversation-first promise.

@@ -74,6 +74,13 @@ Current implementation direction:
 - Import should extract more than exercise names: day type, intensity, targets, duration, dose layers when present, and confidence.
 - Low-confidence imports should be confirmed before becoming planned work.
 
+## Conversation Context Assembly
+- **Current (prototype):** the app sends the full durable structured state — today's plan plus all active constraints and today's logged context — to the model on every message. Acceptable for now: simplest correct behavior, and the state is still small.
+- **Target:** assemble a *relevant* snapshot by intent instead of shipping the whole state every turn:
+  `user message → detect intent → select relevant structured state → send context to model`.
+  As state grows (goals, training history, multiple constraints, an imported program), sending everything wastes tokens and exposes irrelevant context. This selection belongs in the Context Engine, transparent to Decision/Planning.
+- **User-facing framing:** describe this as Baseline using the athlete's *saved training profile, constraints, and daily context* across conversations — **not** as "memory," and not as replaying past chats. Baseline may speak naturally as though it knows saved facts, but privacy copy and internal language keep the distinction clear: it relies on saved structured state, not stored conversation logs.
+
 ## Persistence And Backend
 Current direction:
 - SwiftData is the local editing and in-flight UX source of truth.
