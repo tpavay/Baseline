@@ -31,6 +31,9 @@ Today            Plan             Workout          Profile
 
 *Status: the Today and Workout (execution) tabs exist. Plan, Workout Detail (goal/context ordering), and Exercise Detail are designed here and build on the Plan Engine + workout-history persistence.*
 
+### Direct manipulation, not forms
+The workout is a **living document** — edit objects directly, like Notion / Things, not "tap → modal → form → Save → return." Tapping **+ Block** inserts *Block N* immediately (rename inline); **+ Exercise** opens a search sheet and the pick is inserted at once, auto-expanded, ready to edit; set values are **inline-editable fields** (tap and type); **+ Set** duplicates the last set (copy structure + values, change only what differs — like duplicating a spreadsheet row). **Autosave everywhere** — the model is versioned/undoable, so there is no Save button. Chat and the UI edit the *same object*: every conversation edit is possible manually, every manual edit possible through conversation. *(Built for the execution screen: inline block rename, direct-insert exercise, inline set values, duplicate set, add-metric inline.)*
+
 ### Adding an exercise is catalog-first
 Selecting a stable **Exercise Definition** must come before typing, or identity/aliases/history break at the first input. Flow: **tap Add exercise (block inherited) → search / recent / all → configure prescription → save.** Free text creates a *custom definition* only after explicit confirmation ("Create '…'") — never by default, so typos don't fragment history. The prescription editor is **modality-aware**: it renders only the exercise's default metrics (Bench: sets/reps/load/RPE; Bike: duration/distance/…; Isometric: sets/duration/load/RPE) with an **Add metric** action for others it supports, and human-readable inputs (`1:00`, `60 lb`) — not raw seconds or an implementation unit. *(Built; favorites + block-relevant suggestions are follow-ons.)*
 

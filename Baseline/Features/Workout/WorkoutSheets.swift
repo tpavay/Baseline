@@ -2,24 +2,6 @@ import SwiftUI
 
 /// Input sheets for manual workout editing. Deliberately plain — steppers + number fields, no polish.
 
-// MARK: - Add block
-
-struct AddBlockSheet: View {
-    let onSave: (String, String?) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var intent = ""
-
-    var body: some View {
-        SheetScaffold(title: "Add block", canSave: !name.trimmed.isEmpty, onSave: {
-            onSave(name.trimmed, intent.trimmed.isEmpty ? nil : intent.trimmed); dismiss()
-        }, onCancel: { dismiss() }) {
-            SheetField("Name", text: $name, prompt: "Strength, Warm-up, Stations…")
-            SheetField("Intent (optional)", text: $intent, prompt: "hypertrophy, aerobic…")
-        }
-    }
-}
-
 // MARK: - Substitute
 
 struct SubstituteSheet: View {

@@ -40,7 +40,7 @@ struct WorkoutView: View {
         ToolbarItem(placement: .topBarTrailing) {
             if store.current != nil {
                 Menu {
-                    Button { sheet = .addBlock } label: { Label("Add block", systemImage: "plus.rectangle.on.rectangle") }
+                    Button { addBlock() } label: { Label("Add block", systemImage: "plus.rectangle.on.rectangle") }
                     if !executing {
                         Button { store.startWorkout() } label: { Label("Start workout", systemImage: "play.fill") }
                     } else if store.currentLog?.isComplete == false {
@@ -60,7 +60,7 @@ struct WorkoutView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header(workout)
                 ForEach(workout.blocks) { block in blockCard(block) }
-                Button { sheet = .addBlock } label: {
+                Button { addBlock() } label: {
                     Label("Add block", systemImage: "plus").font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(BaselineColor.accent).frame(maxWidth: .infinity).frame(height: 46)
                         .background(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.line, lineWidth: 1))
@@ -100,21 +100,17 @@ struct WorkoutView: View {
     private func blockCard(_ block: WorkoutBlock) -> some View {
         let expanded = expandedBlocks.contains(block.id)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 8) {
                 Button { toggle(&expandedBlocks, block.id) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
-                        Text(block.name.uppercased()).font(.system(size: 13, weight: .bold)).tracking(0.5).foregroundStyle(BaselineColor.textHi)
-                        if let intent = block.intent {
-                            Text(intent).font(.system(size: 11)).foregroundStyle(BaselineColor.textFaint)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 18)
+                }.buttonStyle(.plain)
+                // Inline rename — no modal, autosaves.
+                TextField("", text: blockNameBinding(block), prompt: Text("Block").foregroundStyle(BaselineColor.textFaint))
+                    .font(.system(size: 13, weight: .bold)).foregroundStyle(BaselineColor.textHi)
                 Spacer()
                 Menu {
-                    Button { sheet = .addExercise(blockID: block.id) } label: { Label("Add exercise", systemImage: "plus") }
+                    Button { addExercise(to: block.id) } label: { Label("Add exercise", systemImage: "plus") }
                     Button(role: .destructive) { store.edit { $0.removeBlock(block.id) } } label: { Label("Delete block", systemImage: "trash") }
                 } label: { Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(6) }
             }
@@ -123,7 +119,7 @@ struct WorkoutView: View {
                     Text("No exercises yet").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint).padding(.top, 8)
                 }
                 ForEach(block.exercises) { ex in exerciseRow(ex, in: block) }
-                Button { sheet = .addExercise(blockID: block.id) } label: {
+                Button { addExercise(to: block.id) } label: {
                     Label("Add exercise", systemImage: "plus").font(.system(size: 13, weight: .medium)).foregroundStyle(BaselineColor.accent)
                 }
                 .buttonStyle(.plain).padding(.top, 8)
@@ -160,9 +156,37 @@ struct WorkoutView: View {
 
     @ViewBuilder private func exerciseDetail(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Planned sets
-            ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
-                Text("Set \(i + 1): \(metricText(s.values, for: ex))").font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+            if executing {
+                // Read-only plan while logging actuals.
+                ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
+                    Text("Set \(i + 1): \(metricText(s.values, for: ex))").font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+                }
+            } else {
+                // Inline-editable sets — tap a value and type; autosaves.
+                ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
+                    HStack(spacing: 8) {
+                        Text("\(i + 1)").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
+                        ForEach(ex.selectedMetrics, id: \.self) { metric in inlineField(ex, s.id, metric) }
+                        Spacer()
+                        if ex.prescription.sets.count > 1 {
+                            Button { deleteSet(s.id, from: ex) } label: {
+                                Image(systemName: "minus.circle").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+                HStack {
+                    Button { addSet(to: ex) } label: {
+                        Label("Add set", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
+                    }.buttonStyle(.plain)
+                    Spacer()
+                    let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
+                    if !unused.isEmpty {
+                        Menu {
+                            ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } }
+                        } label: { Text("Add metric").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
+                    }
+                }
             }
             if executing {
                 // Logged sets
@@ -229,7 +253,7 @@ struct WorkoutView: View {
             Text("No workout yet").font(.system(size: 18, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
             Text("Build one by hand, or ask Baseline to make one.").font(.system(size: 14)).foregroundStyle(BaselineColor.textMid)
                 .multilineTextAlignment(.center)
-            Button { store.create(title: "Today's workout", goal: nil); sheet = .addBlock } label: {
+            Button { store.create(title: "Today's workout", goal: nil); addBlock() } label: {
                 Text("New workout").font(.system(size: 15, weight: .semibold)).foregroundStyle(Color(hex: 0x120B21))
                     .frame(width: 200, height: 50).background(RoundedRectangle(cornerRadius: 14).fill(BaselineColor.accent))
             }.buttonStyle(.plain)
@@ -261,11 +285,12 @@ struct WorkoutView: View {
 
     @ViewBuilder private func sheetView(_ sheet: WorkoutSheet) -> some View {
         switch sheet {
-        case .addBlock:
-            AddBlockSheet { name, intent in store.edit { $0.addBlock(name: name, intent: intent) } }
         case .addExercise(let blockID):
             if let target = blockID ?? store.current?.blocks.first?.id {
-                AddExerciseFlow(blockID: target)      // catalog-first: block inherited, pick → configure
+                AddExerciseFlow(blockID: target) { newID in     // catalog-first, direct insert
+                    expandedBlocks.insert(target)
+                    expandedExercises.insert(newID)
+                }
             } else {
                 Text("Add a block first.").font(.system(size: 15)).foregroundStyle(BaselineColor.textMid).padding(40)
             }
@@ -286,6 +311,89 @@ struct WorkoutView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Direct manipulation (no forms, no save — autosaves via the store)
+
+    private func addBlock() {
+        let n = (store.current?.blocks.count ?? 0) + 1
+        store.edit { $0.addBlock(name: "Block \(n)") }
+        if let id = store.current?.blocks.last?.id { expandedBlocks.insert(id) }
+    }
+
+    private func addExercise(to blockID: UUID) { sheet = .addExercise(blockID: blockID) }
+
+    private func blockNameBinding(_ block: WorkoutBlock) -> Binding<String> {
+        Binding(get: { store.current?.blocks.first { $0.id == block.id }?.name ?? block.name },
+                set: { new in store.edit { $0.renameBlock(block.id, to: new) } })
+    }
+
+    /// "+ Set" copies the last set's structure + values (like duplicating a row) — only the values
+    /// then need changing.
+    private func addSet(to ex: PlannedExercise) {
+        store.edit { w in
+            w.updateExercise(ex.id) { e in
+                var copy = e.prescription.sets.last ?? PlannedSet()
+                copy.id = UUID()
+                e.prescription.sets.append(copy)
+            }
+        }
+    }
+
+    private func deleteSet(_ setID: UUID, from ex: PlannedExercise) {
+        store.edit { $0.updateExercise(ex.id) { $0.prescription.sets.removeAll { $0.id == setID } } }
+    }
+
+    /// Inline-editable value for one metric of one set, in the exercise's display unit — canonical on
+    /// store. Duration reads/writes as m:ss.
+    private func valueBinding(_ ex: PlannedExercise, _ setID: UUID, _ metric: MetricType) -> Binding<String> {
+        let unit = store.displayUnit(metric, for: ex)
+        return Binding(
+            get: {
+                guard let v = store.current?.exercise(ex.id)?.prescription.sets.first(where: { $0.id == setID })?.values[metric] else { return "" }
+                if metric == .duration { return mmss(Int(v)) }
+                let d = MetricConvert.fromCanonical(v, metric, to: unit)
+                return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
+            },
+            set: { text in
+                let trimmed = text.trimmingCharacters(in: .whitespaces)
+                store.edit { w in
+                    w.updateExercise(ex.id) { e in
+                        guard let i = e.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
+                        if trimmed.isEmpty { e.prescription.sets[i].values[metric] = nil }
+                        else if metric == .duration { e.prescription.sets[i].values[.duration] = Double(parseMMSS(trimmed)) }
+                        else if let d = Double(trimmed) { e.prescription.sets[i].values[metric] = max(0, MetricConvert.toCanonical(d, metric, from: unit)) }
+                    }
+                }
+            }
+        )
+    }
+
+    private func mmss(_ seconds: Int) -> String { seconds >= 60 ? "\(seconds / 60):\(String(format: "%02d", seconds % 60))" : "\(seconds)" }
+    private func parseMMSS(_ s: String) -> Int {
+        if s.contains(":") { let p = s.split(separator: ":").map { Int($0) ?? 0 }; return p.count == 2 ? p[0] * 60 + p[1] : (p.first ?? 0) }
+        return Int(s) ?? 0
+    }
+
+    private func inlineField(_ ex: PlannedExercise, _ setID: UUID, _ metric: MetricType) -> some View {
+        let unit = store.displayUnit(metric, for: ex)
+        let unitLabel = metric == .duration ? "m:ss" : (unit.short.isEmpty ? metric.label.lowercased() : unit.short)
+        return VStack(spacing: 1) {
+            TextField("", text: valueBinding(ex, setID, metric))
+                .font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                .multilineTextAlignment(.center)
+                .keyboardType(metric == .duration ? .numbersAndPunctuation : (metric.isInteger ? .numberPad : .decimalPad))
+                .frame(width: 52).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(BaselineColor.base).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(BaselineColor.line, lineWidth: 1)))
+            Text(unitLabel).font(.system(size: 9)).foregroundStyle(BaselineColor.textFaint)
+        }
+    }
+
+    private func addMetric(_ metric: MetricType, to ex: PlannedExercise) {
+        store.edit { $0.updateExercise(ex.id) { e in
+            var s = Set(e.selectedMetrics); s.insert(metric)
+            e.selectedMetrics = MetricType.allCases.filter { s.contains($0) }
+        }}
     }
 
     // MARK: - Helpers
@@ -341,7 +449,6 @@ struct WorkoutView: View {
 }
 
 private enum WorkoutSheet: Identifiable {
-    case addBlock
     case addExercise(blockID: UUID?)
     case substitute(exerciseID: UUID, current: String)
     case logSet(exerciseID: UUID, name: String)
@@ -350,7 +457,6 @@ private enum WorkoutSheet: Identifiable {
     var id: String {
         switch self {
         case .configure(let id, _): "config-\(id)"
-        case .addBlock: "addBlock"
         case .addExercise(let b): "addExercise-\(b?.uuidString ?? "none")"
         case .substitute(let id, _): "sub-\(id)"
         case .logSet(let id, _): "log-\(id)"
