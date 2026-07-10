@@ -55,6 +55,8 @@ Turns the Decision Engine's state into a training **plan**: `(band × limiter ×
 
 The engine **proposes; it doesn't dictate** — the plan is negotiable: **Proposed Plan → conversation → Accepted Plan.** ("Zone 2 today." — "I really want to run." — "Given your Achilles I'd bike; if you run, keep it 20–30 min flat and skip strides.") The **Accepted Plan** is what gets stored — users won't always follow the proposal, and that difference is signal. Hybrid-flavored copy; movement categories, not programmed sessions, until later phases.
 
+*Future — the **Plan Engine** (`docs/implementation/plan-engine.md`).* The same engine grows from "today's action" into **create / edit / adapt / reorder** over a structured `Program → Block → Week → Day → Session → Exercise` model, with intent-preserving substitution, staged **trust levels**, a **confirmation/acceptance** workflow, and **version history**. Same agent loop (propose → validate → apply → recompute); a substantial new *domain* layer.
+
 ### Learning Engine (future) — the feedback loop
 Plans generate more evidence: **Proposed Plan → Accepted Plan → workout → feedback ("how did it feel?") → Evidence.** Tracking proposed-vs-accepted matters — users won't always follow the plan. Over time this learns **athlete-specific model parameters**: responds well to back-to-back threshold; HRV suppressed ~48h after sled work; soreness recovers faster than peers; low sleep has minimal impact; prefers morning training; performs poorly after travel; adapts well to heat. Those per-athlete calibrations are the moat.
 
@@ -82,4 +84,4 @@ Design docs (experience level):
 - **UX Flow** (`docs/ux-flow.md`) — first launch → onboarding → Health sync → HRV scan → first plan → context update → updated plan → living with Baseline.
 - **Conversational Experience** (`docs/conversation-design.md`) — how Baseline talks and feels to interact with: greeting, verbosity, explanation, negotiation, admitting uncertainty, when it stops asking, personality. A UX doc, not an AI/prompt doc.
 
-Implementation docs (field level): Decision Engine · Planning Engine · Evidence & HealthKit · Training Load · Context Engine · Backend · Data Model · UI Spec. These supersede/reconcile the earlier `readiness-score.md`, `engine-and-data-model.md`, and `v0-spec.md`.
+Implementation docs (field level): Decision Engine · Planning Engine · **[Plan Engine](implementation/plan-engine.md)** (future) · Evidence & HealthKit · Training Load · Context Engine · Backend · Data Model · UI Spec. These supersede/reconcile the earlier `readiness-score.md`, `engine-and-data-model.md`, and `v0-spec.md`.
