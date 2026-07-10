@@ -26,14 +26,19 @@ The AI **never edits data directly.** It proposes *validated operations*; the ap
 Planning Engine → Plan Repository → Presentation
 ```
 
-**Boundary with Workout Execution.** The Plan Engine owns **intended training**: planned sessions, prescriptions, order, and version history. The future Workout Execution Engine owns **performed training**: actual sets/reps/load/duration/distance/pace, completed work, skipped work, substitutions, workout notes, exercise notes, and pain events. Workout actuals never overwrite the plan. If a workout event should change future training, it creates a validated plan operation and a new Plan Repository version.
+**Boundary with Workout Execution.** The Plan Engine owns **intended training**: planned sessions, prescriptions, Coach Guidance, order, and version history. The future Workout Execution Engine owns **performed training**: actual sets/reps/load/duration/distance/pace, completed work, skipped work, substitutions, Athlete Notes, and pain events. Workout actuals never overwrite the plan. If a workout event should change future training, it creates a validated plan operation and a new Plan Repository version.
 
 ## 3. Data model
 ```
 Program → TrainingBlock → Week → Day → Session → Exercise
 ```
 Every level carries a **stable id** and an **ordering** field (so moves/reorders are unambiguous and reversible). Exercise-level **prescription** is structured, never free text:
-- sets · reps **or** duration · load · distance · rest · target HR zone · RPE · notes · equipment · **movement category** · **intent**.
+- sets · reps **or** duration · load · distance · rest · target HR zone · RPE · equipment · **movement category** · **intent**.
+
+Each planned exercise also carries **Coach Guidance** separately from the prescription and from future Athlete Notes:
+- goal · intent · tempo · form cues · common mistakes · why it exists · progression notes · video/attachments/links.
+
+The Plan Engine owns authored guidance. Workout Execution owns Athlete Notes. Context-Aware Guidance can be generated from Coach Guidance plus readiness, constraints, and recent execution history without mutating the authored guidance.
 
 Without this model the AI can only rewrite text. With it, the AI becomes a real plan editor.
 
@@ -59,6 +64,7 @@ The AI composes these; each is validated and applied by the app. These are **pla
 - **Structure:** `createProgram` · `createBlock` · `createWeek` · `addSession` · `updateSession` · `deleteSession` · `moveSession` · `reorderDays` · `reorderWeek` · `duplicateSession`
 - **Exercise:** `addExercise` · `updateExercise` · `deleteExercise` · `reorderExercises` · `substituteExercise`
 - **Prescription:** `updateSets` · `updateReps` · `updateLoad` · `updateDuration` · `updateRest` · `updateIntensityTarget`
+- **Coach Guidance:** `updateGoal` · `updateTempo` · `updateFormCues` · `updateCommonMistakes` · `updateProgressionNotes` · `attachMedia`
 - **Triggered by workout actuals:** `moveExerciseToLaterDate` · `replanWeek` · `updateConstraint` · `substituteRemainingWork`
 
 ## 6. Trust levels (staged capability)

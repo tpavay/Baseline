@@ -33,7 +33,7 @@ Every capability slots into a responsibility, so new features have an obvious ho
 Passive signals the user never types: HealthKit (sleep, resting HR, heart-rate samples, workouts, active energy, steps, distance), the morning HRV scan, and derived **training load**. Extensible by adding sources (CGM, weather, altitude, power meters, running dynamics) without touching anything downstream.
 
 ### Context Engine — user-provided, via conversation
-Its responsibility is **not merely conversation**: it continuously **converts unstructured conversation into structured context the Decision Engine can trust.** Owns **training state** (goal, current phase, current plan, today's intent), equipment, available time, current pain/constraints, travel, mood, stress, preferences, and notes.
+Its responsibility is **not merely conversation**: it continuously **converts unstructured conversation into structured context the Decision Engine can trust.** Owns **training state** (goal, current phase, current plan, today's intent), equipment, available time, current pain/constraints, travel, mood, stress, preferences, and athlete-provided context.
 - **Objective:** acquire enough context to make the best recommendation with the *least user effort*.
 - **Stopping condition = confidence, not question count** — it asks itself *"would another question meaningfully improve today's recommendation?"*; if no, it stops. Zero questions or fifteen, whatever it takes.
 - **Always-on, not onboarding-bound.** "Slept four hours" (morning), "hamstring feels great today" (mid-workout), "signed up for a marathon" (evening) all update context and trigger recompute. Onboarding is simply its first session — *meeting your coach*: an interview, not a questionnaire, that extracts a power user's whole paragraph at once and guides a beginner naturally.
@@ -59,19 +59,19 @@ The engine **proposes; it doesn't dictate** — the plan is negotiable: **Propos
 *Future — the **Plan Engine** (`docs/implementation/plan-engine.md`).* The same engine grows from "today's action" into **create / edit / adapt / reorder** over a structured `Program → Block → Week → Day → Session → Exercise` model, with intent-preserving substitution, staged **trust levels**, a **confirmation/acceptance** workflow, and **version history**. Same agent loop (propose → validate → apply → recompute); a substantial new *domain* layer.
 
 ### Workout Execution Engine (future) — plan to performed work
-Owns the active training session after the athlete accepts or starts a workout. It starts planned or ad-hoc workouts, tracks completed work, logs actual performance, records skips/substitutions/modifications, captures exercise- and workout-level notes, preserves pain events as constraints, and asks the Planning Engine to recompute remaining work when the session changes midstream.
+Owns the active training session after the athlete accepts or starts a workout. It starts planned or ad-hoc workouts, tracks completed work, logs actual performance, records skips/substitutions/modifications, captures athlete notes, preserves pain events as constraints, and asks the Planning Engine to recompute remaining work when the session changes midstream.
 
 The durable product loop is:
 ```
-Plan → start workout → log performance → add notes/context → complete or modify session → recompute training state → adapt remaining plan
+Plan → start workout → log performance → add Athlete Notes/context → complete or modify session → recompute training state → adapt remaining plan
 ```
 
 This is where Baseline becomes a full training system rather than a readiness score with advice. The Planning Engine owns **intended work**; Workout Execution owns **performed work**. A threshold run planned as `4 x 5 min + 6 x 30 sec speed` can be logged as threshold completed, speed skipped because of calf pain, with the skipped speed work moved later only through an explicit, versioned plan revision.
 
-The conversation layer talks to this engine through validated tools: `startWorkout`, `logSet`, `logInterval`, `completeExercise`, `skipExercise`, `addExerciseNote`, `addWorkoutNote`, `createConstraint`, `recomputeRemainingWorkout`, and `replanWeek`. The model proposes; the app validates, applies, and recomputes.
+The conversation layer talks to this engine through validated workout operations. The model proposes; the app validates, applies, and recomputes.
 
 ### Learning Engine (future) — the feedback loop
-Plans generate more evidence: **Proposed Plan → Accepted Plan → performed workout → notes / pain / modifications → Evidence.** Tracking proposed-vs-accepted and planned-vs-performed matters — users won't always follow the plan, and mid-workout changes are signal. Over time this learns **athlete-specific model parameters**: responds well to back-to-back threshold; HRV suppressed ~48h after sled work; soreness recovers faster than peers; low sleep has minimal impact; prefers morning training; performs poorly after travel; adapts well to heat; calf pain tends to follow speed work. Those per-athlete calibrations are the moat.
+Plans generate more evidence: **Proposed Plan → Accepted Plan → performed workout → Athlete Notes / pain / modifications → Evidence.** Tracking proposed-vs-accepted and planned-vs-performed matters — users won't always follow the plan, and mid-workout changes are signal. Over time this learns **athlete-specific model parameters**: responds well to back-to-back threshold; HRV suppressed ~48h after sled work; soreness recovers faster than peers; low sleep has minimal impact; prefers morning training; performs poorly after travel; adapts well to heat; calf pain tends to follow speed work. Those per-athlete calibrations are the moat.
 
 ---
 
@@ -79,7 +79,7 @@ Plans generate more evidence: **Proposed Plan → Accepted Plan → performed wo
 Home surfaces **today's plan first**, followed by the evidence supporting it: readiness, certainty, primary limiter/constraint, explanation, and avoid list. (How and where the conversation appears — home, bottom sheet, voice — is UI, not architecture; see the UX flow doc.)
 
 ## What gets stored
-**Local-first.** Health data and app state stay on device; only **derived daily summaries** sync (later). The **structured state is the source of truth** — training profile (long-lived), daily context (resets), constraints (persist until resolved), daily readiness/plan entries, accepted plan versions, workout logs, actual sets/intervals/distance/pace/load, exercise notes, workout notes, skips, substitutions, pain events, and chat *summaries*. Never the raw chat log.
+**Local-first.** Health data and app state stay on device; only **derived daily summaries** sync (later). The **structured state is the source of truth** — training profile, daily context, constraints, daily readiness/plan entries, accepted plan versions, coach guidance, workout logs, athlete notes, skips, substitutions, pain events, and chat *summaries*. Never the raw chat log.
 
 ## Roadmap
 **v1 is the morning decision loop — the conversation included.** The conversation *is* the interface; a person opens Baseline and talks to it. Shipping the engines without it would be a different, lesser product (just another HRV/readiness app). So v1 spans Evidence + Context + Decision + Planning, chat-forward from the first open. The complete training-system loop adds Workout Execution next: plan → perform → log → adapt.
@@ -87,7 +87,7 @@ Home surfaces **today's plan first**, followed by the evidence supporting it: re
   - *Build order within v1:* the deterministic engine first (the truth the conversation speaks about — the engine owns truth, the conversation never invents it), then the conversational shell on top.
 
 **AI lands in stages, behind the Conversation Runtime — conversational UX from day one, implementation gets smarter:** (1) conversation UX, deterministic, no LLM; (2) structured extraction (LLM: free text → structured state); (3) negotiation & explanation (LLM); (4) workout logging tools; (5) learning. Every stage is transparent to the Decision, Planning, and Workout Execution engines.
-- **Next — Workout Execution.** Structured workout model, manual logging, actual-vs-planned deltas, workout notes, exercise notes, skips/modifications, and live HR-zone history.
+- **Next — Workout Execution.** Structured workout model, manual logging, actual-vs-planned deltas, Athlete Notes, skips/modifications, and live HR-zone history.
 - **Then — Voice/chat-assisted logging.** Natural-language logging becomes validated tool calls over the workout model, not chat history.
 - **Then — Learning / Adaptive Decision Engine.** Feedback from completed workouts; per-athlete personalization.
 - **Then — History & trends.** Weekly readiness / load / HRV / sleep / constraints + summaries.
@@ -96,7 +96,8 @@ Home surfaces **today's plan first**, followed by the evidence supporting it: re
 ## Companion docs
 Design docs (experience level):
 - **Product Principles** (`docs/product-principles.md`) — the invariants above, expanded.
+- **Engine & Data Model** (`docs/engine-and-data-model.md`) — durable entities, lifecycle, relationships, and engine boundaries.
 - **UX Flow** (`docs/ux-flow.md`) — first launch → onboarding → Health sync → HRV scan → first plan → context update → updated plan → living with Baseline.
 - **Conversational Experience** (`docs/conversation-design.md`) — how Baseline talks and feels to interact with: greeting, verbosity, explanation, negotiation, admitting uncertainty, when it stops asking, personality. A UX doc, not an AI/prompt doc.
 
-Implementation docs (field level): Decision Engine · Planning Engine · **[Plan Engine](implementation/plan-engine.md)** (future) · **[Workout Execution](implementation/workout-execution.md)** (future) · Evidence & HealthKit · Training Load · Context Engine · Backend · Data Model · UI Spec. These supersede/reconcile the earlier `readiness-score.md`, `engine-and-data-model.md`, and `v0-spec.md`.
+Implementation docs (field level): Decision Engine · Planning Engine · **[Plan Engine](implementation/plan-engine.md)** (future) · **[Workout Execution](implementation/workout-execution.md)** (future) · Evidence & HealthKit · Training Load · Context Engine · Backend · Data Model · UI Spec · **Technical Reference** (`docs/technical-reference.md`).
