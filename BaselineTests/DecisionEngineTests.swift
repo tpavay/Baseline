@@ -33,6 +33,14 @@ struct DecisionEngineTests {
         #expect(r.evidenceTier == .partial)
     }
 
+    @Test func nonTrainingConstraintIsNotEvidence() {
+        // A logged-but-not-training-relevant niggle must not pull Today out of the no-evidence state.
+        let r0 = DE.compute(DE.Inputs(constraints: [.init(kind: .pain, location: "wrist", severity: 0)]))
+        #expect(r0.evidenceTier == .none)
+        let rOff = DE.compute(DE.Inputs(constraints: [.init(kind: .pain, location: "wrist", severity: 2, affectsTraining: false)]))
+        #expect(rOff.evidenceTier == .none)
+    }
+
     @Test func partialEvidenceStaysBelowEstablished() {
         // Sleep only — a plan is possible, but not enough to earn the number.
         let r = DE.compute(DE.Inputs(sleepScore: 80, sleepHours: 7.5))

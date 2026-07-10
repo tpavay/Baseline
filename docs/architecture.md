@@ -43,7 +43,7 @@ Its responsibility is **not merely conversation**: it continuously **converts un
 ```
 conversation → intent detection → structured extraction → validation → Decision Engine
 ```
-The model turns words into *candidate* structured updates; the app validates them; the deterministic engine decides. 
+The model turns words into *candidate* structured updates; the app validates them; the deterministic engine decides.
 
 **Conversation Runtime (provider-agnostic).** The intelligence sits behind a `ConversationService` abstraction — never a `ClaudeService`. The runtime decides *where* a request runs (on-device for lightweight extraction / intent / summaries; cloud for coaching, negotiation, explanation, complex reasoning) and *which* provider — the Context Engine and everything downstream never know or care. This keeps Baseline model-agnostic (Claude / GPT / Gemini / Apple / next) for years without touching Decision or Planning.
 

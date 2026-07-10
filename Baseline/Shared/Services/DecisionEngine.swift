@@ -282,9 +282,14 @@ enum DecisionEngine {
 }
 
 extension DecisionEngine.Result {
-    /// Did anything real feed the engine today? A present domain, a fired cap, or a live constraint.
-    /// When false, the score fell back to a neutral placeholder and must NOT be shown as a verdict.
-    var hasEvidence: Bool { !domains.isEmpty || !appliedCaps.isEmpty || !constraints.isEmpty }
+    /// Did anything real feed the engine today? A present domain, a fired cap, or a *training-relevant*
+    /// constraint. When false, the score fell back to a neutral placeholder and must NOT be shown as a
+    /// verdict. Non-training constraints (severity 0, or explicitly "doesn't affect training") don't
+    /// count — matching the musculoskeletal subscore/cap filter.
+    var hasEvidence: Bool {
+        !domains.isEmpty || !appliedCaps.isEmpty
+            || constraints.contains { $0.severity > 0 && $0.affectsTraining }
+    }
 
     /// The Today branch: `none` → conversation leads; `partial` → plan without the number;
     /// `established` → full plan + readiness number.

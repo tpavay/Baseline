@@ -28,7 +28,7 @@ struct MorningReadinessPromptView: View {
     var body: some View {
         @Bindable var settings = settings
         ZStack {
-            Image("Image")
+            Image("MorningHRVReadingBackground")
                 .resizable()
                 .scaledToFill()
                 .ignoresSafeArea()

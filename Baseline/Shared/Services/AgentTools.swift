@@ -84,7 +84,8 @@ final class AgentTools {
     // MARK: - Helpers
 
     private func today() -> (DecisionEngine.Result, PlanningEngine.Plan) {
-        PlanAssembler.assemble(base: base, dailyContext: store.daily, constraints: store.activeConstraints, style: style)
+        store.rolloverIfNeeded()   // never plan today off yesterday's context
+        return PlanAssembler.assemble(base: base, dailyContext: store.daily, constraints: store.activeConstraints, style: style)
     }
 
     private func respond(prefix: String?) -> Response {
@@ -93,11 +94,22 @@ final class AgentTools {
         return Response(text: text, decision: d, plan: p)
     }
 
+    /// Tier-aware so the model never receives a score it hasn't earned — the same honesty the Today
+    /// screen enforces. No evidence → say so and gather; partial → plan without a number; established
+    /// → the full readiness number.
     private func planLine(_ d: DecisionEngine.Result, _ p: PlanningEngine.Plan) -> String {
-        "Plan: \(p.summary) (readiness \(d.score), \(d.band.rawValue); certainty \(d.certainty.rawValue))."
+        switch d.evidenceTier {
+        case .none:
+            return "Not enough evidence yet for a real readiness. Gather something about today — sleep, how they feel, an HRV reading, or any injury/constraint — before stating a plan or a score."
+        case .partial:
+            return "Plan: \(p.summary) (certainty \(d.certainty.rawValue); no readiness number yet — evidence is still thin, don't invent one)."
+        case .established:
+            return "Plan: \(p.summary) (readiness \(d.score), \(d.band.rawValue); certainty \(d.certainty.rawValue))."
+        }
     }
 
     private func explanation(_ d: DecisionEngine.Result, _ p: PlanningEngine.Plan) -> String {
+        guard d.evidenceTier != .none else { return planLine(d, p) }
         var s = planLine(d, p)
         if let lim = d.primaryLimiter { s += " Main limiter: \(lim.title.lowercased())." }
         if !p.why.isEmpty { s += " Why: " + p.why.joined(separator: " ") }

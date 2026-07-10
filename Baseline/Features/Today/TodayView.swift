@@ -349,6 +349,7 @@ struct TodayView: View {
     /// The single live recompute for Today — base evidence (reading + Health) layered with the
     /// Context Engine's state, through the same `PlanAssembler` the chat uses.
     private func reassemble() async {
+        context.rolloverIfNeeded()   // never plan today off yesterday's context
         let today = entries.first { Calendar.current.isDateInToday($0.date) }
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
         let (decision, plan) = PlanAssembler.assemble(

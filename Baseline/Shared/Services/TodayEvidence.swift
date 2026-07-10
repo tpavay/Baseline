@@ -9,9 +9,17 @@ enum TodayEvidence {
     static func baseInputs(readings: [Reading], todayEntry: ReadinessEntry?, health: HealthService) async -> DecisionEngine.Inputs {
         var inputs = DecisionEngine.Inputs()
 
-        let priorMornings = readings.filter { $0.kind == .morning && !Calendar.current.isDateInToday($0.date) }
-        let latest = readings.first { $0.kind == .morning && Calendar.current.isDateInToday($0.date) } ?? readings.first
-        if let latest {
+        // Autonomic evidence must be *today's* morning read — never a snapshot or yesterday's
+        // reading dressed up as current state. If there's no morning reading today, the autonomic
+        // domain is simply absent (honest lower certainty), not stale. Baselines are single-source
+        // (mixing camera + strap corrupts them), so score only against prior mornings from the same
+        // source — matching DailyReadingFlowView.
+        if let latest = readings.first(where: { $0.kind == .morning && Calendar.current.isDateInToday($0.date) }) {
+            let priorMornings = readings.filter {
+                $0.kind == .morning
+                    && !Calendar.current.isDateInToday($0.date)
+                    && $0.source == latest.source
+            }
             inputs.lnRMSSD = latest.lnRMSSD
             inputs.restingHR = latest.meanHR
             inputs.hrvBaseline = ReadinessScore.baseline(from: priorMornings.map(\.lnRMSSD))
