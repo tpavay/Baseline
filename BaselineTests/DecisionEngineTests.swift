@@ -104,6 +104,16 @@ struct DecisionEngineTests {
         #expect(r.primaryLimiter == .musculoskeletal)
     }
 
+    @Test func nonTrainingConstraintDoesNotMoveTheScore() {
+        // A high-severity constraint the athlete says doesn't affect training must not cap or penalize.
+        let noted = DE.Constraint(kind: .injury, location: "Left pinky", severity: 3, affectsTraining: false)
+        let r = DE.compute(DE.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5,
+                                     soreness: 5, constraints: [noted]))
+        #expect(r.band == .green)
+        #expect(!r.appliedCaps.contains { $0.reason == "injuryHigh" })
+        #expect(r.primaryLimiter != .musculoskeletal)
+    }
+
     // MARK: - Certainty
 
     @Test func certaintyRisesWithEvidence() {

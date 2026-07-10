@@ -14,6 +14,7 @@ struct DailyReadingFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(BluetoothManager.self) private var bluetooth
+    @Environment(TrainingContextStore.self) private var context
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
 
     private enum Step { case reading, averages, checkIn, readiness, summary }
@@ -58,6 +59,7 @@ struct DailyReadingFlowView: View {
                         config: config,
                         hrvBaseline: hrvBaseline,
                         rhrBaseline: rhrBaseline,
+                        constraints: context.activeConstraints,
                         onDone: finish
                     )
                 }
@@ -275,6 +277,7 @@ struct MorningReadinessScoreView: View {
     let config: ReadinessConfig
     let hrvBaseline: ReadinessScore.Baseline?
     let rhrBaseline: ReadinessScore.Baseline?
+    var constraints: [DecisionEngine.Constraint] = []
     let onDone: (DecisionEngine.Result, PlanningEngine.Plan) -> Void
 
     @Environment(HealthService.self) private var health
@@ -411,6 +414,7 @@ struct MorningReadinessScoreView: View {
 
     private func compute() async {
         var inputs = DecisionEngine.Inputs()
+        inputs.constraints = constraints
         if config.heartReadingEnabled {
             inputs.lnRMSSD = result.lnRMSSD
             inputs.hrvBaseline = hrvBaseline

@@ -202,7 +202,9 @@ enum DecisionEngine {
 
     private static func musculoskeletalSubscore(_ i: Inputs) -> Int? {
         let sorenessPresent = i.soreness != nil
-        let activeConstraints = i.constraints.filter { $0.severity > 0 }
+        // Only constraints the athlete says affect training move the score (honors affectsTraining,
+        // matching the Planning Engine).
+        let activeConstraints = i.constraints.filter { $0.severity > 0 && $0.affectsTraining }
         guard sorenessPresent || !activeConstraints.isEmpty else { return nil }
         let base = i.soreness.map(oriented100) ?? 50           // 50 if only a constraint is known
         let penalty = Double((activeConstraints.map(\.severity).max() ?? 0)) * 12   // 0/12/24/36
@@ -240,7 +242,7 @@ enum DecisionEngine {
             if r >= 2.0 { add(.trainingLoad, 55, "veryHighLoad") }
             else if r >= 1.5 { add(.trainingLoad, 70, "highLoad") }
         }
-        for c in i.constraints where c.severity >= 3 {
+        for c in i.constraints where c.severity >= 3 && c.affectsTraining {
             add(.musculoskeletal, 45, c.kind == .injury ? "injuryHigh" : "tendonHigh")
         }
         return caps

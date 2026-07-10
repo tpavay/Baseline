@@ -98,9 +98,9 @@ This enables **undo · compare · restore · explain · audit · experiment** �
 The agent pattern is reused, but this introduces: program **schema** · **calendar semantics** · **training-intent taxonomy** · **progression rules** · **dependency validation** · **conflict handling** · **undo/version history** · **proposed-vs-accepted acceptance workflow**. Architecturally compatible with what exists; a real, sizable build.
 
 ## 11. Keeping today's build extension-ready
-So the Today Conversation slice doesn't become a dead end, design its tool layer now to generalize later:
-- Tool calls are **typed, validated, and versioned** from day one — even the small Today tools (update context, update constraint).
-- The **proposed → validate → apply → recompute** path and the **proposed-vs-accepted** distinction exist from the first slice.
+So the Today Conversation slice doesn't become a dead end, design its tool layer to generalize — without over-building the small stuff:
+- Tool calls are **typed and validated** from day one — even the small Today tools (update context, update constraint).
+- **Versioning and proposed-vs-accepted scale with blast radius (§7).** Low-risk, today-scoped, single-item mutations (daily context, one constraint) **apply directly** and are trivially reversible — no version wrapper needed. The **version history + proposed-vs-accepted** machinery is required for **Plan edits** (structural / multi-session / future-affecting) and is owned by the **Plan Repository** (§2), not bolted onto every micro-mutation.
 - The `ConversationService` + tool-dispatch abstraction is schema-agnostic, so pointing it at Program-editing tools later is additive.
 
 ## Status
