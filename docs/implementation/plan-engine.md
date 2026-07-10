@@ -2,7 +2,7 @@
 
 *The future extension of the **Planning Engine**: from "what should I do **today**?" to create · edit · adapt · reorder a **structured training plan**. This is a design document, not a build — it defines the target so today's tool-calling layer (the Today Conversation slice) grows into it cleanly instead of becoming a dead end. It's **architecturally compatible** with the agent pattern already in `docs/architecture.md`, but it adds a substantial new **domain** layer (§10) — not trivial.*
 
-*This is the **last** high-level design doc. After it: implementation, and everything else emerges from building and using the product.*
+*In one line: **Baseline is building Git for training plans.** A plan is an evolving, versioned document — every meaningful change is immutable, attributable, and explainable, and you can diff, undo, and restore it.*
 
 ## 1. Purpose
 Solve, over a real training plan:
@@ -21,6 +21,11 @@ Conversation → Tool proposal → Validation → Database → Decision Engine �
 ```
 The AI **never edits data directly.** It proposes *validated operations*; the app validates, applies, versions, and recomputes. Once a program exists, "today's plan" becomes *"should I modify today's scheduled session?"* — a harder question the Decision + Planning engines still own.
 
+**Plan Repository.** Between the Planning Engine and the Presentation Layer sits a **Plan Repository** — the versioned store that owns the *current* version, all *previous* versions, the *accepted* version, undo, and diffs. Not another engine; a clean separation so the plan is an evolving, auditable document rather than a mutable blob:
+```
+Planning Engine → Plan Repository → Presentation
+```
+
 ## 3. Data model
 ```
 Program → TrainingBlock → Week → Day → Session → Exercise
@@ -30,12 +35,22 @@ Every level carries a **stable id** and an **ordering** field (so moves/reorders
 
 Without this model the AI can only rewrite text. With it, the AI becomes a real plan editor.
 
-## 4. Training intent (the differentiator)
-Every session has an **intent + purpose**, not just a name:
+## 4. Preserve adaptation (the defining philosophy)
+Most coaching apps, when life interferes, **cancel or delay** ("skip today's run"). Baseline should instead **preserve the adaptation** — keep the intended physiological stimulus while respecting the constraint. That's a fundamentally different philosophy, and it may be Baseline's defining feature.
+
+> **The Planning Engine optimizes for preserving the intended physiological adaptation whenever possible, rather than cancelling or delaying training.**
+
+It works because every session carries an **intent + purpose**, not just a name:
 ```
 Session: "Threshold run"   intent: threshold   purpose: raise lactate threshold
 ```
-Substitution preserves the intent: *replace threshold run → threshold bike* keeps the adaptation while dropping the impact. Adapting the **stimulus** rather than the label is one of Baseline's biggest long-term differentiators.
+So a constraint becomes a **substitution that keeps the stimulus**:
+- Threshold run → **threshold bike**
+- Heavy squat → **belt squat**
+- Running → **SkiErg**
+- Outdoor run → **treadmill**
+
+Preserve the stimulus; respect the constraint. Adapting the *stimulus* rather than the *label* is one of Baseline's biggest long-term moats.
 
 ## 5. Tool API (validated operations)
 The AI composes these; each is validated and applied by the app.
@@ -57,17 +72,27 @@ The AI **proposes**; the athlete **accepts**. Confirmation scales with **blast r
 - **Low-risk, single-field, easily reversible** (one rep count, one exercise) → apply optimistically; always undoable.
 - **Structural / multi-session / destructive** (reorder days, restructure a week, swap or delete sessions, any program-level change, generation) → **propose → show the diff (what changes and why) → confirm → apply.**
 
-Everything is **versioned regardless**, so even auto-applied edits are reversible. Start conservative (confirm more), relax as trust is earned. This directly answers "don't let it silently rewrite my program."
+Everything is **versioned regardless**, so even auto-applied edits are reversible. Start conservative (confirm more), relax as trust is earned.
+
+> **Hard rule: the AI must never silently change future training.** Any change to a future session creates a new *proposed* version the athlete sees — coming back to find half your week rearranged with no trace is unacceptable. Every change is explainable and attributable.
 
 ## 8. Validation
 The AI cannot write the database. Every proposal passes **server- and client-side validation** — schema, ordering, dependency, conflict, and the Decision Engine's safety caps — before it's applied. Rejected proposals come back with a reason the AI can explain to the athlete rather than silently failing.
 
-## 9. Version history (currently missing everywhere — required)
-Every change is a **versioned, reversible transition**:
+## 9. Plan History — Git for training plans
+A training plan is an **evolving document, not a static object.** Every meaningful modification creates a **new immutable version** — this versioning is a **first-class concept**, and it's effectively *Git for training plans*.
+
+Each version records:
+- **timestamp**
+- **actor** — user · Baseline · imported
+- **reason**
+- **supporting evidence** — the readiness, context, and rules that drove it
+- **diff**
+
 ```
-Plan v18 → moveSession(Thu→Sat) → Plan v19
+Plan v18 → moveSession(Thu→Sat)  [actor: Baseline · reason: Achilles constraint] → Plan v19
 ```
-Supports **undo · compare · restore**, and eventually *"show me why Baseline changed this"* — because each version records the **proposal + the evidence, context, and rules** that drove it. This is not yet in the architecture; treat it as a hard requirement of the Plan Engine.
+This enables **undo · compare · restore · explain · audit · experiment** — and eventually *"show me why Baseline changed this."* It's owned by the **Plan Repository** (§2) and is a hard requirement of the Plan Engine, not an afterthought.
 
 ## 10. New domain architecture this adds (compatible, not trivial)
 The agent pattern is reused, but this introduces: program **schema** · **calendar semantics** · **training-intent taxonomy** · **progression rules** · **dependency validation** · **conflict handling** · **undo/version history** · **proposed-vs-accepted acceptance workflow**. Architecturally compatible with what exists; a real, sizable build.
