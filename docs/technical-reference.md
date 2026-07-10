@@ -80,6 +80,13 @@ Current implementation direction:
 - Action tools let Baseline *do*, not just describe: `open_apple_health_setup` presents the system Health permission sheet. Planned: `open_hrv_setup`, `open_settings_section` (need chat→screen navigation plumbing).
 - Rule: speak as the product; never punt to "support" for built-in functionality; only say something is unavailable when capability state says so.
 
+## Response Style By Intent
+The conversation should adapt presentation to the question's intent, not just retrieve and answer literally. Three kinds:
+- **Retrieval** ("what was my sleep / HRV?") → call the tool, then lead with **insight**, offer raw numbers second (don't dump telemetry like "76 ms, 140 ms"; interpret it).
+- **Education** ("what is HRV?") → answer from general knowledge, no tools, no personal-data retrieval. Currently handled by the prompt; **eventually a Knowledge layer** — curated educational content (not an engine), so "explain HRV" answers like Baseline's own curriculum rather than generic AI.
+- **Personal reasoning** ("what should I do today?") → reason over state + tools, recommend with a one-line why.
+Later: proactive/curious prompts ("your sleep's been great three nights but HRV hasn't risen — want to see why?") turn search into coaching. And UI affordances (tap Sleep → Explain) should augment the chat, not require typing.
+
 ## Retrieval Tools (agent architecture)
 Baseline is retrieval-first, not memory-first. Implementation principle: **never answer from memory (injected state) if a tool can answer more accurately.** When the athlete asks about current or historical data, the model calls a retrieval tool rather than answering from the context block or claiming it doesn't have the data.
 - **Split execution (iOS constraint):** the cloud model *proposes* a tool call; the **iOS app validates and executes it locally** — HealthKit lives on-device and the Firebase function cannot query it — then returns a structured result the model answers from. This is the real agent loop, already present in `ConversationService` (`execute`).

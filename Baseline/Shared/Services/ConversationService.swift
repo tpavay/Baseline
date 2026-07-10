@@ -47,17 +47,25 @@ final class ConversationService {
         let userText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !userText.isEmpty, !isThinking else { return }
         log.append(Message(role: .you, text: userText))
+        // Checkpoint *before* this turn: if it fails, we roll the transcript back here so it never
+        // ends on a dangling user/tool turn — otherwise the next send stacks two user turns and the
+        // API rejects every subsequent message until the chat is reopened.
+        let checkpoint = transcript.count
         transcript.append(["role": "user", "content": userText])
         isThinking = true
         defer { isThinking = false }
-        await runLoop()
+        let completed = await runLoop()
+        if !completed { transcript.removeLast(transcript.count - checkpoint) }
     }
 
-    private func runLoop() async {
+    /// Returns true only on a clean finish (a final assistant reply). False on a network failure or
+    /// tool-round exhaustion — the caller rolls the failed turn out of the transcript.
+    @discardableResult
+    private func runLoop() async -> Bool {
         for _ in 0..<maxToolRounds {
             guard let content = await callFunction() else {
                 log.append(Message(role: .baseline, text: "I couldn't reach the coach just now — try again in a moment."))
-                return
+                return false
             }
             transcript.append(["role": "assistant", "content": content])
 
@@ -76,7 +84,7 @@ final class ConversationService {
                 }
             }
             if !text.isEmpty { log.append(Message(role: .baseline, text: text)) }
-            if toolUses.isEmpty { return }                 // final reply, no tools → done
+            if toolUses.isEmpty { return true }            // final reply, no tools → clean finish
 
             // Execute each requested tool on-device and feed results back for the model's follow-up.
             var results: [[String: Any]] = []
@@ -94,6 +102,7 @@ final class ConversationService {
             transcript.append(["role": "user", "content": results])
         }
         log.append(Message(role: .baseline, text: "Let's take that one step at a time — ask me again?"))
+        return false   // tool rounds exhausted → transcript ends on a tool_result; roll it back
     }
 
     /// Keep the inspector's live view in sync: refresh the plan snapshot, and log mutations (not
