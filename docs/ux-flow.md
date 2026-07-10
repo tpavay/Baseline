@@ -6,6 +6,33 @@ Legend: **[E]** Evidence · **[C]** Context · **[D]** Decision · **[P]** Plann
 
 ---
 
+## Navigation model — four intents, four tabs
+The app is **four tabs**, each a distinct mental model. Don't make one screen do everything.
+
+```
+Today            Plan             Workout          Profile
+= decision       = planning       = execution      = setup
+```
+- **Today** — the day's recommendation (readiness → plan). Opened every day.
+- **Plan** — the week/calendar of workout cards, each with its status (incl. "AI modified" badges); tap a card → **Workout Detail**. The primary action is **Talk to Baseline / Edit with Baseline** (not a generic "Adjust Plan"). *(Future — needs the Plan Engine.)*
+- **Workout** — the **current** session being executed (not a library). Collapsible blocks; per-exercise `•••` menu; set logging. Opened every workout.
+- **Profile** — setup, devices, integrations. Occasional.
+
+**History is a capability, not a destination.** It's reached *through* the surfaces that need it (reading history from Today; exercise history from Exercise Detail; workout history from Plan), never the tab bar. Until the Plan Engine lands the shell is **Today / Workout / Profile**; Plan is the fourth tab.
+
+**The chat never navigates away.** "Talk to Baseline" is always a **bottom sheet / floating panel** over the current screen — drag-to-peek, dismiss back to where you were — so you can ask "should I add weight?" on Set 3 without leaving the workout.
+
+**Four screens, four flows:**
+- **Today → Workout Detail** — *understanding*: opens **Goal → Today's Context → Coach Guidance → Blocks** (why am I doing this today comes first, before the coach note).
+- **Workout (execution)** — blocks **collapsed by default** (long sessions don't become enormous), one expanded at a time; each exercise `•••` → Talk about this exercise · Skip · Substitute · Move · Coach Notes · History · Delete · Duplicate. So the chat doesn't have to do everything.
+- **Exercise Detail** (the missing screen) — tap an exercise → History · Best · Recent · Coach Guidance · Current Prescription · Video · Notes · Progression · Talk to Baseline. The home for "how much did I deadlift last month? compare today. should I increase?" — cleaner than burying it in a History tab.
+
+**Naming:** consider renaming **Workout → Train / Session** — "Workout" sounds static; "Train" reads as intent. Deferred.
+
+*Status: the Today and Workout (execution) tabs exist. Plan, Workout Detail (goal/context ordering), and Exercise Detail are designed here and build on the Plan Engine + workout-history persistence.*
+
+---
+
 ## Part 1 — First launch → first plan
 
 The goal of first run: **reach a first, honest plan with the least effort** — and be upfront when evidence is still thin.

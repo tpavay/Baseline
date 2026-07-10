@@ -1,8 +1,10 @@
 import SwiftUI
 import SwiftData
 
-/// The signed-in app shell: Today / Workout / History / Profile. The morning loop lives on Today;
-/// Workout is the manual execution surface; History is the reading archive; Profile holds setup.
+/// The signed-in app shell — four intents, four tabs: **Today** (decision), **Plan** (planning —
+/// future), **Workout** (execution), **Profile** (setup). History is a *capability* reached through
+/// these surfaces (reading history hangs off Today), not a primary destination. The Plan tab lands
+/// with the Plan Engine; until then the shell is Today / Workout / Profile.
 struct MainTabView: View {
     var body: some View {
         TabView {
@@ -11,9 +13,6 @@ struct MainTabView: View {
 
             WorkoutView()
                 .tabItem { Label("Workout", systemImage: "figure.strengthtraining.traditional") }
-
-            NavigationStack { ReadingHistoryView() }
-                .tabItem { Label("History", systemImage: "chart.bar") }
 
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person") }

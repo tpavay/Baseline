@@ -46,6 +46,10 @@ struct AskBaselineSheet: View {
         .sheet(isPresented: $showInspector) {
             if let service { StateInspectorView(service: service, context: context, workouts: workouts) }
         }
+        // A partial bottom sheet, not a takeover — drag down to peek at the workout behind and keep
+        // talking mid-session. Chat never navigates away.
+        .presentationDetents([.large, .medium])
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
     }
 
     private func setUp() async {
