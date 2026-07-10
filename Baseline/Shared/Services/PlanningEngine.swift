@@ -12,6 +12,17 @@ enum PlanningEngine {
 
     enum Style: String, Codable, Sendable { case conservative, balanced, aggressive }
 
+    /// Today's practical constraints, from the chat ("only 25 minutes", "traveling"). They shape the
+    /// plan's framing — the specific session is the LLM's job later; here we add honest context notes.
+    struct DailyFactors: Sendable {
+        var timeAvailableMinutes: Int?
+        var traveling: Bool?
+        init(timeAvailableMinutes: Int? = nil, traveling: Bool? = nil) {
+            self.timeAvailableMinutes = timeAvailableMinutes
+            self.traveling = traveling
+        }
+    }
+
     /// Minimal training state for now (goal/phase are captured by the conversation later and only
     /// flavor the copy; the deterministic routing works without them).
     struct TrainingState: Sendable {
@@ -43,7 +54,8 @@ enum PlanningEngine {
 
     // MARK: - Plan
 
-    static func plan(for d: DecisionEngine.Result, state: TrainingState = .init(), style: Style = .balanced) -> Plan {
+    static func plan(for d: DecisionEngine.Result, daily: DailyFactors = .init(),
+                     state: TrainingState = .init(), style: Style = .balanced) -> Plan {
         // Base level from the band: 4 hard · 3 threshold · 2 aerobic base · 1 easy · 0 active recovery.
         var level: Int
         switch d.band { case .green: level = 4; case .amber: level = 2; case .red: level = 0 }
@@ -74,7 +86,14 @@ enum PlanningEngine {
         let type: PlanType = (!blocking.isEmpty && level >= 2) ? .lowImpact : levelType(level)
 
         avoid += avoidFor(type: type)
-        return Plan(type: type, summary: type.summary, why: why(d, state: state), avoid: dedupe(avoid))
+        return Plan(type: type, summary: type.summary, why: why(d, state: state) + dailyNotes(daily), avoid: dedupe(avoid))
+    }
+
+    private static func dailyNotes(_ d: DailyFactors) -> [String] {
+        var out: [String] = []
+        if let m = d.timeAvailableMinutes, m < 40 { out.append("You've got ~\(m) min — compress it and keep the main stimulus.") }
+        if d.traveling == true { out.append("Traveling — a run, bodyweight circuit, or hotel gym all work.") }
+        return out
     }
 
     // MARK: - Mapping

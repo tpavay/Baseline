@@ -60,6 +60,7 @@ struct DailyReadingFlowView: View {
                         hrvBaseline: hrvBaseline,
                         rhrBaseline: rhrBaseline,
                         constraints: context.activeConstraints,
+                        dailyContext: context.daily,
                         onDone: finish
                     )
                 }
@@ -278,6 +279,7 @@ struct MorningReadinessScoreView: View {
     let hrvBaseline: ReadinessScore.Baseline?
     let rhrBaseline: ReadinessScore.Baseline?
     var constraints: [DecisionEngine.Constraint] = []
+    var dailyContext: TrainingContextStore.DailyContext = .init()
     let onDone: (DecisionEngine.Result, PlanningEngine.Plan) -> Void
 
     @Environment(HealthService.self) private var health
@@ -414,7 +416,6 @@ struct MorningReadinessScoreView: View {
 
     private func compute() async {
         var inputs = DecisionEngine.Inputs()
-        inputs.constraints = constraints
         if config.heartReadingEnabled {
             inputs.lnRMSSD = result.lnRMSSD
             inputs.hrvBaseline = hrvBaseline
@@ -438,9 +439,9 @@ struct MorningReadinessScoreView: View {
             inputs.stress = answers?.stress
             inputs.soreness = answers?.soreness
         }
-        let d = DecisionEngine.compute(inputs)
+        let (d, p) = PlanAssembler.assemble(base: inputs, dailyContext: dailyContext, constraints: constraints)
         decision = d
-        plan = PlanningEngine.plan(for: d)
+        plan = p
         computing = false
         await Haptics.celebrate()
     }

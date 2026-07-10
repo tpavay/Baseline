@@ -161,4 +161,25 @@ struct DecisionEngineTests {
         let aggressive = PE.plan(for: d, style: .aggressive).type
         #expect(conservative != .hardIntensity || aggressive == .hardIntensity) // conservative pulls down
     }
+
+    // MARK: - Daily context + PlanAssembler
+
+    @Test func dailyContextAddsHonestNotes() {
+        let d = DE.compute(DE.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5))
+        let short = PE.plan(for: d, daily: .init(timeAvailableMinutes: 25))
+        #expect(short.why.contains { $0.contains("25 min") })
+        let travel = PE.plan(for: d, daily: .init(traveling: true))
+        #expect(travel.why.contains { $0.localizedCaseInsensitiveContains("traveling") })
+    }
+
+    @Test func planAssemblerLayersContextOntoBase() {
+        let base = DE.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5)
+        let constraint = DE.Constraint(kind: .injury, location: "Achilles", severity: 2)
+        let ctx = TrainingContextStore.DailyContext(timeAvailableMinutes: 25, traveling: true)
+        let out = PlanAssembler.assemble(base: base, dailyContext: ctx, constraints: [constraint])
+        #expect(out.decision.constraints.count == 1)
+        #expect(out.plan.type == .lowImpact)                                      // constraint reroutes
+        #expect(out.plan.avoid.contains { $0.localizedCaseInsensitiveContains("achilles") })
+        #expect(out.plan.why.contains { $0.contains("25 min") })                 // daily note layered on
+    }
 }
