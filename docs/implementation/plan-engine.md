@@ -28,19 +28,44 @@ Planning Engine → Plan Repository → Presentation
 
 **Boundary with Workout Execution.** The Plan Engine owns **intended training**: planned sessions, prescriptions, Coach Guidance, order, and version history. The future Workout Execution Engine owns **performed training**: actual sets/reps/load/duration/distance/pace, completed work, skipped work, substitutions, Athlete Notes, and pain events. Workout actuals never overwrite the plan. If a workout event should change future training, it creates a validated plan operation and a new Plan Repository version.
 
-## 3. Data model
+## 3. Data model — a fully editable hierarchy
+Every layer of the plan is an addressable, editable node — from the whole program down to a single set:
 ```
-Program → TrainingBlock → Week → Day → Session → Exercise
+Program
+  → Training Phase     (multi-week block / mesocycle — base, build, peak, taper)
+  → Week
+  → Day
+  → Workout            (a dated session the athlete performs; the planned session)
+  → Workout Block      (a semantic group inside a workout: warm-up, strength, metcon, HYROX stations, cooldown)
+  → Exercise
+  → Prescription       (the structured target for that exercise)
+  → Set / Interval     (a single set or interval, addressable on its own)
 ```
-Every level carries a **stable id** and an **ordering** field (so moves/reorders are unambiguous and reversible). Exercise-level **prescription** is structured, never free text:
-- sets · reps **or** duration · load · distance · rest · target HR zone · RPE · equipment · **movement category** · **intent**.
+Every level carries a **stable id** and an **ordering** field, so moves and reorders are unambiguous and reversible.
 
-Each planned exercise also carries **Coach Guidance** separately from the prescription and from future Athlete Notes:
-- goal · intent · tempo · form cues · common mistakes · why it exists · progression notes · video/attachments/links.
+> **Baseline supports validated, reversible edits at every level of the training hierarchy — from the overall program down to individual sets and intervals. Workout Blocks are semantic containers, not atomic units. Exercises may be added, removed, reordered, substituted, or moved between blocks; prescriptions may be changed at exercise or set level; entire blocks may be added, removed, reordered, or modified. All future-facing changes remain versioned and explainable.**
 
-The Plan Engine owns authored guidance. Workout Execution owns Athlete Notes. Context-Aware Guidance can be generated from Coach Guidance plus readiness, constraints, and recent execution history without mutating the authored guidance.
+**Two different "blocks" — don't conflate them:**
+- **Training Phase** — the multi-week macro layer (mesocycle). *(Earlier drafts called this a "Training Block".)*
+- **Workout Block** — an intra-workout grouping that captures *purpose* (why these exercises sit together). It helps Baseline understand intent and adaptation, but it is a **semantic container, not an atomic unit**: it never prevents editing inside it, and exercises move freely between blocks.
+
+**The hierarchy provides structure; no layer is immutable.** A block explains purpose; it does not lock its contents.
+
+Exercise-level **prescription** is structured, never free text:
+- sets · reps **or** duration · load · distance · rest · target HR zone · RPE · tempo · pace · equipment · **movement category** · **intent**.
+
+Individual **sets / intervals** are addressable, so one set can change (load/reps) without rewriting the exercise, and **actual performance is logged separately from the planned prescription** — Workout Execution owns the actuals; the plan keeps the intent.
+
+Each planned exercise also carries **Coach Guidance** (goal · intent · tempo · form cues · common mistakes · why it exists · progression notes · media) separately from the prescription and from Athlete Notes. The Plan Engine owns authored guidance; Workout Execution owns Athlete Notes; Context-Aware Guidance is generated from the two without mutating either.
 
 Without this model the AI can only rewrite text. With it, the AI becomes a real plan editor.
+
+### 3a. Valid operations by level
+No layer is a dead end — each supports both structural and fine-grained edits:
+- **Workout:** rename · change overall goal · add/remove/reorder blocks · move blocks · duplicate · split or merge workouts.
+- **Workout Block:** rename · change goal/intent · add/remove/reorder exercises · move an exercise into another block · duplicate · delete · change dose or priority.
+- **Exercise:** add · delete · substitute · reorder · move between blocks · update sets/reps/load/duration/rest/pace/zone/tempo · edit Coach Guidance · add notes.
+- **Set / Interval:** change one set without touching the rest · add/remove a set · change load or reps for a single set · log actual performance separately from the planned prescription.
 
 ## 4. Preserve adaptation (the defining philosophy)
 Most coaching apps, when life interferes, **cancel or delay** ("skip today's run"). Baseline should instead **preserve the adaptation** — keep the intended physiological stimulus while respecting the constraint. That's a fundamentally different philosophy, and it may be Baseline's defining feature.
@@ -60,11 +85,12 @@ So a constraint becomes a **substitution that keeps the stimulus**:
 Preserve the stimulus; respect the constraint. Adapting the *stimulus* rather than the *label* is one of Baseline's biggest long-term moats.
 
 ## 5. Tool API (validated operations)
-The AI composes these; each is validated and applied by the app. These are **plan-editing** tools, not workout-logging tools. Logging tools live with Workout Execution and may request plan edits after validation.
-- **Structure:** `createProgram` · `createBlock` · `createWeek` · `addSession` · `updateSession` · `deleteSession` · `moveSession` · `reorderDays` · `reorderWeek` · `duplicateSession`
-- **Exercise:** `addExercise` · `updateExercise` · `deleteExercise` · `reorderExercises` · `substituteExercise`
-- **Prescription:** `updateSets` · `updateReps` · `updateLoad` · `updateDuration` · `updateRest` · `updateIntensityTarget`
-- **Coach Guidance:** `updateGoal` · `updateTempo` · `updateFormCues` · `updateCommonMistakes` · `updateProgressionNotes` · `attachMedia`
+The AI composes these; each is validated and applied by the app. There is a valid operation at **every level** of the hierarchy (§3) — structural *and* fine-grained. These are **plan-editing** tools, not workout-logging tools; logging tools live with Workout Execution and may request plan edits after validation.
+- **Program / phase / calendar:** `createProgram` · `createPhase` · `createWeek` · `addWorkout` · `updateWorkout` · `deleteWorkout` · `moveWorkout` · `reorderDays` · `reorderWeek` · `duplicateWorkout` · `splitWorkout` · `mergeWorkouts` · `updateWorkoutGoal`
+- **Workout Block:** `addBlock` · `deleteBlock` · `moveBlock` · `reorderBlocks` · `duplicateBlock` · `updateBlockGoal`
+- **Exercise:** `addExercise` · `deleteExercise` · `reorderExercises` · `moveExercise` *(including into another block)* · `substituteExercise` · `updateExercisePrescription`
+- **Prescription / set:** `updateSets` · `updateReps` · `updateLoad` · `updateDuration` · `updateRest` · `updateIntensityTarget` · `updateSet` · `addSet` · `deleteSet`
+- **Coach Guidance:** `updateCoachGuidance` *(goal · tempo · form cues · common mistakes · progression notes)* · `attachMedia`
 - **Triggered by workout actuals:** `moveExerciseToLaterDate` · `replanWeek` · `updateConstraint` · `substituteRemainingWork`
 
 ## 6. Trust levels (staged capability)
@@ -99,7 +125,7 @@ Each version records:
 - **diff**
 
 ```
-Plan v18 → moveSession(Thu→Sat)  [actor: Baseline · reason: Achilles constraint] → Plan v19
+Plan v18 → moveWorkout(Thu→Sat)  [actor: Baseline · reason: Achilles constraint] → Plan v19
 ```
 This enables **undo · compare · restore · explain · audit · experiment** — and eventually *"show me why Baseline changed this."* It's owned by the **Plan Repository** (§2) and is a hard requirement of the Plan Engine, not an afterthought.
 

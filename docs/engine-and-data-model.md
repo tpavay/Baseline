@@ -38,9 +38,17 @@ Baseline does not require a full Program to work. It can reason over a single im
 A reusable template for training content. A Routine can be imported, created manually, copied from past work, or shipped as Baseline content. Starting a Routine creates a planned or ad-hoc session instance.
 
 ### Planned Session
-A dated intended workout. This is what Baseline or the athlete meant to do on a given day.
+A dated intended workout (the athlete-facing "Workout"). This is what Baseline or the athlete meant to do on a given day.
 
-A Planned Session contains planned exercises. It may come from a Routine, an imported coach plan, a generated recommendation, a previous workout, or a manual entry.
+A Planned Session is organized into Workout Blocks, which hold planned exercises. It may come from a Routine, an imported coach plan, a generated recommendation, a previous workout, or a manual entry.
+
+### Workout Block
+A semantic group of exercises inside a workout — warm-up, strength, conditioning/metcon, HYROX station work, cooldown. It captures **purpose**: why those exercises sit together, and how they should adapt.
+
+A Workout Block is a **semantic container, not an atomic unit**. It helps Baseline reason about intent and adaptation, but it never locks its contents: exercises can be added, removed, reordered, or moved between blocks, and blocks themselves can be added, removed, reordered, or re-scoped.
+
+### Fully editable hierarchy
+No layer of the plan is immutable. Baseline supports validated, reversible edits at **every level** — program, phase, week, day, workout, block, exercise, prescription, and individual set/interval. Structural edits (add/remove/reorder/move blocks and exercises, split/merge workouts) and fine-grained edits (one set's load, one exercise's tempo) are both first-class. Every future-facing change is versioned and explainable (see `docs/implementation/plan-engine.md`).
 
 ### Planned Exercise
 An intended exercise inside a Planned Session. It connects an Exercise to a Prescription and Coach Guidance.
@@ -193,13 +201,15 @@ Owns personalization from evidence over time, especially the deltas between prop
 ## Durable Relationships
 ```
 Program
-  -> Training Block
+  -> Training Phase              (multi-week block / mesocycle)
   -> Week
   -> Day
-  -> Planned Session
+  -> Planned Session (Workout)
+  -> Workout Block               (semantic group inside a workout — not an atomic unit)
   -> Planned Exercise
       -> Exercise
       -> Prescription
+          -> Set / Interval      (addressable individually)
       -> Coach Guidance
 
 Workout Log
