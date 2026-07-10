@@ -100,6 +100,17 @@ struct WorkoutStoreTests {
         #expect(s.current?.allExercises.first?.exerciseName == "Overhead carry")
     }
 
+    @Test func addExercisePopulatesCatalogIdentityAndSelectedMetrics() {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        s.addBlock(name: "Cardio", intent: nil)
+        s.addExercise(name: "Stationary Bike", toBlockNamed: "Cardio", sets: 1, reps: nil, load: nil, durationSeconds: 3600, distanceMeters: nil)
+        let ex = s.current!.allExercises.first!
+        #expect(ex.definitionId == "stationary_bike")            // resolved to a stable identity
+        #expect(ex.selectedMetrics.contains(.duration))
+        #expect(ex.selectedMetrics.contains(.distance))          // catalog default, even though only duration was passed
+    }
+
     @Test func createStampsTodayAndClearsLog() {
         let s = store()
         s.create(title: "a", goal: nil)

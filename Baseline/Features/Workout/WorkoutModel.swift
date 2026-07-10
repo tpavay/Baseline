@@ -20,14 +20,24 @@ enum TrainingIntent: String, Codable, Sendable, CaseIterable {
 }
 
 /// A single planned set or interval — addressable on its own so one set can change without
-/// rewriting the exercise.
+/// rewriting the exercise. Values are stored canonically in a typed `MetricValues`; the named
+/// accessors are ergonomic sugar over specific metrics (they never add new stored fields).
 struct PlannedSet: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
-    var reps: Int?
-    var load: Double?          // resistance (unit resolved later)
-    var duration: Int?         // seconds
-    var distance: Double?      // meters
-    var rpe: Double?
+    var values = MetricValues()
+
+    init(reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
+         distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil) {
+        values.setInt(.reps, reps); values[.load] = load; values.setInt(.duration, duration)
+        values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
+    }
+
+    var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
+    var load: Double? { get { values[.load] } set { values[.load] = newValue } }
+    var duration: Int? { get { values.int(.duration) } set { values.setInt(.duration, newValue) } }
+    var distance: Double? { get { values[.distance] } set { values[.distance] = newValue } }
+    var calories: Double? { get { values[.calories] } set { values[.calories] = newValue } }
+    var rpe: Double? { get { values[.rpe] } set { values[.rpe] = newValue } }
 }
 
 /// The structured target for a planned exercise — never free text.
@@ -50,7 +60,9 @@ struct CoachGuidance: Codable, Equatable, Sendable {
 
 struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
-    var exerciseName: String                    // catalog reference resolved later
+    var exerciseName: String
+    var definitionId: String?                   // stable catalog identity (nil = uncurated)
+    var selectedMetrics: [MetricType] = []      // which metrics this instance logs/shows
     var prescription = Prescription()
     var guidance: CoachGuidance?
 }
@@ -237,15 +249,26 @@ enum PerformedStatus: String, Codable, Sendable {
     case pending, completed, skipped, substituted, modified
 }
 
-/// An actually-logged set — links back to a planned set, never overwrites it.
+/// An actually-logged set — links back to a planned set, never overwrites it. Same typed
+/// `MetricValues` storage + accessors as `PlannedSet`.
 struct SetLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var plannedSetID: UUID?
-    var reps: Int?
-    var load: Double?
-    var duration: Int?
-    var distance: Double?
-    var rpe: Double?
+    var values = MetricValues()
+
+    init(plannedSetID: UUID? = nil, reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
+         distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil) {
+        self.plannedSetID = plannedSetID
+        values.setInt(.reps, reps); values[.load] = load; values.setInt(.duration, duration)
+        values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
+    }
+
+    var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
+    var load: Double? { get { values[.load] } set { values[.load] = newValue } }
+    var duration: Int? { get { values.int(.duration) } set { values.setInt(.duration, newValue) } }
+    var distance: Double? { get { values[.distance] } set { values[.distance] = newValue } }
+    var calories: Double? { get { values[.calories] } set { values[.calories] = newValue } }
+    var rpe: Double? { get { values[.rpe] } set { values[.rpe] = newValue } }
 }
 
 struct PerformedExercise: Identifiable, Codable, Equatable, Sendable {

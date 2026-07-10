@@ -104,6 +104,19 @@ final class WorkoutStore {
         }
         let count = max(1, sets ?? 1)
         var exercise = PlannedExercise(exerciseName: name)
+
+        // Resolve stable identity + the metrics this instance should log: the definition's defaults,
+        // plus any metric actually provided. Uncurated movements fall back to reps/load.
+        let def = ExerciseCatalog.resolve(name)
+        exercise.definitionId = def.id == ExerciseCatalog.generic.id ? nil : def.id
+        var selected = Set(def.defaults)
+        if reps != nil { selected.insert(.reps) }
+        if load != nil { selected.insert(.load) }
+        if durationSeconds != nil { selected.insert(.duration) }
+        if distanceMeters != nil { selected.insert(.distance) }
+        if selected.isEmpty { selected = [.reps, .load] }
+        exercise.selectedMetrics = MetricType.allCases.filter { selected.contains($0) }   // canonical order
+
         exercise.prescription.sets = (0..<count).map { _ in
             PlannedSet(reps: clampReps(reps), load: clampLoad(load), duration: clampDuration(durationSeconds), distance: clampLoad(distanceMeters))
         }
