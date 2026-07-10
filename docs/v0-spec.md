@@ -11,15 +11,18 @@
 - **The engine modulates by recovery in layers** (A: dose-pick coach content · B: classify → do/sub/recover · C: built-in library) — see the engine doc.
 - **Live in-session HR zones** is a flagship, not a nice-to-have — one app, no more Polar Flow.
 - **Monetization deferred** to the end; **not** forced by AI cost (import runs on-device for free).
+- **The long-term product loop is the full training loop:** Plan → start workout → log performance → add notes/context → complete or modify session → recompute training state → adapt the remaining plan. v0 starts with the readiness and logging spine, but the product direction is a complete training system.
 
 ## Priority stack (build order)
 1. **The spine (= the launch MVP)** — Reading → readiness score → band guidance + HR zones. HRV (✅ validated on H10) + the configurable readiness composite + band-level guidance copy ("intensity is on" / "keep it easy — active recovery") + zones for anyone with an HR source (capped on low days: "stay in Z1–Z2"). **No session prescription at launch** (decided 2026-07-07) — the score, the guidance, and the zones are the product; concrete sessions arrive with priority 5. User-facing copy never says "chassis" — say "active recovery" / "mobility" (chassis stays internal/engine vocabulary).
-2. **Usable daily** — exercise catalog + heterogeneous logging + **live HR zones** + complete → **calendar / streak**. (Off Polar Flow immediately.)
+2. **Usable daily** — structured workout model + exercise catalog + heterogeneous logging + **live HR zones** + complete → **calendar / streak**. Preserve planned-vs-performed from the first logger. (Off Polar Flow immediately.)
 3. **Import: text → Routine** (on-device FM) + auto day-type classification.
 4. **Import: photo → Routine** (Vision OCR now / native image input on iOS 27).
 5. **Recovery modulation & session recommendation** — dose-pick (A) + do/sub/recover (B) + recommend from the built-in active-recovery/aerobic library (C). This is where "what to do today" becomes a concrete session — post-launch.
-6. **Auto-reorder** the loaded week.
-7. **Trends** depth + the age/gender **bell-curve** positioning.
+6. **Voice/chat-assisted logging** — natural-language updates become validated workout tool calls (`logSet`, `logInterval`, `skipExercise`, notes), not unstructured chat history.
+7. **Mid-workout adaptation** — pain/context events update constraints, recompute remaining work, and propose substitutions/skips.
+8. **Auto-reorder** the loaded week.
+9. **Learning from planned vs performed** — trends, adherence, training-load accuracy, athlete-specific response, and the age/gender **bell-curve** positioning.
 
 ## What v0 ships
 The spine (1) + a daily-usable logger with live zones (2) + text/photo import (3–4) + recovery modulation (5), for **one athlete (you) first**, with the **chassis/recovery library** as the built-in differentiator.

@@ -26,6 +26,8 @@ The AI **never edits data directly.** It proposes *validated operations*; the ap
 Planning Engine → Plan Repository → Presentation
 ```
 
+**Boundary with Workout Execution.** The Plan Engine owns **intended training**: planned sessions, prescriptions, order, and version history. The future Workout Execution Engine owns **performed training**: actual sets/reps/load/duration/distance/pace, completed work, skipped work, substitutions, workout notes, exercise notes, and pain events. Workout actuals never overwrite the plan. If a workout event should change future training, it creates a validated plan operation and a new Plan Repository version.
+
 ## 3. Data model
 ```
 Program → TrainingBlock → Week → Day → Session → Exercise
@@ -53,10 +55,11 @@ So a constraint becomes a **substitution that keeps the stimulus**:
 Preserve the stimulus; respect the constraint. Adapting the *stimulus* rather than the *label* is one of Baseline's biggest long-term moats.
 
 ## 5. Tool API (validated operations)
-The AI composes these; each is validated and applied by the app.
+The AI composes these; each is validated and applied by the app. These are **plan-editing** tools, not workout-logging tools. Logging tools live with Workout Execution and may request plan edits after validation.
 - **Structure:** `createProgram` · `createBlock` · `createWeek` · `addSession` · `updateSession` · `deleteSession` · `moveSession` · `reorderDays` · `reorderWeek` · `duplicateSession`
 - **Exercise:** `addExercise` · `updateExercise` · `deleteExercise` · `reorderExercises` · `substituteExercise`
 - **Prescription:** `updateSets` · `updateReps` · `updateLoad` · `updateDuration` · `updateRest` · `updateIntensityTarget`
+- **Triggered by workout actuals:** `moveExerciseToLaterDate` · `replanWeek` · `updateConstraint` · `substituteRemainingWork`
 
 ## 6. Trust levels (staged capability)
 Each level needs more intelligence, more domain data, and more confirmation:
@@ -102,6 +105,7 @@ So the Today Conversation slice doesn't become a dead end, design its tool layer
 - Tool calls are **typed and validated** from day one — even the small Today tools (update context, update constraint).
 - **Versioning and proposed-vs-accepted scale with blast radius (§7).** Low-risk, today-scoped, single-item mutations (daily context, one constraint) **apply directly** and are trivially reversible — no version wrapper needed. The **version history + proposed-vs-accepted** machinery is required for **Plan edits** (structural / multi-session / future-affecting) and is owned by the **Plan Repository** (§2), not bolted onto every micro-mutation.
 - The `ConversationService` + tool-dispatch abstraction is schema-agnostic, so pointing it at Program-editing tools later is additive.
+- Preserve the planned-vs-performed boundary from the first workout model. Even a simple manual logger should link actuals back to a planned prescription rather than mutating the prescription in place.
 
 ## Status
 **Design only.** Sequenced after: Today Conversation → Context Engine → program upload → **Plan Engine**. Companion to `docs/architecture.md` (extends the Planning Engine) and `docs/conversation-design.md` (how edits are proposed and confirmed in conversation).

@@ -1,8 +1,8 @@
 import Foundation
 import SwiftData
 
-/// The kind of HRV reading. Both use the same paced 5s/5s resonance breathing — they differ
-/// only in length: the morning ritual (2:30) vs. a quick snapshot (1:00) for frequent checks.
+/// The kind of HRV reading. Both are quiet natural-breath reads — they differ only in length:
+/// the morning ritual (2:30) vs. a quick snapshot (1:00) for frequent checks.
 enum ReadingType: String, Codable, CaseIterable, Identifiable, Sendable {
     case morning
     case snapshot

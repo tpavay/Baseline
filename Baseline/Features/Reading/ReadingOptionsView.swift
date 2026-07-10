@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Options for the reading, opened from the Start screen's "Options". Cue + preview preferences
-/// (persisted via `AppSettings`) plus a read at-a-glance of the protocol.
+/// Options for the reading, opened from the Start screen's "Options". Position + preview
+/// preferences (persisted via `AppSettings`) plus a read at-a-glance of the protocol.
 struct ReadingOptionsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
@@ -14,18 +14,13 @@ struct ReadingOptionsView: View {
                 BaselineColor.base.ignoresSafeArea()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        InstrumentLabel("CUES").padding(.top, 8)
-                        toggleRow("Voice cues", "Calm “breathe in / out”", $settings.voiceCuesEnabled)
-                        toggleRow("Haptic cues", "Distinct in / out buzz", $settings.hapticCuesEnabled)
-
-                        InstrumentLabel("POSITION").padding(.top, 28)
+                        InstrumentLabel("POSITION").padding(.top, 8)
                         positionSelector().padding(.top, 12)
                         Text("Keep the same position each day so trends stay comparable.")
                             .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint).padding(.top, 10)
 
                         InstrumentLabel("READING").padding(.top, 28)
                         toggleRow("Live preview", "Show R-R before the read starts", $settings.livePreviewEnabled)
-                        toggleRow("Guided breathing", "5s-in / 5s-out pacing + cues", $settings.guidedBreathingEnabled)
                         Button { editingDuration = true } label: {
                             infoRow("Morning length", ReadingLength.label(settings.morningReadingDurationSeconds))
                         }
@@ -33,7 +28,7 @@ struct ReadingOptionsView: View {
                         infoRow("End-of-reading sound", "Soft hand bell")
                         infoRow("Snapshot length", "1:00")
 
-                        Text("Both reads use 5s-in / 5s-out resonance breathing (≈6 breaths/min).")
+                        Text("Breathe naturally for both reads — no paced breathing. Consistent time, posture, and natural breath keep your baseline comparable.")
                             .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
                             .padding(.top, 24)
                     }

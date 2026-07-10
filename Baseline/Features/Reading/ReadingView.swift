@@ -4,7 +4,7 @@ import UIKit
 
 /// The full HRV reading flow in the Instrument design system. The Start screen is a focused,
 /// connected monitor — short live-signal strip, a one-line device status, collapsed settings,
-/// and a clear call to action; tapping Start drops straight into the paced 5s/5s breathing read;
+/// and a clear call to action; tapping Start drops straight into the natural-breath read;
 /// the result shows HRV ms + 0–100 readiness + metrics, auto-saved.
 struct ReadingView: View {
     let type: ReadingType
@@ -51,7 +51,7 @@ struct ReadingView: View {
         }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
-            let engine = ReadingCues(voiceEnabled: settings.voiceCuesEnabled, hapticsEnabled: settings.hapticCuesEnabled)
+            let engine = ReadingCues()
             engine.prepare()
             cues = engine
             session.start()
@@ -63,8 +63,6 @@ struct ReadingView: View {
         }
         .onChange(of: session.phase) { _, phase in
             switch phase {
-            case .reading:
-                if settings.guidedBreathingEnabled { cues?.cue(for: .inhale) }
             case .complete:
                 cues?.complete()
                 if savedReading == nil, let result = session.result {
@@ -79,9 +77,6 @@ struct ReadingView: View {
             default:
                 break
             }
-        }
-        .onChange(of: session.breath.phase) { _, phase in
-            if settings.guidedBreathingEnabled { cues?.cue(for: phase) }
         }
     }
 

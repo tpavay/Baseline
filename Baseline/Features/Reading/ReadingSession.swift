@@ -17,8 +17,8 @@ struct BeatMark: Identifiable, Equatable, Sendable {
     let intervalMs: Int
 }
 
-/// Drives a single reading: connect the strap → (optional) live preview → paced 5s/5s breathing
-/// for the reading's duration, streaming the HR curve + live HRV (RMSSD, ms) and finalizing
+/// Drives a single reading: connect the strap → (optional) live preview → a quiet natural-breath
+/// read for the reading's duration, streaming the HR curve + live HRV (RMSSD, ms) and finalizing
 /// averages over the *reading* window (preview beats excluded). UI-state only — no SwiftUI, no
 /// persistence (the view turns `result` into a `Reading`). Uses the shared `BluetoothManager`.
 @MainActor
@@ -33,7 +33,6 @@ final class ReadingSession {
 
     private(set) var phase: Phase = .connecting
     private(set) var elapsed: TimeInterval = 0
-    private(set) var breath: BreathState = BreathingPacer.state(atElapsed: 0)
     private(set) var hrSeries: [HRSample] = []
     private(set) var beats: [BeatMark] = []
     private(set) var currentHRVms: Double?
@@ -123,11 +122,10 @@ final class ReadingSession {
         phase = .countdown
     }
 
-    /// Begin the paced reading — called when the countdown hits zero.
+    /// Begin the reading — called when the countdown hits zero.
     func beginReading() {
         startWindow()
         elapsed = 0
-        breath = BreathingPacer.state(atElapsed: 0)
         phase = .reading
     }
 
@@ -170,7 +168,6 @@ final class ReadingSession {
         case .reading:
             guard let phaseStart else { return false }
             elapsed = Date().timeIntervalSince(phaseStart)
-            breath = BreathingPacer.state(atElapsed: elapsed)
             ingestNewBeats(at: elapsed)
             updateLiveHRV()
             if elapsed >= duration {

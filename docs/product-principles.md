@@ -39,26 +39,31 @@ Every plan is traceable to the evidence, context, and rules that produced it. Tr
 - **Say:** "Zone 2 because your 7-day load is elevated, HRV is suppressed, and your Achilles constraint is active."
 - **Never:** an opaque "don't run today."
 
-### 8. Communicate uncertainty; never manufacture confidence
+### 8. Planned and performed work stay separate
+The plan is the intended training. The workout log is what actually happened. Baseline compares them and learns from the delta, but it does not overwrite the plan with actuals.
+- **Rules in:** accepted plan versions, workout logs, skipped work, substitutions, pain events, exercise notes, workout notes, and explicit replanning.
+- **Rules out:** silently replacing a planned threshold run with the shortened workout the athlete completed; losing why an exercise was skipped.
+
+### 9. Communicate uncertainty; never manufacture confidence
 When evidence is thin (first day, no HRV, no sleep, no workouts, no context), Baseline says so. Not-knowing is a first-class output.
 - **Affects:** AI prompts, recommendation rules, UI, onboarding, confidence, error handling.
 - **Rules out:** a confident-looking recommendation built on almost no evidence.
 
-### 9. Certainty = evidence available today
+### 10. Certainty = evidence available today
 Confidence reflects how much *useful evidence* exists right now — not merely that a permission was granted. More signals present → higher certainty.
 - **Rules out:** "Apple Health connected, therefore high confidence."
 
-### 10. Injuries are constraints, not just lower scores
+### 11. Injuries are constraints, not just lower scores
 A constraint shapes the plan directly and can gate it even on a high-readiness day (readiness 88 + Achilles pain → hard upper-body/bike, avoid running/jumping). Constraints override the score-derived choice and contribute the avoid list.
 - **Rules out:** treating an injury purely as a number that drags the score down and disappears into the average.
 
-### 11. Simple UI, complex backend
+### 12. Simple UI, complex backend
 The user sees a plan, its limiter, its certainty, and a way to add context. All complexity — HealthKit, load models, caps, extraction — hides behind that.
 
-### 12. Start hybrid-specific, design generic
+### 13. Start hybrid-specific, design generic
 The first experience is tuned for HYROX / hybrid athletes; the engines are goal-agnostic underneath so other athletes slot in later without a rewrite.
 
-### 13. Every engine is independently testable
+### 14. Every engine is independently testable
 Each engine has a single responsibility and can be tested on its own. External integrations (HealthKit, AI, Firebase, wearables) are **thin adapters around deterministic logic**, not woven through it.
 - **Rules in:** pure functions; unit-tested engines; swappable integrations.
 - **Rules out:** business logic embedded in views; AI calls mixed with scoring; HealthKit dependencies inside planning logic.

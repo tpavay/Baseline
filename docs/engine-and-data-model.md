@@ -6,11 +6,27 @@
 - **Reading** — a morning HRV capture + the subjective check.
 - **Exercise** — a catalog entry (a movement) with a logging type + tags + aliases.
 - **Routine** — a reusable, editable *template* (ordered exercises with targets). Created in-app or produced by import.
-- **Session** — a dated *instance* the athlete actually performs and logs (usually started from a Routine; can be ad-hoc). Source of truth for what was done.
+- **Planned Session** — a dated intended workout instance (usually started from a Routine; can be ad-hoc). Source of truth for what Baseline or the athlete meant to do.
+- **Workout Log / Performed Session** — the actual work performed: sets, reps, load, time, distance, pace, power, HR-zone history, skips, substitutions, notes, and pain events.
+- **Session** — shorthand only when the planned/performed distinction is obvious. In storage and engine code, keep the distinction explicit.
 - **Plan / Week** — Routines assigned to calendar days. This is what the engine reshuffles.
 
 ## The daily loop
-morning **Reading** → **readiness score** → **today's recommendation** (a Routine, proposed + editable) → **Session** (do it, live HR zones, log actuals) → **complete** (calendar + streak) → the log feeds tomorrow's readiness/recommendation.
+morning **Reading** → **readiness score** → **today's recommendation** (a planned Session, proposed + editable) → **start workout** → **log performance** (sets/reps/load/time/distance/pace/power + live HR zones) → **add notes/context** → **complete or modify session** → **recompute training state** → **adapt the remaining plan**.
+
+## Planned vs performed work
+Baseline must preserve two records:
+- **Planned work:** the intended session and exercise prescriptions, versioned through the Plan Repository.
+- **Performed work:** what the athlete actually did, versioned through the Workout Log.
+
+The performed log never overwrites the plan. It links back to the plan and records deltas: completed as prescribed, load changed, skipped, substituted, stopped early, moved later, or replaced after a constraint appeared. Those deltas feed the Learning Engine and can trigger explicit plan revisions.
+
+Examples:
+- Planned `4 x 5 min threshold + 6 x 30 sec speed`; performed threshold completed, speed skipped because calf pain appeared.
+- Deadlift logged as `3 x 8 @ 185/205/225 lb`, with an exercise note: grip weak.
+- Max-effort SkiErg pulls logged as `15 reps`, average pace `1:33/500m`, best pace `1:29/500m`.
+
+Conversation is an interface over this model. Natural language like "my calf hurt so I skipped the speed work; move it later this week" becomes validated tool calls such as `skipExercise`, `createConstraint`, and `moveExerciseToLaterDate`, followed by a recompute.
 
 ## The recovery engine (applies in layers)
 Job: answer "what should I train today, given my recovery?" — automating the week-reordering a coach otherwise hands back. It works at three levels depending on how much structure the content carries:
@@ -99,12 +115,16 @@ A prebuilt **"HYROX Simulation"** Routine (the full fixed sequence) ships as con
 - **Exercise** — catalog entry (schema above).
 - **Routine** — title, tags, source (created/import), ordered `RoutineItem`s; day-type / dose metadata when known.
 - **RoutineItem** — exercise ref, targets (sets/reps/load/time/distance/zone/intent), notes.
-- **Session** — date, source Routine ref, status, ordered `SessionItem`s, HR series + per-segment zone summary, completion.
-- **SessionItem / SetLog** — actuals per the exercise's logging type.
-- **Plan** — date → Routine assignments (the reshuffle surface).
+- **PlannedSession** — date, source Routine ref, status, ordered `PlannedSessionItem`s, accepted plan version, intended prescription.
+- **PlannedSessionItem** — exercise ref, targets (sets/reps/load/time/distance/zone/intent), rest, prescription notes.
+- **WorkoutLog / PerformedSession** — source PlannedSession ref (optional for ad-hoc), start/end, status, ordered performed exercises, HR series + per-segment zone summary, completion.
+- **PerformedExercise / SetLog / IntervalLog** — actuals per the exercise's logging type, plus completion state (completed/skipped/substituted/modified), notes, and reason.
+- **WorkoutEvent** — pain event, constraint update, substitution, skipped work, moved work, pause/resume, note.
+- **Plan** — date → planned Session assignments (the reshuffle surface).
 - **HRZoneConfig** — method (HRR / LTHR), max HR, resting HR, zone bounds, source (estimated/observed/tested).
 
 ## Architecture notes
 - Sensor capture behind a service layer; HRV + readiness + zone math are **pure functions** (unit-testable, no hardware/view tree).
+- Workout execution is its own engine boundary: start planned/ad-hoc workout, log actuals, record modifications, update constraints, recompute remaining work, and request versioned plan revisions from the Plan Engine.
 - Content-driven: catalog, curated extension, built-in library, and any authored programs are **hosted/versioned content** — adding content never requires an app release.
 - Firebase Auth + Firestore from day one (same setup as Ascend). Firestore schema changes follow the strict-rules update order (see `CLAUDE.md`).

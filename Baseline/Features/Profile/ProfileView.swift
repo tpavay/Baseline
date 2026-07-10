@@ -41,10 +41,8 @@ struct ProfileView: View {
                                 subtitle: "Dark", destination: .soon)
                         }
 
-                        group("Reading cues") {
+                        group("Reading") {
                             cardToggle("Live preview", isOn: $settings.livePreviewEnabled)
-                            cardToggle("Voice", isOn: $settings.voiceCuesEnabled)
-                            cardToggle("Haptics", isOn: $settings.hapticCuesEnabled)
                         }
 
                         Button(role: .destructive) { authVM.signOut() } label: {
