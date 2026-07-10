@@ -103,6 +103,9 @@ final class AgentTools {
         guard let health, health.isAvailable else {
             return Response(text: "Apple Health isn't available on this device, so I can't pull sleep.", decision: nil, plan: nil)
         }
+        guard health.requested else {
+            return Response(text: "Apple Health isn't set up yet, so there's nothing to read — that's different from the athlete having no sleep logged. Offer to connect it with open_apple_health_setup.", decision: nil, plan: nil)
+        }
         let when = nightsAgo == 0 ? "last night" : "\(nightsAgo) night\(nightsAgo == 1 ? "" : "s") ago"
         guard let s = await health.sleepSummary(nightsAgo: nightsAgo) else {
             return Response(text: "Apple Health has no sleep recorded for \(when).", decision: nil, plan: nil)
@@ -134,6 +137,9 @@ final class AgentTools {
     private func retrieveRestingHR(days: Int) async -> Response {
         guard let health, health.isAvailable else {
             return Response(text: "Apple Health isn't available on this device, so I can't pull resting heart rate.", decision: nil, plan: nil)
+        }
+        guard health.requested else {
+            return Response(text: "Apple Health isn't set up yet, so there's no resting heart rate to read (NOT 'no data'). Offer to connect it with open_apple_health_setup.", decision: nil, plan: nil)
         }
         let d = max(1, min(days, 90))
         let samples = await health.restingHeartRate(days: d)
@@ -253,7 +259,9 @@ final class AgentTools {
     /// and never over-claims (e.g. promising resting-HR retrieval it has no tool for).
     private func retrievableLine() -> String {
         var items = ["recent HRV readings (get_hrv_readings)"]
-        if let health, health.isAvailable {
+        // Health-backed retrieval is only real once setup was requested — advertising it before then
+        // would let the model claim "no sleep recorded" when the truth is "not connected".
+        if let health, health.isAvailable, health.requested {
             items.insert("sleep for a recent night (get_sleep)", at: 0)
             items.append("resting heart-rate trend (get_resting_heart_rate)")
         }
@@ -268,9 +276,9 @@ final class AgentTools {
             if !health.isAvailable {
                 caps.append("Apple Health not available on this device")
             } else if health.requested {
-                caps.append("Apple Health supported and connected")
+                caps.append("Apple Health access set up (Apple doesn't reveal read-grant status, so data may still be empty)")
             } else {
-                caps.append("Apple Health supported but NOT connected — call open_apple_health_setup to connect it (imports sleep + resting HR, raises certainty)")
+                caps.append("Apple Health supported but not set up — call open_apple_health_setup to connect it (imports sleep + resting HR, raises certainty)")
             }
         }
         caps.append("HRV reading supported via chest strap or phone camera\(hrvConfigured ? " (set up)" : " (not set up yet)") — a 2:30 morning reading on the Today screen adds autonomic evidence")

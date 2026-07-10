@@ -78,6 +78,20 @@ struct AgentToolsTests {
         #expect(!noHealth.localizedCaseInsensitiveContains("get_resting_heart_rate"))
     }
 
+    @Test func healthPresentButNotSetUpNeitherAdvertisesNorConflates() async {
+        let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let health = HealthService(defaults: UserDefaults(suiteName: "hk-\(UUID().uuidString)")!)  // requested == false
+        let t = AgentTools(store: store, base: DecisionEngine.Inputs(), health: health)
+        // Not advertised until setup is requested.
+        let summary = t.contextSummary()
+        #expect(!summary.localizedCaseInsensitiveContains("get_sleep"))
+        #expect(!summary.localizedCaseInsensitiveContains("get_resting_heart_rate"))
+        // Retrieval reports "not set up" — never conflated with "no data recorded".
+        let resp = await t.execute(.getSleep(nightsAgo: 0))
+        #expect(resp.text.localizedCaseInsensitiveContains("set up"))
+        #expect(!resp.text.localizedCaseInsensitiveContains("no sleep recorded"))
+    }
+
     @Test func contextSummaryReportsCapabilities() {
         // With a health service present, the model is told Apple Health status + the connect action.
         let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
