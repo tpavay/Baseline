@@ -150,6 +150,37 @@ For a threshold run:
 
 Mixing these together makes the product hard to trust. Authored guidance should not be polluted by one day's execution notes, and athlete notes should not disappear into generic coaching copy.
 
+## Exercise identity, metrics, and units
+Separate an exercise's **identity** from **how it's logged in a specific workout**. Three layers:
+
+```
+Exercise Definition   → stable identity + the metrics it *supports* + an activity category + aliases
+Planned Exercise      → which of those metrics are *selected* to log, and the preferred display units
+Performed Exercise    → the actual values, stored in canonical units
+```
+
+- **Exercise Definition** is global and stable — `Stationary Bike`, `Outdoor Bike`, `BikeErg`, `Elliptical` are distinct identities. It declares the metrics the modality *can* carry (e.g. duration · distance · calories · avg HR · HR-zone time · cadence · resistance) and belongs to an **activity category** (e.g. *cycling*). Changing how one workout logs it never edits this definition.
+- **Planned Exercise** picks the subset of metrics to show and log for *this instance*, plus display-unit preferences. A bike session might log **duration only**, or **duration + distance (km)**, or **duration + calories + avg HR**. **Unselected metrics must not appear as empty fields** — don't show a blank miles field just because the modality supports distance.
+- **Performed Exercise** stores actuals in **canonical units** (distance → meters, load → kilograms, time → seconds, energy → calories). Display units convert at read time, so `10 km` / `6.21 mi` / `10 000 m` are one underlying value and switching display never corrupts history.
+
+**Scope of a change — the agent must distinguish four scopes and ask when unclear:**
+- *this workout instance* → `updateLoggingConfig(plannedExerciseId, …)`
+- *future defaults for this exercise* → `updateExercisePreference(exerciseId, distanceUnit: km)` ("use km for Stationary Bike from now on")
+- *this exercise* vs *all cycling* → identity vs category.
+
+**Identity vs category — you need both.** Stable identities answer precise questions ("stationary-bike miles"); categories answer aggregate ones ("total cycling this week" → sum over Stationary Bike + Outdoor Bike + BikeErg). Without categories the broad question is hard; without identities the precise one is unreliable.
+
+**Aliases** map casual language to a stable id — "spin bike", "indoor bike", "exercise bike" → `Stationary Bike` — and the agent clarifies when the distinction matters ("a standard stationary bike or a BikeErg?").
+
+**History** is then queryable per identity, per metric, per unit, or per category:
+```
+getExerciseHistory(exerciseId: stationaryBike, metric: distance, unit: miles)
+getCategoryHistory(category: cycling, dateRange: thisWeek)
+  → Stationary Bike 18.4 mi · Outdoor Bike 27.1 mi · BikeErg 12.6 mi · Total 58.1 mi
+```
+
+*Status: design. Today the model stores raw per-set fields (reps/load/duration/distance) with no definition catalog, selectable metrics, display units, categories, or aliases yet — those are the build sequence in `docs/technical-reference.md`.*
+
 ## Lifecycle
 
 ### Morning Decision

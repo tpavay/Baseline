@@ -32,6 +32,8 @@ struct AddExerciseSheet: View {
     @State private var sets = 3
     @State private var reps = ""
     @State private var load = ""
+    @State private var duration = ""
+    @State private var distance = ""
 
     var body: some View {
         SheetScaffold(title: "Add exercise", canSave: blockID != nil && !name.trimmed.isEmpty, onSave: save, onCancel: { dismiss() }) {
@@ -47,6 +49,8 @@ struct AddExerciseSheet: View {
                 labeled("Sets") { Stepper("\(sets)", value: $sets, in: 1...20).foregroundStyle(BaselineColor.textHi) }
                 SheetField("Reps (optional)", text: $reps, prompt: "8", keyboard: .numberPad)
                 SheetField("Load (optional)", text: $load, prompt: "60", keyboard: .decimalPad)
+                SheetField("Duration sec (optional)", text: $duration, prompt: "3600", keyboard: .numberPad)
+                SheetField("Distance m (optional)", text: $distance, prompt: "150", keyboard: .numberPad)
             }
         }
         .onAppear { blockID = preferredBlock ?? blocks.first?.id }
@@ -55,7 +59,9 @@ struct AddExerciseSheet: View {
     private func save() {
         guard let blockID else { return }
         var ex = PlannedExercise(exerciseName: name.trimmed)
-        ex.prescription.sets = (0..<max(1, sets)).map { _ in PlannedSet(reps: Int(reps), load: Double(load)) }
+        ex.prescription.sets = (0..<max(1, sets)).map { _ in
+            PlannedSet(reps: Int(reps), load: Double(load), duration: Int(duration), distance: Double(distance))
+        }
         onSave(blockID, ex); dismiss()
     }
 }

@@ -93,7 +93,8 @@ final class WorkoutStore {
 
     @discardableResult
     func addExercise(name: String, toBlockNamed block: String,
-                     sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?) -> EditOutcome {
+                     sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?,
+                     distanceMeters: Double? = nil) -> EditOutcome {
         guard var w = current else { return .notFound("There's no workout yet — create one first.") }
         let blockID: UUID
         switch resolveBlock(block, in: w) {
@@ -104,7 +105,7 @@ final class WorkoutStore {
         let count = max(1, sets ?? 1)
         var exercise = PlannedExercise(exerciseName: name)
         exercise.prescription.sets = (0..<count).map { _ in
-            PlannedSet(reps: clampReps(reps), load: clampLoad(load), duration: clampDuration(durationSeconds))
+            PlannedSet(reps: clampReps(reps), load: clampLoad(load), duration: clampDuration(durationSeconds), distance: clampLoad(distanceMeters))
         }
         _ = w.addExercise(exercise, toBlock: blockID)
         current = w
@@ -144,7 +145,7 @@ final class WorkoutStore {
     /// Update one set (1-based `setNumber`) of a named exercise. Only the supplied fields change.
     @discardableResult
     func updateSet(exerciseNamed exercise: String, setNumber: Int,
-                   reps: Int?, load: Double?, durationSeconds: Int?, rpe: Double?) -> EditOutcome {
+                   reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double? = nil, rpe: Double?) -> EditOutcome {
         guard var w = current else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(exercise, in: w) {
@@ -161,6 +162,7 @@ final class WorkoutStore {
             if let reps { s.reps = clampReps(reps) }
             if let load { s.load = clampLoad(load) }
             if let durationSeconds { s.duration = clampDuration(durationSeconds) }
+            if let distanceMeters { s.distance = clampLoad(distanceMeters) }
             if let rpe { s.rpe = clampRPE(rpe) }
         }
         current = w

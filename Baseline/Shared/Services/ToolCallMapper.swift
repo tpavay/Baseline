@@ -58,7 +58,8 @@ enum ToolCallMapper {
             guard let block = input["block"] as? String, let name = input["name"] as? String else { return nil }
             return .addExercise(block: block, name: name,
                                 sets: intOrNil(input["sets"]), reps: intOrNil(input["reps"]),
-                                load: doubleOrNil(input["load"]), durationSeconds: intOrNil(input["duration_seconds"]))
+                                load: doubleOrNil(input["load"]), durationSeconds: intOrNil(input["duration_seconds"]),
+                                distanceMeters: doubleOrNil(input["distance_m"]))
         case "move_exercise":
             guard let exercise = input["exercise"] as? String, let toBlock = input["to_block"] as? String else { return nil }
             return .moveExercise(exercise: exercise, toBlock: toBlock)
@@ -69,7 +70,8 @@ enum ToolCallMapper {
             guard let exercise = input["exercise"] as? String, let n = intOrNil(input["set_number"]) else { return nil }
             return .updateSet(exercise: exercise, setNumber: n,
                               reps: intOrNil(input["reps"]), load: doubleOrNil(input["load"]),
-                              durationSeconds: intOrNil(input["duration_seconds"]), rpe: doubleOrNil(input["rpe"]))
+                              durationSeconds: intOrNil(input["duration_seconds"]),
+                              distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]))
         case "get_current_workout":
             return .getCurrentWorkout
         default:

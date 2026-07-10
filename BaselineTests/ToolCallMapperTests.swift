@@ -24,12 +24,12 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", goal: nil, replaceExisting: false))
         #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "replace_existing": true]) == .createWorkout(title: "Push", goal: nil, replaceExisting: true))
         #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength"]) == .addBlock(name: "Strength", intent: nil))
-        #expect(ToolCallMapper.map(name: "add_exercise", input: ["block": "Strength", "name": "Bench", "sets": 3])
-                == .addExercise(block: "Strength", name: "Bench", sets: 3, reps: nil, load: nil, durationSeconds: nil))
+        #expect(ToolCallMapper.map(name: "add_exercise", input: ["block": "Stations", "name": "Overhead carry", "distance_m": 150])
+                == .addExercise(block: "Stations", name: "Overhead carry", sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150))
         #expect(ToolCallMapper.map(name: "move_exercise", input: ["exercise": "Bench", "to_block": "Warm-up"])
                 == .moveExercise(exercise: "Bench", toBlock: "Warm-up"))
-        #expect(ToolCallMapper.map(name: "update_set", input: ["exercise": "Bench", "set_number": 2, "load": 70])
-                == .updateSet(exercise: "Bench", setNumber: 2, reps: nil, load: 70, durationSeconds: nil, rpe: nil))
+        #expect(ToolCallMapper.map(name: "update_set", input: ["exercise": "Row", "set_number": 1, "distance_m": 1000])
+                == .updateSet(exercise: "Row", setNumber: 1, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 1000, rpe: nil))
         #expect(ToolCallMapper.map(name: "get_current_workout", input: [:]) == .getCurrentWorkout)
         #expect(ToolCallMapper.map(name: "create_workout", input: [:]) == nil)   // missing title → rejected
     }

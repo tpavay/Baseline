@@ -22,7 +22,7 @@ struct AgentToolsTests {
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
         t.dispatch(.addBlock(name: "Strength", intent: nil))
-        let r = t.dispatch(.addExercise(block: "Strength", name: "Bench press", sets: 3, reps: 8, load: 60, durationSeconds: nil))
+        let r = t.dispatch(.addExercise(block: "Strength", name: "Bench press", sets: 3, reps: 8, load: 60, durationSeconds: nil, distanceMeters: nil))
         #expect(r.text.localizedCaseInsensitiveContains("bench press"))       // reply echoes the updated workout
         #expect(wk.current?.allExercises.first?.exerciseName == "Bench press")
         #expect(t.dispatch(.getCurrentWorkout).text.localizedCaseInsensitiveContains("strength"))

@@ -90,6 +90,16 @@ struct WorkoutStoreTests {
         #expect(bench.prescription.sets.first?.rpe == 10)   // clamped to 0…10
     }
 
+    @Test func distanceIsStoredInMetersNotTheName() {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        s.addBlock(name: "Stations", intent: nil)
+        // "150m overhead carry" — distance is a real metric, not encoded in the name.
+        #expect(s.addExercise(name: "Overhead carry", toBlockNamed: "Stations", sets: 1, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150).succeeded)
+        #expect(s.current?.allExercises.first?.prescription.sets.first?.distance == 150)
+        #expect(s.current?.allExercises.first?.exerciseName == "Overhead carry")
+    }
+
     @Test func createStampsTodayAndClearsLog() {
         let s = store()
         s.create(title: "a", goal: nil)

@@ -34,10 +34,10 @@ final class AgentTools {
         // Workout editing — build/edit today's structured workout (name-resolved). See WorkoutStore.
         case createWorkout(title: String, goal: String?, replaceExisting: Bool)
         case addBlock(name: String, intent: String?)
-        case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?)
+        case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?)
         case moveExercise(exercise: String, toBlock: String)
         case removeExercise(exercise: String)
-        case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, rpe: Double?)
+        case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
         case getCurrentWorkout
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
@@ -65,10 +65,10 @@ final class AgentTools {
             case .getRestingHeartRate(let d): return "Retrieved resting HR (\(d)-day) from Apple Health"
             case .createWorkout(let t, _, _): return "Created workout: \(t)"
             case .addBlock(let n, _): return "Added block: \(n)"
-            case .addExercise(let b, let n, _, _, _, _): return "Added \(n) to \(b)"
+            case .addExercise(let b, let n, _, _, _, _, _): return "Added \(n) to \(b)"
             case .moveExercise(let e, let b): return "Moved \(e) → \(b)"
             case .removeExercise(let e): return "Removed \(e)"
-            case .updateSet(let e, let n, _, _, _, _): return "Updated set \(n) of \(e)"
+            case .updateSet(let e, let n, _, _, _, _, _): return "Updated set \(n) of \(e)"
             case .getCurrentWorkout: return "Read the current workout"
             }
         }
@@ -233,9 +233,9 @@ final class AgentTools {
                 return Response(text: "There's no workout yet — create one first.", decision: nil, plan: nil)
             }
             return workoutResponse(prefix: "Added block \"\(name)\".")
-        case .addExercise(let block, let name, let sets, let reps, let load, let dur):
+        case .addExercise(let block, let name, let sets, let reps, let load, let dur, let dist):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur),
+            return outcome(workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist),
                            success: "Added \(name) to \(block).")
         case .moveExercise(let exercise, let toBlock):
             guard let workouts else { return workoutUnavailable() }
@@ -244,9 +244,9 @@ final class AgentTools {
         case .removeExercise(let exercise):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.removeExercise(named: exercise), success: "Removed \(exercise).")
-        case .updateSet(let exercise, let n, let reps, let load, let dur, let rpe):
+        case .updateSet(let exercise, let n, let reps, let load, let dur, let dist, let rpe):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.updateSet(exerciseNamed: exercise, setNumber: n, reps: reps, load: load, durationSeconds: dur, rpe: rpe),
+            return outcome(workouts.updateSet(exerciseNamed: exercise, setNumber: n, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist, rpe: rpe),
                            success: "Updated set \(n) of \(exercise).")
         case .getCurrentWorkout:
             guard let workouts else { return workoutUnavailable() }

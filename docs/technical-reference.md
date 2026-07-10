@@ -80,6 +80,15 @@ Current implementation direction:
 - Action tools let Baseline *do*, not just describe: `open_apple_health_setup` presents the system Health permission sheet. Planned: `open_hrv_setup`, `open_settings_section` (need chat→screen navigation plumbing).
 - Rule: speak as the product; never punt to "support" for built-in functionality; only say something is unavailable when capability state says so.
 
+## Metrics, Units & Exercise Catalog (design → build sequence)
+Durable concept in `docs/engine-and-data-model.md` (three-layer identity/metrics/units model). Implementation:
+- **Canonical storage:** distance → meters, load → kilograms, time → seconds, energy → calories, pace/power where convertible. Display units convert at query/display time; never store display units, so switching miles↔km can't corrupt history.
+- **Exercise Definition catalog:** stable ids, supported-metric sets, activity category (cycling, running, erg, carry, …), and an alias map (`free-exercise-db` + curated extension, hosted/versioned).
+- **Per-instance logging config:** each Planned Exercise selects which supported metrics are visible + preferred display units. Unselected metrics render no field.
+- **Preferences:** user-level per-exercise defaults ("use km for Stationary Bike from now on"), overridable per workout.
+- **New tools:** `update_logging_config(planned_exercise, enabled_metrics, distance_unit?)`, `update_exercise_preference(exercise_id, distance_unit?)`, plus history: `get_exercise_history(exercise_id, metric, unit)`, `get_category_history(category, date_range)`. The agent resolves aliases → ids and asks when scope (this workout / future default / this exercise / whole category) is ambiguous.
+- **Build order:** (1) canonical units + display conversion (done for distance/calories as raw metrics); (2) exercise-definition catalog + categories + aliases; (3) per-instance logging config + selectable fields in UI; (4) user preferences; (5) history persistence, then the history/category retrieval tools.
+
 ## Response Style By Intent
 The conversation should adapt presentation to the question's intent, not just retrieve and answer literally. Three kinds:
 - **Retrieval** ("what was my sleep / HRV?") → call the tool, then lead with **insight**, offer raw numbers second (don't dump telemetry like "76 ms, 140 ms"; interpret it).
