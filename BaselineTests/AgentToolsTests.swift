@@ -20,12 +20,26 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        t.dispatch(.createWorkout(title: "Push", goal: nil))
+        t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
         t.dispatch(.addBlock(name: "Strength", intent: nil))
         let r = t.dispatch(.addExercise(block: "Strength", name: "Bench press", sets: 3, reps: 8, load: 60, durationSeconds: nil))
         #expect(r.text.localizedCaseInsensitiveContains("bench press"))       // reply echoes the updated workout
         #expect(wk.current?.allExercises.first?.exerciseName == "Bench press")
         #expect(t.dispatch(.getCurrentWorkout).text.localizedCaseInsensitiveContains("strength"))
+    }
+
+    @Test func createWorkoutRefusesToReplaceWithoutConfirmation() {
+        let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
+        t.dispatch(.createWorkout(title: "First", goal: nil, replaceExisting: false))
+        // Second create without confirmation → refused; existing workout preserved.
+        let r = t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: false))
+        #expect(r.text.localizedCaseInsensitiveContains("already"))
+        #expect(wk.current?.title == "First")
+        // With confirmation → replaced.
+        t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: true))
+        #expect(wk.current?.title == "Second")
     }
 
     @Test func workoutEditWithoutStoreIsGraceful() {

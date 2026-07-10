@@ -62,9 +62,14 @@ final class ConversationService {
     /// tool-round exhaustion — the caller rolls the failed turn out of the transcript.
     @discardableResult
     private func runLoop() async -> Bool {
+        // Tools mutate local state (constraints, workout) before the model's follow-up reply. If that
+        // follow-up fails, the change is already committed — so report the deterministic tool result
+        // instead of a misleading "couldn't reach the coach" (which implies nothing happened).
+        var lastToolResult: String?
         for _ in 0..<maxToolRounds {
             guard let content = await callFunction() else {
-                log.append(Message(role: .baseline, text: "I couldn't reach the coach just now — try again in a moment."))
+                log.append(Message(role: .baseline, text: lastToolResult
+                    ?? "I couldn't reach the coach just now — try again in a moment."))
                 return false
             }
             transcript.append(["role": "assistant", "content": content])
@@ -99,6 +104,7 @@ final class ConversationService {
                 }
                 results.append(["type": "tool_result", "tool_use_id": tu.id, "content": resultText])
             }
+            lastToolResult = results.compactMap { $0["content"] as? String }.joined(separator: "\n")
             transcript.append(["role": "user", "content": results])
         }
         log.append(Message(role: .baseline, text: "Let's take that one step at a time — ask me again?"))

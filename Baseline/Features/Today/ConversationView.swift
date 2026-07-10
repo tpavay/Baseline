@@ -199,8 +199,13 @@ private struct StateInspectorView: View {
         }
     }
 
+    private var workoutTitle: String {
+        guard let d = workouts.current?.scheduledDate, !Calendar.current.isDateInToday(d) else { return "TODAY'S WORKOUT" }
+        return "WORKOUT · " + d.formatted(.dateTime.month().day())
+    }
+
     @ViewBuilder private var workoutSection: some View {
-        card("TODAY'S WORKOUT") {
+        card(workoutTitle) {
             if let w = workouts.current {
                 Text(w.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
                 if let g = w.goal { row("Goal", g) }

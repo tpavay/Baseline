@@ -32,7 +32,7 @@ final class AgentTools {
         case getHRVReadings(limit: Int)
         case getRestingHeartRate(days: Int)
         // Workout editing — build/edit today's structured workout (name-resolved). See WorkoutStore.
-        case createWorkout(title: String, goal: String?)
+        case createWorkout(title: String, goal: String?, replaceExisting: Bool)
         case addBlock(name: String, intent: String?)
         case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?)
         case moveExercise(exercise: String, toBlock: String)
@@ -63,7 +63,7 @@ final class AgentTools {
             case .getSleep(let n): return "Retrieved sleep (\(n == 0 ? "last night" : "\(n) nights ago")) from Apple Health"
             case .getHRVReadings(let l): return "Retrieved \(l) recent HRV readings"
             case .getRestingHeartRate(let d): return "Retrieved resting HR (\(d)-day) from Apple Health"
-            case .createWorkout(let t, _): return "Created workout: \(t)"
+            case .createWorkout(let t, _, _): return "Created workout: \(t)"
             case .addBlock(let n, _): return "Added block: \(n)"
             case .addExercise(let b, let n, _, _, _, _): return "Added \(n) to \(b)"
             case .moveExercise(let e, let b): return "Moved \(e) → \(b)"
@@ -220,8 +220,11 @@ final class AgentTools {
             }
             Task { await health.requestReadAccess() }
             return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
-        case .createWorkout(let title, let goal):
+        case .createWorkout(let title, let goal, let replace):
             guard let workouts else { return workoutUnavailable() }
+            if let existing = workouts.current, !replace {
+                return Response(text: "There's already a workout (\"\(existing.title)\"). Creating a new one will replace it and discard the current one — confirm and I'll do it.", decision: nil, plan: nil)
+            }
             workouts.create(title: title, goal: goal)
             return workoutResponse(prefix: "Created workout \"\(title)\".")
         case .addBlock(let name, let intent):

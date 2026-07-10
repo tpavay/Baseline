@@ -21,7 +21,8 @@ struct ToolCallMapperTests {
     }
 
     @Test func mapsWorkoutTools() {
-        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", goal: nil))
+        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", goal: nil, replaceExisting: false))
+        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "replace_existing": true]) == .createWorkout(title: "Push", goal: nil, replaceExisting: true))
         #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength"]) == .addBlock(name: "Strength", intent: nil))
         #expect(ToolCallMapper.map(name: "add_exercise", input: ["block": "Strength", "name": "Bench", "sets": 3])
                 == .addExercise(block: "Strength", name: "Bench", sets: 3, reps: nil, load: nil, durationSeconds: nil))

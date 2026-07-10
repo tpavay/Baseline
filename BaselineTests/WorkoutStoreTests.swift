@@ -75,6 +75,33 @@ struct WorkoutStoreTests {
         #expect(s2.current?.allExercises.first?.prescription.sets.first?.load == 100)
     }
 
+    @Test func clampsNegativeNumbersAndRpe() {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        s.addBlock(name: "A", intent: nil)
+        s.addExercise(name: "Squat", toBlockNamed: "A", sets: 1, reps: -5, load: -100, durationSeconds: -30)
+        let set = s.current!.allExercises.first!.prescription.sets.first!
+        #expect(set.reps == 0)
+        #expect(set.load == 0)
+        #expect(set.duration == 0)
+        s.addExercise(name: "Bench", toBlockNamed: "A", sets: 1, reps: 5, load: 60, durationSeconds: nil)
+        #expect(s.updateSet(exerciseNamed: "Bench", setNumber: 1, reps: nil, load: nil, durationSeconds: nil, rpe: 99).succeeded)
+        let bench = s.current!.allExercises.first { $0.exerciseName == "Bench" }!
+        #expect(bench.prescription.sets.first?.rpe == 10)   // clamped to 0…10
+    }
+
+    @Test func createStampsTodayAndClearsLog() {
+        let s = store()
+        s.create(title: "a", goal: nil)
+        s.addBlock(name: "A", intent: nil)
+        s.startWorkout()
+        #expect(s.currentLog != nil)
+        #expect(s.currentIsForToday)
+        #expect(s.current?.scheduledDate != nil)
+        s.create(title: "b", goal: nil)                     // replacing clears the prior performed log
+        #expect(s.currentLog == nil)
+    }
+
     @Test func persistsAcrossInstances() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
         let s1 = WorkoutStore(defaults: d)

@@ -49,7 +49,8 @@ enum ToolCallMapper {
             return .getRestingHeartRate(days: intOrNil(input["days"]) ?? 7)
         case "create_workout":
             guard let title = input["title"] as? String else { return nil }
-            return .createWorkout(title: title, goal: input["goal"] as? String)
+            return .createWorkout(title: title, goal: input["goal"] as? String,
+                                  replaceExisting: boolOrNil(input["replace_existing"]) ?? false)
         case "add_block":
             guard let name = input["name"] as? String else { return nil }
             return .addBlock(name: name, intent: input["intent"] as? String)

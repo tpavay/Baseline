@@ -68,6 +68,7 @@ struct Workout: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var goal: String?
+    var scheduledDate: Date?          // the day this workout is for; nil = legacy/unstamped
     var blocks: [WorkoutBlock] = []
 }
 

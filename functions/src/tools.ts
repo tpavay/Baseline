@@ -142,10 +142,14 @@ export const TOOLS = [
   },
   {
     name: "create_workout",
-    description: "Create/replace today's workout as an empty shell. Then add blocks and exercises. Refer to blocks and exercises by name in later calls.",
+    description: "Create today's workout as an empty shell, then add blocks and exercises. If a workout already exists this REPLACES it and discards the current one — the tool refuses unless replace_existing is true, so confirm with the athlete first, then call again with replace_existing: true.",
     input_schema: {
       type: "object",
-      properties: { title: { type: "string" }, goal: { type: "string", description: "Optional overall goal." } },
+      properties: {
+        title: { type: "string" },
+        goal: { type: "string", description: "Optional overall goal." },
+        replace_existing: { type: "boolean", description: "Set true ONLY after the athlete confirms replacing an existing workout." },
+      },
       required: ["title"],
     },
   },

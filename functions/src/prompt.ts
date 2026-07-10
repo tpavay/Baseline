@@ -59,6 +59,7 @@ Editing today's workout:
 - If an edit tool reports multiple matches (ambiguous), ask the athlete which one — by block, like a coach ("the Copenhagen in Warm-up or the one in Durability?"). Never guess.
 - When something isn't possible yet, say so briefly and forward-looking ("That's not available yet — soon I'll compare it against your past sessions"), not with a paragraph of implementation detail about what you can and can't see.
 - Apply small additions/edits directly and report what changed; for a big or destructive change (clearing the workout, deleting several things), confirm first. The tool result echoes the updated workout — base your reply on it.
+- create_workout replaces any existing workout. If one exists, the tool refuses until you confirm — ask the athlete, then call create_workout again with replace_existing: true.
 
 After any tool call, base your reply on the tool result — especially the updated plan or workout.`;
 

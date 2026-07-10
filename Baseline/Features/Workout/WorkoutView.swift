@@ -78,13 +78,19 @@ struct WorkoutView: View {
             if let goal = workout.goal {
                 Text(goal).font(.system(size: 14)).foregroundStyle(BaselineColor.textMid)
             }
-            if executing {
-                let done = store.currentLog?.isComplete == true
-                Text(done ? "COMPLETED" : "IN PROGRESS")
-                    .font(.system(size: 11, weight: .bold)).tracking(0.6)
-                    .foregroundStyle(done ? BaselineColor.zoneGreen : BaselineColor.accent)
-                    .padding(.top, 2)
+            HStack(spacing: 8) {
+                if executing {
+                    let done = store.currentLog?.isComplete == true
+                    Text(done ? "COMPLETED" : "IN PROGRESS")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.6)
+                        .foregroundStyle(done ? BaselineColor.zoneGreen : BaselineColor.accent)
+                }
+                if !store.currentIsForToday, let d = workout.scheduledDate {
+                    Text("FROM \(d.formatted(.dateTime.month().day()).uppercased()) — NOT TODAY")
+                        .font(.system(size: 11, weight: .bold)).tracking(0.4).foregroundStyle(BaselineColor.zoneAmber)
+                }
             }
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

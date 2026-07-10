@@ -60,11 +60,28 @@ final class WorkoutStore {
         var succeeded: Bool { if case .done = self { return true } else { return false } }
     }
 
+    /// Whether the stored workout is for today. Unstamped (legacy) workouts count as today's; a
+    /// workout from an earlier day must not be presented as "today's".
+    var currentIsForToday: Bool {
+        guard let date = current?.scheduledDate else { return true }
+        return Calendar.current.isDateInToday(date)
+    }
+
     // MARK: - Tool-facing operations (name-resolved)
 
     func create(title: String, goal: String?) {
-        current = Workout(title: title, goal: goal)
+        var w = Workout(title: title, goal: goal)
+        w.scheduledDate = Calendar.current.startOfDay(for: .now)
+        current = w
+        currentLog = nil            // a new workout starts with a clean performed log
     }
+
+    // Numeric guards at the tool boundary — the model can propose anything; reps/load/duration can't
+    // go negative and RPE is 0–10.
+    private func clampReps(_ v: Int?) -> Int? { v.map { max(0, $0) } }
+    private func clampLoad(_ v: Double?) -> Double? { v.map { max(0, $0) } }
+    private func clampDuration(_ v: Int?) -> Int? { v.map { max(0, $0) } }
+    private func clampRPE(_ v: Double?) -> Double? { v.map { min(max($0, 0), 10) } }
 
     @discardableResult
     func addBlock(name: String, intent: String?) -> Bool {
@@ -86,7 +103,9 @@ final class WorkoutStore {
         }
         let count = max(1, sets ?? 1)
         var exercise = PlannedExercise(exerciseName: name)
-        exercise.prescription.sets = (0..<count).map { _ in PlannedSet(reps: reps, load: load, duration: durationSeconds) }
+        exercise.prescription.sets = (0..<count).map { _ in
+            PlannedSet(reps: clampReps(reps), load: clampLoad(load), duration: clampDuration(durationSeconds))
+        }
         _ = w.addExercise(exercise, toBlock: blockID)
         current = w
         return .done
@@ -139,10 +158,10 @@ final class WorkoutStore {
         }
         let setID = ex.prescription.sets[setNumber - 1].id
         _ = w.updateSet(setID) { s in
-            if let reps { s.reps = reps }
-            if let load { s.load = load }
-            if let durationSeconds { s.duration = durationSeconds }
-            if let rpe { s.rpe = rpe }
+            if let reps { s.reps = clampReps(reps) }
+            if let load { s.load = clampLoad(load) }
+            if let durationSeconds { s.duration = clampDuration(durationSeconds) }
+            if let rpe { s.rpe = clampRPE(rpe) }
         }
         current = w
         return .done
