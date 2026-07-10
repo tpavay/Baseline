@@ -147,7 +147,7 @@ struct WorkoutView: View {
                             Text(ex.exerciseName).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
                             statusChip(performed?.status)
                         }
-                        Text(prescriptionSummary(ex.prescription)).font(.system(size: 12)).foregroundStyle(BaselineColor.textMid)
+                        Text(prescriptionLine(ex)).font(.system(size: 12)).foregroundStyle(BaselineColor.textMid)
                     }
                 }
                 .buttonStyle(.plain)
@@ -162,7 +162,7 @@ struct WorkoutView: View {
         VStack(alignment: .leading, spacing: 10) {
             // Planned sets
             ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
-                Text("Set \(i + 1): \(setText(s))").font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+                Text("Set \(i + 1): \(metricText(s.values, for: ex))").font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
             }
             if executing {
                 // Logged sets
@@ -170,7 +170,7 @@ struct WorkoutView: View {
                     Text("LOGGED").font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundStyle(BaselineColor.zoneGreen)
                     ForEach(Array(logs.enumerated()), id: \.element.id) { i, s in
                         HStack {
-                            Text("• \(loggedText(s))").font(.system(size: 13)).foregroundStyle(BaselineColor.textHi)
+                            Text("• \(metricText(s.values, for: ex))").font(.system(size: 13)).foregroundStyle(BaselineColor.textHi)
                             Spacer()
                             Button { store.editLog { $0.removeSetLog(s.id) } } label: {
                                 Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
@@ -207,6 +207,7 @@ struct WorkoutView: View {
 
     private func exerciseMenu(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
         Menu {
+            Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName) } label: { Label("Configure metrics", systemImage: "slider.horizontal.3") }
             Button { sheet = .substitute(exerciseID: ex.id, current: ex.exerciseName) } label: { Label("Substitute", systemImage: "arrow.triangle.2.circlepath") }
             Menu {
                 ForEach(otherBlocks(than: block.id)) { b in
@@ -263,15 +264,29 @@ struct WorkoutView: View {
         case .addBlock:
             AddBlockSheet { name, intent in store.edit { $0.addBlock(name: name, intent: intent) } }
         case .addExercise(let blockID):
-            AddExerciseSheet(blocks: store.current?.blocks ?? [], preferredBlock: blockID) { blockID, ex in
-                store.edit { $0.addExercise(ex, toBlock: blockID) }
+            AddExerciseSheet(blocks: store.current?.blocks ?? [], preferredBlock: blockID) { targetBlockID, ex in
+                var e = ex
+                let def = ExerciseCatalog.resolve(e.exerciseName)      // manual add gets catalog identity too
+                e.definitionId = def.id == ExerciseCatalog.generic.id ? nil : def.id
+                if e.selectedMetrics.isEmpty { e.selectedMetrics = MetricType.allCases.filter { def.defaults.contains($0) } }
+                store.edit { $0.addExercise(e, toBlock: targetBlockID) }
             }
         case .substitute(let id, let current):
             SubstituteSheet(currentName: current) { name, prescription in
                 store.edit { $0.substituteExercise(id, withName: name, prescription: prescription) }
             }
         case .logSet(let id, let name):
-            LogSetSheet { set in store.editLog { $0.logSet(set, forPlanned: id, name: name) } }
+            let ex = store.current?.exercise(id)
+            let fields = (ex?.selectedMetrics ?? [.reps, .load]).map { ($0, store.displayUnit($0, for: ex ?? .init(exerciseName: name))) }
+            MetricLogSheet(title: "Log \(name)", fields: fields) { values in
+                store.editLog { $0.logSet(SetLog(values: values), forPlanned: id, name: name) }
+            }
+        case .configure(let id, let name):
+            if let ex = store.current?.exercise(id) {
+                MetricConfigSheet(exercise: ex, unitFor: { store.displayUnit($0, for: ex) }) { enabled, units in
+                    store.setLoggingConfig(exerciseNamed: name, enabled: enabled, units: units)
+                }
+            }
         }
     }
 
@@ -305,30 +320,25 @@ struct WorkoutView: View {
         }
     }
 
-    private func prescriptionSummary(_ p: Prescription) -> String {
-        guard !p.sets.isEmpty else { return "no sets" }
-        let s = p.sets.first!
-        let scheme = [s.reps.map { "\($0)" }, s.load.map { "@\(Int($0))" }].compactMap { $0 }.joined(separator: " ")
-        return "\(p.sets.count)×\(scheme.isEmpty ? "" : scheme)".trimmingCharacters(in: .whitespaces)
+    private func prescriptionLine(_ ex: PlannedExercise) -> String {
+        guard let first = ex.prescription.sets.first else { return "no sets" }
+        let body = metricText(first.values, for: ex)
+        return "\(ex.prescription.sets.count)× " + (body == "—" ? ex.selectedMetrics.map(\.label).joined(separator: " · ").lowercased() : body)
     }
 
-    private func setText(_ s: PlannedSet) -> String {
-        var b: [String] = []
-        if let r = s.reps { b.append("\(r) reps") }
-        if let l = s.load { b.append("\(Int(l)) load") }
-        if let d = s.duration { b.append("\(d)s") }
-        if let dist = s.distance { b.append("\(Int(dist))m") }
-        return b.isEmpty ? "—" : b.joined(separator: ", ")
+    /// Render a set's values in each metric's display unit (per this exercise's prefs). Only metrics
+    /// that actually have a value show — no blank fields.
+    private func metricText(_ values: MetricValues, for ex: PlannedExercise) -> String {
+        let parts = values.present.map { metric -> String in
+            let unit = store.displayUnit(metric, for: ex)
+            return format(MetricConvert.fromCanonical(values[metric]!, metric, to: unit), metric, unit)
+        }
+        return parts.isEmpty ? "—" : parts.joined(separator: ", ")
     }
 
-    private func loggedText(_ s: SetLog) -> String {
-        var b: [String] = []
-        if let r = s.reps { b.append("\(r) reps") }
-        if let l = s.load { b.append("\(Int(l)) load") }
-        if let d = s.duration { b.append("\(d)s") }
-        if let dist = s.distance { b.append("\(Int(dist))m") }
-        if let rpe = s.rpe { b.append("RPE \(Int(rpe))") }
-        return b.isEmpty ? "logged" : b.joined(separator: ", ")
+    private func format(_ value: Double, _ metric: MetricType, _ unit: MetricUnit) -> String {
+        let num = (metric.isInteger || value == value.rounded()) ? String(Int(value.rounded())) : String(format: "%.1f", value)
+        return unit.short.isEmpty ? "\(num) \(metric.label.lowercased())" : "\(num) \(unit.short)"
     }
 }
 
@@ -337,9 +347,11 @@ private enum WorkoutSheet: Identifiable {
     case addExercise(blockID: UUID?)
     case substitute(exerciseID: UUID, current: String)
     case logSet(exerciseID: UUID, name: String)
+    case configure(exerciseID: UUID, name: String)
 
     var id: String {
         switch self {
+        case .configure(let id, _): "config-\(id)"
         case .addBlock: "addBlock"
         case .addExercise(let b): "addExercise-\(b?.uuidString ?? "none")"
         case .substitute(let id, _): "sub-\(id)"

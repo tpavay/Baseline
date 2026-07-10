@@ -74,6 +74,20 @@ enum ToolCallMapper {
                               distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]))
         case "get_current_workout":
             return .getCurrentWorkout
+        case "update_logging_config":
+            guard let ex = input["exercise"] as? String else { return nil }
+            return .updateLoggingConfig(exercise: ex, enabledMetrics: metricList(input["enabled_metrics"]), units: unitOverrides(input))
+        case "update_exercise_preference":
+            guard let ex = input["exercise"] as? String else { return nil }
+            let scope: WorkoutStore.PreferenceScope = (input["scope"] as? String) == "category" ? .category : .exercise
+            return .updateExercisePreference(exercise: ex, scope: scope, units: unitOverrides(input), selectedMetrics: metricList(input["enabled_metrics"]))
+        case "set_metric_value":
+            guard let ex = input["exercise"] as? String, let n = intOrNil(input["set_number"]),
+                  let m = metric(input["metric"]), let v = doubleOrNil(input["value"]) else { return nil }
+            return .setMetricValue(exercise: ex, setNumber: n, metric: m, value: v, unit: unit(input["unit"]))
+        case "remove_metric":
+            guard let ex = input["exercise"] as? String, let m = metric(input["metric"]) else { return nil }
+            return .removeMetric(exercise: ex, metric: m)
         default:
             return nil
         }
@@ -87,6 +101,49 @@ enum ToolCallMapper {
         if let n = v as? NSNumber { return n.intValue }
         return nil
     }
+    // MARK: - Metric / unit parsing (tolerant of casual names the model may emit)
+
+    private static let metricAliases: [String: MetricType] = [
+        "reps": .reps, "rep": .reps, "load": .load, "weight": .load,
+        "duration": .duration, "time": .duration, "distance": .distance,
+        "calories": .calories, "cals": .calories, "cal": .calories,
+        "heartrate": .heartRate, "heart_rate": .heartRate, "hr": .heartRate, "avghr": .heartRate,
+        "hrzonetime": .heartRateZoneTime, "zonetime": .heartRateZoneTime,
+        "cadence": .cadence, "power": .power, "watts": .power, "pace": .pace, "rpe": .rpe,
+    ]
+    private static let unitAliases: [String: MetricUnit] = [
+        "m": .meters, "meter": .meters, "meters": .meters,
+        "km": .kilometers, "kilometer": .kilometers, "kilometers": .kilometers,
+        "mi": .miles, "mile": .miles, "miles": .miles,
+        "kg": .kilograms, "kilogram": .kilograms, "kilograms": .kilograms,
+        "lb": .pounds, "lbs": .pounds, "pound": .pounds, "pounds": .pounds,
+        "s": .seconds, "sec": .seconds, "second": .seconds, "seconds": .seconds,
+        "min": .minutes, "minute": .minutes, "minutes": .minutes,
+    ]
+    private static func normalize(_ s: String) -> String {
+        s.lowercased().filter { !" _-/".contains($0) }
+    }
+    private static func metric(_ v: Any?) -> MetricType? {
+        guard let s = v as? String else { return nil }
+        return metricAliases[normalize(s)] ?? MetricType(rawValue: s)
+    }
+    private static func metricList(_ v: Any?) -> [MetricType]? {
+        guard let arr = v as? [String] else { return nil }
+        return arr.compactMap { metric($0) }
+    }
+    private static func unit(_ v: Any?) -> MetricUnit? {
+        guard let s = v as? String else { return nil }
+        return unitAliases[normalize(s)] ?? MetricUnit(rawValue: s)
+    }
+    /// Build a metric→unit override dict from the tool's distance_unit / load_unit / duration_unit.
+    private static func unitOverrides(_ input: [String: Any]) -> [MetricType: MetricUnit] {
+        var out: [MetricType: MetricUnit] = [:]
+        if let u = unit(input["distance_unit"]) { out[.distance] = u }
+        if let u = unit(input["load_unit"]) { out[.load] = u }
+        if let u = unit(input["duration_unit"]) { out[.duration] = u }
+        return out
+    }
+
     private static func doubleOrNil(_ v: Any?) -> Double? {
         if v == nil || v is NSNull { return nil }
         if let d = v as? Double { return d }

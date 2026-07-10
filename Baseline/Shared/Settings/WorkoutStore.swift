@@ -16,14 +16,38 @@ final class WorkoutStore {
     /// from `current` (the plan) — logging never mutates the plan.
     private(set) var currentLog: WorkoutLog? { didSet { persist(currentLog, Self.logKey) } }
 
+    /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
+    /// *future* instances, so "use miles for Stationary Bike from now on" doesn't touch today's.
+    struct ExercisePreferences: Codable, Equatable, Sendable {
+        var selectedByExercise: [String: [MetricType]] = [:]
+        var unitsByExercise: [String: [MetricType: MetricUnit]] = [:]
+        var unitsByCategory: [String: [MetricType: MetricUnit]] = [:]
+    }
+    enum PreferenceScope: String, Sendable { case exercise, category }
+
+    private(set) var preferences: ExercisePreferences { didSet { persist(preferences, Self.prefKey) } }
+
     private let defaults: UserDefaults
     private static let key = "workout.current"
     private static let logKey = "workout.currentLog"
+    private static let prefKey = "workout.preferences"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         current = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Workout.self, from: $0) }
         currentLog = defaults.data(forKey: Self.logKey).flatMap { try? JSONDecoder().decode(WorkoutLog.self, from: $0) }
+        preferences = defaults.data(forKey: Self.prefKey).flatMap { try? JSONDecoder().decode(ExercisePreferences.self, from: $0) } ?? ExercisePreferences()
+    }
+
+    /// The display unit for a metric on a planned exercise: this-instance override → per-exercise
+    /// preference → per-category preference → canonical.
+    func displayUnit(_ metric: MetricType, for ex: PlannedExercise) -> MetricUnit {
+        if let u = ex.displayUnits[metric] { return u }
+        if let id = ex.definitionId {
+            if let u = preferences.unitsByExercise[id]?[metric] { return u }
+            if let cat = ExerciseCatalog.definition(id: id)?.category.rawValue, let u = preferences.unitsByCategory[cat]?[metric] { return u }
+        }
+        return metric.canonicalUnit
     }
 
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
@@ -109,7 +133,8 @@ final class WorkoutStore {
         // plus any metric actually provided. Uncurated movements fall back to reps/load.
         let def = ExerciseCatalog.resolve(name)
         exercise.definitionId = def.id == ExerciseCatalog.generic.id ? nil : def.id
-        var selected = Set(def.defaults)
+        // A saved per-exercise metric preference wins over the catalog default for new instances.
+        var selected = Set(preferences.selectedByExercise[def.id] ?? def.defaults)
         if reps != nil { selected.insert(.reps) }
         if load != nil { selected.insert(.load) }
         if durationSeconds != nil { selected.insert(.duration) }
@@ -177,6 +202,104 @@ final class WorkoutStore {
             if let durationSeconds { s.duration = clampDuration(durationSeconds) }
             if let distanceMeters { s.distance = clampLoad(distanceMeters) }
             if let rpe { s.rpe = clampRPE(rpe) }
+        }
+        current = w
+        return .done
+    }
+
+    // MARK: - Logging configuration & values (metric system)
+
+    /// THIS WORKOUT: choose which metrics an exercise logs + per-instance unit overrides. Rejects
+    /// metrics the exercise doesn't support.
+    @discardableResult
+    func setLoggingConfig(exerciseNamed name: String, enabled: [MetricType]?, units: [MetricType: MetricUnit] = [:]) -> EditOutcome {
+        guard var w = current else { return .notFound("There's no workout yet.") }
+        let exID: UUID
+        switch resolveExercise(name, in: w) {
+        case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
+        case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
+        case .one(let id): exID = id
+        }
+        guard let ex = w.exercise(exID) else { return .notFound("I couldn't find \"\(name)\".") }
+        let requested = (enabled ?? []) + Array(units.keys)
+        if let bad = requested.first(where: { !ex.supportedMetrics.contains($0) }) {
+            return .notFound("\(ex.exerciseName) doesn't support \(bad.label.lowercased()).")
+        }
+        w.updateExercise(exID) { e in
+            if let enabled { e.selectedMetrics = MetricType.allCases.filter { enabled.contains($0) } }
+            for (metric, unit) in units where metric.displayUnits.contains(unit) { e.displayUnits[metric] = unit }
+        }
+        current = w
+        return .done
+    }
+
+    /// FUTURE DEFAULT: a user preference for an exercise identity (or its whole category). Applies to
+    /// new instances only — never the current workout.
+    @discardableResult
+    func setExercisePreference(exerciseNamed name: String, scope: PreferenceScope,
+                               units: [MetricType: MetricUnit] = [:], selected: [MetricType]? = nil) -> EditOutcome {
+        let def = ExerciseCatalog.resolve(name)
+        guard def.id != ExerciseCatalog.generic.id else {
+            return .notFound("I don't recognize \"\(name)\" as a known exercise to set a default for.")
+        }
+        if let bad = (Array(units.keys) + (selected ?? [])).first(where: { !def.supported.contains($0) }) {
+            return .notFound("\(def.name) doesn't support \(bad.label.lowercased()).")
+        }
+        switch scope {
+        case .exercise:
+            var u = preferences.unitsByExercise[def.id] ?? [:]
+            for (m, unit) in units where m.displayUnits.contains(unit) { u[m] = unit }
+            preferences.unitsByExercise[def.id] = u
+            if let selected { preferences.selectedByExercise[def.id] = MetricType.allCases.filter { selected.contains($0) } }
+        case .category:
+            var u = preferences.unitsByCategory[def.category.rawValue] ?? [:]
+            for (m, unit) in units where m.displayUnits.contains(unit) { u[m] = unit }
+            preferences.unitsByCategory[def.category.rawValue] = u
+        }
+        return .done
+    }
+
+    /// Set one metric's value on a planned set (value given in `unit`, stored canonically). Ensures
+    /// the metric is selected/visible. Rejects unsupported metrics.
+    @discardableResult
+    func setMetricValue(exerciseNamed name: String, setNumber: Int, metric: MetricType, value: Double, unit: MetricUnit?) -> EditOutcome {
+        guard var w = current else { return .notFound("There's no workout yet.") }
+        let exID: UUID
+        switch resolveExercise(name, in: w) {
+        case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
+        case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
+        case .one(let id): exID = id
+        }
+        guard let ex = w.exercise(exID) else { return .notFound("I couldn't find \"\(name)\".") }
+        guard ex.supportedMetrics.contains(metric) else {
+            return .notFound("\(ex.exerciseName) doesn't support \(metric.label.lowercased()).")
+        }
+        guard setNumber >= 1, setNumber <= ex.prescription.sets.count else {
+            return .notFound("Set \(setNumber) doesn't exist for \(ex.exerciseName).")
+        }
+        let canonical = max(0, MetricConvert.toCanonical(value, metric, from: unit ?? metric.canonicalUnit))
+        w.updateExercise(exID) { e in
+            e.prescription.sets[setNumber - 1].values[metric] = canonical
+            if !e.selectedMetrics.contains(metric) { e.selectedMetrics = MetricType.allCases.filter { e.selectedMetrics.contains($0) || $0 == metric } }
+        }
+        current = w
+        return .done
+    }
+
+    /// Remove a metric from an exercise this workout — unselect it and clear its values.
+    @discardableResult
+    func removeMetric(exerciseNamed name: String, metric: MetricType) -> EditOutcome {
+        guard var w = current else { return .notFound("There's no workout yet.") }
+        let exID: UUID
+        switch resolveExercise(name, in: w) {
+        case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
+        case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
+        case .one(let id): exID = id
+        }
+        w.updateExercise(exID) { e in
+            e.selectedMetrics.removeAll { $0 == metric }
+            e.displayUnits[metric] = nil
+            for i in e.prescription.sets.indices { e.prescription.sets[i].values[metric] = nil }
         }
         current = w
         return .done

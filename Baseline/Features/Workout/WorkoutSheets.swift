@@ -95,33 +95,90 @@ struct SubstituteSheet: View {
     }
 }
 
-// MARK: - Log set
+// MARK: - Log set (dynamic — one field per selected metric, in its display unit)
 
-struct LogSetSheet: View {
-    let onSave: (SetLog) -> Void
+struct MetricLogSheet: View {
+    let title: String
+    let fields: [(metric: MetricType, unit: MetricUnit)]
+    let onSave: (MetricValues) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var reps = ""
-    @State private var load = ""
-    @State private var duration = ""
-    @State private var distance = ""
-    @State private var rpe = ""
+    @State private var text: [MetricType: String] = [:]
 
     var body: some View {
-        SheetScaffold(title: "Log set", canSave: hasAny, onSave: save, onCancel: { dismiss() }) {
-            Text("Enter what you actually did — any fields that apply.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-            SheetField("Reps", text: $reps, prompt: "8", keyboard: .numberPad)
-            SheetField("Load", text: $load, prompt: "225", keyboard: .decimalPad)
-            SheetField("Duration (sec)", text: $duration, prompt: "90", keyboard: .numberPad)
-            SheetField("Distance (m)", text: $distance, prompt: "500", keyboard: .numberPad)
-            SheetField("RPE", text: $rpe, prompt: "8", keyboard: .decimalPad)
+        SheetScaffold(title: title, canSave: hasAny, onSave: save, onCancel: { dismiss() }) {
+            Text("Enter what you actually did.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+            ForEach(fields, id: \.metric) { field in
+                SheetField(label(field.metric, field.unit), text: binding(field.metric), prompt: "",
+                           keyboard: field.metric.isInteger ? .numberPad : .decimalPad)
+            }
         }
     }
 
-    private var hasAny: Bool { [reps, load, duration, distance, rpe].contains { !$0.trimmed.isEmpty } }
+    private func binding(_ m: MetricType) -> Binding<String> {
+        Binding(get: { text[m] ?? "" }, set: { text[m] = $0 })
+    }
+    private func label(_ m: MetricType, _ u: MetricUnit) -> String {
+        u.short.isEmpty ? m.label : "\(m.label) (\(u.short))"
+    }
+    private var hasAny: Bool { fields.contains { !(text[$0.metric] ?? "").trimmed.isEmpty } }
 
     private func save() {
-        onSave(SetLog(reps: Int(reps), load: Double(load), duration: Int(duration), distance: Double(distance), rpe: Double(rpe)))
-        dismiss()
+        var values = MetricValues()
+        for (metric, unit) in fields {
+            if let d = Double((text[metric] ?? "").trimmed) {
+                values[metric] = max(0, MetricConvert.toCanonical(d, metric, from: unit))
+            }
+        }
+        onSave(values); dismiss()
+    }
+}
+
+// MARK: - Configure metrics (this workout: pick metrics + display units)
+
+struct MetricConfigSheet: View {
+    let exercise: PlannedExercise
+    let unitFor: (MetricType) -> MetricUnit
+    let onApply: (_ enabled: [MetricType], _ units: [MetricType: MetricUnit]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<MetricType>
+    @State private var units: [MetricType: MetricUnit]
+
+    init(exercise: PlannedExercise, unitFor: @escaping (MetricType) -> MetricUnit,
+         onApply: @escaping (_ enabled: [MetricType], _ units: [MetricType: MetricUnit]) -> Void) {
+        self.exercise = exercise; self.unitFor = unitFor; self.onApply = onApply
+        _selected = State(initialValue: Set(exercise.selectedMetrics))
+        var u: [MetricType: MetricUnit] = [:]
+        for m in exercise.supportedMetrics where m.displayUnits.count > 1 { u[m] = unitFor(m) }
+        _units = State(initialValue: u)
+    }
+
+    var body: some View {
+        SheetScaffold(title: exercise.exerciseName, canSave: true, onSave: apply, onCancel: { dismiss() }) {
+            Text("Log only what matters for this exercise — for this workout.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+            ForEach(exercise.supportedMetrics, id: \.self) { metric in
+                VStack(spacing: 8) {
+                    Toggle(metric.label, isOn: toggle(metric)).tint(BaselineColor.accent)
+                        .font(.system(size: 15)).foregroundStyle(BaselineColor.textHi)
+                    if selected.contains(metric), metric.displayUnits.count > 1 {
+                        Picker("Unit", selection: unitBinding(metric)) {
+                            ForEach(metric.displayUnits, id: \.self) { Text($0.short).tag($0) }
+                        }.pickerStyle(.segmented)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggle(_ m: MetricType) -> Binding<Bool> {
+        Binding(get: { selected.contains(m) }, set: { if $0 { selected.insert(m) } else { selected.remove(m) } })
+    }
+    private func unitBinding(_ m: MetricType) -> Binding<MetricUnit> {
+        Binding(get: { units[m] ?? m.canonicalUnit }, set: { units[m] = $0 })
+    }
+    private func apply() {
+        let enabled = MetricType.allCases.filter { selected.contains($0) }
+        let overrides = units.filter { selected.contains($0.key) }
+        onApply(enabled, overrides); dismiss()
     }
 }
 

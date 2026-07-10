@@ -111,6 +111,70 @@ struct WorkoutStoreTests {
         #expect(ex.selectedMetrics.contains(.distance))          // catalog default, even though only duration was passed
     }
 
+    // MARK: - Metric logging config, units, and scope (acceptance criteria)
+
+    /// Adds a Stationary Bike, then configures it to log duration only.
+    private func bikeStore() -> WorkoutStore {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        s.addBlock(name: "Cardio", intent: nil)
+        s.addExercise(name: "Stationary Bike", toBlockNamed: "Cardio", sets: 1, reps: nil, load: nil, durationSeconds: 3600, distanceMeters: nil)
+        return s
+    }
+
+    @Test func durationOnlyBikeHidesDistance() {
+        let s = bikeStore()
+        #expect(s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: [.duration]).succeeded)
+        let ex = s.current!.allExercises.first!
+        #expect(ex.selectedMetrics == [.duration])
+        #expect(!ex.selectedMetrics.contains(.distance))     // no blank distance field
+    }
+
+    @Test func switchingKmToMilesPreservesCanonicalMeters() {
+        let s = bikeStore()
+        s.setMetricValue(exerciseNamed: "Stationary Bike", setNumber: 1, metric: .distance, value: 10, unit: .kilometers)
+        let stored = s.current!.allExercises.first!.prescription.sets.first!.values[.distance]!
+        #expect(abs(stored - 10_000) < 0.001)                // stored canonical (meters)
+        // Switch the display unit to miles — the stored value is untouched.
+        s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: nil, units: [.distance: .miles])
+        let ex = s.current!.allExercises.first!
+        #expect(s.displayUnit(.distance, for: ex) == .miles)
+        #expect(abs(ex.prescription.sets.first!.values[.distance]! - 10_000) < 0.001)  // unchanged
+    }
+
+    @Test func exercisePreferenceAffectsFutureInstancesOnly() {
+        let s = bikeStore()
+        // "Use miles for Stationary Bike from now on."
+        #expect(s.setExercisePreference(exerciseNamed: "Stationary Bike", scope: .exercise, units: [.distance: .miles]).succeeded)
+        // Today's existing instance is NOT changed (no per-instance override set).
+        let existing = s.current!.allExercises.first!
+        #expect(existing.displayUnits[.distance] == nil)
+        // A NEW instance resolves to miles via the preference.
+        s.addBlock(name: "More", intent: nil)
+        s.addExercise(name: "Stationary Bike", toBlockNamed: "More", sets: 1, reps: nil, load: nil, durationSeconds: 600, distanceMeters: nil)
+        let fresh = s.current!.allExercises.last!
+        #expect(s.displayUnit(.distance, for: fresh) == .miles)
+    }
+
+    @Test func thisWorkoutConfigDoesNotMutateGlobalDefault() {
+        let s = bikeStore()
+        #expect(s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: [.duration]).succeeded)
+        // The global/default preference is untouched by a this-workout change.
+        #expect(s.preferences.selectedByExercise["stationary_bike"] == nil)
+    }
+
+    @Test func unsupportedMetricIsRejected() {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        s.addBlock(name: "Strength", intent: nil)
+        s.addExercise(name: "Deadlift", toBlockNamed: "Strength", sets: 3, reps: 5, load: 140, durationSeconds: nil, distanceMeters: nil)
+        // A deadlift has no pace.
+        guard case .notFound(let msg) = s.setMetricValue(exerciseNamed: "Deadlift", setNumber: 1, metric: .pace, value: 5, unit: nil) else {
+            Issue.record("expected rejection"); return
+        }
+        #expect(msg.localizedCaseInsensitiveContains("pace"))
+    }
+
     @Test func createStampsTodayAndClearsLog() {
         let s = store()
         s.create(title: "a", goal: nil)

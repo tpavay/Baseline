@@ -31,6 +31,7 @@ struct PlannedSet: Identifiable, Codable, Equatable, Sendable {
         values.setInt(.reps, reps); values[.load] = load; values.setInt(.duration, duration)
         values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
     }
+    init(values: MetricValues) { self.values = values }
 
     var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
     var load: Double? { get { values[.load] } set { values[.load] = newValue } }
@@ -61,10 +62,15 @@ struct CoachGuidance: Codable, Equatable, Sendable {
 struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var exerciseName: String
-    var definitionId: String?                   // stable catalog identity (nil = uncurated)
-    var selectedMetrics: [MetricType] = []      // which metrics this instance logs/shows
+    var definitionId: String?                       // stable catalog identity (nil = uncurated)
+    var selectedMetrics: [MetricType] = []          // which metrics this instance logs/shows
+    var displayUnits: [MetricType: MetricUnit] = [:] // this-instance unit overrides
     var prescription = Prescription()
     var guidance: CoachGuidance?
+
+    /// The catalog definition backing this exercise (generic when uncurated).
+    var definition: ExerciseDefinition { definitionId.flatMap(ExerciseCatalog.definition(id:)) ?? ExerciseCatalog.generic }
+    var supportedMetrics: [MetricType] { definition.supported }
 }
 
 /// A semantic group inside a workout (warm-up, strength, metcon, station work). Explains *purpose*;
@@ -221,6 +227,15 @@ extension Workout {
         return true
     }
 
+    @discardableResult
+    mutating func updateExercise(_ id: UUID, _ transform: (inout PlannedExercise) -> Void) -> Bool {
+        guard let loc = locate(id) else { return false }
+        transform(&blocks[loc.block].exercises[loc.exercise])
+        return true
+    }
+
+    func exercise(_ id: UUID) -> PlannedExercise? { allExercises.first { $0.id == id } }
+
     // MARK: - Lookup helpers
 
     private func locate(_ exerciseID: UUID) -> (block: Int, exercise: Int)? {
@@ -262,6 +277,7 @@ struct SetLog: Identifiable, Codable, Equatable, Sendable {
         values.setInt(.reps, reps); values[.load] = load; values.setInt(.duration, duration)
         values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
     }
+    init(plannedSetID: UUID? = nil, values: MetricValues) { self.plannedSetID = plannedSetID; self.values = values }
 
     var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
     var load: Double? { get { values[.load] } set { values[.load] = newValue } }

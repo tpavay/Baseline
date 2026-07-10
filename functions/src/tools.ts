@@ -141,6 +141,61 @@ export const TOOLS = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "update_logging_config",
+    description: "THIS WORKOUT ONLY: choose which metrics an exercise logs and its display units. Does NOT change future defaults. Metrics: reps, load, duration, distance, calories, heartRate, cadence, power, pace, rpe. Unsupported metrics are rejected.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string" },
+        enabled_metrics: { type: "array", items: { type: "string" }, description: "The full set of metrics to log for this exercise, e.g. ['duration','distance']." },
+        distance_unit: { type: "string", description: "m | km | mi" },
+        load_unit: { type: "string", description: "kg | lb" },
+        duration_unit: { type: "string", description: "sec | min" },
+      },
+      required: ["exercise"],
+    },
+  },
+  {
+    name: "update_exercise_preference",
+    description: "FUTURE DEFAULTS: save a preference for an exercise identity (or its whole category), applied to NEW instances only — e.g. 'use km for Stationary Bike from now on'. Never affects the current workout. Ask the athlete whether they mean just this exercise or all exercises in its category when unclear.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string", description: "Exercise name (resolved to a stable identity)." },
+        scope: { type: "string", enum: ["exercise", "category"], description: "'exercise' = this movement's default; 'category' = all e.g. cycling." },
+        enabled_metrics: { type: "array", items: { type: "string" } },
+        distance_unit: { type: "string" },
+        load_unit: { type: "string" },
+        duration_unit: { type: "string" },
+      },
+      required: ["exercise", "scope"],
+    },
+  },
+  {
+    name: "set_metric_value",
+    description: "Set one metric's value on a set of an exercise (value in the given unit; stored canonically). Adds the metric to what the exercise logs. Rejected if the exercise doesn't support the metric.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string" },
+        set_number: { type: "integer", minimum: 1 },
+        metric: { type: "string", description: "reps | load | duration | distance | calories | power | pace | heartRate | cadence | rpe" },
+        value: { type: "number" },
+        unit: { type: "string", description: "Unit of `value` (e.g. mi, km, kg, lb, min). Defaults to canonical." },
+      },
+      required: ["exercise", "set_number", "metric", "value"],
+    },
+  },
+  {
+    name: "remove_metric",
+    description: "Stop logging a metric for an exercise this workout (unselect it and clear its values).",
+    input_schema: {
+      type: "object",
+      properties: { exercise: { type: "string" }, metric: { type: "string" } },
+      required: ["exercise", "metric"],
+    },
+  },
+  {
     name: "create_workout",
     description: "Create today's workout as an empty shell, then add blocks and exercises. If a workout already exists this REPLACES it and discards the current one — the tool refuses unless replace_existing is true, so confirm with the athlete first, then call again with replace_existing: true.",
     input_schema: {

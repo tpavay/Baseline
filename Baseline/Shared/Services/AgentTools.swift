@@ -39,6 +39,11 @@ final class AgentTools {
         case removeExercise(exercise: String)
         case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
         case getCurrentWorkout
+        // Metric system: configure which metrics an exercise logs + display units, and set values.
+        case updateLoggingConfig(exercise: String, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
+        case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
+        case setMetricValue(exercise: String, setNumber: Int, metric: MetricType, value: Double, unit: MetricUnit?)
+        case removeMetric(exercise: String, metric: MetricType)
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
         /// inspector's activity feed, so the behind-the-scenes mutations are visible.
@@ -70,6 +75,10 @@ final class AgentTools {
             case .removeExercise(let e): return "Removed \(e)"
             case .updateSet(let e, let n, _, _, _, _, _): return "Updated set \(n) of \(e)"
             case .getCurrentWorkout: return "Read the current workout"
+            case .updateLoggingConfig(let e, _, _): return "Configured metrics for \(e)"
+            case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
+            case .setMetricValue(let e, let n, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
+            case .removeMetric(let e, let m): return "Removed \(m.label.lowercased()) from \(e)"
             }
         }
     }
@@ -251,6 +260,22 @@ final class AgentTools {
         case .getCurrentWorkout:
             guard let workouts else { return workoutUnavailable() }
             return Response(text: workouts.summary, decision: nil, plan: nil)
+        case .updateLoggingConfig(let ex, let enabled, let units):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(workouts.setLoggingConfig(exerciseNamed: ex, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
+        case .updateExercisePreference(let ex, let scope, let units, let selected):
+            guard let workouts else { return workoutUnavailable() }
+            let r = workouts.setExercisePreference(exerciseNamed: ex, scope: scope, units: units, selected: selected)
+            if case .done = r {
+                return Response(text: "Saved that as your \(scope == .category ? "category" : "default") preference for \(ex) — it applies to future \(ex) instances, not today's.", decision: nil, plan: nil)
+            }
+            return outcome(r, success: "")
+        case .setMetricValue(let ex, let n, let m, let v, let u):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(workouts.setMetricValue(exerciseNamed: ex, setNumber: n, metric: m, value: v, unit: u), success: "Set \(m.label.lowercased()) on set \(n) of \(ex).")
+        case .removeMetric(let ex, let m):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(workouts.removeMetric(exerciseNamed: ex, metric: m), success: "Removed \(m.label.lowercased()) from \(ex).")
         case .getSleep, .getHRVReadings, .getRestingHeartRate:
             // Retrieval is async — routed through `execute`, never here.
             return Response(text: "", decision: nil, plan: nil)
