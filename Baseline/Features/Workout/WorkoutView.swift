@@ -60,12 +60,7 @@ struct WorkoutView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header(workout)
                 ForEach(workout.blocks) { block in blockCard(block) }
-                Button { addBlock() } label: {
-                    Label("Add block", systemImage: "plus").font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(BaselineColor.accent).frame(maxWidth: .infinity).frame(height: 46)
-                        .background(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.line, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+                addCardButton("Add block") { addBlock() }
                 Color.clear.frame(height: 72)   // clear the chat bar
             }
             .padding(16)
@@ -99,125 +94,159 @@ struct WorkoutView: View {
 
     private func blockCard(_ block: WorkoutBlock) -> some View {
         let expanded = expandedBlocks.contains(block.id)
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Button { toggle(&expandedBlocks, block.id) } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 18)
                 }.buttonStyle(.plain)
-                // Inline rename — no modal, autosaves.
                 TextField("", text: blockNameBinding(block), prompt: Text("Block").foregroundStyle(BaselineColor.textFaint))
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(BaselineColor.textHi)
+                    .font(.system(size: 13, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textHi)
                 Spacer()
                 Menu {
                     Button { addExercise(to: block.id) } label: { Label("Add exercise", systemImage: "plus") }
+                    Button { store.edit { $0.duplicateBlock(block.id) } } label: { Label("Duplicate block", systemImage: "plus.square.on.square") }
                     Button(role: .destructive) { store.edit { $0.removeBlock(block.id) } } label: { Label("Delete block", systemImage: "trash") }
-                } label: { Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(6) }
+                } label: { Image(systemName: "ellipsis").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).padding(6) }
             }
             if expanded {
-                if block.exercises.isEmpty {
-                    Text("No exercises yet").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint).padding(.top, 8)
+                HStack(spacing: 6) {
+                    Text("GOAL").font(.system(size: 10, weight: .bold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
+                    TextField("", text: blockGoalBinding(block), prompt: Text("optional").foregroundStyle(BaselineColor.textFaint))
+                        .font(.system(size: 13)).foregroundStyle(BaselineColor.textMid)
                 }
-                ForEach(block.exercises) { ex in exerciseRow(ex, in: block) }
-                Button { addExercise(to: block.id) } label: {
-                    Label("Add exercise", systemImage: "plus").font(.system(size: 13, weight: .medium)).foregroundStyle(BaselineColor.accent)
-                }
-                .buttonStyle(.plain).padding(.top, 8)
+                ForEach(block.exercises) { ex in exerciseCard(ex, in: block) }
+                addCardButton("Add exercise") { addExercise(to: block.id) }
+            } else {
+                let goal = block.intent.map { $0.isEmpty ? nil : "Goal: \($0) · " } ?? nil
+                Text((goal ?? "") + "\(block.exercises.count) exercise\(block.exercises.count == 1 ? "" : "s")")
+                    .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
             }
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 16).fill(BaselineColor.surface))
     }
 
-    // MARK: - Exercise
+    // MARK: - Exercise (nested card)
 
-    private func exerciseRow(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
+    private func exerciseCard(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
         let expanded = expandedExercises.contains(ex.id)
         let performed = store.currentLog?.performed(forPlanned: ex.id)
-        return VStack(alignment: .leading, spacing: 8) {
-            Divider().overlay(BaselineColor.line)
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Button { toggle(&expandedExercises, ex.id) } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(ex.exerciseName).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-                            statusChip(performed?.status)
+                    HStack(spacing: 8) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(ex.exerciseName).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                                statusChip(performed?.status)
+                            }
+                            if !expanded { Text(prescriptionLine(ex)).font(.system(size: 12)).foregroundStyle(BaselineColor.textMid) }
                         }
-                        Text(prescriptionLine(ex)).font(.system(size: 12)).foregroundStyle(BaselineColor.textMid)
                     }
-                }
-                .buttonStyle(.plain)
+                }.buttonStyle(.plain)
                 Spacer()
                 exerciseMenu(ex, in: block)
             }
-            if expanded { exerciseDetail(ex, performed: performed) }
+            if expanded {
+                setTable(ex)
+                if !executing {
+                    Button { addSet(to: ex) } label: {
+                        Label("Add set", systemImage: "plus.circle").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
+                            .frame(maxWidth: .infinity).frame(height: 36)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
+                    }.buttonStyle(.plain)
+                    let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
+                    if !unused.isEmpty {
+                        Menu { ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } } }
+                        label: { Label("Add metric", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
+                    }
+                }
+                if executing { executionControls(ex, performed: performed) }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(BaselineColor.base)
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.line, lineWidth: 1)))
+    }
+
+    /// Sets as a dense table — metric headers once, values in aligned columns (Strong-style).
+    @ViewBuilder private func setTable(_ ex: PlannedExercise) -> some View {
+        let metrics = ex.selectedMetrics
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+            GridRow {
+                Text("#").font(.system(size: 10, weight: .bold)).foregroundStyle(BaselineColor.textFaint).gridColumnAlignment(.center)
+                ForEach(metrics, id: \.self) { m in
+                    Text(columnHeader(m, for: ex)).font(.system(size: 10, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
+                }
+                Color.clear.frame(width: 16)
+            }
+            ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
+                GridRow {
+                    Text("\(i + 1)").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.textMid).gridColumnAlignment(.center)
+                    ForEach(metrics, id: \.self) { m in
+                        if executing {
+                            Text(cellText(s.values, m, for: ex)).font(.system(size: 14)).foregroundStyle(BaselineColor.textHi)
+                        } else {
+                            TextField("—", text: valueBinding(ex, s.id, m))
+                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                                .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                                .frame(width: 52)
+                        }
+                    }
+                    Menu {
+                        Button { duplicateSet(s.id, in: ex) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                        Button(role: .destructive) { deleteSet(s.id, from: ex) } label: { Label("Delete", systemImage: "trash") }
+                    } label: { Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint) }
+                }
+            }
         }
     }
 
-    @ViewBuilder private func exerciseDetail(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if executing {
-                // Read-only plan while logging actuals.
-                ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
-                    Text("Set \(i + 1): \(metricText(s.values, for: ex))").font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
-                }
-            } else {
-                // Inline-editable sets — tap a value and type; autosaves.
-                ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
-                    HStack(spacing: 8) {
-                        Text("\(i + 1)").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
-                        ForEach(ex.selectedMetrics, id: \.self) { metric in inlineField(ex, s.id, metric) }
-                        Spacer()
-                        if ex.prescription.sets.count > 1 {
-                            Button { deleteSet(s.id, from: ex) } label: {
-                                Image(systemName: "minus.circle").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint)
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                }
+    @ViewBuilder private func executionControls(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
+        if let logs = performed?.setLogs, !logs.isEmpty {
+            Text("LOGGED").font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundStyle(BaselineColor.zoneGreen)
+            ForEach(Array(logs.enumerated()), id: \.element.id) { _, s in
                 HStack {
-                    Button { addSet(to: ex) } label: {
-                        Label("Add set", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                    }.buttonStyle(.plain)
+                    Text("• \(metricText(s.values, for: ex))").font(.system(size: 13)).foregroundStyle(BaselineColor.textHi)
                     Spacer()
-                    let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
-                    if !unused.isEmpty {
-                        Menu {
-                            ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } }
-                        } label: { Text("Add metric").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
-                    }
-                }
-            }
-            if executing {
-                // Logged sets
-                if let logs = performed?.setLogs, !logs.isEmpty {
-                    Text("LOGGED").font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundStyle(BaselineColor.zoneGreen)
-                    ForEach(Array(logs.enumerated()), id: \.element.id) { i, s in
-                        HStack {
-                            Text("• \(metricText(s.values, for: ex))").font(.system(size: 13)).foregroundStyle(BaselineColor.textHi)
-                            Spacer()
-                            Button { store.editLog { $0.removeSetLog(s.id) } } label: {
-                                Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                }
-                HStack(spacing: 10) {
-                    Button { sheet = .logSet(exerciseID: ex.id, name: ex.exerciseName) } label: {
-                        Label("Log set", systemImage: "plus.circle.fill").font(.system(size: 13, weight: .semibold))
-                    }.buttonStyle(.plain).foregroundStyle(BaselineColor.accent)
-                    Spacer()
-                    Button { store.editLog { $0.setStatus(.completed, forPlanned: ex.id, name: ex.exerciseName) } } label: {
-                        Text("Complete").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.zoneGreen)
-                    }.buttonStyle(.plain)
-                    Button { store.editLog { $0.setStatus(.skipped, forPlanned: ex.id, name: ex.exerciseName) } } label: {
-                        Text("Skip").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.zoneAmber)
+                    Button { store.editLog { $0.removeSetLog(s.id) } } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
                     }.buttonStyle(.plain)
                 }
-                noteField(ex, performed: performed)
             }
         }
-        .padding(.leading, 4).padding(.top, 2)
+        HStack(spacing: 10) {
+            Button { sheet = .logSet(exerciseID: ex.id, name: ex.exerciseName) } label: {
+                Label("Log set", systemImage: "plus.circle.fill").font(.system(size: 13, weight: .semibold))
+            }.buttonStyle(.plain).foregroundStyle(BaselineColor.accent)
+            Spacer()
+            Button { store.editLog { $0.setStatus(.completed, forPlanned: ex.id, name: ex.exerciseName) } } label: {
+                Text("Complete").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.zoneGreen)
+            }.buttonStyle(.plain)
+            Button { store.editLog { $0.setStatus(.skipped, forPlanned: ex.id, name: ex.exerciseName) } } label: {
+                Text("Skip").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.zoneAmber)
+            }.buttonStyle(.plain)
+        }
+        noteField(ex, performed: performed)
+    }
+
+    private func columnHeader(_ m: MetricType, for ex: PlannedExercise) -> String {
+        let u = store.displayUnit(m, for: ex)
+        switch m {
+        case .duration: return "TIME"
+        case .distance, .load: return u.short.uppercased()
+        default: return m.label.uppercased()
+        }
+    }
+
+    private func cellText(_ values: MetricValues, _ m: MetricType, for ex: PlannedExercise) -> String {
+        guard let v = values[m] else { return "—" }
+        if m == .duration { return mmss(Int(v)) }
+        let d = MetricConvert.fromCanonical(v, m, to: store.displayUnit(m, for: ex))
+        return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
     }
 
     private func noteField(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
@@ -240,6 +269,7 @@ struct WorkoutView: View {
             } label: { Label("Move to block", systemImage: "arrow.right") }
             Button { reorder(ex, in: block, by: -1) } label: { Label("Move up", systemImage: "arrow.up") }
             Button { reorder(ex, in: block, by: 1) } label: { Label("Move down", systemImage: "arrow.down") }
+            Button { duplicateExercise(ex, in: block) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
             Button(role: .destructive) { store.edit { $0.removeExercise(ex.id) } } label: { Label("Remove", systemImage: "trash") }
         } label: { Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(6) }
     }
@@ -375,25 +405,44 @@ struct WorkoutView: View {
         return Int(s) ?? 0
     }
 
-    private func inlineField(_ ex: PlannedExercise, _ setID: UUID, _ metric: MetricType) -> some View {
-        let unit = store.displayUnit(metric, for: ex)
-        let unitLabel = metric == .duration ? "m:ss" : (unit.short.isEmpty ? metric.label.lowercased() : unit.short)
-        return VStack(spacing: 1) {
-            TextField("", text: valueBinding(ex, setID, metric))
-                .font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-                .multilineTextAlignment(.center)
-                .keyboardType(metric == .duration ? .numbersAndPunctuation : (metric.isInteger ? .numberPad : .decimalPad))
-                .frame(width: 52).padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 8).fill(BaselineColor.base).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(BaselineColor.line, lineWidth: 1)))
-            Text(unitLabel).font(.system(size: 9)).foregroundStyle(BaselineColor.textFaint)
-        }
-    }
-
     private func addMetric(_ metric: MetricType, to ex: PlannedExercise) {
         store.edit { $0.updateExercise(ex.id) { e in
             var s = Set(e.selectedMetrics); s.insert(metric)
             e.selectedMetrics = MetricType.allCases.filter { s.contains($0) }
         }}
+    }
+
+    private func blockGoalBinding(_ block: WorkoutBlock) -> Binding<String> {
+        Binding(get: { store.current?.blocks.first { $0.id == block.id }?.intent ?? "" },
+                set: { new in store.edit { $0.setBlockIntent(block.id, new.trimmingCharacters(in: .whitespaces).isEmpty ? nil : new) } })
+    }
+
+    private func duplicateSet(_ setID: UUID, in ex: PlannedExercise) {
+        store.edit { $0.updateExercise(ex.id) { e in
+            guard let i = e.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
+            var copy = e.prescription.sets[i]; copy.id = UUID()
+            e.prescription.sets.insert(copy, at: i + 1)
+        }}
+    }
+
+    private func duplicateExercise(_ ex: PlannedExercise, in block: WorkoutBlock) {
+        store.edit { w in
+            guard let bi = w.blocks.firstIndex(where: { $0.id == block.id }),
+                  let ei = w.blocks[bi].exercises.firstIndex(where: { $0.id == ex.id }) else { return }
+            var copy = w.blocks[bi].exercises[ei]
+            copy.id = UUID()
+            copy.prescription.sets = copy.prescription.sets.map { var s = $0; s.id = UUID(); return s }
+            w.blocks[bi].exercises.insert(copy, at: ei + 1)
+        }
+    }
+
+    /// The shared full-width "Add …" card component — Add Block and Add Exercise use the same one.
+    private func addCardButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: "plus").font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(BaselineColor.accent).frame(maxWidth: .infinity).frame(height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).strokeBorder(BaselineColor.line, lineWidth: 1))
+        }.buttonStyle(.plain)
     }
 
     // MARK: - Helpers
