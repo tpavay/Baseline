@@ -12,6 +12,7 @@ struct TodayView: View {
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
     @State private var activeModal: TodayModal?
     @State private var autoPromptedDate: Date?
+    @State private var showChat = false
 
     /// Live readiness formula, edited in Profile → sourced from the shared profile store.
     private var readinessConfig: ReadinessConfig { profile.draft.config }
@@ -24,6 +25,7 @@ struct TodayView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         header
                         todayPlanCard
+                        askBaselineBar
                         lastReadingCard
                         startButtons
                         if !readings.isEmpty { historyLink }
@@ -53,6 +55,7 @@ struct TodayView: View {
                 DailyReadingFlowView(type: type, config: readinessConfig, duration: duration(for: type))
             }
         }
+        .sheet(isPresented: $showChat) { AskBaselineSheet() }
         .onAppear { maybeShowMorningPrompt(auto: true) }
         .onChange(of: readings.count) { _, _ in maybeShowMorningPrompt(auto: true) }
         .onChange(of: scenePhase) { _, phase in
@@ -94,6 +97,21 @@ struct TodayView: View {
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textMid)
             }
         }
+    }
+
+    private var askBaselineBar: some View {
+        Button { showChat = true } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "bubble.left.and.text.bubble.right.fill").font(.system(size: 15)).foregroundStyle(BaselineColor.accent)
+                Text("Ask Baseline").font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                Spacer()
+                Image(systemName: "mic.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+            }
+            .padding(.horizontal, 16).frame(height: 52)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(BaselineColor.accent.opacity(0.35), lineWidth: 1)))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var todayPlanCard: some View {
