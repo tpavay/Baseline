@@ -129,12 +129,12 @@ final class AgentTools {
         let (d, p) = today()
         var lines = [planLine(d, p)]
 
-        let constraints = store.activeConstraints
+        let constraints = store.activeConstraintRecords
         if !constraints.isEmpty {
             let list = constraints.map {
-                "\($0.location) (\($0.kind.rawValue), severity \($0.severity)/3\($0.affectsTraining ? "" : ", not limiting training"))"
+                "\($0.location) (\($0.kind.rawValue), severity \($0.severity)/3\($0.affectsTraining ? "" : ", not limiting training")) [id \($0.id.uuidString)]"
             }.joined(separator: "; ")
-            lines.append("Active constraints (persist until resolved): \(list).")
+            lines.append("Active constraints (persist until resolved — to change or clear one, pass its id; don't create a duplicate): \(list).")
         }
 
         let dc = store.daily

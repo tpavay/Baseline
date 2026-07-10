@@ -35,6 +35,16 @@ struct AgentToolsTests {
         #expect(summary.localizedCaseInsensitiveContains("calf"))
     }
 
+    @Test func reMentioningAConstraintUpdatesInsteadOfDuplicating() {
+        let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let t = AgentTools(store: store, base: DecisionEngine.Inputs())
+        // "My right calf hurts" then "actually it's not limiting training" — same body part twice.
+        t.dispatch(.upsertConstraint(id: nil, kind: .pain, location: "right calf", severity: 1, affectsTraining: true))
+        t.dispatch(.upsertConstraint(id: nil, kind: .pain, location: "Right Calf", severity: 1, affectsTraining: false))
+        #expect(store.activeConstraintRecords.count == 1)                 // folded, not duplicated
+        #expect(store.activeConstraintRecords.first?.affectsTraining == false)
+    }
+
     @Test func contextSummaryDoesNotInventUnknowns() {
         let summary = tools(base: DecisionEngine.Inputs()).contextSummary()
         #expect(summary.localizedCaseInsensitiveContains("nothing"))   // says nothing is on file

@@ -82,23 +82,39 @@ final class TrainingContextStore {
     }
     private func clamp15(_ v: Double) -> Double { min(max(v, 1), 5) }
 
-    /// Create or update a constraint. Returns its id. Passing an existing `id` updates it.
+    /// Create or update a constraint. Returns its id. Passing an existing `id` updates it. With no
+    /// id, an existing *unresolved* constraint for the same location+kind is updated in place rather
+    /// than duplicated — the model can only ever create (it isn't handed ids reliably), so without
+    /// this a re-mentioned injury spawns duplicate, sometimes contradictory, entries.
     @discardableResult
     func upsertConstraint(id: UUID? = nil, kind: DecisionEngine.Constraint.Kind, location: String,
                           severity: Int, affectsTraining: Bool = true) -> UUID {
         let sev = min(max(severity, 0), 3)
-        if let id, let idx = constraints.firstIndex(where: { $0.id == id }) {
+        func apply(_ idx: Int) {
             constraints[idx].kind = kind
             constraints[idx].location = location
             constraints[idx].severity = sev
             constraints[idx].affectsTraining = affectsTraining
             constraints[idx].resolved = false
             constraints[idx].updatedAt = .now
-            return id
+        }
+        if let id, let idx = constraints.firstIndex(where: { $0.id == id }) {
+            apply(idx); return id
+        }
+        // Dedupe: fold a no-id repeat into the existing unresolved constraint for this body part.
+        let key = normalized(location)
+        if id == nil, let idx = constraints.firstIndex(where: {
+            !$0.resolved && $0.kind == kind && normalized($0.location) == key
+        }) {
+            apply(idx); return constraints[idx].id
         }
         let c = ActiveConstraint(kind: kind, location: location, severity: sev, affectsTraining: affectsTraining)
         constraints.append(c)
         return c.id
+    }
+
+    private func normalized(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     /// Returns whether a matching constraint existed (so callers can report honestly).
@@ -111,6 +127,10 @@ final class TrainingContextStore {
     }
 
     // MARK: - Read for the engine
+
+    /// Unresolved constraint records (with ids) — for surfacing to the model so it can update or
+    /// resolve a specific one instead of creating duplicates.
+    var activeConstraintRecords: [ActiveConstraint] { constraints.filter { !$0.resolved } }
 
     /// Unresolved constraints mapped for `DecisionEngine.Inputs`.
     var activeConstraints: [DecisionEngine.Constraint] {
