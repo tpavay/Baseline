@@ -142,13 +142,18 @@ export const TOOLS = [
   },
   {
     name: "start_workout",
-    description: "Begin the athlete's workout — switches it into logging (in-progress) mode so sets can be checked off. The workout must already exist (see the state block / get_current_workout); if none exists, offer to build one instead of calling this.",
+    description: "Begin the athlete's workout — activates a live logging session so sets can be checked off, and returns the active session id. Safe to call immediately when a workout exists and no session is already active. The workout must already exist (see the current-workout index in the state block); if none exists, offer to build one instead of calling this. Idempotent — calling it when already active just reports the running session.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "complete_workout",
-    description: "Mark the in-progress workout complete (the athlete is done). Only meaningful after start_workout.",
-    input_schema: { type: "object", properties: {} },
+    description: "Finalize the in-progress workout's performed log (the athlete is done). Only meaningful after start_workout; it never touches the planned workout. IMPORTANT: call it FIRST with confirm=false — if sets remain unlogged the tool returns a warning like 'You still have 4 unlogged sets…' and does NOT complete. Relay that to the athlete and only call again with confirm=true once they say to finish anyway. When nothing is unlogged it completes directly.",
+    input_schema: {
+      type: "object",
+      properties: {
+        confirm: { type: "boolean", description: "Set true ONLY after the athlete has confirmed finishing despite unlogged sets. Leave false/absent for the first call." },
+      },
+    },
   },
   {
     name: "update_logging_config",

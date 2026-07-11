@@ -77,7 +77,7 @@ enum ToolCallMapper {
         case "start_workout":
             return .startWorkout
         case "complete_workout", "finish_workout":
-            return .completeWorkout
+            return .completeWorkout(confirm: (input["confirm"] as? Bool) ?? false)
         case "update_logging_config":
             guard let ex = input["exercise"] as? String else { return nil }
             return .updateLoggingConfig(exercise: ex, enabledMetrics: metricList(input["enabled_metrics"]), units: unitOverrides(input))

@@ -76,6 +76,36 @@ struct WorkoutStoreTests {
         #expect(s2.current?.allExercises.first?.prescription.sets.first?.load == 100)
     }
 
+    @Test func compactSummaryIndexesWithoutDumpingDetail() {
+        let s = store()
+        #expect(s.compactSummary == nil)                    // no workout yet
+        s.create(title: "MED", goal: nil)
+        s.addExercise(name: "Row", toBlockNamed: "Main", sets: 3, reps: nil, load: nil, durationSeconds: 600)
+        let compact = s.compactSummary ?? ""
+        #expect(compact.contains("Title: MED"))
+        #expect(compact.contains("1 exercise"))
+        #expect(compact.contains("not started"))
+        #expect(!compact.contains("600"))                   // no set-level detail leaks into the index
+    }
+
+    @Test func incompleteWorkCountsUncheckedSetsAcrossExercises() {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        s.addExercise(name: "Squat", toBlockNamed: "Main", sets: 2, reps: 5, load: 100, durationSeconds: nil)
+        s.addExercise(name: "Bench", toBlockNamed: "Main", sets: 1, reps: 5, load: 60, durationSeconds: nil)
+        #expect(s.incompleteWork().sets == 0)               // not started → nothing to complete
+        s.startWorkout()
+        #expect(s.incompleteWork() == (sets: 3, exercises: 2))
+        // Check off both Squat sets → only Bench's one set remains open.
+        let squat = s.current!.allExercises.first { $0.exerciseName == "Squat" }!
+        s.editLog { log in
+            for set in squat.prescription.sets {
+                log.upsertSetLog(forPlanned: squat.id, name: "Squat", plannedSetID: set.id) { $0.completed = true }
+            }
+        }
+        #expect(s.incompleteWork() == (sets: 1, exercises: 1))
+    }
+
     @Test func clampsNegativeNumbersAndRpe() {
         let s = store()
         s.create(title: "x", goal: nil)

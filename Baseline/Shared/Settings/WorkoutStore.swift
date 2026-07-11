@@ -372,6 +372,44 @@ final class WorkoutStore {
     // MARK: - Read
 
     /// A compact, model-and-inspector-friendly rendering of the current workout.
+    /// A cheap **index** of the current workout for the always-sent context — ID, title, status,
+    /// counts, date — WITHOUT the exercise/set detail. Detail is fetched on demand via
+    /// get_current_workout, so a 30-exercise workout doesn't inflate every chat request.
+    var compactSummary: String? {
+        guard let w = current else { return nil }
+        let status = currentLog == nil ? "not started" : (currentLog?.isComplete == true ? "completed" : "in progress")
+        let date: String = currentIsForToday ? "today"
+            : (w.scheduledDate.map { $0.formatted(.dateTime.month().day()) } ?? "unscheduled")
+        let exercises = w.allExercises.count
+        let blocks = w.blocks.filter { !$0.isDefault || !$0.exercises.isEmpty }.count
+        return """
+        - ID: \(w.id.uuidString)
+        - Title: \(w.title)
+        - Status: \(status)
+        - \(blocks) block\(blocks == 1 ? "" : "s")
+        - \(exercises) exercise\(exercises == 1 ? "" : "s")
+        - Scheduled: \(date)
+        """
+    }
+
+    /// The active session id (the performed log), or nil if the workout hasn't been started.
+    var activeSessionID: UUID? { currentLog?.id }
+
+    /// Sets still unchecked, and how many exercises they span — so complete_workout can warn before
+    /// finalizing (and start_workout can tell whether a session is already live).
+    func incompleteWork() -> (sets: Int, exercises: Int) {
+        guard let w = current, let log = currentLog else { return (0, 0) }
+        var sets = 0, exercises = 0
+        for ex in w.allExercises {
+            let perf = log.performed(forPlanned: ex.id)
+            let open = ex.prescription.sets.filter { s in
+                perf?.setLogs.first { $0.plannedSetID == s.id }?.completed != true
+            }.count
+            if open > 0 { exercises += 1; sets += open }
+        }
+        return (sets, exercises)
+    }
+
     var summary: String {
         guard let w = current else { return "No workout has been created yet." }
         var lines = ["Workout: \(w.title)" + (w.goal.map { " — goal: \($0)" } ?? "")]

@@ -40,7 +40,7 @@ final class AgentTools {
         case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
         case getCurrentWorkout
         case startWorkout
-        case completeWorkout
+        case completeWorkout(confirm: Bool)
         // Metric system: configure which metrics an exercise logs + display units, and set values.
         case updateLoggingConfig(exercise: String, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
         case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
@@ -269,16 +269,31 @@ final class AgentTools {
             guard workouts.current != nil else {
                 return Response(text: "There's no workout built yet, so there's nothing to start — want me to create one?", decision: nil, plan: nil)
             }
-            if workouts.currentLog != nil { return workoutResponse(prefix: "That workout is already in progress.") }
+            // Safe to begin immediately: workout exists and no session is active. Idempotent if it is.
+            if workouts.activeSessionID != nil {
+                return Response(text: "That workout is already in progress — logging is live. (session \(workouts.activeSessionID!.uuidString))", decision: nil, plan: nil)
+            }
             workouts.startWorkout()
-            return workoutResponse(prefix: "Started the workout — logging is live.")
-        case .completeWorkout:
+            let sid = workouts.activeSessionID?.uuidString ?? "—"
+            return Response(text: "Started the workout — logging is live and the sets are ready to check off. (session \(sid))", decision: nil, plan: nil)
+        case .completeWorkout(let confirm):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.currentLog != nil else {
-                return Response(text: "The workout hasn't been started yet, so there's nothing to finish. Want me to start it?", decision: nil, plan: nil)
+            guard workouts.current != nil else {
+                return Response(text: "There's no workout to finish yet.", decision: nil, plan: nil)
+            }
+            // Never finalize a workout that was never started, or one with open sets, without a
+            // deliberate confirm — completion is one-way for the session's status.
+            guard workouts.activeSessionID != nil else {
+                return Response(text: "That workout hasn't been started, so there's nothing to complete yet. Want me to start it?", decision: nil, plan: nil)
+            }
+            let open = workouts.incompleteWork()
+            if open.sets > 0 && !confirm {
+                let s = open.sets == 1 ? "set" : "sets"
+                let e = open.exercises == 1 ? "exercise" : "exercises"
+                return Response(text: "You still have \(open.sets) unlogged \(s) across \(open.exercises) \(e). Want me to finish the workout anyway?", decision: nil, plan: nil)
             }
             workouts.completeWorkout()
-            return workoutResponse(prefix: "Marked the workout complete — nice work.")
+            return Response(text: "Marked the workout complete — nice work.", decision: nil, plan: nil)
         case .updateLoggingConfig(let ex, let enabled, let units):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.setLoggingConfig(exerciseNamed: ex, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
@@ -361,13 +376,11 @@ final class AgentTools {
             lines.append("Nothing else has been recorded yet — no injuries, sleep, check-in, or context on file.")
         }
 
-        // The current workout is part of what you know — so you never deny one that's on screen. The
-        // athlete sees and edits it on the Workout tab; get_current_workout re-reads the live detail.
-        if let workouts, let w = workouts.current {
-            let state = workouts.currentLog == nil ? "not started"
-                : (workouts.currentLog?.isComplete == true ? "completed" : "in progress")
-            let day = workouts.currentIsForToday ? "" : " — scheduled for another day, not today"
-            lines.append("Today's workout is built and on the Workout tab (\(state)\(day)). To start it call start_workout; to finish it call complete_workout. Structure:\n\(workouts.summary)")
+        // A compact INDEX of the current workout — enough to know it exists and its status, never the
+        // full exercise/set detail (that would inflate every request). Detail is fetched on demand via
+        // get_current_workout. Never deny a workout the index shows.
+        if let workouts, let compact = workouts.compactSummary {
+            lines.append("Current workout (call get_current_workout for its exercises/sets; never answer content from memory):\n\(compact)\nTo begin it call start_workout; to finish it call complete_workout.")
         } else {
             lines.append("No workout has been built yet. If the athlete wants one, use create_workout (or build it up with add_block/add_exercise).")
         }
