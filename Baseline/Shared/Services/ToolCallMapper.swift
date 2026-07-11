@@ -74,6 +74,10 @@ enum ToolCallMapper {
                               distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]))
         case "get_current_workout":
             return .getCurrentWorkout
+        case "start_workout":
+            return .startWorkout
+        case "complete_workout", "finish_workout":
+            return .completeWorkout
         case "update_logging_config":
             guard let ex = input["exercise"] as? String else { return nil }
             return .updateLoggingConfig(exercise: ex, enabledMetrics: metricList(input["enabled_metrics"]), units: unitOverrides(input))

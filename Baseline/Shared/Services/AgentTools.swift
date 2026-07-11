@@ -39,6 +39,8 @@ final class AgentTools {
         case removeExercise(exercise: String)
         case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
         case getCurrentWorkout
+        case startWorkout
+        case completeWorkout
         // Metric system: configure which metrics an exercise logs + display units, and set values.
         case updateLoggingConfig(exercise: String, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
         case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
@@ -75,6 +77,8 @@ final class AgentTools {
             case .removeExercise(let e): return "Removed \(e)"
             case .updateSet(let e, let n, _, _, _, _, _): return "Updated set \(n) of \(e)"
             case .getCurrentWorkout: return "Read the current workout"
+            case .startWorkout: return "Started the workout"
+            case .completeWorkout: return "Completed the workout"
             case .updateLoggingConfig(let e, _, _): return "Configured metrics for \(e)"
             case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
             case .setMetricValue(let e, let n, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
@@ -260,6 +264,21 @@ final class AgentTools {
         case .getCurrentWorkout:
             guard let workouts else { return workoutUnavailable() }
             return Response(text: workouts.summary, decision: nil, plan: nil)
+        case .startWorkout:
+            guard let workouts else { return workoutUnavailable() }
+            guard workouts.current != nil else {
+                return Response(text: "There's no workout built yet, so there's nothing to start — want me to create one?", decision: nil, plan: nil)
+            }
+            if workouts.currentLog != nil { return workoutResponse(prefix: "That workout is already in progress.") }
+            workouts.startWorkout()
+            return workoutResponse(prefix: "Started the workout — logging is live.")
+        case .completeWorkout:
+            guard let workouts else { return workoutUnavailable() }
+            guard workouts.currentLog != nil else {
+                return Response(text: "The workout hasn't been started yet, so there's nothing to finish. Want me to start it?", decision: nil, plan: nil)
+            }
+            workouts.completeWorkout()
+            return workoutResponse(prefix: "Marked the workout complete — nice work.")
         case .updateLoggingConfig(let ex, let enabled, let units):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.setLoggingConfig(exerciseNamed: ex, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
@@ -340,6 +359,17 @@ final class AgentTools {
 
         if constraints.isEmpty && ctx.isEmpty {
             lines.append("Nothing else has been recorded yet — no injuries, sleep, check-in, or context on file.")
+        }
+
+        // The current workout is part of what you know — so you never deny one that's on screen. The
+        // athlete sees and edits it on the Workout tab; get_current_workout re-reads the live detail.
+        if let workouts, let w = workouts.current {
+            let state = workouts.currentLog == nil ? "not started"
+                : (workouts.currentLog?.isComplete == true ? "completed" : "in progress")
+            let day = workouts.currentIsForToday ? "" : " — scheduled for another day, not today"
+            lines.append("Today's workout is built and on the Workout tab (\(state)\(day)). To start it call start_workout; to finish it call complete_workout. Structure:\n\(workouts.summary)")
+        } else {
+            lines.append("No workout has been built yet. If the athlete wants one, use create_workout (or build it up with add_block/add_exercise).")
         }
 
         lines.append(capabilityLine())

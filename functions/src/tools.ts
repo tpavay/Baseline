@@ -141,6 +141,16 @@ export const TOOLS = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "start_workout",
+    description: "Begin the athlete's workout — switches it into logging (in-progress) mode so sets can be checked off. The workout must already exist (see the state block / get_current_workout); if none exists, offer to build one instead of calling this.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "complete_workout",
+    description: "Mark the in-progress workout complete (the athlete is done). Only meaningful after start_workout.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "update_logging_config",
     description: "THIS WORKOUT ONLY: choose which metrics an exercise logs and its display units. Does NOT change future defaults. Metrics: reps, load, duration, distance, calories, heartRate, cadence, power, pace, rpe. Unsupported metrics are rejected.",
     input_schema: {
