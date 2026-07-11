@@ -118,8 +118,8 @@ struct WorkoutView: View {
                         .font(.system(size: 11, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
                 }.buttonStyle(.plain)
                 TextField("", text: blockNameBinding(block), prompt: Text(block.isDefault ? "Main" : "Block").foregroundStyle(BaselineColor.textFaint))
-                    .font(.system(size: 12, weight: .bold)).tracking(0.6).foregroundStyle(BaselineColor.textMid)
-                if let g = block.intent, !g.isEmpty { Text(g).font(.system(size: 11)).foregroundStyle(BaselineColor.textFaint) }
+                    .font(.system(size: 14, weight: .bold)).tracking(0.6).foregroundStyle(BaselineColor.textMid)
+                if let g = block.intent, !g.isEmpty { Text(g).font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint) }
                 Spacer()
                 Menu {
                     TextField("Goal", text: blockGoalBinding(block))
@@ -148,45 +148,52 @@ struct WorkoutView: View {
         let expanded = expandedExercises.contains(ex.id)
         let performed = store.currentLog?.performed(forPlanned: ex.id)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
+            // Header — thumbnail + big accent name, ⋯ top-aligned. Tap the name area to collapse.
+            HStack(alignment: .top, spacing: 12) {
                 Button { toggle(&expandedExercises, ex.id) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 11, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(ex.exerciseName).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                    HStack(alignment: .top, spacing: 12) {
+                        thumbnail(ex)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(ex.exerciseName).font(.system(size: 18, weight: .semibold)).foregroundStyle(BaselineColor.accent)
+                                    .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
                                 statusChip(performed?.status)
                             }
-                            if !expanded { Text(prescriptionLine(ex)).font(.system(size: 12)).foregroundStyle(BaselineColor.textMid) }
+                            if !expanded { Text(prescriptionLine(ex)).font(.system(size: 14)).foregroundStyle(BaselineColor.textMid) }
                         }
-                    }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }.buttonStyle(.plain)
-                Spacer()
                 exerciseMenu(ex, in: block)
             }
-            .padding(.vertical, 11)
+            .padding(.vertical, 14)
             if expanded {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
+                    if executing { noteField(ex, performed: performed) }   // note directly under the exercise
                     setTable(ex, performed: performed)
                     Button { addSet(to: ex) } label: {
-                        Label("Add set", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                            .frame(maxWidth: .infinity).frame(height: 34)
-                            .background(RoundedRectangle(cornerRadius: 9).fill(BaselineColor.surface))
+                        Label("Add set", systemImage: "plus").font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.accent)
+                            .frame(maxWidth: .infinity).frame(height: 40)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
                     }.buttonStyle(.plain)
                     if !executing {
                         let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
                         if !unused.isEmpty {
                             Menu { ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } } }
-                            label: { Label("Add metric", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
+                            label: { Label("Add metric", systemImage: "plus").font(.system(size: 13, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
                         }
                     }
-                    if executing { noteField(ex, performed: performed) }
                 }
-                .padding(.leading, 22).padding(.bottom, 10)
+                .padding(.bottom, 12)
             }
-            Rectangle().fill(BaselineColor.line).frame(height: 1)   // whitespace-thin separator between rows
+            Rectangle().fill(BaselineColor.line).frame(height: 1)   // full-width separator between rows
         }
+    }
+
+    /// Stand-in exercise thumbnail — a rounded tile with the category glyph until real media exists.
+    private func thumbnail(_ ex: PlannedExercise) -> some View {
+        RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface)
+            .frame(width: 46, height: 46)
+            .overlay(Image(systemName: ex.definition.category.glyph).font(.system(size: 20)).foregroundStyle(BaselineColor.textMid))
     }
 
     /// Sets as a dense table — metric headers once, values in aligned columns. Two reads of the same
@@ -196,52 +203,55 @@ struct WorkoutView: View {
     @ViewBuilder private func setTable(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
         let metrics = ex.selectedMetrics
         let activeIdx = executing ? ex.prescription.sets.firstIndex(where: { !setComplete(performed, $0.id) }) : nil
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-            GridRow {
-                Text("#").font(.system(size: 10, weight: .bold)).foregroundStyle(BaselineColor.textFaint).gridColumnAlignment(.center)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Text("SET").frame(width: 40).font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
                 ForEach(metrics, id: \.self) { m in
-                    Text(columnHeader(m, for: ex)).font(.system(size: 10, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
+                    Text(columnHeader(m, for: ex)).frame(maxWidth: .infinity).font(.system(size: 12, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
                 }
-                if executing {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(BaselineColor.textFaint).gridColumnAlignment(.center)
-                } else {
-                    Color.clear.frame(width: 16)
-                }
+                Image(systemName: "checkmark").frame(width: 44).font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
             }
+            .padding(.bottom, 8)
             ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
                 let done = executing && setComplete(performed, s.id)
                 let active = executing && i == activeIdx
-                GridRow {
-                    Text("\(i + 1)").font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textMid))
-                        .gridColumnAlignment(.center)
+                HStack(spacing: 0) {
+                    Text("\(i + 1)").frame(width: 40).font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textHi))
                     ForEach(metrics, id: \.self) { m in
                         if executing {
                             TextField(cellText(s.values, m, for: ex), text: logValueBinding(ex, s, m))
-                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(done ? BaselineColor.textFaint : BaselineColor.textHi)
+                                .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                                .font(.system(size: 16, weight: .semibold)).foregroundStyle(done ? BaselineColor.textFaint : BaselineColor.textHi)
                                 .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
-                                .frame(width: 52)
                         } else {
                             TextField("—", text: valueBinding(ex, s.id, m))
-                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                                .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                                .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
                                 .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
-                                .frame(width: 52)
                         }
                     }
                     if executing {
-                        Button { toggleComplete(ex, s) } label: {
-                            Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 18)).foregroundStyle(done ? BaselineColor.zoneGreen : BaselineColor.textFaint)
-                        }.buttonStyle(.plain).gridColumnAlignment(.center)
+                        Button { toggleComplete(ex, s) } label: { checkbox(done: done) }.buttonStyle(.plain).frame(width: 44)
                     } else {
                         Menu {
                             Button { duplicateSet(s.id, in: ex) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
                             Button(role: .destructive) { deleteSet(s.id, from: ex) } label: { Label("Delete", systemImage: "trash") }
-                        } label: { Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint) }
+                        } label: { Image(systemName: "ellipsis").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 32) }
                     }
                 }
+                .padding(.vertical, 10)
+                .background(active ? BaselineColor.surface.opacity(0.6) : Color.clear)
             }
         }
+    }
+
+    /// Hevy's rounded-square completion control — faint when open, green with a white check when done.
+    private func checkbox(done: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 8).fill(done ? BaselineColor.zoneGreen : BaselineColor.surface)
+            .frame(width: 30, height: 30)
+            .overlay(Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
+                .foregroundStyle(done ? .white : BaselineColor.textFaint.opacity(0.4)))
     }
 
     private func setComplete(_ performed: PerformedExercise?, _ setID: UUID) -> Bool {
@@ -267,7 +277,7 @@ struct WorkoutView: View {
     private func noteField(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(performed?.athleteNotes ?? [], id: \.self) { n in
-                Text("“\(n)”").font(.system(size: 12)).italic().foregroundStyle(BaselineColor.textMid)
+                Text("“\(n)”").font(.system(size: 14)).italic().foregroundStyle(BaselineColor.textMid)
             }
             NoteEntry { note in store.editLog { $0.addNote(note, forPlanned: ex.id, name: ex.exerciseName) } }
         }
@@ -568,10 +578,10 @@ private struct NoteEntry: View {
     @State private var text = ""
     var body: some View {
         HStack {
-            TextField("", text: $text, prompt: Text("Add a note…").foregroundStyle(BaselineColor.textFaint))
-                .font(.system(size: 13)).foregroundStyle(BaselineColor.textHi)
+            TextField("", text: $text, prompt: Text("Add notes here…").foregroundStyle(BaselineColor.textFaint))
+                .font(.system(size: 15)).foregroundStyle(BaselineColor.textHi)
                 .onSubmit(submit)
-            if !text.isEmpty { Button("Add", action: submit).font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.accent) }
+            if !text.isEmpty { Button("Add", action: submit).font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.accent) }
         }
     }
     private func submit() {

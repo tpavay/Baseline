@@ -102,7 +102,7 @@ struct AddExerciseFlow: View {
         let isSel = selected.contains(def.id)
         return Button { toggle(def.id) } label: {
             HStack(spacing: 12) {
-                Image(systemName: glyph(def.category)).font(.system(size: 16)).foregroundStyle(BaselineColor.accent)
+                Image(systemName: def.category.glyph).font(.system(size: 16)).foregroundStyle(BaselineColor.accent)
                     .frame(width: 38, height: 38).background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(def.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
@@ -160,18 +160,6 @@ struct AddExerciseFlow: View {
         }
         onInserted(ids)
         dismiss()
-    }
-
-    private func glyph(_ c: ActivityCategory) -> String {
-        switch c {
-        case .cycling: "bicycle"
-        case .running: "figure.run"
-        case .erg: "figure.rower"
-        case .strength: "dumbbell.fill"
-        case .carry: "figure.walk"
-        case .isometric: "figure.core.training"
-        case .other: "figure.strengthtraining.functional"
-        }
     }
 }
 

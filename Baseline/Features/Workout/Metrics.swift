@@ -140,4 +140,17 @@ struct MetricValues: Codable, Equatable, Sendable {
 
 enum ActivityCategory: String, Codable, Sendable, CaseIterable {
     case cycling, running, erg, strength, carry, isometric, other
+
+    /// SF Symbol standing in for an exercise thumbnail until real media exists.
+    var glyph: String {
+        switch self {
+        case .cycling: "bicycle"
+        case .running: "figure.run"
+        case .erg: "figure.rower"
+        case .strength: "dumbbell.fill"
+        case .carry: "figure.walk"
+        case .isometric: "figure.core.training"
+        case .other: "figure.strengthtraining.functional"
+        }
+    }
 }
