@@ -110,6 +110,20 @@ extension Workout {
         return block.id
     }
 
+    /// Add a *user-created* block, discarding the implicit empty default if present — creating your
+    /// own structure shouldn't leave a phantom "Main" section beside it. Leaves ≥1 block.
+    @discardableResult
+    mutating func addUserBlock(name: String, intent: String? = nil) -> UUID {
+        if let i = blocks.firstIndex(where: {
+            $0.isDefault && $0.exercises.isEmpty
+                && $0.name.trimmingCharacters(in: .whitespaces).isEmpty
+                && ($0.intent?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
+        }) {
+            blocks.remove(at: i)
+        }
+        return addBlock(name: name, intent: intent)
+    }
+
     @discardableResult
     mutating func removeBlock(_ id: UUID) -> Bool {
         guard let i = blocks.firstIndex(where: { $0.id == id }) else { return false }

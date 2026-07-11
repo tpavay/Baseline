@@ -68,7 +68,18 @@ struct WorkoutView: View {
                     addRowButton("Add exercise") { addExercise(to: def.id) }
                     addRowButton("Add block") { addBlock() }
                 } else {
-                    ForEach(workout.blocks) { block in blockSection(block) }
+                    // The default "Main" block never shows a header — only user-created blocks do.
+                    // Any loose exercises in it render flat at the top.
+                    ForEach(workout.blocks) { block in
+                        if block.isDefault {
+                            if !block.exercises.isEmpty {
+                                ForEach(block.exercises) { ex in exerciseRow(ex, in: block) }
+                                addRowButton("Add exercise") { addExercise(to: block.id) }
+                            }
+                        } else {
+                            blockSection(block)
+                        }
+                    }
                     addRowButton("Add block") { addBlock() }
                 }
                 Color.clear.frame(height: 80)   // clear the chat bar
@@ -215,33 +226,34 @@ struct WorkoutView: View {
             ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
                 let done = executing && setComplete(performed, s.id)
                 let active = executing && i == activeIdx
-                HStack(spacing: 0) {
-                    Text("\(i + 1)").frame(width: 40).font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textHi))
-                    ForEach(metrics, id: \.self) { m in
+                SwipeToDeleteRow(onDelete: { deleteSet(s.id, from: ex) }) {
+                    HStack(spacing: 0) {
+                        Text("\(i + 1)").frame(width: 40).font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textHi))
+                        ForEach(metrics, id: \.self) { m in
+                            if executing {
+                                TextField(cellText(s.values, m, for: ex), text: logValueBinding(ex, s, m))
+                                    .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(done ? BaselineColor.textFaint : BaselineColor.textHi)
+                                    .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                            } else {
+                                TextField("—", text: valueBinding(ex, s.id, m))
+                                    .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                                    .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                            }
+                        }
                         if executing {
-                            TextField(cellText(s.values, m, for: ex), text: logValueBinding(ex, s, m))
-                                .multilineTextAlignment(.center).frame(maxWidth: .infinity)
-                                .font(.system(size: 16, weight: .semibold)).foregroundStyle(done ? BaselineColor.textFaint : BaselineColor.textHi)
-                                .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                            Button { toggleComplete(ex, s) } label: { checkbox(done: done) }.buttonStyle(.plain).frame(width: 44)
                         } else {
-                            TextField("—", text: valueBinding(ex, s.id, m))
-                                .multilineTextAlignment(.center).frame(maxWidth: .infinity)
-                                .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-                                .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                            Button { duplicateSet(s.id, in: ex) } label: {
+                                Image(systemName: "plus.square.on.square").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 32)
+                            }.buttonStyle(.plain)
                         }
                     }
-                    if executing {
-                        Button { toggleComplete(ex, s) } label: { checkbox(done: done) }.buttonStyle(.plain).frame(width: 44)
-                    } else {
-                        Menu {
-                            Button { duplicateSet(s.id, in: ex) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                            Button(role: .destructive) { deleteSet(s.id, from: ex) } label: { Label("Delete", systemImage: "trash") }
-                        } label: { Image(systemName: "ellipsis").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 32) }
-                    }
+                    .padding(.vertical, 10)
+                    .background(active ? BaselineColor.surface.opacity(0.6) : BaselineColor.base)
                 }
-                .padding(.vertical, 10)
-                .background(active ? BaselineColor.surface.opacity(0.6) : Color.clear)
             }
         }
     }
@@ -368,9 +380,9 @@ struct WorkoutView: View {
     // MARK: - Direct manipulation (no forms, no save — autosaves via the store)
 
     private func addBlock() {
-        // Empty-named, inline-renamable — revealing structure turns the default into "Main" and this
-        // new block prompts for a name. Blocks are expanded by default.
-        store.edit { $0.addBlock(name: "") }
+        // The new block is empty-named and prompts for a name inline; the empty default is dropped so
+        // there's no phantom "Main" section beside it.
+        store.edit { $0.addUserBlock(name: "") }
     }
 
     private func addExercise(to blockID: UUID) { sheet = .addExercise(blockID: blockID) }
@@ -588,6 +600,40 @@ private struct NoteEntry: View {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         onSubmit(t); text = ""
+    }
+}
+
+/// Swipe a row left to reveal a trash affordance; tap it to delete. A self-contained wrapper so each
+/// row owns its own offset — used for set rows (the only way to remove a set).
+private struct SwipeToDeleteRow<Content: View>: View {
+    let onDelete: () -> Void
+    @ViewBuilder var content: () -> Content
+    @State private var offset: CGFloat = 0
+    private let revealWidth: CGFloat = 76
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { offset = 0 }
+                onDelete()
+            } label: {
+                Image(systemName: "trash").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    .frame(width: revealWidth).frame(maxHeight: .infinity).background(BaselineColor.zoneRed)
+            }.buttonStyle(.plain)
+            content()
+                .offset(x: offset)
+                .gesture(
+                    DragGesture(minimumDistance: 18)
+                        .onChanged { v in
+                            let base = offset <= -revealWidth ? -revealWidth : 0
+                            offset = min(0, max(-revealWidth, base + v.translation.width))
+                        }
+                        .onEnded { _ in
+                            withAnimation(.easeOut(duration: 0.2)) { offset = offset < -revealWidth / 2 ? -revealWidth : 0 }
+                        }
+                )
+        }
+        .clipped()
     }
 }
 

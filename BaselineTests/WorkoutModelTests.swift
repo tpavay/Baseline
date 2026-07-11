@@ -176,6 +176,25 @@ struct WorkoutModelTests {
         #expect(decoded.reps == 8)
     }
 
+    @Test func addUserBlockDropsTheEmptyDefaultButKeepsAPopulatedOne() {
+        // Empty default → replaced by the user's block (no phantom "Main").
+        var flat = Workout(title: "Flat")
+        flat.blocks = [WorkoutBlock(name: "", isDefault: true)]
+        let id = flat.addUserBlock(name: "")
+        #expect(flat.blocks.count == 1)
+        #expect(flat.blocks.first?.id == id)
+        #expect(flat.blocks.first?.isDefault == false)
+
+        // Default holding loose exercises → kept; the user's block is added alongside.
+        var loose = Workout(title: "Loose")
+        var def = WorkoutBlock(name: "", isDefault: true)
+        def.exercises = [PlannedExercise(exerciseName: "Curl")]
+        loose.blocks = [def]
+        loose.addUserBlock(name: "")
+        #expect(loose.blocks.count == 2)
+        #expect(loose.blocks.contains { $0.isDefault && $0.exercises.count == 1 })
+    }
+
     // MARK: - Validation
 
     @Test func invalidEditsReturnFalse() {
