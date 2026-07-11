@@ -155,6 +155,7 @@ final class WorkoutStore {
     func create(title: String, goal: String?) {
         var w = Workout(title: title, goal: goal)
         w.scheduledDate = Calendar.current.startOfDay(for: .now)
+        w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block (hidden until structured)
         current = w
         currentLog = nil            // a new workout starts with a clean performed log
     }
@@ -181,7 +182,10 @@ final class WorkoutStore {
         guard var w = current else { return .notFound("There's no workout yet — create one first.") }
         let blockID: UUID
         switch resolveBlock(block, in: w) {
-        case .none: return .notFound("I couldn't find a block called \"\(block)\".")
+        case .none:
+            // A simple workout has one implicit block — put it there rather than failing on the name.
+            if w.blocks.count == 1 { blockID = w.blocks[0].id }
+            else { return .notFound("I couldn't find a block called \"\(block)\".") }
         case .one(let id): blockID = id
         case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
         }

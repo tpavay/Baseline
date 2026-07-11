@@ -59,12 +59,29 @@ struct WorkoutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header(workout)
-                ForEach(workout.blocks) { block in blockCard(block) }
-                addCardButton("Add block") { addBlock() }
+                if isFlat(workout), let def = workout.blocks.first {
+                    // Flat, Hevy-style: no block chrome — just the exercises.
+                    ForEach(def.exercises) { ex in exerciseCard(ex, in: def) }
+                    if def.exercises.isEmpty {
+                        Text("No exercises yet — add one to get started.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+                    }
+                    addCardButton("Add exercise") { addExercise(to: def.id) }
+                    addCardButton("Add block") { addBlock() }
+                } else {
+                    ForEach(workout.blocks) { block in blockCard(block) }
+                    addCardButton("Add block") { addBlock() }
+                }
                 Color.clear.frame(height: 72)   // clear the chat bar
             }
             .padding(16)
         }
+    }
+
+    /// A workout reads flat while it has only the default block with no name or goal.
+    private func isFlat(_ w: Workout) -> Bool {
+        guard w.blocks.count == 1, let b = w.blocks.first, b.isDefault else { return false }
+        return b.name.trimmingCharacters(in: .whitespaces).isEmpty
+            && (b.intent?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
     }
 
     private func header(_ workout: Workout) -> some View {
@@ -100,13 +117,18 @@ struct WorkoutView: View {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 18)
                 }.buttonStyle(.plain)
-                TextField("", text: blockNameBinding(block), prompt: Text("Block").foregroundStyle(BaselineColor.textFaint))
+                TextField("", text: blockNameBinding(block), prompt: Text(block.isDefault ? "Main" : "Block").foregroundStyle(BaselineColor.textFaint))
                     .font(.system(size: 13, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textHi)
                 Spacer()
                 Menu {
                     Button { addExercise(to: block.id) } label: { Label("Add exercise", systemImage: "plus") }
                     Button { store.edit { $0.duplicateBlock(block.id) } } label: { Label("Duplicate block", systemImage: "plus.square.on.square") }
-                    Button(role: .destructive) { store.edit { $0.removeBlock(block.id) } } label: { Label("Delete block", systemImage: "trash") }
+                    Button(role: .destructive) {
+                        store.edit { w in
+                            w.removeBlock(block.id)
+                            if w.blocks.isEmpty { w.blocks.append(WorkoutBlock(name: "", isDefault: true)) }  // always ≥1 block
+                        }
+                    } label: { Label("Delete block", systemImage: "trash") }
                 } label: { Image(systemName: "ellipsis").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).padding(6) }
             }
             if expanded {
@@ -283,7 +305,7 @@ struct WorkoutView: View {
             Text("No workout yet").font(.system(size: 18, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
             Text("Build one by hand, or ask Baseline to make one.").font(.system(size: 14)).foregroundStyle(BaselineColor.textMid)
                 .multilineTextAlignment(.center)
-            Button { store.create(title: "Today's workout", goal: nil); addBlock() } label: {
+            Button { store.create(title: "Today's workout", goal: nil) } label: {
                 Text("New workout").font(.system(size: 15, weight: .semibold)).foregroundStyle(Color(hex: 0x120B21))
                     .frame(width: 200, height: 50).background(RoundedRectangle(cornerRadius: 14).fill(BaselineColor.accent))
             }.buttonStyle(.plain)
@@ -346,8 +368,9 @@ struct WorkoutView: View {
     // MARK: - Direct manipulation (no forms, no save — autosaves via the store)
 
     private func addBlock() {
-        let n = (store.current?.blocks.count ?? 0) + 1
-        store.edit { $0.addBlock(name: "Block \(n)") }
+        // Empty-named, inline-renamable — revealing structure turns the default into "Main" and this
+        // new block prompts for a name.
+        store.edit { $0.addBlock(name: "") }
         if let id = store.current?.blocks.last?.id { expandedBlocks.insert(id) }
     }
 

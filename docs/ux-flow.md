@@ -6,13 +6,30 @@ Legend: **[E]** Evidence · **[C]** Context · **[D]** Decision · **[P]** Plann
 
 ---
 
-## Navigation model — four intents, four tabs
-The app is **four tabs**, each a distinct mental model. Don't make one screen do everything.
+## Navigation model — three modes, four tabs
+The app is **three modes** the athlete is never in two of at once — *Decide, Plan, Train* — plus setup. "Workout" is an overloaded word for three different objects, so the tab is **Train**.
 
 ```
-Today            Plan             Workout          Profile
-= decision       = planning       = execution      = setup
+Today            Plan             Train            Profile
+= Decide         = Plan           = Execute        = setup
+"what should     "what am I       "what am I
+ I do?"           scheduled?"      doing right now?"
 ```
+
+**Three objects, never conflated:**
+- **Program** — long-term training (HYROX Dallas, Marathon Base, Shoulder Rehab). An athlete can have several at once; Today reasons across all of them.
+- **Workout** — a *planned* session inside a program/day (has a date, lives on the calendar).
+- **Training Session** — the thing you actually *execute and log* (no dates — you're training). A Workout becomes a Training Session when you Start it.
+
+`Program → Calendar → Workout → (Decision Engine) → Training Session`. This is the wedge: Hevy starts at the Training Session; FITR starts at the Program; Baseline needs both, joined by readiness.
+
+**Why this matters:** "Today's Workout — NOT TODAY" feels wrong because it forces one screen to be planning *and* execution. In this model, tapping today's workout enters a **Training Session** (no dates, no "not today"); dates only matter while browsing the **Plan** calendar. The date-scoping banner is a stopgap that this modes split removes.
+
+- **Plan** — Programs (open the only one automatically; show cards if several) → week → **workout cards** (FITR-style, cleaner than a grid) → **Workout Detail** (purpose · today's adaptation · coach notes · blocks · Talk to Baseline · **Start Session** / Edit).
+- **Train** — Hevy-style execution: exercise → log → complete → next → reflection → Decision Engine → history. Includes **Start Empty Session** (walk in, no plan needed).
+- **AI is everywhere**, scoped to the surface: Plan ("build next week"), Workout Detail ("swap sled pushes"), Train ("I skipped these"), History ("why has my deadlift stalled?").
+
+*Status: Today + Train (execution editor) exist. Plan (Programs/calendar/Workout Detail), the Program object, and the Workout→Training-Session split build on the Plan Engine — sequenced there, deliberately, not this turn.*
 - **Today** — the day's recommendation (readiness → plan). Opened every day.
 - **Plan** — the week/calendar of workout cards, each with its status (incl. "AI modified" badges); tap a card → **Workout Detail**. The primary action is **Talk to Baseline / Edit with Baseline** (not a generic "Adjust Plan"). *(Future — needs the Plan Engine.)*
 - **Workout** — the **current** session being executed (not a library). Collapsible blocks; per-exercise `•••` menu; set logging. Opened every workout.
@@ -37,8 +54,8 @@ The workout is a **living document** — edit objects directly, like Notion / Th
 ### Adding an exercise — Hevy-model multi-select
 Steal the interaction model that already works: **search → multi-select → Add N exercises** (like Photos). Recents first, then **all exercises A–Z** (never random); **category chips** (All / Cycling / Strength / …) filter; each row has a **glyph/thumbnail + name + category tag + selection state**; the keyboard follows iOS convention (scroll dismisses; a sticky **Add N** bar sits above it). Selecting a stable **Exercise Definition** comes before typing, so identity/aliases/history never break. Custom definitions are created **explicitly** ("Create custom exercise"), never from a typo. Inserted exercises carry their **remembered metrics + units** (no setup) and drop straight into the editor for inline editing. *(Built. Follow-ons that need catalog media/metadata: real thumbnails; searching muscles / equipment / movement patterns; a Favorites chip.)*
 
-### Blocks are optional — progressive complexity
-Don't force blocks. **Beginner:** a workout is just a list of exercises (no block chrome). **Intermediate/Advanced:** the athlete adds named blocks (Warm-up / Threshold / Strength / Durability). Ask for the minimum — someone doing Chest/Shoulders/Triceps shouldn't have to invent block names. This needs a small **model change**: a Workout holds ordered **Content** = `Exercise | Block(→Exercises)`, so it can legally contain standalone exercises, blocks, or a mix. *(Design — not yet built; the model is currently Workout → Block → Exercise, so today there's always at least one block. Deliberate refactor, sequenced next.)*
+### Blocks are optional — via an implicit default block (NOT a mixed hierarchy)
+Don't force blocks, but **don't** corrupt the model with `Content = Exercise | Block` either — a mixed hierarchy adds needless complexity everywhere (ordering two entity types, root↔block moves, tool ambiguity, render/persistence/version branches). Keep the invariant **`Workout → Block → Exercise`** and use an **implicit default block**: every workout has one internally, but while it's the only block with no name or goal, its card/header is hidden so the workout reads flat (Hevy-style). Adding a second (or naming/adding a goal to it) reveals block containers; the default then displays as **"Main"**. Rules: new workout gets one default block; workout-level Add Exercise lands there; deleting all explicit blocks falls back to the default (always ≥1 block); the agent's add lands in the single implicit block regardless of block name; chat creates named blocks only for distinct purposes. *(Built.)*
 
 ### Where Baseline differentiates
 Steal the boring, well-optimized parts (the Add-Exercise sheet, set logging) from apps like Hevy. **Differentiate on everything *after* the exercise is added:** AI builds the workout, rich structure + readiness-driven adaptation, coach guidance, conversation, learning. The Exercise Detail screen adds what Hevy lacks — **today's goal + context + coach note** alongside history.

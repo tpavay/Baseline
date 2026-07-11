@@ -38,6 +38,7 @@ struct WorkoutStoreTests {
     @Test func unknownNamesAndBadSetsFail() {
         let s = store()
         s.create(title: "x", goal: nil)
+        s.addBlock(name: "Real", intent: nil)     // ≥2 blocks so a bad block name can't fall back to the implicit one
         #expect(!s.moveExercise(named: "ghost", toBlockNamed: "nowhere").succeeded)
         #expect(!s.updateSet(exerciseNamed: "ghost", setNumber: 1, reps: 5, load: nil, durationSeconds: nil, rpe: nil).succeeded)
         #expect(!s.addExercise(name: "X", toBlockNamed: "missing block", sets: 1, reps: nil, load: nil, durationSeconds: nil).succeeded)
@@ -206,13 +207,25 @@ struct WorkoutStoreTests {
         #expect(s.currentLog == nil)
     }
 
+    @Test func createGivesImplicitDefaultBlock() {
+        let s = store()
+        s.create(title: "x", goal: nil)
+        #expect(s.current?.blocks.count == 1)
+        #expect(s.current?.blocks.first?.isDefault == true)
+        #expect(s.current?.blocks.first?.name.isEmpty == true)
+        // A simple workout: any block name lands the exercise in the implicit block.
+        #expect(s.addExercise(name: "Deadlift", toBlockNamed: "anything", sets: 3, reps: 5, load: 100, durationSeconds: nil).succeeded)
+        #expect(s.current?.allExercises.first?.exerciseName == "Deadlift")
+    }
+
     @Test func persistsAcrossInstances() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
         let s1 = WorkoutStore(defaults: d)
-        s1.create(title: "Persisted", goal: "test")
-        s1.addBlock(name: "A", intent: nil)
+        s1.create(title: "Persisted", goal: "test")          // implicit default block
+        s1.addBlock(name: "A", intent: nil)                  // + explicit block
         let s2 = WorkoutStore(defaults: d)
         #expect(s2.current?.title == "Persisted")
-        #expect(s2.current?.blocks.count == 1)
+        #expect(s2.current?.blocks.contains { $0.name == "A" } == true)
+        #expect(s2.current?.blocks.count == 2)
     }
 }

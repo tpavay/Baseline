@@ -80,6 +80,10 @@ struct WorkoutBlock: Identifiable, Codable, Equatable, Sendable {
     var name: String
     var intent: String?
     var exercises: [PlannedExercise] = []
+    /// The auto-created container every workout has. Its card/header is hidden while it's the only
+    /// block and carries no name or goal — so a simple workout reads flat, though the model stays
+    /// `Workout → Block → Exercise`. Progressive complexity without a mixed hierarchy.
+    var isDefault = false
 }
 
 struct Workout: Identifiable, Codable, Equatable, Sendable {
