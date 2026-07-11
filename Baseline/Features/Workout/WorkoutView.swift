@@ -7,8 +7,8 @@ import SwiftUI
 /// inspectable and correctable by hand. No charts / PRs / calendar / voice yet.
 struct WorkoutView: View {
     @Environment(WorkoutStore.self) private var store
-    @State private var expandedBlocks: Set<UUID> = []
-    @State private var expandedExercises: Set<UUID> = []
+    @State private var collapsedBlocks: Set<UUID> = []       // blocks expanded by default
+    @State private var expandedExercises: Set<UUID> = []     // exercises collapsed by default
     @State private var sheet: WorkoutSheet?
     @State private var showChat = false
 
@@ -57,23 +57,23 @@ struct WorkoutView: View {
 
     private func content(_ workout: Workout) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                header(workout)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                header(workout).padding(.bottom, 6)
                 if isFlat(workout), let def = workout.blocks.first {
-                    // Flat, Hevy-style: no block chrome — just the exercises.
-                    ForEach(def.exercises) { ex in exerciseCard(ex, in: def) }
+                    // Flat, Hevy-style: exercises are light rows separated by whitespace — no cards.
+                    ForEach(def.exercises) { ex in exerciseRow(ex, in: def) }
                     if def.exercises.isEmpty {
-                        Text("No exercises yet — add one to get started.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+                        Text("No exercises yet — add one to get started.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint).padding(.vertical, 12)
                     }
-                    addCardButton("Add exercise") { addExercise(to: def.id) }
-                    addCardButton("Add block") { addBlock() }
+                    addRowButton("Add exercise") { addExercise(to: def.id) }
+                    addRowButton("Add block") { addBlock() }
                 } else {
-                    ForEach(workout.blocks) { block in blockCard(block) }
-                    addCardButton("Add block") { addBlock() }
+                    ForEach(workout.blocks) { block in blockSection(block) }
+                    addRowButton("Add block") { addBlock() }
                 }
-                Color.clear.frame(height: 72)   // clear the chat bar
+                Color.clear.frame(height: 80)   // clear the chat bar
             }
-            .padding(16)
+            .padding(.horizontal, 16)
         }
     }
 
@@ -107,20 +107,22 @@ struct WorkoutView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Block
+    // MARK: - Block (lightweight section header, Apple-Notes style — not a card)
 
-    private func blockCard(_ block: WorkoutBlock) -> some View {
-        let expanded = expandedBlocks.contains(block.id)
-        return VStack(alignment: .leading, spacing: 12) {
+    private func blockSection(_ block: WorkoutBlock) -> some View {
+        let expanded = !collapsedBlocks.contains(block.id)
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Button { toggle(&expandedBlocks, block.id) } label: {
+                Button { toggle(&collapsedBlocks, block.id) } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 18)
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
                 }.buttonStyle(.plain)
                 TextField("", text: blockNameBinding(block), prompt: Text(block.isDefault ? "Main" : "Block").foregroundStyle(BaselineColor.textFaint))
-                    .font(.system(size: 13, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textHi)
+                    .font(.system(size: 12, weight: .bold)).tracking(0.6).foregroundStyle(BaselineColor.textMid)
+                if let g = block.intent, !g.isEmpty { Text(g).font(.system(size: 11)).foregroundStyle(BaselineColor.textFaint) }
                 Spacer()
                 Menu {
+                    TextField("Goal", text: blockGoalBinding(block))
                     Button { addExercise(to: block.id) } label: { Label("Add exercise", systemImage: "plus") }
                     Button { store.edit { $0.duplicateBlock(block.id) } } label: { Label("Duplicate block", systemImage: "plus.square.on.square") }
                     Button(role: .destructive) {
@@ -131,31 +133,22 @@ struct WorkoutView: View {
                     } label: { Label("Delete block", systemImage: "trash") }
                 } label: { Image(systemName: "ellipsis").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).padding(6) }
             }
+            .padding(.top, 16).padding(.bottom, 6)
+            Rectangle().fill(BaselineColor.line).frame(height: 1)
             if expanded {
-                HStack(spacing: 6) {
-                    Text("GOAL").font(.system(size: 10, weight: .bold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
-                    TextField("", text: blockGoalBinding(block), prompt: Text("optional").foregroundStyle(BaselineColor.textFaint))
-                        .font(.system(size: 13)).foregroundStyle(BaselineColor.textMid)
-                }
-                ForEach(block.exercises) { ex in exerciseCard(ex, in: block) }
-                addCardButton("Add exercise") { addExercise(to: block.id) }
-            } else {
-                let goal = block.intent.map { $0.isEmpty ? nil : "Goal: \($0) · " } ?? nil
-                Text((goal ?? "") + "\(block.exercises.count) exercise\(block.exercises.count == 1 ? "" : "s")")
-                    .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+                ForEach(block.exercises) { ex in exerciseRow(ex, in: block) }
+                addRowButton("Add exercise") { addExercise(to: block.id) }
             }
         }
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16).fill(BaselineColor.surface))
     }
 
-    // MARK: - Exercise (nested card)
+    // MARK: - Exercise (light row → expands to a logging table)
 
-    private func exerciseCard(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
+    private func exerciseRow(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
         let expanded = expandedExercises.contains(ex.id)
         let performed = store.currentLog?.performed(forPlanned: ex.id)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
                 Button { toggle(&expandedExercises, ex.id) } label: {
                     HStack(spacing: 8) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
@@ -172,26 +165,28 @@ struct WorkoutView: View {
                 Spacer()
                 exerciseMenu(ex, in: block)
             }
+            .padding(.vertical, 11)
             if expanded {
-                setTable(ex)
-                if !executing {
-                    Button { addSet(to: ex) } label: {
-                        Label("Add set", systemImage: "plus.circle").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                            .frame(maxWidth: .infinity).frame(height: 36)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
-                    }.buttonStyle(.plain)
-                    let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
-                    if !unused.isEmpty {
-                        Menu { ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } } }
-                        label: { Label("Add metric", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
+                VStack(alignment: .leading, spacing: 8) {
+                    setTable(ex)
+                    if !executing {
+                        Button { addSet(to: ex) } label: {
+                            Label("Add set", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
+                                .frame(maxWidth: .infinity).frame(height: 34)
+                                .background(RoundedRectangle(cornerRadius: 9).fill(BaselineColor.surface))
+                        }.buttonStyle(.plain)
+                        let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
+                        if !unused.isEmpty {
+                            Menu { ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } } }
+                            label: { Label("Add metric", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
+                        }
                     }
+                    if executing { executionControls(ex, performed: performed) }
                 }
-                if executing { executionControls(ex, performed: performed) }
+                .padding(.leading, 22).padding(.bottom, 10)
             }
+            Rectangle().fill(BaselineColor.line).frame(height: 1)   // whitespace-thin separator between rows
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(BaselineColor.base)
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.line, lineWidth: 1)))
     }
 
     /// Sets as a dense table — metric headers once, values in aligned columns (Strong-style).
@@ -340,7 +335,6 @@ struct WorkoutView: View {
         case .addExercise(let blockID):
             if let target = blockID ?? store.current?.blocks.first?.id {
                 AddExerciseFlow(blockID: target) { newIDs in    // catalog-first, multi-select insert
-                    expandedBlocks.insert(target)
                     if newIDs.count == 1, let only = newIDs.first { expandedExercises.insert(only) }
                 }
             } else {
@@ -369,9 +363,8 @@ struct WorkoutView: View {
 
     private func addBlock() {
         // Empty-named, inline-renamable — revealing structure turns the default into "Main" and this
-        // new block prompts for a name.
+        // new block prompts for a name. Blocks are expanded by default.
         store.edit { $0.addBlock(name: "") }
-        if let id = store.current?.blocks.last?.id { expandedBlocks.insert(id) }
     }
 
     private func addExercise(to blockID: UUID) { sheet = .addExercise(blockID: blockID) }
@@ -459,13 +452,13 @@ struct WorkoutView: View {
         }
     }
 
-    /// The shared full-width "Add …" card component — Add Block and Add Exercise use the same one.
-    private func addCardButton(_ title: String, action: @escaping () -> Void) -> some View {
+    /// The shared full-width, lightweight "Add …" row — Add Block and Add Exercise use the same one.
+    private func addRowButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: "plus").font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(BaselineColor.accent).frame(maxWidth: .infinity).frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).strokeBorder(BaselineColor.line, lineWidth: 1))
-        }.buttonStyle(.plain)
+                .foregroundStyle(BaselineColor.accent).frame(maxWidth: .infinity).frame(height: 42)
+                .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface.opacity(0.5)))
+        }.buttonStyle(.plain).padding(.top, 8)
     }
 
     // MARK: - Helpers
