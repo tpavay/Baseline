@@ -274,6 +274,9 @@ struct SetLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var plannedSetID: UUID?
     var values = MetricValues()
+    /// Set-level completion — the Hevy "check the row" gesture. When every planned set has a
+    /// completed log, the exercise auto-completes; there is no separate exercise-level "Complete".
+    var completed = false
 
     init(plannedSetID: UUID? = nil, reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
          distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil) {
@@ -282,6 +285,16 @@ struct SetLog: Identifiable, Codable, Equatable, Sendable {
         values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
     }
     init(plannedSetID: UUID? = nil, values: MetricValues) { self.plannedSetID = plannedSetID; self.values = values }
+
+    // Codable-tolerant of the pre-`completed` on-disk shape (dev logs written before this field).
+    private enum CodingKeys: String, CodingKey { case id, plannedSetID, values, completed }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        plannedSetID = try c.decodeIfPresent(UUID.self, forKey: .plannedSetID)
+        values = try c.decode(MetricValues.self, forKey: .values)
+        completed = try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
+    }
 
     var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
     var load: Double? { get { values[.load] } set { values[.load] = newValue } }
@@ -327,6 +340,23 @@ extension WorkoutLog {
 
     mutating func logSet(_ set: SetLog, forPlanned plannedID: UUID, name: String) {
         exercises[index(forPlanned: plannedID, name: name)].setLogs.append(set)
+    }
+
+    /// Find-or-create the actual for one planned set and edit it in place — the training table edits
+    /// cells directly (Hevy-style) rather than appending free-floating logs.
+    mutating func upsertSetLog(forPlanned plannedID: UUID, name: String, plannedSetID: UUID, _ transform: (inout SetLog) -> Void) {
+        let i = index(forPlanned: plannedID, name: name)
+        if let s = exercises[i].setLogs.firstIndex(where: { $0.plannedSetID == plannedSetID }) {
+            transform(&exercises[i].setLogs[s])
+        } else {
+            var new = SetLog(plannedSetID: plannedSetID)
+            transform(&new)
+            exercises[i].setLogs.append(new)
+        }
+    }
+
+    func setLog(forPlanned plannedID: UUID, plannedSetID: UUID) -> SetLog? {
+        performed(forPlanned: plannedID)?.setLogs.first { $0.plannedSetID == plannedSetID }
     }
 
     mutating func setStatus(_ status: PerformedStatus, forPlanned plannedID: UUID, name: String, reason: String? = nil) {

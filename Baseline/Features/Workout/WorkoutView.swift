@@ -168,20 +168,20 @@ struct WorkoutView: View {
             .padding(.vertical, 11)
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
-                    setTable(ex)
+                    setTable(ex, performed: performed)
+                    Button { addSet(to: ex) } label: {
+                        Label("Add set", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
+                            .frame(maxWidth: .infinity).frame(height: 34)
+                            .background(RoundedRectangle(cornerRadius: 9).fill(BaselineColor.surface))
+                    }.buttonStyle(.plain)
                     if !executing {
-                        Button { addSet(to: ex) } label: {
-                            Label("Add set", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                                .frame(maxWidth: .infinity).frame(height: 34)
-                                .background(RoundedRectangle(cornerRadius: 9).fill(BaselineColor.surface))
-                        }.buttonStyle(.plain)
                         let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
                         if !unused.isEmpty {
                             Menu { ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } } }
                             label: { Label("Add metric", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
                         }
                     }
-                    if executing { executionControls(ex, performed: performed) }
+                    if executing { noteField(ex, performed: performed) }
                 }
                 .padding(.leading, 22).padding(.bottom, 10)
             }
@@ -189,23 +189,38 @@ struct WorkoutView: View {
         }
     }
 
-    /// Sets as a dense table — metric headers once, values in aligned columns (Strong-style).
-    @ViewBuilder private func setTable(_ ex: PlannedExercise) -> some View {
+    /// Sets as a dense table — metric headers once, values in aligned columns. Two reads of the same
+    /// table: **planning** edits the prescription; **training** edits the actual into pre-filled cells
+    /// (the plan value is the placeholder) and checks each row off. No planned-vs-actual columns —
+    /// they're separated by mode, not by column.
+    @ViewBuilder private func setTable(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
         let metrics = ex.selectedMetrics
+        let activeIdx = executing ? ex.prescription.sets.firstIndex(where: { !setComplete(performed, $0.id) }) : nil
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
             GridRow {
                 Text("#").font(.system(size: 10, weight: .bold)).foregroundStyle(BaselineColor.textFaint).gridColumnAlignment(.center)
                 ForEach(metrics, id: \.self) { m in
                     Text(columnHeader(m, for: ex)).font(.system(size: 10, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
                 }
-                Color.clear.frame(width: 16)
+                if executing {
+                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(BaselineColor.textFaint).gridColumnAlignment(.center)
+                } else {
+                    Color.clear.frame(width: 16)
+                }
             }
             ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
+                let done = executing && setComplete(performed, s.id)
+                let active = executing && i == activeIdx
                 GridRow {
-                    Text("\(i + 1)").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.textMid).gridColumnAlignment(.center)
+                    Text("\(i + 1)").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textMid))
+                        .gridColumnAlignment(.center)
                     ForEach(metrics, id: \.self) { m in
                         if executing {
-                            Text(cellText(s.values, m, for: ex)).font(.system(size: 14)).foregroundStyle(BaselineColor.textHi)
+                            TextField(cellText(s.values, m, for: ex), text: logValueBinding(ex, s, m))
+                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(done ? BaselineColor.textFaint : BaselineColor.textHi)
+                                .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                                .frame(width: 52)
                         } else {
                             TextField("—", text: valueBinding(ex, s.id, m))
                                 .font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
@@ -213,41 +228,24 @@ struct WorkoutView: View {
                                 .frame(width: 52)
                         }
                     }
-                    Menu {
-                        Button { duplicateSet(s.id, in: ex) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                        Button(role: .destructive) { deleteSet(s.id, from: ex) } label: { Label("Delete", systemImage: "trash") }
-                    } label: { Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint) }
+                    if executing {
+                        Button { toggleComplete(ex, s) } label: {
+                            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18)).foregroundStyle(done ? BaselineColor.zoneGreen : BaselineColor.textFaint)
+                        }.buttonStyle(.plain).gridColumnAlignment(.center)
+                    } else {
+                        Menu {
+                            Button { duplicateSet(s.id, in: ex) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                            Button(role: .destructive) { deleteSet(s.id, from: ex) } label: { Label("Delete", systemImage: "trash") }
+                        } label: { Image(systemName: "ellipsis").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint) }
+                    }
                 }
             }
         }
     }
 
-    @ViewBuilder private func executionControls(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
-        if let logs = performed?.setLogs, !logs.isEmpty {
-            Text("LOGGED").font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundStyle(BaselineColor.zoneGreen)
-            ForEach(Array(logs.enumerated()), id: \.element.id) { _, s in
-                HStack {
-                    Text("• \(metricText(s.values, for: ex))").font(.system(size: 13)).foregroundStyle(BaselineColor.textHi)
-                    Spacer()
-                    Button { store.editLog { $0.removeSetLog(s.id) } } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-                    }.buttonStyle(.plain)
-                }
-            }
-        }
-        HStack(spacing: 10) {
-            Button { sheet = .logSet(exerciseID: ex.id, name: ex.exerciseName) } label: {
-                Label("Log set", systemImage: "plus.circle.fill").font(.system(size: 13, weight: .semibold))
-            }.buttonStyle(.plain).foregroundStyle(BaselineColor.accent)
-            Spacer()
-            Button { store.editLog { $0.setStatus(.completed, forPlanned: ex.id, name: ex.exerciseName) } } label: {
-                Text("Complete").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.zoneGreen)
-            }.buttonStyle(.plain)
-            Button { store.editLog { $0.setStatus(.skipped, forPlanned: ex.id, name: ex.exerciseName) } } label: {
-                Text("Skip").font(.system(size: 12, weight: .semibold)).foregroundStyle(BaselineColor.zoneAmber)
-            }.buttonStyle(.plain)
-        }
-        noteField(ex, performed: performed)
+    private func setComplete(_ performed: PerformedExercise?, _ setID: UUID) -> Bool {
+        performed?.setLogs.first { $0.plannedSetID == setID }?.completed ?? false
     }
 
     private func columnHeader(_ m: MetricType, for ex: PlannedExercise) -> String {
@@ -277,17 +275,21 @@ struct WorkoutView: View {
 
     private func exerciseMenu(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
         Menu {
-            Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName) } label: { Label("Configure metrics", systemImage: "slider.horizontal.3") }
-            Button { sheet = .substitute(exerciseID: ex.id, current: ex.exerciseName) } label: { Label("Substitute", systemImage: "arrow.triangle.2.circlepath") }
+            Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName, focus: .metrics) } label: { Label("Metrics", systemImage: "slider.horizontal.3") }
+            Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName, focus: .units) } label: { Label("Units", systemImage: "ruler") }
+            Button { sheet = .substitute(exerciseID: ex.id, current: ex.exerciseName) } label: { Label("Replace", systemImage: "arrow.triangle.2.circlepath") }
             Menu {
                 ForEach(otherBlocks(than: block.id)) { b in
-                    Button(b.name) { store.edit { $0.moveExercise(ex.id, toBlock: b.id) } }
+                    Button(b.name.isEmpty ? "Main" : b.name) { store.edit { $0.moveExercise(ex.id, toBlock: b.id) } }
                 }
-            } label: { Label("Move to block", systemImage: "arrow.right") }
-            Button { reorder(ex, in: block, by: -1) } label: { Label("Move up", systemImage: "arrow.up") }
-            Button { reorder(ex, in: block, by: 1) } label: { Label("Move down", systemImage: "arrow.down") }
+                Button { reorder(ex, in: block, by: -1) } label: { Label("Move up", systemImage: "arrow.up") }
+                Button { reorder(ex, in: block, by: 1) } label: { Label("Move down", systemImage: "arrow.down") }
+            } label: { Label("Move", systemImage: "arrow.up.arrow.down") }
             Button { duplicateExercise(ex, in: block) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-            Button(role: .destructive) { store.edit { $0.removeExercise(ex.id) } } label: { Label("Remove", systemImage: "trash") }
+            if executing {
+                Button { store.editLog { $0.setStatus(.skipped, forPlanned: ex.id, name: ex.exerciseName) } } label: { Label("Skip exercise", systemImage: "forward.end") }
+            }
+            Button(role: .destructive) { store.edit { $0.removeExercise(ex.id) } } label: { Label("Delete", systemImage: "trash") }
         } label: { Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(6) }
     }
 
@@ -344,15 +346,9 @@ struct WorkoutView: View {
             SubstituteSheet(currentName: current) { name, prescription in
                 store.edit { $0.substituteExercise(id, withName: name, prescription: prescription) }
             }
-        case .logSet(let id, let name):
-            let ex = store.current?.exercise(id)
-            let fields = (ex?.selectedMetrics ?? [.reps, .load]).map { ($0, store.displayUnit($0, for: ex ?? .init(exerciseName: name))) }
-            MetricLogSheet(title: "Log \(name)", fields: fields) { values in
-                store.editLog { $0.logSet(SetLog(values: values), forPlanned: id, name: name) }
-            }
-        case .configure(let id, let name):
+        case .configure(let id, let name, let focus):
             if let ex = store.current?.exercise(id) {
-                MetricConfigSheet(exercise: ex, unitFor: { store.displayUnit($0, for: ex) }) { enabled, units in
+                MetricConfigSheet(exercise: ex, focus: focus, unitFor: { store.displayUnit($0, for: ex) }) { enabled, units in
                     store.setLoggingConfig(exerciseNamed: name, enabled: enabled, units: units)
                 }
             }
@@ -413,6 +409,45 @@ struct WorkoutView: View {
                 }
             }
         )
+    }
+
+    /// Training-mode cell: reads/writes the *actual* for one metric of one set (canonical on the log,
+    /// shown in the exercise's display unit). Empty until edited — the plan value is the placeholder.
+    private func logValueBinding(_ ex: PlannedExercise, _ set: PlannedSet, _ metric: MetricType) -> Binding<String> {
+        let unit = store.displayUnit(metric, for: ex)
+        return Binding(
+            get: {
+                guard let v = store.currentLog?.setLog(forPlanned: ex.id, plannedSetID: set.id)?.values[metric] else { return "" }
+                if metric == .duration { return mmss(Int(v)) }
+                let d = MetricConvert.fromCanonical(v, metric, to: unit)
+                return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
+            },
+            set: { text in
+                let t = text.trimmingCharacters(in: .whitespaces)
+                store.editLog { log in
+                    log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
+                        if t.isEmpty { s.values[metric] = nil }
+                        else if metric == .duration { s.values[.duration] = Double(parseMMSS(t)) }
+                        else if let d = Double(t) { s.values[metric] = max(0, MetricConvert.toCanonical(d, metric, from: unit)) }
+                    }
+                }
+            }
+        )
+    }
+
+    /// Check / uncheck a set. First check seeds any untouched metric from the plan (logged as
+    /// prescribed); when every planned set is checked the exercise auto-completes.
+    private func toggleComplete(_ ex: PlannedExercise, _ set: PlannedSet) {
+        store.editLog { log in
+            let wasDone = log.setLog(forPlanned: ex.id, plannedSetID: set.id)?.completed ?? false
+            log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
+                if !wasDone { for m in ex.selectedMetrics where s.values[m] == nil { s.values[m] = set.values[m] } }
+                s.completed = !wasDone
+            }
+            let ids = ex.prescription.sets.map(\.id)
+            let allDone = !ids.isEmpty && ids.allSatisfy { log.setLog(forPlanned: ex.id, plannedSetID: $0)?.completed == true }
+            log.setStatus(allDone ? .completed : .pending, forPlanned: ex.id, name: ex.exerciseName)
+        }
     }
 
     private func mmss(_ seconds: Int) -> String { seconds >= 60 ? "\(seconds / 60):\(String(format: "%02d", seconds % 60))" : "\(seconds)" }
@@ -516,15 +551,13 @@ struct WorkoutView: View {
 private enum WorkoutSheet: Identifiable {
     case addExercise(blockID: UUID?)
     case substitute(exerciseID: UUID, current: String)
-    case logSet(exerciseID: UUID, name: String)
-    case configure(exerciseID: UUID, name: String)
+    case configure(exerciseID: UUID, name: String, focus: MetricConfigFocus)
 
     var id: String {
         switch self {
-        case .configure(let id, _): "config-\(id)"
+        case .configure(let id, _, let f): "config-\(f)-\(id)"
         case .addExercise(let b): "addExercise-\(b?.uuidString ?? "none")"
         case .substitute(let id, _): "sub-\(id)"
-        case .logSet(let id, _): "log-\(id)"
         }
     }
 }

@@ -132,6 +132,50 @@ struct WorkoutModelTests {
         #expect(log.performed(forPlanned: adhoc)?.exerciseName == "Ad-hoc curl")
     }
 
+    @Test func upsertSetLogEditsInPlaceKeyedByPlannedSet() {
+        let (w, _, _, bench) = sample()
+        var log = w.startLog()
+        let plannedSetID = w.exercise(bench)!.prescription.sets[0].id
+
+        // First upsert creates the actual; second edits the same one (no duplicate).
+        log.upsertSetLog(forPlanned: bench, name: "Bench press", plannedSetID: plannedSetID) { $0.reps = 8 }
+        log.upsertSetLog(forPlanned: bench, name: "Bench press", plannedSetID: plannedSetID) { $0.load = 65 }
+        let logs = log.performed(forPlanned: bench)?.setLogs ?? []
+        #expect(logs.count == 1)
+        #expect(logs.first?.reps == 8)
+        #expect(logs.first?.load == 65)
+        #expect(log.setLog(forPlanned: bench, plannedSetID: plannedSetID)?.load == 65)
+    }
+
+    @Test func checkingEverySetIsWhatAutoCompletesTheExercise() {
+        // Mirrors WorkoutView.toggleComplete: an exercise completes only once every planned set is
+        // checked — completion is a set-level gesture, not an exercise-level button.
+        let (w, _, _, bench) = sample()
+        var log = w.startLog()
+        let ids = w.exercise(bench)!.prescription.sets.map(\.id)
+
+        func allChecked() -> Bool { ids.allSatisfy { log.setLog(forPlanned: bench, plannedSetID: $0)?.completed == true } }
+
+        log.upsertSetLog(forPlanned: bench, name: "Bench press", plannedSetID: ids[0]) { $0.completed = true }
+        #expect(!allChecked())          // one of two — not done yet
+        #expect(log.performed(forPlanned: bench)?.status == .pending)
+
+        log.upsertSetLog(forPlanned: bench, name: "Bench press", plannedSetID: ids[1]) { $0.completed = true }
+        log.setStatus(allChecked() ? .completed : .pending, forPlanned: bench, name: "Bench press")
+        #expect(log.performed(forPlanned: bench)?.status == .completed)
+
+        // The plan is never touched by checking sets off.
+        #expect(w.exercise(bench)?.prescription.sets.count == 2)
+    }
+
+    @Test func setLogCompletedSurvivesLegacyDecodeWithoutTheField() throws {
+        // Dev logs written before `completed` existed must still decode (default false).
+        let legacy = #"{"id":"\#(UUID().uuidString)","values":{"reps":8}}"#
+        let decoded = try JSONDecoder().decode(SetLog.self, from: Data(legacy.utf8))
+        #expect(decoded.completed == false)
+        #expect(decoded.reps == 8)
+    }
+
     // MARK: - Validation
 
     @Test func invalidEditsReturnFalse() {
