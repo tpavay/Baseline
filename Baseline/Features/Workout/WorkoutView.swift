@@ -317,9 +317,9 @@ struct WorkoutView: View {
         switch sheet {
         case .addExercise(let blockID):
             if let target = blockID ?? store.current?.blocks.first?.id {
-                AddExerciseFlow(blockID: target) { newID in     // catalog-first, direct insert
+                AddExerciseFlow(blockID: target) { newIDs in    // catalog-first, multi-select insert
                     expandedBlocks.insert(target)
-                    expandedExercises.insert(newID)
+                    if newIDs.count == 1, let only = newIDs.first { expandedExercises.insert(only) }
                 }
             } else {
                 Text("Add a block first.").font(.system(size: 15)).foregroundStyle(BaselineColor.textMid).padding(40)
