@@ -1,0 +1,17 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /exercise-media/{exerciseId}/{version}/{fileName} {
+      allow read: if request.auth != null
+        && version.matches('v[1-9][0-9]*')
+        && fileName in ['thumbnail.png', 'detail.png']
+        && resource.contentType == 'image/png'
+        && resource.size < 5 * 1024 * 1024;
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

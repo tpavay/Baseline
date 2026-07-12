@@ -36,6 +36,8 @@ targets:
         product: FirebaseFirestore
       - package: Firebase
         product: FirebaseFunctions
+      - package: Firebase
+        product: FirebaseStorage
       - package: GoogleSignIn
         product: GoogleSignIn
     info:

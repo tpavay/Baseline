@@ -102,8 +102,7 @@ struct AddExerciseFlow: View {
         let isSel = selected.contains(def.id)
         return Button { toggle(def.id) } label: {
             HStack(spacing: 12) {
-                Image(systemName: def.category.glyph).font(.system(size: 16)).foregroundStyle(BaselineColor.accent)
-                    .frame(width: 38, height: 38).background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
+                ExerciseThumbnailView(definition: def, size: 38)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(def.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
                     Text(def.category.rawValue.capitalized).font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)

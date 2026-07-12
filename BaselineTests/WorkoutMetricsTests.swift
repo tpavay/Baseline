@@ -42,7 +42,9 @@ struct ExerciseCatalogTests {
         #expect(ExerciseCatalog.resolve("spin bike").id == "stationary_bike")
         #expect(ExerciseCatalog.resolve("Concept2 Bike").id == "bike_erg")
         #expect(ExerciseCatalog.resolve("rower").id == "row")
-        #expect(ExerciseCatalog.resolve("farmers carry").id == "loaded_carry")
+        #expect(ExerciseCatalog.resolve("farmers carry").id == "farmers_carry")
+        #expect(ExerciseCatalog.resolve("treadmill").id == "treadmill_run")
+        #expect(ExerciseCatalog.resolve("wall ball").id == "wall_balls")
         #expect(ExerciseCatalog.resolve("Copenhagen").id == "isometric_hold")
     }
 
@@ -56,5 +58,6 @@ struct ExerciseCatalogTests {
         #expect(bike.supported.contains(.distance))
         #expect(bike.defaults == [.duration, .distance])
         #expect(ExerciseCatalog.definition(id: "deadlift")?.category == .strength)
+        #expect(ExerciseCatalog.definition(id: "sled_push")?.supported.contains(.distance) == true)
     }
 }

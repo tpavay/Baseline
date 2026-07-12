@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "exercises": {
+    "back_squat": {
+      "sourceFilename": "Squat.png",
+      "thumbnailPath": "exercise-media/back_squat/v1/thumbnail.png",
+      "detailPath": "exercise-media/back_squat/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "bench_press": {
+      "sourceFilename": "BenchPress.png",
+      "thumbnailPath": "exercise-media/bench_press/v1/thumbnail.png",
+      "detailPath": "exercise-media/bench_press/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "bodyweight_squat": {
+      "sourceFilename": "BodyweightSquat.png",
+      "thumbnailPath": "exercise-media/bodyweight_squat/v1/thumbnail.png",
+      "detailPath": "exercise-media/bodyweight_squat/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "burpee_broad_jump": {
+      "sourceFilename": "BurpeeBroadJump.png",
+      "thumbnailPath": "exercise-media/burpee_broad_jump/v1/thumbnail.png",
+      "detailPath": "exercise-media/burpee_broad_jump/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "deadlift": {
+      "sourceFilename": "Deadlift.png",
+      "thumbnailPath": "exercise-media/deadlift/v1/thumbnail.png",
+      "detailPath": "exercise-media/deadlift/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "farmers_carry": {
+      "sourceFilename": "FarmersCarry.png",
+      "thumbnailPath": "exercise-media/farmers_carry/v1/thumbnail.png",
+      "detailPath": "exercise-media/farmers_carry/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "outdoor_bike": {
+      "sourceFilename": "OutdoorBike.png",
+      "thumbnailPath": "exercise-media/outdoor_bike/v1/thumbnail.png",
+      "detailPath": "exercise-media/outdoor_bike/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "pull_up": {
+      "sourceFilename": "Pullup.png",
+      "thumbnailPath": "exercise-media/pull_up/v1/thumbnail.png",
+      "detailPath": "exercise-media/pull_up/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "push_up": {
+      "sourceFilename": "PushUp.png",
+      "thumbnailPath": "exercise-media/push_up/v1/thumbnail.png",
+      "detailPath": "exercise-media/push_up/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "row": {
+      "sourceFilename": "Rower.png",
+      "thumbnailPath": "exercise-media/row/v1/thumbnail.png",
+      "detailPath": "exercise-media/row/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "run": {
+      "sourceFilename": "OutdoorRun.png",
+      "thumbnailPath": "exercise-media/run/v1/thumbnail.png",
+      "detailPath": "exercise-media/run/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "sandbag_lunge": {
+      "sourceFilename": "SandbagLunge.png",
+      "thumbnailPath": "exercise-media/sandbag_lunge/v1/thumbnail.png",
+      "detailPath": "exercise-media/sandbag_lunge/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "ski_erg": {
+      "sourceFilename": "SkiErg.png",
+      "thumbnailPath": "exercise-media/ski_erg/v1/thumbnail.png",
+      "detailPath": "exercise-media/ski_erg/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "blocked"
+    },
+    "sled_push": {
+      "sourceFilename": "SledPush.png",
+      "thumbnailPath": "exercise-media/sled_push/v1/thumbnail.png",
+      "detailPath": "exercise-media/sled_push/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "stationary_bike": {
+      "sourceFilename": "IndoorBike.png",
+      "thumbnailPath": "exercise-media/stationary_bike/v1/thumbnail.png",
+      "detailPath": "exercise-media/stationary_bike/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "treadmill_run": {
+      "sourceFilename": "TreadmillRun.png",
+      "thumbnailPath": "exercise-media/treadmill_run/v1/thumbnail.png",
+      "detailPath": "exercise-media/treadmill_run/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "wall_balls": {
+      "sourceFilename": "WallBalls.png",
+      "thumbnailPath": "exercise-media/wall_balls/v1/thumbnail.png",
+      "detailPath": "exercise-media/wall_balls/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "blocked"
+    }
+  }
+}
