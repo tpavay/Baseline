@@ -11,10 +11,17 @@ struct BaselineApp: App {
     @State private var health = HealthService()
     @State private var context = TrainingContextStore()
     @State private var workouts = WorkoutStore()
+    @State private var plan: PlanStore
+    private let container: ModelContainer
 
     init() {
         FirebaseApp.configure()
         authVM = AuthViewModel()
+        // One container for everything on-device; the Plan schema is registered from day one.
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        let c = try! ModelContainer(for: Schema(models))
+        container = c
+        _plan = State(initialValue: PlanStore(context: c.mainContext))
     }
 
     var body: some Scene {
@@ -32,6 +39,7 @@ struct BaselineApp: App {
         .environment(health)
         .environment(context)
         .environment(workouts)
-        .modelContainer(for: [Reading.self, ReadinessEntry.self])
+        .environment(plan)
+        .modelContainer(container)
     }
 }

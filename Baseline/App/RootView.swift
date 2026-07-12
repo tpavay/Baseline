@@ -5,6 +5,8 @@ import SwiftUI
 /// that, signed-in users get the app and signed-out users get the standalone auth gate.
 struct RootView: View {
     @Environment(AuthViewModel.self) private var authVM
+    @Environment(PlanStore.self) private var plan
+    @Environment(WorkoutStore.self) private var workouts
     @State private var onboarding = OnboardingStore()
 
     var body: some View {
@@ -22,6 +24,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.25), value: authVM.state)
         .animation(.easeInOut(duration: 0.3), value: onboarding.isComplete)
         .task { await reconcileProfile() }
+        .task { PlanMigrator.migrateIfNeeded(into: plan, workouts: workouts) }
     }
 
     /// Idempotent retry of the profile write in case the completion-time save failed offline.
@@ -32,10 +35,15 @@ struct RootView: View {
 }
 
 #Preview {
-    RootView()
+    let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+    let container = try! ModelContainer(for: Schema(models),
+                                        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    return RootView()
         .environment(AuthViewModel())
         .environment(AppSettings())
         .environment(BluetoothManager())
         .environment(HealthService())
-        .modelContainer(for: Reading.self, inMemory: true)
+        .environment(WorkoutStore())
+        .environment(PlanStore(context: container.mainContext))
+        .modelContainer(container)
 }
