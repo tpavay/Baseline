@@ -99,6 +99,26 @@ struct PlanRepositoryTests {
         #expect(after.workoutID == sw.workoutID)      // stable identity across revisions
     }
 
+    @Test func previousPerformanceReadsCompletedActualsByIdentity() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let sw = seed(repo, date: monday, program: prog.id)          // exercise definitionId == "deadlift"
+        let ex = sw.workout.allExercises.first!
+
+        repo.startSession(forScheduled: sw.id, now: monday)
+        repo.updateSessionLog(forScheduled: sw.id) { log in
+            log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: ex.prescription.sets[0].id) { s in
+                s.values[.load] = 100; s.values.setInt(.reps, 5); s.completed = true
+            }
+        }
+        _ = repo.completeSession(forScheduled: sw.id, acknowledgingOpenWork: true, now: monday)
+
+        let prev = repo.mostRecentPerformance(exerciseDefinitionID: "deadlift", before: cal.date(byAdding: .day, value: 1, to: monday)!)
+        #expect(prev?.sets.first?[.load] == 100)
+        #expect(repo.mostRecentPerformance(exerciseDefinitionID: "deadlift", before: monday) == nil)   // strictly before
+        #expect(repo.mostRecentPerformance(exerciseDefinitionID: "nonexistent", before: cal.date(byAdding: .day, value: 1, to: monday)!) == nil)
+    }
+
     @Test func migratorSeedsTodaysScheduledWorkoutOnceWithoutWiping() {
         let repo = makeRepo()
         let plan = PlanStore(repo: repo, today: monday)

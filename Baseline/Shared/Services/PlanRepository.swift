@@ -21,6 +21,10 @@ protocol PlanRepository {
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout?
     func session(forScheduled id: UUID) -> WorkoutSession?
     func completedLog(forScheduled id: UUID) -> CompletedWorkoutLog?
+    /// The most recent completed actuals for an exercise identity, before a date — the Hevy "previous"
+    /// column, per-exercise history, PRs. Reads the normalized index; never decodes a full log.
+    func mostRecentPerformance(exerciseDefinitionID: String, before: Date) -> ExercisePerformance?
+    func history(exerciseDefinitionID: String, limit: Int) -> [ExercisePerformance]
 
     @discardableResult func addProgram(_ p: Program) -> Program
     @discardableResult func addScheduled(_ sw: ScheduledWorkout) -> ScheduledWorkout
@@ -113,6 +117,24 @@ final class SwiftDataPlanRepository: PlanRepository {
         let logs = fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id })
             .sorted { $0.finishedAt > $1.finishedAt }
         return logs.first.flatMap(map)
+    }
+
+    func mostRecentPerformance(exerciseDefinitionID: String, before: Date) -> ExercisePerformance? {
+        let defID: String? = exerciseDefinitionID
+        return fetch(SDCompletedExercise.self, where: #Predicate { $0.exerciseDefinitionID == defID && $0.date < before })
+            .sorted { $0.date > $1.date }.first.flatMap(mapPerformance)
+    }
+
+    func history(exerciseDefinitionID: String, limit: Int) -> [ExercisePerformance] {
+        let defID: String? = exerciseDefinitionID
+        return Array(fetch(SDCompletedExercise.self, where: #Predicate { $0.exerciseDefinitionID == defID })
+            .sorted { $0.date > $1.date }.prefix(limit).compactMap(mapPerformance))
+    }
+
+    private func mapPerformance(_ sd: SDCompletedExercise) -> ExercisePerformance {
+        ExercisePerformance(id: sd.id, completedLogID: sd.completedLogID, date: sd.date,
+                            exerciseInstanceID: sd.exerciseInstanceID, exerciseDefinitionID: sd.exerciseDefinitionID,
+                            exerciseName: sd.exerciseName, sets: PlanCoding.value([MetricValues].self, sd.metricsJSON) ?? [])
     }
 
     // MARK: Seeding

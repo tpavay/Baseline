@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 /// The manual workout screen — the **ground-truth UI** for the structured workout the agent edits.
@@ -7,6 +8,7 @@ import SwiftUI
 /// inspectable and correctable by hand. No charts / PRs / calendar / voice yet.
 struct WorkoutView: View {
     @Environment(WorkoutStore.self) private var store
+    @Environment(PlanStore.self) private var plan            // for the "previous" column (exercise history)
     @State private var collapsedBlocks: Set<UUID> = []       // blocks expanded by default
     @State private var expandedExercises: Set<UUID> = []     // exercises collapsed by default
     @State private var sheet: WorkoutSheet?
@@ -214,9 +216,15 @@ struct WorkoutView: View {
     @ViewBuilder private func setTable(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
         let metrics = ex.selectedMetrics
         let activeIdx = executing ? ex.prescription.sets.firstIndex(where: { !setComplete(performed, $0.id) }) : nil
+        // Hevy "previous" column — last completed actuals for this exercise identity (only while logging,
+        // and only when real history exists — never a faked value).
+        let previous = executing ? ex.definitionId.flatMap { plan.previousPerformance(exerciseDefinitionID: $0) } : nil
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Text("SET").frame(width: 40).font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
+                if previous != nil {
+                    Text("PREVIOUS").frame(maxWidth: .infinity).font(.system(size: 12, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
+                }
                 ForEach(metrics, id: \.self) { m in
                     Text(columnHeader(m, for: ex)).frame(maxWidth: .infinity).font(.system(size: 12, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
                 }
@@ -230,6 +238,10 @@ struct WorkoutView: View {
                     HStack(spacing: 0) {
                         Text("\(i + 1)").frame(width: 40).font(.system(size: 16, weight: .bold))
                             .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textHi))
+                        if let previous {
+                            Text(previousCell(previous, i, for: ex)).frame(maxWidth: .infinity)
+                                .font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint).lineLimit(1).minimumScaleFactor(0.7)
+                        }
                         ForEach(metrics, id: \.self) { m in
                             if executing {
                                 TextField(cellText(s.values, m, for: ex), text: logValueBinding(ex, s, m))
@@ -268,6 +280,12 @@ struct WorkoutView: View {
 
     private func setComplete(_ performed: PerformedExercise?, _ setID: UUID) -> Bool {
         performed?.setLogs.first { $0.plannedSetID == setID }?.completed ?? false
+    }
+
+    /// The prior session's actuals for set `i`, in this exercise's display units (or "—" if that session
+    /// had fewer sets). Real data only — the column is hidden entirely when there's no history.
+    private func previousCell(_ previous: ExercisePerformance, _ i: Int, for ex: PlannedExercise) -> String {
+        i < previous.sets.count ? metricText(previous.sets[i], for: ex) : "—"
     }
 
     private func columnHeader(_ m: MetricType, for ex: PlannedExercise) -> String {
@@ -638,5 +656,9 @@ private struct SwipeToDeleteRow<Content: View>: View {
 }
 
 #Preview {
-    WorkoutView().environment(WorkoutStore(defaults: UserDefaults(suiteName: "preview")!))
+    let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+    let container = try! ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    return WorkoutView()
+        .environment(WorkoutStore(defaults: UserDefaults(suiteName: "preview")!))
+        .environment(PlanStore(context: container.mainContext))
 }

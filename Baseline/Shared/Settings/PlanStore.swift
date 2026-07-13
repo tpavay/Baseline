@@ -40,6 +40,10 @@ final class PlanStore {
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? { repo.scheduledWorkout(id) }
     func session(for id: UUID) -> WorkoutSession? { repo.session(forScheduled: id) }
     func completed(for id: UUID) -> CompletedWorkoutLog? { repo.completedLog(forScheduled: id) }
+    /// Previous completed actuals for an exercise identity — the Hevy "previous" column.
+    func previousPerformance(exerciseDefinitionID: String, before: Date = Date()) -> ExercisePerformance? {
+        repo.mostRecentPerformance(exerciseDefinitionID: exerciseDefinitionID, before: before)
+    }
     /// Edit a scheduled workout's content (creates a revision). Used by the execution bridge on dismiss.
     func updateWorkout(_ id: UUID, _ transform: (inout Workout) -> Void) { repo.updateWorkout(scheduledID: id, transform); reload() }
 
