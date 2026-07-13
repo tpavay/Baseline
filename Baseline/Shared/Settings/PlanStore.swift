@@ -59,6 +59,20 @@ final class PlanStore {
     func discard(_ id: UUID) { repo.discardSession(forScheduled: id); reload() }
     func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); reload() }
 
+    // MARK: Mutations & versioning (Slice 2) — every schedule change is versioned
+
+    func versions(limit: Int = 100) -> [PlanVersion] { repo.versions(limit: limit) }
+    @discardableResult func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.move(id, toDate: toDate, timeOfDay: timeOfDay, actor: actor, reason: reason) }
+    @discardableResult func swap(_ a: UUID, _ b: UUID, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.swap(a, b, actor: actor, reason: reason) }
+    @discardableResult func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.reorder(day: day, orderedIDs: orderedIDs, actor: actor, reason: reason) }
+    @discardableResult func addWorkout(_ sw: ScheduledWorkout, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.addWorkout(sw, actor: actor, reason: reason) }
+    @discardableResult func duplicate(_ id: UUID, toDate: Date? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.duplicate(id, toDate: toDate, actor: actor, reason: reason) }
+    @discardableResult func editContent(_ id: UUID, actor: PlanActor = .user, reason: String? = nil, _ transform: (inout Workout) -> Void) -> MutationResult { defer { reload() }; return repo.editContent(id, actor: actor, reason: reason, transform) }
+    @discardableResult func setSkipped(_ id: UUID, _ skipped: Bool, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.setSkipped(id, skipped, actor: actor, reason: reason) }
+    @discardableResult func delete(_ id: UUID, proposalID: UUID? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.delete(id, actor: actor, reason: reason, proposalID: proposalID) }
+    @discardableResult func undo(actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.undo(actor: actor) }
+    @discardableResult func restore(versionID: UUID, actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.restore(versionID: versionID, actor: actor) }
+
     // MARK: Seeding (migrator + tests)
 
     @discardableResult func addProgram(_ p: Program) -> Program { defer { reload() }; return repo.addProgram(p) }
