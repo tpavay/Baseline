@@ -109,6 +109,23 @@ final class WorkoutStore {
         return metric.canonicalUnit
     }
 
+    // MARK: - Execution bridge (drive a Plan session through this same editing surface)
+
+    /// Optional write-through hooks. Nil for the standalone (ad-hoc / agent) store — no behaviour change.
+    /// When a `WorkoutView` is presented for a Plan session, a scratch store wires these to the Plan
+    /// repository so logging + lifecycle flow to the authoritative store, and the plan itself is never a
+    /// second writable path (the scratch store is a buffer, not persistence).
+    var onLogChange: ((WorkoutLog) -> Void)?
+    var onStart: (() -> Void)?
+    var onComplete: (() -> Void)?
+    var onDiscard: (() -> Void)?
+
+    /// Load a specific workout + (optional) performed session into this store for execution.
+    func loadExecution(workout: Workout, log: WorkoutLog?) {
+        current = workout
+        currentLog = log
+    }
+
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
 
     /// Apply an id-based structural edit to the plan (add/remove/reorder/move/substitute) and persist.
@@ -122,6 +139,7 @@ final class WorkoutStore {
     func startWorkout() {
         guard let w = current, currentLog == nil else { return }
         currentLog = w.startLog()
+        onStart?()
     }
 
     /// Apply an edit to the performed log (log a set, skip/complete, note) and persist.
@@ -129,10 +147,11 @@ final class WorkoutStore {
         guard var l = currentLog else { return }
         transform(&l)
         currentLog = l
+        onLogChange?(l)
     }
 
-    func completeWorkout() { editLog { $0.isComplete = true } }
-    func discardLog() { currentLog = nil }
+    func completeWorkout() { editLog { $0.isComplete = true }; onComplete?() }
+    func discardLog() { currentLog = nil; onDiscard?() }
 
     /// Result of a name-resolved edit — so the tool layer asks the athlete to disambiguate (exactly
     /// what a coach does with two same-named movements) instead of silently guessing.

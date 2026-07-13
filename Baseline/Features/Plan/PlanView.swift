@@ -7,10 +7,18 @@ import SwiftUI
 struct PlanView: View {
     @Environment(PlanStore.self) private var plan
     @State private var selectedDay: Date = Calendar.planWeek.startOfDay(for: Date())
-    @State private var detail: ScheduledWorkout?
+    @State private var execContext: ExecContext?
     @State private var confirmComplete: ScheduledWorkout?
     @State private var openWorkMessage = ""
     @State private var showChat = false
+
+    /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
+    /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
+    struct ExecContext: Identifiable {
+        let id: UUID
+        let store: WorkoutStore
+        let original: Workout
+    }
 
     private let cal = Calendar.planWeek
     private var today: Date { cal.startOfDay(for: Date()) }
@@ -35,7 +43,9 @@ struct PlanView: View {
             .navigationTitle("").toolbar { toolbar }
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
         }
-        .sheet(item: $detail) { ScheduledWorkoutDetailView(scheduled: $0) }
+        .sheet(item: $execContext, onDismiss: flushExecution) { ctx in
+            WorkoutView().environment(ctx.store)
+        }
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
         .alert("Finish workout?", isPresented: Binding(get: { confirmComplete != nil }, set: { if !$0 { confirmComplete = nil } })) {
             Button("Finish anyway", role: .destructive) { if let sw = confirmComplete { _ = plan.complete(sw.id, acknowledgingOpenWork: true) }; confirmComplete = nil }
@@ -138,7 +148,7 @@ struct PlanView: View {
                             scheduled: sw,
                             status: plan.status(for: sw, today: Date()),
                             onPrimary: { primaryAction(sw) },
-                            onOpen: { detail = sw },
+                            onOpen: { openExecution(sw) },
                             onComplete: { attemptComplete(sw) },
                             onSkip: { plan.discard(sw.id) })
                         .padding(.leading, 22).padding(.bottom, 14)
@@ -166,12 +176,13 @@ struct PlanView: View {
     private func primaryAction(_ sw: ScheduledWorkout) {
         switch plan.status(for: sw, today: Date()) {
         case .today, .missed, .planned, .modifiedIntent:
-            _ = plan.start(sw.id); detail = sw
+            _ = plan.start(sw.id)
         case .inProgress, .paused:
-            _ = plan.resume(sw.id); detail = sw
+            _ = plan.resume(sw.id)
         case .completed, .skipped:
-            detail = sw
+            break
         }
+        openExecution(plan.scheduledWorkout(sw.id) ?? sw)
     }
 
     private func attemptComplete(_ sw: ScheduledWorkout) {
@@ -179,6 +190,35 @@ struct PlanView: View {
             openWorkMessage = "You still have \(sets) unlogged set\(sets == 1 ? "" : "s") across \(exercises) exercise\(exercises == 1 ? "" : "s")."
             confirmComplete = sw
         }
+    }
+
+    // MARK: Execution bridge — reuse WorkoutView, write through to the repository
+
+    private func openExecution(_ sw: ScheduledWorkout) {
+        let planStore = plan                                   // concrete ref captured once (safe in closures)
+        let store = WorkoutStore(defaults: UserDefaults(suiteName: "plan.exec.buffer") ?? .standard)
+        store.loadExecution(workout: sw.workout, log: planStore.session(for: sw.id)?.log)
+        let id = sw.id
+        store.onLogChange = { log in planStore.updateSessionLog(id) { $0 = log } }
+        store.onStart = { [weak store] in
+            _ = planStore.start(id)
+            if let s = planStore.session(for: id), let w = planStore.scheduledWorkout(id)?.workout {
+                store?.loadExecution(workout: w, log: s.log)
+            }
+        }
+        store.onComplete = { _ = planStore.complete(id, acknowledgingOpenWork: true) }
+        store.onDiscard = { planStore.discard(id) }
+        execContext = ExecContext(id: id, store: store, original: sw.workout)
+    }
+
+    /// On dismiss, flush any *structural* plan edits as one immutable revision (logging already
+    /// write-through). Only when the workout actually changed — no spurious revisions.
+    private func flushExecution() {
+        guard let ctx = execContext else { return }
+        if let edited = ctx.store.current, edited != ctx.original {
+            plan.updateWorkout(ctx.id) { $0 = edited }
+        }
+        plan.reload()
     }
 
     private var chatBar: some View {

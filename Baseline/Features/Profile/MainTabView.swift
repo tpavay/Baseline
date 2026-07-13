@@ -1,10 +1,9 @@
 import SwiftUI
 import SwiftData
 
-/// The signed-in app shell. Target shape is **Today** (decision), **Plan** (the week-level surface),
-/// **Profile** (setup) — History is a *capability* reached through these, not a primary destination.
-/// During Slice 1 the standalone **Workout** tab stays reachable while the Plan card → WorkoutView
-/// execution reuse lands; the next slice retires it, leaving Today / Plan / Profile.
+/// The signed-in app shell — three intents, three tabs: **Today** (decision), **Plan** (the week-level
+/// surface that opens/starts/resumes any workout), **Profile** (setup). History and workout execution
+/// are *capabilities* reached through Plan, not primary destinations.
 struct MainTabView: View {
     var body: some View {
         TabView {
@@ -13,9 +12,6 @@ struct MainTabView: View {
 
             PlanView()
                 .tabItem { Label("Plan", systemImage: "calendar") }
-
-            WorkoutView()
-                .tabItem { Label("Workout", systemImage: "figure.strengthtraining.traditional") }
 
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person") }

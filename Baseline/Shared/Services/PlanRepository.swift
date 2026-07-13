@@ -24,6 +24,9 @@ protocol PlanRepository {
 
     @discardableResult func addProgram(_ p: Program) -> Program
     @discardableResult func addScheduled(_ sw: ScheduledWorkout) -> ScheduledWorkout
+    /// Edit a scheduled workout's content — creates a NEW immutable revision and repoints; the prior
+    /// revision is untouched, so version restore (Slice 2) can bring it back.
+    func updateWorkout(scheduledID: UUID, _ transform: (inout Workout) -> Void)
 
     @discardableResult func startSession(forScheduled id: UUID, now: Date) -> WorkoutSession?
     @discardableResult func resumeSession(forScheduled id: UUID) -> WorkoutSession?
@@ -123,6 +126,16 @@ final class SwiftDataPlanRepository: PlanRepository {
             recurrenceJSON: sw.recurrence.map(PlanCoding.data)))
         save()
         return sw
+    }
+
+    func updateWorkout(scheduledID: UUID, _ transform: (inout Workout) -> Void) {
+        guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == scheduledID }),
+              var workout = scheduledWorkout(scheduledID)?.workout else { return }
+        transform(&workout)
+        let revision = SDWorkoutRevision(workoutID: sd.workoutID, createdAt: Date(), workoutJSON: PlanCoding.data(workout))
+        context.insert(revision)
+        sd.workoutRevisionID = revision.id
+        save()
     }
 
     // MARK: Lifecycle

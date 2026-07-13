@@ -85,6 +85,20 @@ struct PlanRepositoryTests {
         } else { Issue.record("expected completed") }
     }
 
+    @Test func editingWorkoutCreatesANewImmutableRevision() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let sw = seed(repo, date: monday, program: prog.id)
+        let before = repo.scheduledWorkout(sw.id)!.workoutRevisionID
+
+        repo.updateWorkout(scheduledID: sw.id) { $0.rename("Edited") }
+        let after = repo.scheduledWorkout(sw.id)!
+
+        #expect(after.workout.title == "Edited")
+        #expect(after.workoutRevisionID != before)   // new revision, old one untouched
+        #expect(after.workoutID == sw.workoutID)      // stable identity across revisions
+    }
+
     @Test func migratorSeedsTodaysScheduledWorkoutOnceWithoutWiping() {
         let repo = makeRepo()
         let plan = PlanStore(repo: repo, today: monday)

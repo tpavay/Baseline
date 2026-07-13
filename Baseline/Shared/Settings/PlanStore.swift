@@ -37,8 +37,11 @@ final class PlanStore {
     // MARK: Reads
 
     func programs() -> [Program] { repo.programs() }
+    func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? { repo.scheduledWorkout(id) }
     func session(for id: UUID) -> WorkoutSession? { repo.session(forScheduled: id) }
     func completed(for id: UUID) -> CompletedWorkoutLog? { repo.completedLog(forScheduled: id) }
+    /// Edit a scheduled workout's content (creates a revision). Used by the execution bridge on dismiss.
+    func updateWorkout(_ id: UUID, _ transform: (inout Workout) -> Void) { repo.updateWorkout(scheduledID: id, transform); reload() }
 
     /// Derived status (never stored). Today's physiological modification is injected by the caller.
     func status(for sw: ScheduledWorkout, today: Date = Date(), todayModification: TodayModification? = nil) -> ScheduleStatus {
