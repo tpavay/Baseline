@@ -569,7 +569,7 @@ has a non-gesture fallback via the ⋯ menu (Move/Reorder) so it isn't gesture-o
 13. Overflow ⋯ actions wired to mutations (with diffs/confirm/undo).
 14. Long-press drag-reorder + cross-day move + occupied-drop action sheet + diff preview.
 
-**Slice 4 — multi-program + agent tools**
+**Slice 4 — multi-program + agent tools** — ✅ DONE (commits 1d4f811, ee753b9; 203 tests; functions deployed to dev). Collections filter + week-plan agent tools (move/swap/skip/duplicate/delete/explain) on the same versioned repository, ambiguity-aware, delete confirmation-gated.
 15. Program filter against real multiple programs; collections (Ad Hoc/Completed/Archived).
 16. Plan agent tools (§8) through the same repository; `tools.ts`/`prompt.ts`; ambiguity + diff + confirm.
 17. `explain_modification` tool tied to deterministic state + stored diffs.
