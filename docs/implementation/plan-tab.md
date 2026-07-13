@@ -540,7 +540,7 @@ has a non-gesture fallback via the ⋯ menu (Move/Reorder) so it isn't gesture-o
 
 ## 16. Ordered commit sequence
 
-**Slice 1 — migration + repository + Plan reading + lifecycle** (start/complete are mutations)
+**Slice 1 — migration + repository + Plan reading + lifecycle** (start/complete are mutations) — ✅ DONE (commits 8918592, 2b69116, bf2395b, 1bd3079; 190 tests). WorkoutView execution reuse via a write-through bridge (scratch WorkoutStore → repository); nav = Today/Plan/Profile.
 1. Domain value types (§4) + `ProgramFilter`/status enums (+ tests).
 2. SwiftData `@Model` adapters + `ModelContainer` at root (CloudKit-safe).
 3. `PlanRepository` reads + `SwiftDataPlanRepository` + `PlanStore` (+ tests).
