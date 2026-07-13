@@ -99,8 +99,14 @@ struct PlanView: View {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
                 Button("All Training") { plan.setFilter(.allTraining) }
-                ForEach(plan.programs().filter { $0.isActive && !$0.isArchived }) { p in
-                    Button(p.name) { plan.setFilter(.program(p.id)) }
+                let programs = plan.programs().filter { $0.isActive && !$0.isArchived }
+                if !programs.isEmpty {
+                    Section("Programs") { ForEach(programs) { p in Button(p.name) { plan.setFilter(.program(p.id)) } } }
+                }
+                Section("Collections") {
+                    Button("Ad Hoc") { plan.setFilter(.collection(.adHoc)) }
+                    Button("Completed") { plan.setFilter(.collection(.completed)) }
+                    Button("Archived") { plan.setFilter(.collection(.archived)) }
                 }
             } label: {
                 HStack(spacing: 6) {

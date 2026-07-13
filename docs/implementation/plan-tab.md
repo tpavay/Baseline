@@ -565,7 +565,7 @@ has a non-gesture fallback via the ⋯ menu (Move/Reorder) so it isn't gesture-o
 12b. `SDCompletedExercise` index + `mostRecentPerformance`/`history` queries; surface the **Previous**
     column in `WorkoutView`'s active logging table (point 6) (+ tests).
 
-**Slice 3 — drag-drop + manual editing**
+**Slice 3 — drag-drop + manual editing** — ✅ DONE (commit 3c234e6; 198 tests). Action-based ⋯ menu → mutations, draggable cards + day drop targets, occupied-drop Move/Swap dialog, delete confirmation gate, undo snackbar.
 13. Overflow ⋯ actions wired to mutations (with diffs/confirm/undo).
 14. Long-press drag-reorder + cross-day move + occupied-drop action sheet + diff preview.
 

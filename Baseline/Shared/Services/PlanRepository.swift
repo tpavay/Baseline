@@ -467,12 +467,16 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func scheduled(in range: Range<Date>, filter: ProgramFilter) -> [ScheduledWorkout] {
         let lo = range.lowerBound, hi = range.upperBound
         let rows = fetch(SDScheduledWorkout.self, where: #Predicate { $0.date >= lo && $0.date < hi })
-        let activeProgramIDs = Set((fetchAll() as [SDProgram]).filter { $0.isActive && !$0.isArchived }.map(\.id))
+        let programs = fetchAll() as [SDProgram]
+        let activeIDs = Set(programs.filter { $0.isActive && !$0.isArchived }.map(\.id))
+        let archivedIDs = Set(programs.filter(\.isArchived).map(\.id))
         return rows.compactMap(hydrate).filter { sw in
             switch filter {
-            case .allTraining: return activeProgramIDs.contains(sw.programID)
+            case .allTraining: return activeIDs.contains(sw.programID)
             case .program(let id): return sw.programID == id
-            case .collection: return true   // collections wired in Slice 4
+            case .collection(.archived): return archivedIDs.contains(sw.programID)
+            case .collection(.completed): return completedLog(forScheduled: sw.id) != nil
+            case .collection(.adHoc): return [.userCreated, .legacyMigrated, .baselineGenerated].contains(sw.origin)
             }
         }.sorted { $0.date < $1.date }
     }

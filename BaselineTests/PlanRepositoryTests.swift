@@ -99,6 +99,21 @@ struct PlanRepositoryTests {
         #expect(after.workoutID == sw.workoutID)      // stable identity across revisions
     }
 
+    @Test func completedCollectionFiltersToCompletedOnly() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let a = seed(repo, date: monday, program: prog.id)
+        _ = seed(repo, date: monday, program: prog.id)                 // B, left untouched
+        repo.startSession(forScheduled: a.id, now: monday)
+        _ = repo.completeSession(forScheduled: a.id, acknowledgingOpenWork: true, now: monday)
+
+        let completed = repo.week(containing: monday, filter: .collection(.completed)).days.flatMap(\.sessions)
+        #expect(completed.map(\.id) == [a.id])
+        // Ad-hoc collection (origin-based) sees both; archived sees none.
+        #expect(repo.week(containing: monday, filter: .collection(.adHoc)).days.flatMap(\.sessions).count == 2)
+        #expect(repo.week(containing: monday, filter: .collection(.archived)).days.flatMap(\.sessions).isEmpty)
+    }
+
     @Test func previousPerformanceReadsCompletedActualsByIdentity() {
         let repo = makeRepo()
         let prog = repo.addProgram(Program(name: "P", createdAt: monday))
