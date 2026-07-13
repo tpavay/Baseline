@@ -555,7 +555,7 @@ has a non-gesture fallback via the ⋯ menu (Move/Reorder) so it isn't gesture-o
    contextual).
    *Verification checkpoint (Slice 1).*
 
-**Slice 2 — mutation core + versioning + history query (headless)**
+**Slice 2 — mutation core + versioning + history query (headless)** — ✅ DONE (commits df0f01e, 6200ed2; 198 tests). Typed versioned mutations, append-only undo/restore, stored-proposal confirmation gate, active-session guard, previous-performance query + Hevy previous column.
 10. `WorkoutRevision` store + revision-on-edit; `ScheduleDiff` (+ inverse) + `PlanOperation`/`PlanVersion`
     (+ `ScheduleSnapshot` referencing revision IDs) + append-only version store.
 11. Typed mutations (move/swap/reorder/add/duplicate/replace/skip/delete + workout-content edit) with the
