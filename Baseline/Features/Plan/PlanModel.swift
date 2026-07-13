@@ -161,6 +161,8 @@ struct ExercisePerformance: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var completedLogID: UUID
     var date: Date
+    var programID: UUID
+    var workoutTitle: String
     var exerciseInstanceID: UUID          // survives across revisions
     var exerciseDefinitionID: String?     // stable catalog identity
     var exerciseName: String

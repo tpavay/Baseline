@@ -133,6 +133,7 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     private func mapPerformance(_ sd: SDCompletedExercise) -> ExercisePerformance {
         ExercisePerformance(id: sd.id, completedLogID: sd.completedLogID, date: sd.date,
+                            programID: sd.programID, workoutTitle: sd.workoutTitle,
                             exerciseInstanceID: sd.exerciseInstanceID, exerciseDefinitionID: sd.exerciseDefinitionID,
                             exerciseName: sd.exerciseName, sets: PlanCoding.value([MetricValues].self, sd.metricsJSON) ?? [])
     }
@@ -424,8 +425,8 @@ final class SwiftDataPlanRepository: PlanRepository {
             let def = perf.plannedExerciseID.flatMap { sw.workout.exercise($0)?.definitionId }
             context.insert(SDCompletedExercise(
                 completedLogID: completed.id, date: completed.finishedAt, programID: sw.programID,
-                exerciseInstanceID: instanceID, exerciseDefinitionID: def, exerciseName: perf.exerciseName,
-                metricsJSON: PlanCoding.data(perf.setLogs.map(\.values))))
+                workoutTitle: sw.workout.title, exerciseInstanceID: instanceID, exerciseDefinitionID: def,
+                exerciseName: perf.exerciseName, metricsJSON: PlanCoding.data(perf.setLogs.map(\.values))))
         }
     }
 

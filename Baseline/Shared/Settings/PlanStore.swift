@@ -44,6 +44,11 @@ final class PlanStore {
     func previousPerformance(exerciseDefinitionID: String, before: Date = Date()) -> ExercisePerformance? {
         repo.mostRecentPerformance(exerciseDefinitionID: exerciseDefinitionID, before: before)
     }
+    /// Full completed history for an exercise identity, newest-first — the Exercise History screen.
+    func history(exerciseDefinitionID: String, limit: Int = 100) -> [ExercisePerformance] {
+        repo.history(exerciseDefinitionID: exerciseDefinitionID, limit: limit)
+    }
+    func programName(_ id: UUID) -> String? { programs().first { $0.id == id }?.name }
     /// Edit a scheduled workout's content (creates a revision). Used by the execution bridge on dismiss.
     func updateWorkout(_ id: UUID, _ transform: (inout Workout) -> Void) { repo.updateWorkout(scheduledID: id, transform); reload() }
 

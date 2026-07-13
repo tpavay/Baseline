@@ -113,16 +113,17 @@ import SwiftData
     var completedLogID: UUID = UUID()
     var date: Date = Date.distantPast
     var programID: UUID = UUID()
+    var workoutTitle: String = ""              // snapshot of the workout's title at completion (historical fact)
     var exerciseInstanceID: UUID = UUID()
     var exerciseDefinitionID: String?
     var exerciseName: String = ""
     var metricsJSON: Data = Data()
     init(id: UUID = UUID(), completedLogID: UUID = UUID(), date: Date = Date.distantPast, programID: UUID = UUID(),
-         exerciseInstanceID: UUID = UUID(), exerciseDefinitionID: String? = nil, exerciseName: String = "",
-         metricsJSON: Data = Data()) {
+         workoutTitle: String = "", exerciseInstanceID: UUID = UUID(), exerciseDefinitionID: String? = nil,
+         exerciseName: String = "", metricsJSON: Data = Data()) {
         self.id = id; self.completedLogID = completedLogID; self.date = date; self.programID = programID
-        self.exerciseInstanceID = exerciseInstanceID; self.exerciseDefinitionID = exerciseDefinitionID
-        self.exerciseName = exerciseName; self.metricsJSON = metricsJSON
+        self.workoutTitle = workoutTitle; self.exerciseInstanceID = exerciseInstanceID
+        self.exerciseDefinitionID = exerciseDefinitionID; self.exerciseName = exerciseName; self.metricsJSON = metricsJSON
     }
 }
 

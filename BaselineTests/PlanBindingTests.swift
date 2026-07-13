@@ -5,7 +5,7 @@ import Testing
 
 /// The two integration seams: the shared `WorkoutStore` (agent editing surface) and the Plan-execution
 /// buffer both write through to the Plan repository via a `PlanSink` — one mutation path, no divergence.
-@MainActor
+@Suite(.serialized) @MainActor
 struct PlanBindingTests {
 
     private func makeStore() -> PlanStore {

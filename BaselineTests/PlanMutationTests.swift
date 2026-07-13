@@ -5,7 +5,7 @@ import Testing
 
 /// Slice 2: typed, versioned schedule mutations — append-only history, undo/restore, the stored-proposal
 /// confirmation gate, and the active-session guard. Headless, against an in-memory container.
-@MainActor
+@Suite(.serialized) @MainActor
 struct PlanMutationTests {
 
     private func makeRepo() -> SwiftDataPlanRepository {

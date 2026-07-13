@@ -13,6 +13,7 @@ struct WorkoutView: View {
     @State private var expandedExercises: Set<UUID> = []     // exercises collapsed by default
     @State private var sheet: WorkoutSheet?
     @State private var showChat = false
+    @State private var historyExercise: PlannedExercise?
 
     private var executing: Bool { store.currentLog != nil }
 
@@ -33,6 +34,7 @@ struct WorkoutView: View {
             .toolbar { toolbar }
         }
         .sheet(item: $sheet) { sheetView($0) }
+        .sheet(item: $historyExercise) { ExerciseHistoryView(exercise: $0) }
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
     }
 
@@ -315,6 +317,7 @@ struct WorkoutView: View {
 
     private func exerciseMenu(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
         Menu {
+            Button { historyExercise = ex } label: { Label("History", systemImage: "clock.arrow.circlepath") }
             Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName, focus: .metrics) } label: { Label("Metrics", systemImage: "slider.horizontal.3") }
             Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName, focus: .units) } label: { Label("Units", systemImage: "ruler") }
             Button { sheet = .substitute(exerciseID: ex.id, current: ex.exerciseName) } label: { Label("Replace", systemImage: "arrow.triangle.2.circlepath") }

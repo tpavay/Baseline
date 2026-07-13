@@ -5,7 +5,7 @@ import Testing
 
 /// Slice 1 persistence: the SwiftData-backed repository (reads + lifecycle) and the migrator, exercised
 /// against an in-memory container. Everything runs on the main actor (SwiftData `ModelContext`).
-@MainActor
+@Suite(.serialized) @MainActor
 struct PlanRepositoryTests {
 
     private func makeRepo() -> SwiftDataPlanRepository {
@@ -97,6 +97,46 @@ struct PlanRepositoryTests {
         #expect(after.workout.title == "Edited")
         #expect(after.workoutRevisionID != before)   // new revision, old one untouched
         #expect(after.workoutID == sw.workoutID)      // stable identity across revisions
+    }
+
+    private func completeDeadlift(_ repo: SwiftDataPlanRepository, _ sw: ScheduledWorkout, load: Double) {
+        let ex = sw.workout.allExercises.first { $0.definitionId == "deadlift" }!
+        repo.startSession(forScheduled: sw.id, now: sw.date)
+        repo.updateSessionLog(forScheduled: sw.id) { log in
+            log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: ex.prescription.sets[0].id) { $0.values[.load] = load; $0.completed = true }
+        }
+        _ = repo.completeSession(forScheduled: sw.id, acknowledgingOpenWork: true, now: sw.date)
+    }
+
+    @Test func historyIsNewestFirstAndGlobalAcrossPrograms() {
+        let repo = makeRepo()
+        let a = repo.addProgram(Program(name: "Block A", createdAt: monday))
+        let b = repo.addProgram(Program(name: "Block B", createdAt: monday))
+        completeDeadlift(repo, seed(repo, date: monday, program: a.id), load: 100)
+        completeDeadlift(repo, seed(repo, date: cal.date(byAdding: .day, value: 3, to: monday)!, program: b.id), load: 110)
+
+        let h = repo.history(exerciseDefinitionID: "deadlift", limit: 10)
+        #expect(h.count == 2)                                  // spans both programs
+        #expect(h.first!.date > h.last!.date)                  // newest-first
+        #expect(h.first?.sets.first?[.load] == 110)            // most recent session
+        #expect(Set(h.map(\.programID)) == Set([a.id, b.id]))
+    }
+
+    @Test func unidentifiedExerciseNeverMergesIntoHistory() {
+        let repo = makeRepo()
+        let p = repo.addProgram(Program(name: "P", createdAt: monday))
+        // A workout with an identified deadlift + an unnamed one-off (no definitionId).
+        var known = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift")
+        known.prescription.sets = [PlannedSet(reps: 5, load: 100)]
+        var oneOff = PlannedExercise(exerciseName: "Mystery Move")   // definitionId nil
+        oneOff.prescription.sets = [PlannedSet(reps: 5)]
+        let w = Workout(title: "Mixed", blocks: [WorkoutBlock(name: "", exercises: [known, oneOff], isDefault: true)])
+        let sw = repo.addScheduled(ScheduledWorkout(programID: p.id, date: monday, origin: .userCreated,
+                                                    workoutID: UUID(), workoutRevisionID: UUID(), workout: w))
+        completeDeadlift(repo, sw, load: 100)
+
+        #expect(repo.history(exerciseDefinitionID: "deadlift", limit: 10).count == 1)   // only the identified one
+        // The one-off produced no queryable identity — no display-name bucket to merge into.
     }
 
     @Test func completedCollectionFiltersToCompletedOnly() {

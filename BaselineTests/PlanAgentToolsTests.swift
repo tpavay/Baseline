@@ -5,7 +5,7 @@ import Testing
 
 /// Slice 4: the week-plan agent tools resolve workouts by name (ambiguity-aware) and route to the same
 /// versioned repository mutations as the manual UI — no separate write path.
-@MainActor
+@Suite(.serialized) @MainActor
 struct PlanAgentToolsTests {
 
     private func makeStore() -> PlanStore {
