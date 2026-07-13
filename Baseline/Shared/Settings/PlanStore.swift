@@ -100,12 +100,28 @@ final class PlanStore {
     /// scheduled yet), returning a sink bound to it. Lands in the first active program, or a new
     /// `Baseline` program if none exists.
     func addTodayScheduled(workout: Workout, date: Date = Date()) -> WorkoutStore.PlanSink {
+        let sw = newScheduledWorkout(on: date, workout: workout, origin: .baselineGenerated)
+        return sink(forScheduled: sw.id)
+    }
+
+    /// Manually create a scheduled workout on a given day (the timeline "+ Add workout" flow). Blank by
+    /// default — an implicit block ready for exercises. Versioned + undoable. Lands in the first active
+    /// program, or a new `Baseline` program if none exists.
+    @discardableResult
+    func newScheduledWorkout(on date: Date, title: String = "New workout",
+                             workout: Workout? = nil, origin: WorkoutOrigin = .userCreated) -> ScheduledWorkout {
         let programID = programs().first { $0.isActive && !$0.isArchived }?.id
             ?? addProgram(Program(name: "Baseline", createdAt: date)).id
-        let sw = ScheduledWorkout(programID: programID, date: Calendar.planWeek.startOfDay(for: date),
-                                  origin: .baselineGenerated, workoutID: workout.id, workoutRevisionID: UUID(), workout: workout)
-        _ = addWorkout(sw)
-        return sink(forScheduled: sw.id)
+        let day = Calendar.planWeek.startOfDay(for: date)
+        let w: Workout = workout ?? {
+            var w = Workout(title: title); w.scheduledDate = day
+            w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block, ready for exercises
+            return w
+        }()
+        let sw = ScheduledWorkout(programID: programID, date: day, origin: origin,
+                                  workoutID: w.id, workoutRevisionID: UUID(), workout: w)
+        _ = addWorkout(sw)   // versioned mutation — undoable
+        return sw
     }
 
     // MARK: Seeding (migrator + tests)

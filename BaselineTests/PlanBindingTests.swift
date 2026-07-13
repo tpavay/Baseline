@@ -65,6 +65,16 @@ struct PlanBindingTests {
         #expect(plan.session(for: sw.id)?.log.performed(forPlanned: ex.id)?.setLogs.first?.completed == true)
     }
 
+    @Test func manualAddWorkoutCreatesAnEmptyVersionedWorkoutOnThatDay() {
+        let plan = makeStore()
+        let sw = plan.newScheduledWorkout(on: Date(), title: "New workout")   // the timeline "+ Add workout" flow
+        #expect(plan.todayScheduled()?.id == sw.id)
+        #expect(plan.todayScheduled()?.workout.blocks.first?.isDefault == true)   // ready for exercises
+        // Versioned + undoable.
+        #expect(plan.undo().isApplied)
+        #expect(plan.todayScheduled() == nil)
+    }
+
     @Test func createWithFactoryLandsANewWorkoutInThePlan() {
         let plan = makeStore()
         let store = buffer()

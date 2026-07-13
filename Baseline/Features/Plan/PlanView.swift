@@ -175,21 +175,14 @@ struct PlanView: View {
     // MARK: Timeline
 
     private var timeline: some View {
-        let daysWithContent = plan.week.days.filter { !$0.sessions.isEmpty || cal.isDate($0.date, inSameDayAs: today) }
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("TIMELINE").font(.system(size: 13, weight: .bold)).tracking(1.5).foregroundStyle(BaselineColor.textFaint)
                 .padding(.bottom, 14)
-            if daysWithContent.allSatisfy(\.sessions.isEmpty) {
-                Text("Nothing scheduled this week — ask Baseline or add a workout.")
-                    .font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(.vertical, 20)
-            }
-            ForEach(daysWithContent) { day in
+            ForEach(plan.week.days) { day in   // every day of the week — empty days are add points + drop targets
                 VStack(alignment: .leading, spacing: 0) {
                     dayHeader(day)
                     if day.sessions.isEmpty {
-                        Text("Rest").font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.leading, 22).padding(.bottom, 20)
+                        addWorkoutRow(on: day.date)
                     } else {
                         ForEach(day.sessions) { sw in
                             ScheduledWorkoutCard(
@@ -212,6 +205,25 @@ struct PlanView: View {
                     ? RoundedRectangle(cornerRadius: 12).fill(BaselineColor.accent.opacity(0.08)) : nil)
             }
         }
+    }
+
+    /// Empty-day affordance: a lightweight "+ Add workout" row (rest until you add). The enclosing day is
+    /// still a drop target, so a dragged workout can also land here.
+    private func addWorkoutRow(on date: Date) -> some View {
+        Button { addWorkout(on: date) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus").font(.system(size: 13, weight: .bold))
+                Text("Add workout").font(.system(size: 14, weight: .medium))
+                Spacer()
+            }
+            .foregroundStyle(BaselineColor.textFaint)
+            .padding(.leading, 22).padding(.vertical, 12).padding(.bottom, 8)
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    private func addWorkout(on date: Date) {
+        openExecution(plan.newScheduledWorkout(on: date))   // create for that date, then open the editor
     }
 
     private func dayHeader(_ day: TrainingDay) -> some View {
