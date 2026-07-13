@@ -497,7 +497,7 @@ final class WorkoutStore {
             var bits: [String] = []
             if let r = s.reps { bits.append("\(r) reps") }
             if let l = s.load { bits.append("\(clean(l)) load") }
-            if let d = s.duration { bits.append("\(d)s") }
+            if let d = s.duration { bits.append(MetricFormat.duration(Double(d))) }
             return "set \(i + 1): " + (bits.isEmpty ? "—" : bits.joined(separator: ", "))
         }
         return parts.joined(separator: "; ")

@@ -114,15 +114,10 @@ struct ExerciseHistoryView: View {
         return m == .pace ? values.min() : values.max()
     }
     private func format(_ canonical: Double, _ m: MetricType) -> String {
-        if m == .duration { return mmss(Int(canonical)) }
-        let unit = store.displayUnit(m, for: exercise)
-        let d = MetricConvert.fromCanonical(canonical, m, to: unit)
-        let num = (m.isInteger || d == d.rounded()) ? String(Int(d.rounded())) : String(format: "%.1f", d)
-        return unit.short.isEmpty ? num : "\(num) \(unit.short)"
+        MetricFormat.value(canonical, m, unit: store.displayUnit(m, for: exercise))
     }
     private func formatSet(_ values: MetricValues) -> String {
         let parts = values.present.map { format(values[$0]!, $0) }
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
-    private func mmss(_ s: Int) -> String { s >= 60 ? "\(s / 60):\(String(format: "%02d", s % 60))" : "\(s)s" }
 }

@@ -65,7 +65,8 @@ struct MetricConfigSheet: View {
                         .font(.system(size: 15)).foregroundStyle(BaselineColor.textHi)
                 }
             case .units:
-                let unitful = exercise.selectedMetrics.filter { $0.displayUnits.count > 1 }
+                // Durations always render smart time (45s / 10:00) — a sec-vs-min preference is moot.
+                let unitful = exercise.selectedMetrics.filter { $0.displayUnits.count > 1 && !$0.isDurationKind }
                 if unitful.isEmpty {
                     Text("The metrics on this exercise don't have unit choices.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
                 } else {

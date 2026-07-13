@@ -32,7 +32,7 @@ struct ReadingDetailView: View {
                         stat("Beats", "\(reading.beatCount)")
                         stat("Artifacts", "\(reading.artifacts) corrected")
                         stat("lnRMSSD", String(format: "%.2f", reading.lnRMSSD))
-                        stat("Duration", "\(reading.durationSeconds)s")
+                        stat("Duration", MetricFormat.duration(Double(reading.durationSeconds)))
                     }
 
                     if !exportItems.isEmpty {

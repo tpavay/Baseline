@@ -262,15 +262,15 @@ struct WorkoutView: View {
                         }
                         ForEach(metrics, id: \.self) { m in
                             if executing {
-                                TextField(cellText(s.values, m, for: ex), text: logValueBinding(ex, s, m))
-                                    .multilineTextAlignment(.center).frame(maxWidth: .infinity)
-                                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(done ? BaselineColor.textFaint : BaselineColor.textHi)
-                                    .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                                MetricField(metric: m, unit: store.displayUnit(m, for: ex),
+                                            placeholder: cellText(s.values, m, for: ex),
+                                            canonical: logCanonicalBinding(ex, s, m),
+                                            color: done ? BaselineColor.textFaint : BaselineColor.textHi)
+                                    .frame(maxWidth: .infinity)
                             } else {
-                                TextField("—", text: valueBinding(ex, s.id, m))
-                                    .multilineTextAlignment(.center).frame(maxWidth: .infinity)
-                                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-                                    .keyboardType(m == .duration ? .numbersAndPunctuation : (m.isInteger ? .numberPad : .decimalPad))
+                                MetricField(metric: m, unit: store.displayUnit(m, for: ex),
+                                            canonical: planCanonicalBinding(ex, s.id, m))
+                                    .frame(maxWidth: .infinity)
                             }
                         }
                         if executing {
@@ -307,19 +307,12 @@ struct WorkoutView: View {
     }
 
     private func columnHeader(_ m: MetricType, for ex: PlannedExercise) -> String {
-        let u = store.displayUnit(m, for: ex)
-        switch m {
-        case .duration: return "TIME"
-        case .distance, .load: return u.short.uppercased()
-        default: return m.label.uppercased()
-        }
+        MetricFormat.columnHeader(m, unit: store.displayUnit(m, for: ex))
     }
 
     private func cellText(_ values: MetricValues, _ m: MetricType, for ex: PlannedExercise) -> String {
         guard let v = values[m] else { return "—" }
-        if m == .duration { return mmss(Int(v)) }
-        let d = MetricConvert.fromCanonical(v, m, to: store.displayUnit(m, for: ex))
-        return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
+        return MetricFormat.editText(v, m, unit: store.displayUnit(m, for: ex))
     }
 
     private func noteField(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
@@ -456,49 +449,30 @@ struct WorkoutView: View {
         store.edit { $0.updateExercise(ex.id) { $0.prescription.sets.removeAll { $0.id == setID } } }
     }
 
-    /// Inline-editable value for one metric of one set, in the exercise's display unit — canonical on
-    /// store. Duration reads/writes as m:ss.
-    private func valueBinding(_ ex: PlannedExercise, _ setID: UUID, _ metric: MetricType) -> Binding<String> {
-        let unit = store.displayUnit(metric, for: ex)
-        return Binding(
-            get: {
-                guard let v = store.current?.exercise(ex.id)?.prescription.sets.first(where: { $0.id == setID })?.values[metric] else { return "" }
-                if metric == .duration { return mmss(Int(v)) }
-                let d = MetricConvert.fromCanonical(v, metric, to: unit)
-                return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
-            },
-            set: { text in
-                let trimmed = text.trimmingCharacters(in: .whitespaces)
+    /// Canonical value of one metric of one planned set — `MetricField` owns display/parse.
+    private func planCanonicalBinding(_ ex: PlannedExercise, _ setID: UUID, _ metric: MetricType) -> Binding<Double?> {
+        Binding(
+            get: { store.current?.exercise(ex.id)?.prescription.sets.first(where: { $0.id == setID })?.values[metric] },
+            set: { newValue in
                 store.edit { w in
                     w.updateExercise(ex.id) { e in
                         guard let i = e.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
-                        if trimmed.isEmpty { e.prescription.sets[i].values[metric] = nil }
-                        else if metric == .duration { e.prescription.sets[i].values[.duration] = Double(parseMMSS(trimmed)) }
-                        else if let d = Double(trimmed) { e.prescription.sets[i].values[metric] = max(0, MetricConvert.toCanonical(d, metric, from: unit)) }
+                        e.prescription.sets[i].values[metric] = newValue.map { max(0, $0) }
                     }
                 }
             }
         )
     }
 
-    /// Training-mode cell: reads/writes the *actual* for one metric of one set (canonical on the log,
-    /// shown in the exercise's display unit). Empty until edited — the plan value is the placeholder.
-    private func logValueBinding(_ ex: PlannedExercise, _ set: PlannedSet, _ metric: MetricType) -> Binding<String> {
-        let unit = store.displayUnit(metric, for: ex)
-        return Binding(
-            get: {
-                guard let v = store.currentLog?.setLog(forPlanned: ex.id, plannedSetID: set.id)?.values[metric] else { return "" }
-                if metric == .duration { return mmss(Int(v)) }
-                let d = MetricConvert.fromCanonical(v, metric, to: unit)
-                return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
-            },
-            set: { text in
-                let t = text.trimmingCharacters(in: .whitespaces)
+    /// Training-mode cell: the canonical *actual* for one metric of one set (on the log, never the
+    /// plan). Empty until edited — the plan value is the placeholder.
+    private func logCanonicalBinding(_ ex: PlannedExercise, _ set: PlannedSet, _ metric: MetricType) -> Binding<Double?> {
+        Binding(
+            get: { store.currentLog?.setLog(forPlanned: ex.id, plannedSetID: set.id)?.values[metric] },
+            set: { newValue in
                 store.editLog { log in
                     log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
-                        if t.isEmpty { s.values[metric] = nil }
-                        else if metric == .duration { s.values[.duration] = Double(parseMMSS(t)) }
-                        else if let d = Double(t) { s.values[metric] = max(0, MetricConvert.toCanonical(d, metric, from: unit)) }
+                        s.values[metric] = newValue.map { max(0, $0) }
                     }
                 }
             }
@@ -518,12 +492,6 @@ struct WorkoutView: View {
             let allDone = !ids.isEmpty && ids.allSatisfy { log.setLog(forPlanned: ex.id, plannedSetID: $0)?.completed == true }
             log.setStatus(allDone ? .completed : .pending, forPlanned: ex.id, name: ex.exerciseName)
         }
-    }
-
-    private func mmss(_ seconds: Int) -> String { seconds >= 60 ? "\(seconds / 60):\(String(format: "%02d", seconds % 60))" : "\(seconds)" }
-    private func parseMMSS(_ s: String) -> Int {
-        if s.contains(":") { let p = s.split(separator: ":").map { Int($0) ?? 0 }; return p.count == 2 ? p[0] * 60 + p[1] : (p.first ?? 0) }
-        return Int(s) ?? 0
     }
 
     private func addMetric(_ metric: MetricType, to ex: PlannedExercise) {
@@ -607,15 +575,12 @@ struct WorkoutView: View {
     private func metricText(_ values: MetricValues, for ex: PlannedExercise) -> String {
         let parts = values.present.map { metric -> String in
             let unit = store.displayUnit(metric, for: ex)
-            return format(MetricConvert.fromCanonical(values[metric]!, metric, to: unit), metric, unit)
+            let text = MetricFormat.value(values[metric]!, metric, unit: unit)
+            return (unit.short.isEmpty && !metric.isDurationKind) ? "\(text) \(metric.label.lowercased())" : text
         }
         return parts.isEmpty ? "—" : parts.joined(separator: ", ")
     }
 
-    private func format(_ value: Double, _ metric: MetricType, _ unit: MetricUnit) -> String {
-        let num = (metric.isInteger || value == value.rounded()) ? String(Int(value.rounded())) : String(format: "%.1f", value)
-        return unit.short.isEmpty ? "\(num) \(metric.label.lowercased())" : "\(num) \(unit.short)"
-    }
 }
 
 private enum WorkoutSheet: Identifiable {
