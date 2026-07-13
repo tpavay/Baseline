@@ -82,6 +82,20 @@ final class PlanStore {
     @discardableResult func undo(actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.undo(actor: actor) }
     @discardableResult func restore(versionID: UUID, actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.restore(versionID: versionID, actor: actor) }
 
+    // MARK: Templates (immutable reusable sources)
+
+    func templates() -> [WorkoutTemplate] { repo.templates() }
+    func template(named name: String) -> WorkoutTemplate? { repo.template(named: name) }
+    @discardableResult func saveAsTemplate(name: String, from workout: Workout, tags: [WorkoutTag] = []) -> WorkoutTemplate { repo.saveAsTemplate(name: name, from: workout, tags: tags) }
+    @discardableResult func updateTemplate(_ id: UUID, from workout: Workout) -> WorkoutTemplate? { repo.updateTemplate(id, from: workout) }
+    /// Instantiate a template onto a date (its own program, or a new Baseline program). Versioned.
+    @discardableResult func instantiateTemplate(_ id: UUID, on date: Date, actor: PlanActor = .user) -> ScheduledWorkout? {
+        defer { reload() }
+        let programID = programs().first { $0.isActive && !$0.isArchived }?.id
+            ?? addProgram(Program(name: "Baseline", createdAt: date)).id
+        return repo.instantiateTemplate(id, on: date, programID: programID, actor: actor)
+    }
+
     // MARK: Editing-surface binding (WorkoutStore write-throughs here — one mutation path)
 
     /// Today's first scheduled workout across active programs, if any.

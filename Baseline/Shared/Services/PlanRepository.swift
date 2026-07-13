@@ -51,6 +51,16 @@ protocol PlanRepository {
     func delete(_ id: UUID, actor: PlanActor, reason: String?, proposalID: UUID?) -> MutationResult
     func undo(actor: PlanActor) -> MutationResult
     func restore(versionID: UUID, actor: PlanActor) -> MutationResult
+
+    // Templates — immutable reusable sources. Editing a template makes a new template revision; it never
+    // touches already-scheduled workouts (they keep their own revision + template-revision attribution).
+    func templates() -> [WorkoutTemplate]
+    func template(named name: String) -> WorkoutTemplate?
+    @discardableResult func saveAsTemplate(name: String, from workout: Workout, tags: [WorkoutTag]) -> WorkoutTemplate
+    @discardableResult func updateTemplate(_ id: UUID, from workout: Workout) -> WorkoutTemplate?
+    /// Instantiate a template onto a date as an INDEPENDENT scheduled workout (its own fresh revision),
+    /// recording templateID + templateRevisionID for attribution. Versioned + undoable.
+    @discardableResult func instantiateTemplate(_ id: UUID, on date: Date, programID: UUID, actor: PlanActor) -> ScheduledWorkout?
 }
 
 // Monday-based calendar used for week projections.
@@ -301,6 +311,56 @@ final class SwiftDataPlanRepository: PlanRepository {
         return .applied(diff: diff, version: appendVersion(kind: .restore, actor: actor, reason: "restore \(versionID)", diff: diff))
     }
 
+    // MARK: - Templates (immutable reusable sources)
+
+    func templates() -> [WorkoutTemplate] {
+        (fetchAll() as [SDWorkoutTemplate]).map(mapTemplate).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    func template(named name: String) -> WorkoutTemplate? {
+        let key = name.trimmingCharacters(in: .whitespaces).lowercased()
+        return templates().first { $0.name.lowercased() == key }
+    }
+
+    @discardableResult func saveAsTemplate(name: String, from workout: Workout, tags: [WorkoutTag]) -> WorkoutTemplate {
+        // The template's content is its own immutable revision (independent of any scheduled workout).
+        let rev = SDWorkoutRevision(workoutID: UUID(), createdAt: Date(), workoutJSON: PlanCoding.data(workout))
+        context.insert(rev)
+        let sd = SDWorkoutTemplate(name: name.trimmingCharacters(in: .whitespaces), currentRevisionID: rev.id,
+                                   tagsJSON: tags.isEmpty ? nil : PlanCoding.data(tags))
+        context.insert(sd); save()
+        return mapTemplate(sd)
+    }
+
+    @discardableResult func updateTemplate(_ id: UUID, from workout: Workout) -> WorkoutTemplate? {
+        guard let sd = firstSD(SDWorkoutTemplate.self, where: #Predicate { $0.id == id }) else { return nil }
+        let rev = SDWorkoutRevision(workoutID: UUID(), createdAt: Date(), workoutJSON: PlanCoding.data(workout))
+        context.insert(rev)               // new immutable template revision; the old one is kept (attribution)
+        sd.currentRevisionID = rev.id      // last-write-wins on the pointer (v1: no conflict detection)
+        save()
+        return mapTemplate(sd)
+    }
+
+    @discardableResult func instantiateTemplate(_ id: UUID, on date: Date, programID: UUID, actor: PlanActor) -> ScheduledWorkout? {
+        guard let sd = firstSD(SDWorkoutTemplate.self, where: #Predicate { $0.id == id }) else { return nil }
+        let rid = sd.currentRevisionID
+        guard let rev = firstSD(SDWorkoutRevision.self, where: #Predicate { $0.id == rid }),
+              let content = PlanCoding.value(Workout.self, rev.workoutJSON) else { return nil }
+        // Independent copy: fresh workout identity + fresh revision, with template attribution.
+        var workout = content; workout.id = UUID()
+        workout.scheduledDate = Calendar.planWeek.startOfDay(for: date)
+        let sw = ScheduledWorkout(programID: programID, date: Calendar.planWeek.startOfDay(for: date),
+                                  origin: .userCreated, workoutID: workout.id, workoutRevisionID: UUID(),
+                                  workout: workout, templateID: sd.id, templateRevisionID: sd.currentRevisionID,
+                                  tags: PlanCoding.value([WorkoutTag].self, sd.tagsJSON) ?? [])
+        guard case .applied = addWorkout(sw, actor: actor, reason: "from template \(sd.name)") else { return nil }
+        return sw
+    }
+
+    private func mapTemplate(_ sd: SDWorkoutTemplate) -> WorkoutTemplate {
+        WorkoutTemplate(id: sd.id, name: sd.name, currentRevisionID: sd.currentRevisionID,
+                        tags: PlanCoding.value([WorkoutTag].self, sd.tagsJSON) ?? [])
+    }
+
     // MARK: Versioning internals
 
     private func makeDeleteProposal(_ sd: SDScheduledWorkout) -> MutationResult {
@@ -350,7 +410,8 @@ final class SwiftDataPlanRepository: PlanRepository {
         ScheduledIntent(id: sd.id, programID: sd.programID, sectionID: sd.sectionID, date: sd.date,
                         timeOfDay: sd.timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)),
                         origin: WorkoutOrigin(rawValue: sd.originRaw) ?? .userCreated,
-                        workoutID: sd.workoutID, workoutRevisionID: sd.workoutRevisionID, templateID: sd.templateID,
+                        workoutID: sd.workoutID, workoutRevisionID: sd.workoutRevisionID,
+                        templateID: sd.templateID, templateRevisionID: sd.templateRevisionID,
                         tags: PlanCoding.value([WorkoutTag].self, sd.tagsJSON) ?? [],
                         supportsGoalIDs: PlanCoding.value([UUID].self, sd.supportsGoalIDsJSON) ?? [], skipped: sd.skipped)
     }
@@ -371,7 +432,8 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func write(_ it: ScheduledIntent, to sd: SDScheduledWorkout) {
         sd.id = it.id; sd.programID = it.programID; sd.sectionID = it.sectionID; sd.date = it.date
         sd.timeOfDayRaw = it.timeOfDay?.rawValue; sd.originRaw = it.origin.rawValue
-        sd.workoutID = it.workoutID; sd.workoutRevisionID = it.workoutRevisionID; sd.templateID = it.templateID
+        sd.workoutID = it.workoutID; sd.workoutRevisionID = it.workoutRevisionID
+        sd.templateID = it.templateID; sd.templateRevisionID = it.templateRevisionID
         sd.tagsJSON = it.tags.isEmpty ? nil : PlanCoding.data(it.tags)
         sd.supportsGoalIDsJSON = it.supportsGoalIDs.isEmpty ? nil : PlanCoding.data(it.supportsGoalIDs)
         sd.skipped = it.skipped
@@ -397,7 +459,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         context.insert(SDScheduledWorkout(
             id: sw.id, programID: sw.programID, sectionID: sw.sectionID, originRaw: sw.origin.rawValue,
             date: sw.date, timeOfDayRaw: sw.timeOfDay?.rawValue, skipped: sw.skipped, workoutID: sw.workoutID,
-            workoutRevisionID: sw.workoutRevisionID, templateID: sw.templateID,
+            workoutRevisionID: sw.workoutRevisionID, templateID: sw.templateID, templateRevisionID: sw.templateRevisionID,
             tagsJSON: sw.tags.isEmpty ? nil : PlanCoding.data(sw.tags),
             supportsGoalIDsJSON: sw.supportsGoalIDs.isEmpty ? nil : PlanCoding.data(sw.supportsGoalIDs),
             recurrenceJSON: sw.recurrence.map(PlanCoding.data)))
@@ -446,7 +508,7 @@ final class SwiftDataPlanRepository: PlanRepository {
             timeOfDay: sd.timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)),
             origin: WorkoutOrigin(rawValue: sd.originRaw) ?? .userCreated,
             workoutID: sd.workoutID, workoutRevisionID: sd.workoutRevisionID, workout: workout,
-            sectionID: sd.sectionID, templateID: sd.templateID,
+            sectionID: sd.sectionID, templateID: sd.templateID, templateRevisionID: sd.templateRevisionID,
             tags: PlanCoding.value([WorkoutTag].self, sd.tagsJSON) ?? [],
             supportsGoalIDs: PlanCoding.value([UUID].self, sd.supportsGoalIDsJSON) ?? [],
             recurrence: PlanCoding.value(RecurrenceRule.self, sd.recurrenceJSON), skipped: sd.skipped)

@@ -34,6 +34,7 @@ struct ScheduledIntent: Codable, Equatable, Sendable {
     var workoutID: UUID
     var workoutRevisionID: UUID
     var templateID: UUID?
+    var templateRevisionID: UUID?
     var tags: [WorkoutTag]
     var supportsGoalIDs: [UUID]
     var skipped: Bool

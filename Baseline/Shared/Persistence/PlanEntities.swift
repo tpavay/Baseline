@@ -50,17 +50,19 @@ import SwiftData
     var workoutID: UUID = UUID()
     var workoutRevisionID: UUID = UUID()
     var templateID: UUID?
+    var templateRevisionID: UUID?
     var tagsJSON: Data?
     var supportsGoalIDsJSON: Data?
     var recurrenceJSON: Data?
     init(id: UUID = UUID(), programID: UUID = UUID(), sectionID: UUID? = nil,
          originRaw: String = WorkoutOrigin.userCreated.rawValue, date: Date = Date.distantPast,
          timeOfDayRaw: String? = nil, skipped: Bool = false, workoutID: UUID = UUID(),
-         workoutRevisionID: UUID = UUID(), templateID: UUID? = nil, tagsJSON: Data? = nil,
-         supportsGoalIDsJSON: Data? = nil, recurrenceJSON: Data? = nil) {
+         workoutRevisionID: UUID = UUID(), templateID: UUID? = nil, templateRevisionID: UUID? = nil,
+         tagsJSON: Data? = nil, supportsGoalIDsJSON: Data? = nil, recurrenceJSON: Data? = nil) {
         self.id = id; self.programID = programID; self.sectionID = sectionID; self.originRaw = originRaw
         self.date = date; self.timeOfDayRaw = timeOfDayRaw; self.skipped = skipped
-        self.workoutID = workoutID; self.workoutRevisionID = workoutRevisionID; self.templateID = templateID
+        self.workoutID = workoutID; self.workoutRevisionID = workoutRevisionID
+        self.templateID = templateID; self.templateRevisionID = templateRevisionID
         self.tagsJSON = tagsJSON; self.supportsGoalIDsJSON = supportsGoalIDsJSON; self.recurrenceJSON = recurrenceJSON
     }
 }

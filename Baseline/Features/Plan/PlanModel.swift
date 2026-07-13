@@ -104,7 +104,8 @@ struct ScheduledWorkout: Identifiable, Codable, Equatable, Sendable {
     var workoutRevisionID: UUID
     var workout: Workout                  // resolved current revision content (for UI/resolvers)
     var sectionID: UUID?                  // optional phase-as-folder
-    var templateID: UUID?                 // fwd-compat reusable source
+    var templateID: UUID?                 // the template this was instantiated from (attribution)
+    var templateRevisionID: UUID?         // which template *revision* — so template edits never touch this
     var tags: [WorkoutTag] = []
     var supportsGoalIDs: [UUID] = []
     var recurrence: RecurrenceRule?       // fwd-compat, unused in v1
