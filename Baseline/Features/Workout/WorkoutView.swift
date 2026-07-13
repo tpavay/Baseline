@@ -14,6 +14,9 @@ struct WorkoutView: View {
     @State private var sheet: WorkoutSheet?
     @State private var showChat = false
     @State private var historyExercise: PlannedExercise?
+    @State private var showSaveTemplate = false
+    @State private var templateName = ""
+    @State private var templateConflict: WorkoutTemplate?
 
     private var executing: Bool { store.currentLog != nil }
 
@@ -36,6 +39,18 @@ struct WorkoutView: View {
         .sheet(item: $sheet) { sheetView($0) }
         .sheet(item: $historyExercise) { ExerciseHistoryView(exercise: $0) }
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
+        .alert("Save as template", isPresented: $showSaveTemplate) {
+            TextField("Template name", text: $templateName)
+            Button("Save") { saveTemplate() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Reuse this workout later from + Add workout on the Plan tab.") }
+        .confirmationDialog("A template named \"\(templateName)\" already exists",
+                            isPresented: Binding(get: { templateConflict != nil }, set: { if !$0 { templateConflict = nil } }),
+                            presenting: templateConflict) { existing in
+            Button("Update \"\(existing.name)\"") { if let w = store.current { plan.updateTemplate(existing.id, from: w) }; templateConflict = nil }
+            Button("Save as new") { if let w = store.current { plan.saveAsTemplate(name: templateName, from: w) }; templateConflict = nil }
+            Button("Cancel", role: .cancel) { templateConflict = nil }
+        }
     }
 
     // MARK: - Toolbar
@@ -45,6 +60,7 @@ struct WorkoutView: View {
             if store.current != nil {
                 Menu {
                     Button { addBlock() } label: { Label("Add block", systemImage: "plus.rectangle.on.rectangle") }
+                    Button { beginSaveTemplate() } label: { Label("Save as template", systemImage: "square.and.arrow.down") }
                     if !executing {
                         Button { store.startWorkout() } label: { Label("Start workout", systemImage: "play.fill") }
                     } else if store.currentLog?.isComplete == false {
@@ -399,6 +415,17 @@ struct WorkoutView: View {
     }
 
     // MARK: - Direct manipulation (no forms, no save — autosaves via the store)
+
+    private func beginSaveTemplate() {
+        templateName = store.current?.title ?? "New template"
+        showSaveTemplate = true
+    }
+    private func saveTemplate() {
+        let name = templateName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let w = store.current else { return }
+        if let existing = plan.template(named: name) { templateConflict = existing }   // ask: update or save new
+        else { plan.saveAsTemplate(name: name, from: w) }
+    }
 
     private func addBlock() {
         // The new block is empty-named and prompts for a name inline; the empty default is dropped so

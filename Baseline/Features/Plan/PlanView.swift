@@ -208,22 +208,37 @@ struct PlanView: View {
     }
 
     /// Empty-day affordance: a lightweight "+ Add workout" row (rest until you add). The enclosing day is
-    /// still a drop target, so a dragged workout can also land here.
-    private func addWorkoutRow(on date: Date) -> some View {
-        Button { addWorkout(on: date) } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 13, weight: .bold))
-                Text("Add workout").font(.system(size: 14, weight: .medium))
-                Spacer()
-            }
-            .foregroundStyle(BaselineColor.textFaint)
-            .padding(.leading, 22).padding(.vertical, 12).padding(.bottom, 8)
-            .contentShape(Rectangle())
-        }.buttonStyle(.plain)
+    /// still a drop target, so a dragged workout can also land here. When templates exist, offer them.
+    @ViewBuilder private func addWorkoutRow(on date: Date) -> some View {
+        let templates = plan.templates()
+        if templates.isEmpty {
+            Button { addWorkout(on: date) } label: { addWorkoutLabel }.buttonStyle(.plain)
+        } else {
+            Menu {
+                Button("Blank workout") { addWorkout(on: date) }
+                Menu("From template") {
+                    ForEach(templates) { t in Button(t.name) { addFromTemplate(t.id, on: date) } }
+                }
+            } label: { addWorkoutLabel }.buttonStyle(.plain)
+        }
+    }
+
+    private var addWorkoutLabel: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus").font(.system(size: 13, weight: .bold))
+            Text("Add workout").font(.system(size: 14, weight: .medium))
+            Spacer()
+        }
+        .foregroundStyle(BaselineColor.textFaint)
+        .padding(.leading, 22).padding(.vertical, 12).padding(.bottom, 8)
+        .contentShape(Rectangle())
     }
 
     private func addWorkout(on date: Date) {
-        openExecution(plan.newScheduledWorkout(on: date))   // create for that date, then open the editor
+        openExecution(plan.newScheduledWorkout(on: date))   // blank workout for that date, then open the editor
+    }
+    private func addFromTemplate(_ id: UUID, on date: Date) {
+        if let sw = plan.instantiateTemplate(id, on: date) { openExecution(sw) }
     }
 
     private func dayHeader(_ day: TrainingDay) -> some View {
