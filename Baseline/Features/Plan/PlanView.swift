@@ -280,29 +280,18 @@ struct PlanView: View {
     // MARK: Execution bridge — reuse WorkoutView, write through to the repository
 
     private func openExecution(_ sw: ScheduledWorkout) {
-        let planStore = plan                                   // concrete ref captured once (safe in closures)
+        // A scratch store bound to this scheduled workout — logging + lifecycle write through immediately;
+        // structural content edits are coalesced and flushed as one revision on dismiss.
         let store = WorkoutStore(defaults: UserDefaults(suiteName: "plan.exec.buffer") ?? .standard)
-        store.loadExecution(workout: sw.workout, log: planStore.session(for: sw.id)?.log)
-        let id = sw.id
-        store.onLogChange = { log in planStore.updateSessionLog(id) { $0 = log } }
-        store.onStart = { [weak store] in
-            _ = planStore.start(id)
-            if let s = planStore.session(for: id), let w = planStore.scheduledWorkout(id)?.workout {
-                store?.loadExecution(workout: w, log: s.log)
-            }
-        }
-        store.onComplete = { _ = planStore.complete(id, acknowledgingOpenWork: true) }
-        store.onDiscard = { planStore.discard(id) }
-        execContext = ExecContext(id: id, store: store, original: sw.workout)
+        store.bind(plan.sink(forScheduled: sw.id), coalesceContent: true)
+        execContext = ExecContext(id: sw.id, store: store, original: sw.workout)
     }
 
-    /// On dismiss, flush any *structural* plan edits as one immutable revision (logging already
-    /// write-through). Only when the workout actually changed — no spurious revisions.
+    /// On dismiss, flush any coalesced structural edits as one immutable revision — only when the
+    /// workout actually changed (logging already wrote through live).
     private func flushExecution() {
         guard let ctx = execContext else { return }
-        if let edited = ctx.store.current, edited != ctx.original {
-            plan.updateWorkout(ctx.id) { $0 = edited }
-        }
+        if ctx.store.current != ctx.original { ctx.store.flush() }
         plan.reload()
     }
 

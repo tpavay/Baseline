@@ -77,6 +77,37 @@ final class PlanStore {
     @discardableResult func undo(actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.undo(actor: actor) }
     @discardableResult func restore(versionID: UUID, actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.restore(versionID: versionID, actor: actor) }
 
+    // MARK: Editing-surface binding (WorkoutStore write-throughs here — one mutation path)
+
+    /// Today's first scheduled workout across active programs, if any.
+    func todayScheduled(_ date: Date = Date()) -> ScheduledWorkout? { repo.day(date, filter: .allTraining).sessions.first }
+
+    /// A sink that write-throughs a WorkoutStore's edits/lifecycle to a scheduled workout in the repo.
+    func sink(forScheduled id: UUID) -> WorkoutStore.PlanSink {
+        WorkoutStore.PlanSink(
+            pushWorkout: { [weak self] w in self?.updateWorkout(id) { $0 = w } },
+            pushLog: { [weak self] l in self?.updateSessionLog(id) { $0 = l } },
+            start: { [weak self] in _ = self?.start(id) },
+            complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
+            discard: { [weak self] in self?.discard(id) },
+            reload: { [weak self] in
+                guard let self, let sw = self.scheduledWorkout(id) else { return nil }
+                return (sw.workout, self.session(for: id)?.log)
+            })
+    }
+
+    /// Create a brand-new scheduled workout for today (used when the agent builds one and nothing is
+    /// scheduled yet), returning a sink bound to it. Lands in the first active program, or a new
+    /// `Baseline` program if none exists.
+    func addTodayScheduled(workout: Workout, date: Date = Date()) -> WorkoutStore.PlanSink {
+        let programID = programs().first { $0.isActive && !$0.isArchived }?.id
+            ?? addProgram(Program(name: "Baseline", createdAt: date)).id
+        let sw = ScheduledWorkout(programID: programID, date: Calendar.planWeek.startOfDay(for: date),
+                                  origin: .baselineGenerated, workoutID: workout.id, workoutRevisionID: UUID(), workout: workout)
+        _ = addWorkout(sw)
+        return sink(forScheduled: sw.id)
+    }
+
     // MARK: Seeding (migrator + tests)
 
     @discardableResult func addProgram(_ p: Program) -> Program { defer { reload() }; return repo.addProgram(p) }

@@ -55,6 +55,7 @@ struct AskBaselineSheet: View {
 
     private func setUp() async {
         guard service == nil else { return }
+        workouts.reloadFromPlan()   // freshen the bound today-workout in case the Plan tab changed it
         let today = entries.first { Calendar.current.isDateInToday($0.date) }
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
         let tools = AgentTools(store: context, base: base,

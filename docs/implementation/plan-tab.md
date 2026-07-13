@@ -74,6 +74,14 @@ immutable; proposals are concretely stored:
   source of relationship truth); migration origin is `.legacyMigrated` (Baseline didn't author it); Slice 1
   renamed "Plan reading + lifecycle" (start/complete are mutations).
 
+**2026-07-12 — integration seams closed.** The two post-Slice-4 seams are resolved by one mechanism: a
+`WorkoutStore.PlanSink` write-through binding. The shared `WorkoutStore` (the agent's editing surface) is
+bound to **today's scheduled workout** at startup, so the coach's create / edit / log / lifecycle flow
+into the Plan repository as revisions + session updates (immediate write-through; the chat refreshes the
+bound workout on open). The Plan-execution buffer uses the *same* binding with content coalesced (flushed
+as one revision on dismiss; logging live). One mutation path for manual and agent; no divergent
+`WorkoutStore.current`. 206 tests.
+
 **2026-07-12 round 4** — final model refinements before building (mostly forward-compat fields added now to
 avoid painful `@Model` migrations later; only Phase-optional and the WorkoutSession rename touch v1 code):
 - **Phase is optional (point 1):** `Program → ScheduledWorkout(date)`; `ProgramSection` (renamed from

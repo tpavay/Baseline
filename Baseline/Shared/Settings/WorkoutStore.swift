@@ -11,10 +11,56 @@ import Observation
 @MainActor
 @Observable
 final class WorkoutStore {
-    private(set) var current: Workout? { didSet { persist(current, Self.key) } }
+    private(set) var current: Workout? {
+        didSet {
+            persist(current, Self.key)
+            // Bound to a Plan scheduled workout → write content through (a new revision). Coalesced for
+            // the manual editor (flush on dismiss, no keystroke revisions); immediate for the agent.
+            if let sink, !coalesceContent, !isSyncing, let c = current, c != oldValue { sink.pushWorkout(c) }
+        }
+    }
     /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
     /// from `current` (the plan) — logging never mutates the plan.
-    private(set) var currentLog: WorkoutLog? { didSet { persist(currentLog, Self.logKey) } }
+    private(set) var currentLog: WorkoutLog? {
+        didSet {
+            persist(currentLog, Self.logKey)
+            if let sink, !isSyncing, let l = currentLog, l != oldValue { sink.pushLog(l) }
+        }
+    }
+
+    // MARK: - Plan binding (this store is the shared editing surface; a sink write-throughs to the repo)
+
+    /// The write-through target when this store edits a Plan scheduled workout. Nil = standalone (legacy
+    /// ad-hoc), which behaves exactly as before.
+    struct PlanSink {
+        let pushWorkout: (Workout) -> Void            // edit content → new immutable revision
+        let pushLog: (WorkoutLog) -> Void             // log a set → the session log
+        let start: () -> Void                         // begin the session in the plan
+        let complete: () -> Void                      // freeze the completed log
+        let discard: () -> Void
+        let reload: () -> (workout: Workout, log: WorkoutLog?)?
+    }
+    private var sink: PlanSink?
+    private var coalesceContent = false
+    private var isSyncing = false                     // true while pulling from the plan → suppress push-back
+    /// Set once at startup: makes a brand-new today scheduled workout in the plan (for the agent's
+    /// create_workout when nothing is scheduled today) and returns a sink bound to it.
+    var makeTodayScheduled: ((Workout) -> PlanSink?)?
+
+    func bind(_ sink: PlanSink, coalesceContent: Bool) {
+        self.sink = sink; self.coalesceContent = coalesceContent
+        reloadFromPlan()
+    }
+    func unbind() { sink = nil; coalesceContent = false }
+
+    /// Pull the authoritative workout + session back from the plan (suppressing write-back).
+    func reloadFromPlan() {
+        guard let s = sink?.reload() else { return }
+        isSyncing = true; current = s.workout; currentLog = s.log; isSyncing = false
+    }
+
+    /// Push coalesced content edits to the plan on demand (the manual editor calls this on dismiss).
+    func flush() { if let sink, let c = current { sink.pushWorkout(c) } }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
     /// *future* instances, so "use miles for Stationary Bike from now on" doesn't touch today's.
@@ -109,49 +155,42 @@ final class WorkoutStore {
         return metric.canonicalUnit
     }
 
-    // MARK: - Execution bridge (drive a Plan session through this same editing surface)
-
-    /// Optional write-through hooks. Nil for the standalone (ad-hoc / agent) store — no behaviour change.
-    /// When a `WorkoutView` is presented for a Plan session, a scratch store wires these to the Plan
-    /// repository so logging + lifecycle flow to the authoritative store, and the plan itself is never a
-    /// second writable path (the scratch store is a buffer, not persistence).
-    var onLogChange: ((WorkoutLog) -> Void)?
-    var onStart: (() -> Void)?
-    var onComplete: (() -> Void)?
-    var onDiscard: (() -> Void)?
-
-    /// Load a specific workout + (optional) performed session into this store for execution.
-    func loadExecution(workout: Workout, log: WorkoutLog?) {
-        current = workout
-        currentLog = log
-    }
-
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
 
-    /// Apply an id-based structural edit to the plan (add/remove/reorder/move/substitute) and persist.
+    /// Apply an id-based structural edit to the plan (add/remove/reorder/move/substitute). Write-through
+    /// to the plan (if bound) happens in `current`'s didSet.
     func edit(_ transform: (inout Workout) -> Void) {
         guard var w = current else { return }
         transform(&w)
         current = w
     }
 
-    /// Begin performing: create the performed log from the current plan (linked, read-only over it).
+    /// Begin performing. Bound → the plan creates the session; unbound → a local performed log.
     func startWorkout() {
-        guard let w = current, currentLog == nil else { return }
-        currentLog = w.startLog()
-        onStart?()
+        if let sink {
+            sink.start()
+            isSyncing = true; currentLog = sink.reload()?.log; isSyncing = false
+        } else {
+            guard let w = current, currentLog == nil else { return }
+            currentLog = w.startLog()
+        }
     }
 
-    /// Apply an edit to the performed log (log a set, skip/complete, note) and persist.
+    /// Apply an edit to the performed log (log a set, skip/complete, note). Write-through in didSet.
     func editLog(_ transform: (inout WorkoutLog) -> Void) {
         guard var l = currentLog else { return }
         transform(&l)
         currentLog = l
-        onLogChange?(l)
     }
 
-    func completeWorkout() { editLog { $0.isComplete = true }; onComplete?() }
-    func discardLog() { currentLog = nil; onDiscard?() }
+    func completeWorkout() {
+        if let sink { sink.complete(); reloadFromPlan() }
+        else { editLog { $0.isComplete = true } }
+    }
+    func discardLog() {
+        sink?.discard()
+        isSyncing = true; currentLog = nil; isSyncing = false
+    }
 
     /// Result of a name-resolved edit — so the tool layer asks the athlete to disambiguate (exactly
     /// what a coach does with two same-named movements) instead of silently guessing.
@@ -175,8 +214,17 @@ final class WorkoutStore {
         var w = Workout(title: title, goal: goal)
         w.scheduledDate = Calendar.current.startOfDay(for: .now)
         w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block (hidden until structured)
-        current = w
-        currentLog = nil            // a new workout starts with a clean performed log
+
+        if sink != nil {
+            current = w             // already bound → didSet write-throughs (replaces today's content)
+            isSyncing = true; currentLog = nil; isSyncing = false
+        } else if let make = makeTodayScheduled, let newSink = make(w) {
+            // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
+            sink = newSink; coalesceContent = false
+            isSyncing = true; current = w; currentLog = nil; isSyncing = false
+        } else {
+            current = w; currentLog = nil   // standalone (no plan)
+        }
     }
 
     // Numeric guards at the tool boundary — the model can propose anything; reps/load/duration can't
