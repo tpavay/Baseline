@@ -90,6 +90,64 @@ enum MetricFormat {
         return min(max(d, 0), maxDurationSeconds).rounded()   // whole seconds — duration is integer-kind
     }
 
+    // MARK: - Digit-cascade duration entry (the on-screen keypad is plain digits — no colon key exists,
+    // so precise time entry works like a stopwatch/register: each digit shifts in from the right —
+    // "1" → 0:01, "0" → 0:10, "3" → 1:03, "0" → 10:30. Pure + unit-tested; `MetricField` owns the
+    // keystroke wiring. `rawDigits` is the typed sequence, capped to the last 6 (hh mm ss).
+
+    static func cascadeAppend(_ rawDigits: String, _ digit: Character) -> String {
+        guard digit.isASCII, digit.isNumber else { return rawDigits }
+        return String((rawDigits + String(digit)).suffix(6))
+    }
+
+    static func cascadeBackspace(_ rawDigits: String) -> String { String(rawDigits.dropLast()) }
+
+    /// The raw digits interpreted as seconds — last 2 digits = seconds, next 2 = minutes, rest = hours.
+    static func cascadeSeconds(_ rawDigits: String) -> Double {
+        guard let total = Int(rawDigits), total > 0 else { return 0 }
+        let h = total / 10_000, m = (total / 100) % 100, s = total % 100
+        return Double(h * 3600 + m * 60 + s)
+    }
+
+    /// The inverse of `cascadeSeconds` — reconstructs the digit sequence a canonical value came from, so
+    /// syncing the field from an external change (agent edit, undo) seeds cascade entry correctly.
+    /// Capped to the same last-6-digits window as `cascadeAppend`, so a value that round-trips here
+    /// round-trips identically after the next keystroke too (no silent jump on first edit).
+    static func cascadeDigits(fromSeconds seconds: Double) -> String {
+        let total = safeInt(seconds)
+        guard total > 0 else { return "" }
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        let digits = h > 0 ? "\(h)\(String(format: "%02d%02d", m, s))" : String(format: "%02d%02d", m, s)
+        return String(digits.suffix(6))
+    }
+
+    /// Live display while typing — always full clock form (no "45s" shorthand; the colon appears as the
+    /// user types, which is the whole point of cascade entry).
+    static func cascadeDisplay(_ rawDigits: String) -> String {
+        rawDigits.isEmpty ? "" : clock(safeInt(cascadeSeconds(rawDigits)))
+    }
+
+    /// Classifies one text-field edit (old shown text → new shown text) and returns the resulting raw
+    /// digit accumulator. **Prefix-based, not count-delta-based** — a length delta alone can't
+    /// distinguish "typed a digit" from "selected all and typed a shorter replacement" (both change the
+    /// length by an arbitrary amount, and a naive `new.count < old.count` check misreads the latter as a
+    /// backspace, silently dropping what was typed). Two narrow fast paths cover the overwhelmingly
+    /// common cases — append at the end, backspace from the end; everything else (paste, select-all-
+    /// replace, a same-length replacement) re-derives the accumulator wholesale from `new`'s digits,
+    /// which is correct regardless of *how* the text changed. Pulled out of the view so this
+    /// keystroke-classification logic is unit-testable without a UI harness.
+    static func cascadeEdit(old: String, new: String, rawDigits: String) -> String {
+        if new.hasPrefix(old), new.count == old.count + 1, let added = new.last {
+            return cascadeAppend(rawDigits, added)
+        } else if old.hasPrefix(new), new.count == old.count - 1 {
+            return cascadeBackspace(rawDigits)
+        } else if new.contains(where: { !$0.isNumber }), let parsed = parseDuration(new) {
+            return cascadeDigits(fromSeconds: parsed)          // pasted a formatted duration ("10:30")
+        } else {
+            return String(new.filter(\.isNumber).suffix(6))    // paste / select-replace / anything else
+        }
+    }
+
     // MARK: - Any metric (canonical → display unit and back)
 
     /// Display a canonical value in the given unit, with the unit suffix (`80 kg`, `3.11 mi`, `10:00`).

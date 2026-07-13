@@ -104,6 +104,89 @@ struct MetricFormatTests {
         #expect(MetricFormat.editText(102.5, .load, unit: .kilograms) == "102.5") // trailing zeros trimmed
     }
 
+    // MARK: Digit-cascade duration entry (stopwatch-style: no colon key on the number pad)
+
+    @Test func cascadeAppendBuildsTimeFromTheRight() {
+        var digits = ""
+        digits = MetricFormat.cascadeAppend(digits, "1"); #expect(MetricFormat.cascadeDisplay(digits) == "0:01")
+        digits = MetricFormat.cascadeAppend(digits, "0"); #expect(MetricFormat.cascadeDisplay(digits) == "0:10")
+        digits = MetricFormat.cascadeAppend(digits, "3"); #expect(MetricFormat.cascadeDisplay(digits) == "1:03")
+        digits = MetricFormat.cascadeAppend(digits, "0"); #expect(MetricFormat.cascadeDisplay(digits) == "10:30")
+        #expect(MetricFormat.cascadeSeconds(digits) == 630)
+    }
+
+    @Test func cascadeAppendIgnoresNonDigits() {
+        #expect(MetricFormat.cascadeAppend("1", ":") == "1")
+        #expect(MetricFormat.cascadeAppend("1", "s") == "1")
+    }
+
+    @Test func cascadeCapsAtSixDigits() {
+        let digits = "1234567".reduce("") { MetricFormat.cascadeAppend($0, $1) }
+        #expect(digits == "234567")   // oldest (most-significant) digit dropped, not the newest
+        #expect(digits.count == 6)
+    }
+
+    @Test func cascadeBackspaceRemovesOneDigitAtATime_andFullyClears() {
+        var digits = "1030"
+        digits = MetricFormat.cascadeBackspace(digits); #expect(digits == "103")
+        #expect(MetricFormat.cascadeDisplay(digits) == "1:03")
+        digits = MetricFormat.cascadeBackspace(digits)
+        digits = MetricFormat.cascadeBackspace(digits)
+        digits = MetricFormat.cascadeBackspace(digits)
+        #expect(digits == "")                                  // fully clears — no "stuck at 0:00"
+        #expect(MetricFormat.cascadeDisplay(digits) == "")
+        #expect(MetricFormat.cascadeBackspace("") == "")        // backspace on empty is a no-op
+    }
+
+    @Test func cascadeDigitsFromSecondsRoundTrips() {
+        for seconds in [1.0, 45, 60, 630, 1800, 3900, 5405] {
+            let digits = MetricFormat.cascadeDigits(fromSeconds: seconds)
+            #expect(MetricFormat.cascadeSeconds(digits) == seconds, "seconds \(seconds) → digits \(digits)")
+        }
+        #expect(MetricFormat.cascadeDigits(fromSeconds: 0) == "")
+    }
+
+    /// Adversarial review found: an extreme synced value (168h = maxDurationSeconds) produced 7 raw
+    /// digits, one more than cascadeAppend's 6-digit cap — so the *next* keystroke silently truncated a
+    /// different leading digit than cascadeDigits itself did, jumping the value on first edit.
+    @Test func cascadeDigitsCapsToSixLikeAppendDoes() {
+        let digits = MetricFormat.cascadeDigits(fromSeconds: MetricFormat.maxDurationSeconds)   // 168:00:00
+        #expect(digits.count <= 6)
+        // Appending a digit afterward must not jump the value by truncating a *different* leading digit.
+        let appended = MetricFormat.cascadeAppend(digits, "5")
+        #expect(appended.count <= 6)
+    }
+
+    /// Adversarial review: classifying purely off `new.count < old.count` misreads "select-all then type
+    /// a shorter replacement" as a backspace and silently drops the typed digit. Prefix-based
+    /// classification must fall through to a full re-derive instead.
+    @Test func cascadeEditHandlesSelectAllReplace() {
+        // Selected all of "1:03" (digits "103") and typed "5" → the field now shows just "5".
+        #expect(MetricFormat.cascadeEdit(old: "1:03", new: "5", rawDigits: "103") == "5")
+    }
+
+    /// Same review finding, the other blind spot: a same-length replacement matches neither the append
+    /// nor backspace fast path and must not be silently dropped.
+    @Test func cascadeEditHandlesSameLengthReplacement() {
+        #expect(MetricFormat.cascadeEdit(old: "103", new: "105", rawDigits: "103") == "105")
+    }
+
+    /// When the replacement text is a formatted clock string (the realistic case — the field always
+    /// displays with a colon), the fallback prefers reading it as m:ss over blindly stripping the colon:
+    /// editing "1:03" to read "1:53" is best honored as "the athlete means 1:53", not "153".
+    @Test func cascadeEditSameLengthReplacementWithColonParsesAsClockTime() {
+        #expect(MetricFormat.cascadeEdit(old: "1:03", new: "1:53", rawDigits: "103") == "0153")
+    }
+
+    @Test func cascadeEditPasteOfFormattedDuration() {
+        #expect(MetricFormat.cascadeEdit(old: "", new: "10:30", rawDigits: "") == "1030")
+    }
+
+    @Test func cascadeEditFastPathsMatchDirectAppendBackspace() {
+        #expect(MetricFormat.cascadeEdit(old: "0:01", new: "0:010", rawDigits: "1") == MetricFormat.cascadeAppend("1", "0"))
+        #expect(MetricFormat.cascadeEdit(old: "0:10", new: "0:1", rawDigits: "10") == MetricFormat.cascadeBackspace("10"))
+    }
+
     @Test func columnHeadersCarryUnits() {
         #expect(MetricFormat.columnHeader(.duration, unit: .seconds) == "TIME")
         #expect(MetricFormat.columnHeader(.load, unit: .pounds) == "LB")
