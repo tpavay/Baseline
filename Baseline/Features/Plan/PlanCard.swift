@@ -1,16 +1,21 @@
 import SwiftUI
 
+/// Structural actions a card can request; `PlanView` maps each to a versioned repository mutation.
+enum PlanCardAction: Equatable {
+    case primary, open, complete, duplicate, skip, unskip, delete, move(Date)
+}
+
 /// One adaptive workout card in the timeline. Shares a structure across modalities; the summary line is
 /// derived from the workout's content. Completed cards read quiet; today/active read prominent. Full
-/// execution (logging) opens `onOpen`; the primary action runs the lifecycle.
+/// execution (logging) opens via `.open`; structural edits go through the ⋯ menu; drag-drop is added by
+/// the enclosing timeline.
 struct ScheduledWorkoutCard: View {
     let scheduled: ScheduledWorkout
     let status: ScheduleStatus
-    let onPrimary: () -> Void
-    let onOpen: () -> Void
-    var onComplete: () -> Void = {}
-    var onSkip: () -> Void = {}
+    var weekDays: [Date] = []
+    let onAction: (PlanCardAction) -> Void
     @State private var expanded = false
+    private let cal = Calendar.planWeek
 
     private var quiet: Bool { if case .completed = status { return true }; if case .skipped = status { return true }; return false }
 
@@ -31,11 +36,22 @@ struct ScheduledWorkoutCard: View {
                 }
                 Spacer(minLength: 0)
                 Menu {
-                    if primaryLabel != nil { Button(primaryLabel!, action: onPrimary) }
-                    if case .inProgress = status { Button("Complete", action: onComplete) }
-                    if case .paused = status { Button("Complete", action: onComplete) }
-                    Button("Open", action: onOpen)
-                    Button("Skip", action: onSkip)
+                    if let p = primaryLabel { Button(p) { onAction(.primary) } }
+                    if case .inProgress = status { Button("Complete") { onAction(.complete) } }
+                    if case .paused = status { Button("Complete") { onAction(.complete) } }
+                    Button("Open") { onAction(.open) }
+                    if !weekDays.isEmpty {
+                        Menu("Move to") {
+                            ForEach(weekDays, id: \.self) { d in
+                                Button(d.formatted(.dateTime.weekday(.wide))) { onAction(.move(d)) }
+                                    .disabled(cal.isDate(d, inSameDayAs: scheduled.date))
+                            }
+                        }
+                    }
+                    Button("Duplicate") { onAction(.duplicate) }
+                    if scheduled.skipped { Button("Unskip") { onAction(.unskip) } }
+                    else { Button("Skip") { onAction(.skip) } }
+                    Button("Delete", role: .destructive) { onAction(.delete) }
                 } label: { Image(systemName: "ellipsis").font(.system(size: 16)).foregroundStyle(BaselineColor.textFaint).padding(6) }
             }
             if let (label, color) = PlanStatusStyle.chip(status) {
@@ -48,7 +64,7 @@ struct ScheduledWorkoutCard: View {
                 }.buttonStyle(.plain)
                 Spacer()
                 if let label = primaryLabel {
-                    Button(action: onPrimary) {
+                    Button { onAction(.primary) } label: {
                         Text(label).font(.system(size: 15, weight: .bold))
                             .foregroundStyle(prominent ? Color(hex: 0x120B21) : BaselineColor.accent)
                             .padding(.horizontal, 20).frame(height: 42)
@@ -59,7 +75,8 @@ struct ScheduledWorkoutCard: View {
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 16).fill(quiet ? BaselineColor.surface.opacity(0.4) : BaselineColor.surface))
-        .onTapGesture { onOpen() }
+        .contentShape(Rectangle())
+        .onTapGesture { onAction(.open) }
     }
 
     private var prominent: Bool {

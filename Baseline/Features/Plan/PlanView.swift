@@ -11,6 +11,10 @@ struct PlanView: View {
     @State private var confirmComplete: ScheduledWorkout?
     @State private var openWorkMessage = ""
     @State private var showChat = false
+    @State private var dropTargetDate: Date?
+    @State private var pendingDrop: PendingDrop?
+    @State private var deleteTarget: DeleteTarget?
+    @State private var undoMessage: String?
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -19,6 +23,9 @@ struct PlanView: View {
         let store: WorkoutStore
         let original: Workout
     }
+    /// A drag dropped onto a day that already has session(s) — resolved via an action sheet.
+    struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
+    struct DeleteTarget: Identifiable { let id = UUID(); let sw: ScheduledWorkout; let proposalID: UUID }
 
     private let cal = Calendar.planWeek
     private var today: Date { cal.startOfDay(for: Date()) }
@@ -39,6 +46,7 @@ struct PlanView: View {
                     .padding(.horizontal, 16)
                 }
                 chatBar
+                if let msg = undoMessage { undoBar(msg) }
             }
             .navigationTitle("").toolbar { toolbar }
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
@@ -51,6 +59,38 @@ struct PlanView: View {
             Button("Finish anyway", role: .destructive) { if let sw = confirmComplete { _ = plan.complete(sw.id, acknowledgingOpenWork: true) }; confirmComplete = nil }
             Button("Keep logging", role: .cancel) { confirmComplete = nil }
         } message: { Text(openWorkMessage) }
+        .alert("Delete workout?", isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), presenting: deleteTarget) { t in
+            Button("Delete", role: .destructive) { apply(plan.delete(t.sw.id, proposalID: t.proposalID), "Deleted"); deleteTarget = nil }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        } message: { t in Text("This removes \(t.sw.workout.title) from the plan. You can undo it.") }
+        .confirmationDialog("Drop onto this day", isPresented: Binding(get: { pendingDrop != nil }, set: { if !$0 { pendingDrop = nil } }), presenting: pendingDrop) { pd in
+            Button("Move here") { apply(plan.move(pd.dragged, toDate: pd.day), "Moved"); pendingDrop = nil }
+            if pd.existing.count == 1 {
+                Button("Swap with \(pd.existing[0].workout.title)") { apply(plan.swap(pd.dragged, pd.existing[0].id), "Swapped"); pendingDrop = nil }
+            }
+            Button("Cancel", role: .cancel) { pendingDrop = nil }
+        }
+        .task(id: undoMessage) {
+            guard undoMessage != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            undoMessage = nil
+        }
+    }
+
+    private func undoBar(_ message: String) -> some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 12) {
+                Text(message).font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                Spacer()
+                Button("Undo") { _ = plan.undo(); undoMessage = nil }
+                    .font(.system(size: 14, weight: .bold)).foregroundStyle(BaselineColor.accent)
+            }
+            .padding(.horizontal, 18).frame(height: 46)
+            .background(Capsule().fill(BaselineColor.amethyst).overlay(Capsule().strokeBorder(BaselineColor.accent.opacity(0.4), lineWidth: 1)))
+            .padding(.horizontal, 16).padding(.bottom, 66)   // above the chat bar
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     // MARK: Toolbar (program filter + today)
@@ -138,22 +178,32 @@ struct PlanView: View {
                     .font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(.vertical, 20)
             }
             ForEach(daysWithContent) { day in
-                dayHeader(day)
-                if day.sessions.isEmpty {
-                    Text("Rest").font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
-                        .padding(.leading, 22).padding(.bottom, 20)
-                } else {
-                    ForEach(day.sessions) { sw in
-                        ScheduledWorkoutCard(
-                            scheduled: sw,
-                            status: plan.status(for: sw, today: Date()),
-                            onPrimary: { primaryAction(sw) },
-                            onOpen: { openExecution(sw) },
-                            onComplete: { attemptComplete(sw) },
-                            onSkip: { plan.discard(sw.id) })
-                        .padding(.leading, 22).padding(.bottom, 14)
+                VStack(alignment: .leading, spacing: 0) {
+                    dayHeader(day)
+                    if day.sessions.isEmpty {
+                        Text("Rest").font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 22).padding(.bottom, 20)
+                    } else {
+                        ForEach(day.sessions) { sw in
+                            ScheduledWorkoutCard(
+                                scheduled: sw,
+                                status: plan.status(for: sw, today: Date()),
+                                weekDays: plan.week.days.map(\.date),
+                                onAction: { handle($0, sw) })
+                            .padding(.leading, 22).padding(.bottom, 14)
+                            .draggable(sw.id.uuidString)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .dropDestination(for: String.self) { items, _ in
+                    guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
+                    return drop(dragged, on: day.date)
+                } isTargeted: { dropTargetDate = $0 ? day.date : (cal.isDate(dropTargetDate ?? .distantPast, inSameDayAs: day.date) ? nil : dropTargetDate) }
+                .background(cal.isDate(dropTargetDate ?? .distantPast, inSameDayAs: day.date)
+                    ? RoundedRectangle(cornerRadius: 12).fill(BaselineColor.accent.opacity(0.08)) : nil)
             }
         }
     }
@@ -172,6 +222,35 @@ struct PlanView: View {
     }
 
     // MARK: Actions
+
+    private func handle(_ action: PlanCardAction, _ sw: ScheduledWorkout) {
+        switch action {
+        case .primary: primaryAction(sw)
+        case .open: openExecution(sw)
+        case .complete: attemptComplete(sw)
+        case .duplicate: apply(plan.duplicate(sw.id, toDate: nil), "Duplicated")
+        case .skip: apply(plan.setSkipped(sw.id, true), "Skipped")
+        case .unskip: apply(plan.setSkipped(sw.id, false), "Unskipped")
+        case .move(let d): apply(plan.move(sw.id, toDate: d), "Moved")
+        case .delete:
+            if case .confirmationRequired(_, _, let pid) = plan.delete(sw.id) { deleteTarget = DeleteTarget(sw: sw, proposalID: pid) }
+        }
+    }
+
+    /// A drag dropped on `day`. Empty day → move directly; occupied → offer Move/Swap.
+    private func drop(_ dragged: UUID, on day: Date) -> Bool {
+        dropTargetDate = nil
+        guard let sw = plan.scheduledWorkout(dragged), !cal.isDate(sw.date, inSameDayAs: day) else { return false }
+        let existing = (plan.week.days.first { cal.isDate($0.date, inSameDayAs: day) }?.sessions ?? []).filter { $0.id != dragged }
+        if existing.isEmpty { apply(plan.move(dragged, toDate: day), "Moved") }
+        else { pendingDrop = PendingDrop(dragged: dragged, day: day, existing: existing) }
+        return true
+    }
+
+    /// Surface an Undo affordance after an applied mutation.
+    private func apply(_ result: MutationResult, _ verb: String) {
+        if result.isApplied { withAnimation { undoMessage = verb } }
+    }
 
     private func primaryAction(_ sw: ScheduledWorkout) {
         switch plan.status(for: sw, today: Date()) {
