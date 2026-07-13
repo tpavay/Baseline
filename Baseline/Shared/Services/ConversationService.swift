@@ -117,7 +117,7 @@ final class ConversationService {
         if let d = response.decision { latestDecision = d }
         if let p = response.plan { latestPlan = p }
         switch call {
-        case .getToday, .explain, .getCurrentWorkout: break   // pure reads — not "what changed"
+        case .getToday, .explain, .getCurrentWorkout, .getWeekPlan, .explainModification: break   // pure reads — not "what changed"
         default: toolActivity.append(ToolEvent(label: call.activityLabel))
         }
     }

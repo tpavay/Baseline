@@ -41,6 +41,14 @@ final class AgentTools {
         case getCurrentWorkout
         case startWorkout
         case completeWorkout(confirm: Bool)
+        // Plan (week-level schedule) — reshuffle the week through the same versioned repository ops.
+        case getWeekPlan
+        case moveWorkout(workout: String, toDay: String)
+        case swapWorkouts(a: String, b: String)
+        case skipWorkout(workout: String, skipped: Bool)
+        case duplicateWorkout(workout: String, toDay: String?)
+        case deleteWorkout(workout: String, proposalID: String?)
+        case explainModification(workout: String)
         // Metric system: configure which metrics an exercise logs + display units, and set values.
         case updateLoggingConfig(exercise: String, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
         case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
@@ -79,6 +87,13 @@ final class AgentTools {
             case .getCurrentWorkout: return "Read the current workout"
             case .startWorkout: return "Started the workout"
             case .completeWorkout: return "Completed the workout"
+            case .getWeekPlan: return "Read the week's plan"
+            case .moveWorkout(let w, let d): return "Moved \(w) → \(d)"
+            case .swapWorkouts(let a, let b): return "Swapped \(a) ↔ \(b)"
+            case .skipWorkout(let w, let s): return "\(s ? "Skipped" : "Unskipped") \(w)"
+            case .duplicateWorkout(let w, _): return "Duplicated \(w)"
+            case .deleteWorkout(let w, _): return "Deleted \(w)"
+            case .explainModification(let w): return "Explained \(w)"
             case .updateLoggingConfig(let e, _, _): return "Configured metrics for \(e)"
             case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
             case .setMetricValue(let e, let n, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
@@ -104,9 +119,11 @@ final class AgentTools {
     private let hrvConfigured: Bool
     private let readings: [Reading]              // recent HRV readings, newest first — for retrieval
     private let workouts: WorkoutStore?         // today's structured workout the chat can edit
+    private let plan: PlanStore?                // the week-level schedule the chat can reshuffle
 
     init(store: TrainingContextStore, base: DecisionEngine.Inputs = .init(), style: PlanningEngine.Style = .balanced,
-         health: HealthService? = nil, hrvConfigured: Bool = false, readings: [Reading] = [], workouts: WorkoutStore? = nil) {
+         health: HealthService? = nil, hrvConfigured: Bool = false, readings: [Reading] = [], workouts: WorkoutStore? = nil,
+         plan: PlanStore? = nil) {
         self.store = store
         self.base = base
         self.style = style
@@ -114,6 +131,7 @@ final class AgentTools {
         self.hrvConfigured = hrvConfigured
         self.readings = readings
         self.workouts = workouts
+        self.plan = plan
     }
 
     // MARK: - Async execution (retrieval tools do real I/O; state tools stay synchronous)
@@ -294,6 +312,45 @@ final class AgentTools {
             }
             workouts.completeWorkout()
             return Response(text: "Marked the workout complete — nice work.", decision: nil, plan: nil)
+        case .getWeekPlan:
+            guard let plan else { return workoutUnavailable() }
+            return Response(text: weekPlanSummary(plan), decision: nil, plan: nil)
+        case .moveWorkout(let workout, let toDay):
+            return resolvePlan(workout) { sw, plan in
+                guard let date = self.dayDate(toDay, plan) else { return Response(text: "I couldn't tell which day \"\(toDay)\" is.", decision: nil, plan: nil) }
+                return self.planOutcome(plan.move(sw.id, toDate: date), verb: "Moved \(sw.workout.title) to \(self.dayLabel(date)).")
+            }
+        case .swapWorkouts(let a, let b):
+            guard let plan else { return workoutUnavailable() }
+            switch (resolveScheduled(a, plan), resolveScheduled(b, plan)) {
+            case (.one(let x), .one(let y)): return planOutcome(plan.swap(x, y), verb: "Swapped \(a) and \(b).")
+            case (.many(let m), _): return Response(text: ambiguityText(a, m), decision: nil, plan: nil)
+            case (_, .many(let m)): return Response(text: ambiguityText(b, m), decision: nil, plan: nil)
+            default: return Response(text: "I couldn't find both of those in this week.", decision: nil, plan: nil)
+            }
+        case .skipWorkout(let workout, let skipped):
+            return resolvePlan(workout) { sw, plan in
+                self.planOutcome(plan.setSkipped(sw.id, skipped), verb: "\(skipped ? "Skipped" : "Unskipped") \(sw.workout.title).")
+            }
+        case .duplicateWorkout(let workout, let toDay):
+            return resolvePlan(workout) { sw, plan in
+                let date = toDay.flatMap { self.dayDate($0, plan) }
+                return self.planOutcome(plan.duplicate(sw.id, toDate: date), verb: "Duplicated \(sw.workout.title)\(date.map { " to \(self.dayLabel($0))" } ?? "").")
+            }
+        case .deleteWorkout(let workout, let proposalID):
+            return resolvePlan(workout) { sw, plan in
+                let result = plan.delete(sw.id, proposalID: proposalID.flatMap(UUID.init(uuidString:)))
+                switch result {
+                case .applied: return Response(text: "Deleted \(sw.workout.title). You can undo it on the Plan tab.", decision: nil, plan: nil)
+                case .confirmationRequired(let warnings, _, let pid):
+                    return Response(text: "\(warnings.first?.message ?? "This is destructive.") To confirm, call delete_workout again with proposal_id \"\(pid.uuidString)\".", decision: nil, plan: nil)
+                case .rejected: return Response(text: "I couldn't delete that.", decision: nil, plan: nil)
+                }
+            }
+        case .explainModification(let workout):
+            return resolvePlan(workout) { sw, plan in
+                Response(text: self.explainModification(sw, plan), decision: nil, plan: nil)
+            }
         case .updateLoggingConfig(let ex, let enabled, let units):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.setLoggingConfig(exerciseNamed: ex, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
@@ -318,6 +375,93 @@ final class AgentTools {
 
     private func workoutUnavailable() -> Response {
         Response(text: "Workout editing isn't available in this context.", decision: nil, plan: nil)
+    }
+
+    // MARK: - Plan (week-level) helpers — resolve by name, route to the versioned repository ops
+
+    private enum PlanMatch { case none; case one(UUID); case many([ScheduledWorkout]) }
+
+    private func resolveScheduled(_ name: String, _ plan: PlanStore) -> PlanMatch {
+        let all = plan.week.days.flatMap(\.sessions)
+        let n = name.trimmingCharacters(in: .whitespaces).lowercased()
+        let exact = all.filter { $0.workout.title.lowercased() == n }
+        let hits = exact.isEmpty ? all.filter { $0.workout.title.lowercased().contains(n) } : exact
+        switch hits.count { case 0: return .none; case 1: return .one(hits[0].id); default: return .many(hits) }
+    }
+
+    /// Resolve a workout by name in the current week; ambiguity-aware (asks which one, never guesses).
+    private func resolvePlan(_ name: String, _ body: (ScheduledWorkout, PlanStore) -> Response) -> Response {
+        guard let plan else { return workoutUnavailable() }
+        switch resolveScheduled(name, plan) {
+        case .none: return Response(text: "I couldn't find \"\(name)\" in this week's plan.", decision: nil, plan: nil)
+        case .many(let m): return Response(text: ambiguityText(name, m), decision: nil, plan: nil)
+        case .one(let id):
+            guard let sw = plan.scheduledWorkout(id) else { return Response(text: "I couldn't load \"\(name)\".", decision: nil, plan: nil) }
+            return body(sw, plan)
+        }
+    }
+
+    private func ambiguityText(_ name: String, _ m: [ScheduledWorkout]) -> String {
+        "There's more than one \"\(name)\" this week: " + m.map { "\($0.workout.title) on \(dayLabel($0.date))" }.joined(separator: ", ") + ". Which one?"
+    }
+
+    private func planOutcome(_ r: MutationResult, verb: String) -> Response {
+        switch r {
+        case .applied: return Response(text: verb, decision: nil, plan: nil)
+        case .confirmationRequired(let w, _, _): return Response(text: w.first?.message ?? "That needs confirmation.", decision: nil, plan: nil)
+        case .rejected(.activeSessionConflict): return Response(text: "That workout is in progress — finish or discard the session before reshuffling it.", decision: nil, plan: nil)
+        case .rejected: return Response(text: "I couldn't make that change.", decision: nil, plan: nil)
+        }
+    }
+
+    /// Map a day token (weekday name, or `yyyy-MM-dd`) to a date in the current plan week.
+    private func dayDate(_ token: String, _ plan: PlanStore) -> Date? {
+        let t = token.trimmingCharacters(in: .whitespaces).lowercased()
+        for d in plan.week.days.map(\.date) {
+            let wide = d.formatted(.dateTime.weekday(.wide)).lowercased()
+            let abbr = d.formatted(.dateTime.weekday(.abbreviated)).lowercased()
+            if t == wide || t == abbr || (t.count >= 3 && wide.hasPrefix(t)) { return d }
+        }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: t).map { Calendar.planWeek.startOfDay(for: $0) }
+    }
+
+    private func dayLabel(_ d: Date) -> String { d.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()) }
+
+    private func statusWord(_ s: ScheduleStatus) -> String {
+        switch s {
+        case .today: "today"; case .inProgress: "in progress"; case .paused: "paused"; case .completed: "completed"
+        case .skipped: "skipped"; case .missed: "missed"; case .planned: "planned"; case .modifiedIntent: "modified"
+        }
+    }
+
+    private func weekPlanSummary(_ plan: PlanStore) -> String {
+        var lines = ["This week's plan (\(plan.week.startDate.formatted(.dateTime.month().day())) start):"]
+        for day in plan.week.days where !day.sessions.isEmpty {
+            let items = day.sessions.map { "\($0.workout.title) (\(statusWord(plan.status(for: $0, today: Date()))))" }.joined(separator: ", ")
+            lines.append("- \(day.date.formatted(.dateTime.weekday(.wide))): \(items)")
+        }
+        if lines.count == 1 { lines.append("- nothing scheduled yet") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Honest rationale: today's status from the engine (as-planned in v1 unless a real diff exists),
+    /// past/future from execution state and version history — never invented.
+    private func explainModification(_ sw: ScheduledWorkout, _ plan: PlanStore) -> String {
+        let title = sw.workout.title
+        switch plan.status(for: sw, today: Date()) {
+        case .today(.asPlanned): return "\(title) is set as planned for today — no modification."
+        case .today(.modified(let reasons)): return "\(title) was modified today: \(reasons.joined(separator: ", "))."
+        case .today(.constraintActive): return "\(title) reflects an active constraint today."
+        case .today(.swapSuggested): return "\(title) has a suggested swap today."
+        case .today(.reducedVolume(let p)): return "\(title) has reduced volume today\(p.map { " (−\($0)%)" } ?? "")."
+        case .completed: return "\(title) is completed."
+        case .inProgress, .paused: return "\(title) is in progress."
+        case .skipped: return "\(title) was skipped."
+        case .missed: return "\(title) was missed."
+        case .planned: return "\(title) is planned as-is; nothing's been changed."
+        case .modifiedIntent(let a): return "\(title) was changed by \(a.rawValue)."
+        }
     }
 
     /// Turn a name-resolved edit into a reply: on success echo the refreshed workout; on not-found

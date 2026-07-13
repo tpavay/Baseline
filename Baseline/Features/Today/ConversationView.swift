@@ -9,6 +9,7 @@ struct AskBaselineSheet: View {
     @Environment(HealthService.self) private var health
     @Environment(OnboardingStore.self) private var profile
     @Environment(WorkoutStore.self) private var workouts
+    @Environment(PlanStore.self) private var plan
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
@@ -58,7 +59,7 @@ struct AskBaselineSheet: View {
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
         let tools = AgentTools(store: context, base: base,
                                health: health, hrvConfigured: profile.draft.config.heartSource != nil,
-                               readings: readings, workouts: workouts)
+                               readings: readings, workouts: workouts, plan: plan)
         service = ConversationService(tools: tools)
     }
 }

@@ -156,6 +156,65 @@ export const TOOLS = [
     },
   },
   {
+    name: "get_week_plan",
+    description: "Read the athlete's week-level training plan (each day's scheduled workouts + their status). Call this before moving/swapping/skipping workouts so you know what exists and can refer to them by name and day.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "move_workout",
+    description: "Move a scheduled workout to another day of the current week. Refer to the workout by its title and the target day by weekday name (e.g. 'Thursday') or yyyy-MM-dd. If the name matches more than one workout this week, the tool asks which — relay that, don't guess.",
+    input_schema: {
+      type: "object",
+      properties: { workout: { type: "string" }, to_day: { type: "string", description: "Weekday name or yyyy-MM-dd" } },
+      required: ["workout", "to_day"],
+    },
+  },
+  {
+    name: "swap_workouts",
+    description: "Swap the days of two scheduled workouts this week (each keeps its content, they trade dates). Refer to both by title.",
+    input_schema: {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      required: ["a", "b"],
+    },
+  },
+  {
+    name: "skip_workout",
+    description: "Mark a scheduled workout as skipped (or un-skip it). Does not delete it.",
+    input_schema: {
+      type: "object",
+      properties: { workout: { type: "string" }, skipped: { type: "boolean", description: "true to skip (default), false to un-skip" } },
+      required: ["workout"],
+    },
+  },
+  {
+    name: "duplicate_workout",
+    description: "Duplicate a scheduled workout (same content), optionally onto another day. The copy shares the original's content revision.",
+    input_schema: {
+      type: "object",
+      properties: { workout: { type: "string" }, to_day: { type: "string", description: "Optional weekday name or yyyy-MM-dd" } },
+      required: ["workout"],
+    },
+  },
+  {
+    name: "delete_workout",
+    description: "Remove a scheduled workout from the plan. DESTRUCTIVE: call FIRST without proposal_id — the tool returns a warning and a proposal_id and deletes nothing. Relay the warning; only if the athlete confirms, call again with that proposal_id. (The athlete can also undo afterward.)",
+    input_schema: {
+      type: "object",
+      properties: { workout: { type: "string" }, proposal_id: { type: "string", description: "Pass ONLY on the confirming second call, using the id from the first call's warning." } },
+      required: ["workout"],
+    },
+  },
+  {
+    name: "explain_modification",
+    description: "Explain why a scheduled workout is as it is (as-planned / modified today / skipped / completed / changed by you or the athlete). Rationale comes from the deterministic state and version history — report exactly what the tool returns; never invent a reason or a percentage.",
+    input_schema: {
+      type: "object",
+      properties: { workout: { type: "string" } },
+      required: ["workout"],
+    },
+  },
+  {
     name: "update_logging_config",
     description: "THIS WORKOUT ONLY: choose which metrics an exercise logs and its display units. Does NOT change future defaults. Metrics: reps, load, duration, distance, calories, heartRate, cadence, power, pace, rpe. Unsupported metrics are rejected.",
     input_schema: {

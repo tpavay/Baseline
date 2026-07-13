@@ -78,6 +78,26 @@ enum ToolCallMapper {
             return .startWorkout
         case "complete_workout", "finish_workout":
             return .completeWorkout(confirm: (input["confirm"] as? Bool) ?? false)
+        case "get_week_plan":
+            return .getWeekPlan
+        case "move_workout":
+            guard let w = input["workout"] as? String, let d = input["to_day"] as? String else { return nil }
+            return .moveWorkout(workout: w, toDay: d)
+        case "swap_workouts":
+            guard let a = input["a"] as? String, let b = input["b"] as? String else { return nil }
+            return .swapWorkouts(a: a, b: b)
+        case "skip_workout":
+            guard let w = input["workout"] as? String else { return nil }
+            return .skipWorkout(workout: w, skipped: (input["skipped"] as? Bool) ?? true)
+        case "duplicate_workout":
+            guard let w = input["workout"] as? String else { return nil }
+            return .duplicateWorkout(workout: w, toDay: input["to_day"] as? String)
+        case "delete_workout":
+            guard let w = input["workout"] as? String else { return nil }
+            return .deleteWorkout(workout: w, proposalID: input["proposal_id"] as? String)
+        case "explain_modification":
+            guard let w = input["workout"] as? String else { return nil }
+            return .explainModification(workout: w)
         case "update_logging_config":
             guard let ex = input["exercise"] as? String else { return nil }
             return .updateLoggingConfig(exercise: ex, enabledMetrics: metricList(input["enabled_metrics"]), units: unitOverrides(input))
