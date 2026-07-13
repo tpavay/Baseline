@@ -215,6 +215,33 @@ export const TOOLS = [
     },
   },
   {
+    name: "save_as_template",
+    description: "Save today's workout as a reusable template with a name. If a template with that name already exists the tool refuses and tells you — relay that and either use update_template to replace it or pick a different name (never overwrite silently).",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
+  {
+    name: "create_from_template",
+    description: "Create a workout on a day from a saved template (by name). The new workout is an independent copy — later edits to it or the template don't affect each other. Day is a weekday name or yyyy-MM-dd. Asks which if the name matches more than one template.",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string" }, to_day: { type: "string", description: "Weekday name or yyyy-MM-dd" } },
+      required: ["name", "to_day"],
+    },
+  },
+  {
+    name: "update_template",
+    description: "Replace a saved template's content with today's workout (by template name). Creates a new template revision; workouts already scheduled from the template are NOT changed. Asks which if the name matches more than one.",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
+  {
     name: "update_logging_config",
     description: "THIS WORKOUT ONLY: choose which metrics an exercise logs and its display units. Does NOT change future defaults. Metrics: reps, load, duration, distance, calories, heartRate, cadence, power, pace, rpe. Unsupported metrics are rejected.",
     input_schema: {

@@ -98,6 +98,15 @@ enum ToolCallMapper {
         case "explain_modification":
             guard let w = input["workout"] as? String else { return nil }
             return .explainModification(workout: w)
+        case "save_as_template":
+            guard let n = input["name"] as? String else { return nil }
+            return .saveAsTemplate(name: n)
+        case "create_from_template":
+            guard let n = input["name"] as? String, let d = input["to_day"] as? String else { return nil }
+            return .createFromTemplate(name: n, day: d)
+        case "update_template":
+            guard let n = input["name"] as? String else { return nil }
+            return .updateTemplate(name: n)
         case "update_logging_config":
             guard let ex = input["exercise"] as? String else { return nil }
             return .updateLoggingConfig(exercise: ex, enabledMetrics: metricList(input["enabled_metrics"]), units: unitOverrides(input))

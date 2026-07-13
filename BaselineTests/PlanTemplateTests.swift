@@ -9,10 +9,10 @@ import Testing
 @Suite(.serialized) @MainActor
 struct PlanTemplateTests {
 
-    private func makeStore() -> PlanStore {
+    private func makeStore(today: Date = Date()) -> PlanStore {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
         let container = try! ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        return PlanStore(repo: SwiftDataPlanRepository(context: container.mainContext))
+        return PlanStore(repo: SwiftDataPlanRepository(context: container.mainContext), today: today)
     }
     private func work(_ t: String) -> Workout {
         var ex = PlannedExercise(exerciseName: "Squat", definitionId: "deadlift")
@@ -67,4 +67,25 @@ struct PlanTemplateTests {
         #expect(plan.undo().isApplied)
         #expect(plan.scheduledWorkout(sw.id) == nil)
     }
+
+    @Test func agentToolsSaveRefuseDuplicateAndCreateFromTemplate() {
+        let plan = makeStore(today: mon)
+        _ = plan.addProgram(Program(name: "P", createdAt: mon))
+        // Bind a today workout so save_as_template has something to save.
+        plan.addScheduled(ScheduledWorkout(programID: plan.programs()[0].id, date: mon, origin: .userCreated,
+                                           workoutID: UUID(), workoutRevisionID: UUID(), workout: work("Threshold")))
+        let store = WorkoutStore(defaults: UserDefaults(suiteName: "tpl-\(UUID().uuidString)")!)
+        store.bind(plan.sink(forScheduled: plan.todayScheduled(mon)!.id), coalesceContent: false)
+        let tools = AgentTools(store: TrainingContextStore(), workouts: store, plan: plan)
+
+        #expect(tools.dispatch(.saveAsTemplate(name: "Threshold")).text.contains("Saved"))
+        #expect(tools.dispatch(.saveAsTemplate(name: "Threshold")).text.contains("already exists"))   // refuses dup
+        let out = tools.dispatch(.createFromTemplate(name: "threshold", day: "Wednesday")).text
+        #expect(out.contains("Added"))
+        let wed = plan.week.days.first { cal.isDate($0.date, inSameDayAs: cal.date(byAdding: .day, value: 2, to: mon)!) }
+        #expect(wed?.sessions.contains { $0.workout.title == "Threshold" } == true)
+    }
+
+    private let cal = Calendar.planWeek
+    private var mon: Date { cal.weekStart(for: Date(timeIntervalSince1970: 1_752_000_000)) }
 }

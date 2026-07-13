@@ -49,6 +49,10 @@ final class AgentTools {
         case duplicateWorkout(workout: String, toDay: String?)
         case deleteWorkout(workout: String, proposalID: String?)
         case explainModification(workout: String)
+        // Templates — save today's workout for reuse; build a workout from one.
+        case saveAsTemplate(name: String)
+        case createFromTemplate(name: String, day: String)
+        case updateTemplate(name: String)
         // Metric system: configure which metrics an exercise logs + display units, and set values.
         case updateLoggingConfig(exercise: String, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
         case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
@@ -94,6 +98,9 @@ final class AgentTools {
             case .duplicateWorkout(let w, _): return "Duplicated \(w)"
             case .deleteWorkout(let w, _): return "Deleted \(w)"
             case .explainModification(let w): return "Explained \(w)"
+            case .saveAsTemplate(let n): return "Saved template \(n)"
+            case .createFromTemplate(let n, let d): return "Added \(n) → \(d)"
+            case .updateTemplate(let n): return "Updated template \(n)"
             case .updateLoggingConfig(let e, _, _): return "Configured metrics for \(e)"
             case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
             case .setMetricValue(let e, let n, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
@@ -351,6 +358,34 @@ final class AgentTools {
             return resolvePlan(workout) { sw, plan in
                 Response(text: self.explainModification(sw, plan), decision: nil, plan: nil)
             }
+        case .saveAsTemplate(let name):
+            guard let plan else { return workoutUnavailable() }
+            guard let w = workouts?.current else { return Response(text: "There's no workout to save as a template yet.", decision: nil, plan: nil) }
+            if plan.template(named: name) != nil {
+                return Response(text: "A template named \"\(name)\" already exists. Say \"update it\" to replace it, or give me a different name.", decision: nil, plan: nil)
+            }
+            _ = plan.saveAsTemplate(name: name, from: w)
+            return Response(text: "Saved \(name) as a template — you can reuse it any day.", decision: nil, plan: nil)
+        case .updateTemplate(let name):
+            guard let plan else { return workoutUnavailable() }
+            guard let w = workouts?.current else { return Response(text: "There's no workout to update the template from.", decision: nil, plan: nil) }
+            let matches = matchTemplates(name, plan)
+            switch matches.count {
+            case 0: return Response(text: "I don't have a template called \"\(name)\".", decision: nil, plan: nil)
+            case 1: _ = plan.updateTemplate(matches[0].id, from: w); return Response(text: "Updated the \(matches[0].name) template from this workout. Already-scheduled ones stay as they are.", decision: nil, plan: nil)
+            default: return Response(text: templateAmbiguity(name, matches), decision: nil, plan: nil)
+            }
+        case .createFromTemplate(let name, let day):
+            guard let plan else { return workoutUnavailable() }
+            let matches = matchTemplates(name, plan)
+            switch matches.count {
+            case 0: return Response(text: "I don't have a template called \"\(name)\".", decision: nil, plan: nil)
+            case 1:
+                guard let date = dayDate(day, plan) else { return Response(text: "I couldn't tell which day \"\(day)\" is.", decision: nil, plan: nil) }
+                guard let sw = plan.instantiateTemplate(matches[0].id, on: date) else { return Response(text: "I couldn't build that workout.", decision: nil, plan: nil) }
+                return Response(text: "Added \(sw.workout.title) on \(dayLabel(date)) from the \(matches[0].name) template.", decision: nil, plan: nil)
+            default: return Response(text: templateAmbiguity(name, matches), decision: nil, plan: nil)
+            }
         case .updateLoggingConfig(let ex, let enabled, let units):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.setLoggingConfig(exerciseNamed: ex, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
@@ -433,6 +468,16 @@ final class AgentTools {
         case .today: "today"; case .inProgress: "in progress"; case .paused: "paused"; case .completed: "completed"
         case .skipped: "skipped"; case .missed: "missed"; case .planned: "planned"; case .modifiedIntent: "modified"
         }
+    }
+
+    private func matchTemplates(_ name: String, _ plan: PlanStore) -> [WorkoutTemplate] {
+        let n = name.trimmingCharacters(in: .whitespaces).lowercased()
+        let all = plan.templates()
+        let exact = all.filter { $0.name.lowercased() == n }
+        return exact.isEmpty ? all.filter { $0.name.lowercased().contains(n) } : exact
+    }
+    private func templateAmbiguity(_ name: String, _ m: [WorkoutTemplate]) -> String {
+        "There's more than one template matching \"\(name)\": " + m.map(\.name).joined(separator: ", ") + ". Which one?"
     }
 
     private func weekPlanSummary(_ plan: PlanStore) -> String {
