@@ -186,6 +186,8 @@ struct SleepRepositoryTests {
 
         let newestFive = repository.latest(limit: 5)
         #expect(newestFive.map(\.date) == (0..<5).map { Fix.calendar.date(byAdding: .day, value: -$0, to: wakeDay)! })
+        // fetchLimit 0 is "unlimited" in Core Data — the repository must read it as "nothing".
+        #expect(repository.latest(limit: 0).isEmpty)
     }
 
     @Test func emptyStoreReturnsEmptyEverything() {
@@ -223,6 +225,123 @@ struct SleepRepositoryTests {
         #expect(stored.analysisStatus == .revised)
         #expect(stored.id == nyNight.id)
         #expect(tokyoRepository.night(for: nyNight.date) == nil)   // moved, not copied
+    }
+
+    private var tokyoCalendar: Calendar {
+        var tokyo = Calendar(identifier: .gregorian)
+        tokyo.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        return tokyo
+    }
+
+    private func watchSample(_ uuid: UUID, _ start: Date, _ end: Date) -> SleepSample {
+        SleepSample(uuid: uuid, start: start, end: end, kind: .core,
+                    sourceBundleID: Fix.watchBundle, deviceModel: "Watch")
+    }
+
+    @Test func partialTimezoneShiftAbsorbsTheStaleFragmentRow() throws {
+        // NY view: overnight U1 composes the Mar 11 night; an afternoon nap U3 composes the
+        // Mar 12 night. In Tokyo BOTH samples fall into one window (Tokyo Mar 12), so the
+        // reassembled night's fingerprint matches NEITHER stored row — the exact case where
+        // fingerprint-only re-keying left the U1 row behind as a permanent duplicate.
+        let u1 = UUID(), u3 = UUID()
+        let overnight = watchSample(u1, Fix.date(2026, 3, 10, 23, 0), Fix.date(2026, 3, 11, 7, 0))
+        let nap = watchSample(u3, Fix.date(2026, 3, 11, 13, 0), Fix.date(2026, 3, 11, 14, 0))
+        for night in Engine.nights(from: [overnight, nap], context: settled) {
+            repository.replaceCanonical(night: night)
+        }
+        #expect(try rowCount() == 2)
+        let mar12NY = Fix.calendar.date(byAdding: .day, value: 1, to: wakeDay)!
+        let napRowID = try #require(repository.night(for: mar12NY)).id
+
+        let tokyoContext = SleepIngestionEngine.Context(
+            calendar: tokyoCalendar, lastSyncAt: Fix.date(2026, 3, 12, 10, 0),
+            stabilization: SleepStabilizationRule())
+        let tokyoNights = Engine.nights(from: [overnight, nap], context: tokyoContext)
+        #expect(tokyoNights.count == 1)
+        let tokyoNight = try #require(tokyoNights.first)
+        #expect(tokyoNight.sourceFingerprint != "")
+
+        let tokyoRepository = reopenedRepository(calendar: tokyoCalendar)
+        #expect(tokyoRepository.replaceCanonical(night: tokyoNight) == .replaced)
+
+        // Single physical night, counted once: the U1 fragment is gone.
+        #expect(try rowCount() == 1)
+        let merged = try #require(tokyoRepository.night(for: tokyoNight.date))
+        #expect(merged.id == napRowID)             // target-key row's identity preserved
+        #expect(merged.revision == 1)
+        #expect(merged.analysisStatus == .revised)
+        #expect(Set(merged.composingSampleUUIDs) == Set([u1, u3]))
+        #expect(tokyoRepository.nights(lastDays: 7, endingOn: tokyoNight.date).count == 1)
+        #expect(tokyoRepository.night(for: wakeDay) == nil)   // no stale old-day row
+    }
+
+    @Test func partialShiftAdoptsTheFragmentWhenTargetKeyIsEmpty() throws {
+        // NY view: ONE Mar 11 night holds evening segment U2 + overnight U1. In Tokyo they
+        // split across Mar 11/Mar 12 — the overnight's new day key has no row, so the shifted
+        // candidate must adopt the old row (identity + revision), not insert alongside it.
+        let u1 = UUID(), u2 = UUID()
+        let evening = watchSample(u2, Fix.date(2026, 3, 10, 18, 0), Fix.date(2026, 3, 10, 18, 30))
+        let overnight = watchSample(u1, Fix.date(2026, 3, 10, 23, 0), Fix.date(2026, 3, 11, 7, 0))
+        let nyNights = Engine.nights(from: [evening, overnight], context: settled)
+        #expect(nyNights.count == 1)
+        let originalID = try #require(nyNights.first).id
+        repository.replaceCanonical(night: try #require(nyNights.first))
+
+        let tokyoContext = SleepIngestionEngine.Context(
+            calendar: tokyoCalendar, lastSyncAt: Fix.date(2026, 3, 12, 10, 0),
+            stabilization: SleepStabilizationRule())
+        let tokyoNights = Engine.nights(from: [evening, overnight], context: tokyoContext)
+        #expect(tokyoNights.count == 2)
+        let tokyoRepository = reopenedRepository(calendar: tokyoCalendar)
+
+        // Process the shifted overnight FIRST: empty target key + overlapping fragment → adopt.
+        let shiftedOvernight = try #require(tokyoNights.first { $0.composingSampleUUIDs.contains(u1) })
+        #expect(tokyoRepository.replaceCanonical(night: shiftedOvernight) == .replaced)
+        #expect(try rowCount() == 1)
+        let adopted = try #require(tokyoRepository.night(for: shiftedOvernight.date))
+        #expect(adopted.id == originalID)
+        #expect(adopted.revision == 1)
+        #expect(adopted.analysisStatus == .revised)
+
+        // The evening segment then lands as its own (new) Tokyo night — two real nights, and
+        // each sample is counted exactly once across the store.
+        let eveningNight = try #require(tokyoNights.first { $0.composingSampleUUIDs.contains(u2) })
+        #expect(tokyoRepository.replaceCanonical(night: eveningNight) == .inserted)
+        #expect(try rowCount() == 2)
+        let allUUIDs = tokyoRepository.latest(limit: 10).flatMap(\.composingSampleUUIDs)
+        #expect(allUUIDs.sorted { $0.uuidString < $1.uuidString }
+            == [u1, u2].sorted { $0.uuidString < $1.uuidString })
+    }
+
+    @Test func reverseTimezoneShiftRekeysSymmetrically() throws {
+        // Tokyo → NY. A late Tokyo sleep (05:00–13:00, ends past Tokyo noon → Tokyo Mar 13)
+        // reassembles in NY as a Mar 12 night — the day key shifts the other direction and the
+        // same re-key path must hold.
+        let tokyo = tokyoCalendar
+        func tokyoDate(_ d: Int, _ h: Int, _ m: Int = 0) -> Date {
+            tokyo.date(from: DateComponents(year: 2026, month: 3, day: d, hour: h, minute: m))!
+        }
+        let sample = watchSample(UUID(), tokyoDate(12, 5), tokyoDate(12, 13))
+
+        let tokyoContext = SleepIngestionEngine.Context(
+            calendar: tokyo, lastSyncAt: tokyoDate(12, 16), stabilization: SleepStabilizationRule())
+        let tokyoNight = try #require(Engine.nights(from: [sample], context: tokyoContext).first)
+        let tokyoRepository = reopenedRepository(calendar: tokyo)
+        #expect(tokyoRepository.replaceCanonical(night: tokyoNight) == .inserted)
+
+        let nyContext = Fix.context(lastSyncAt: Fix.date(2026, 3, 12, 10, 0))
+        let nyNight = try #require(Engine.nights(from: [sample], context: nyContext).first)
+        #expect(nyNight.date != tokyoNight.date)
+        #expect(nyNight.sourceFingerprint == tokyoNight.sourceFingerprint)
+
+        let nyRepository = reopenedRepository()
+        #expect(nyRepository.replaceCanonical(night: nyNight) == .replaced)
+        #expect(try rowCount() == 1)
+        let stored = try #require(nyRepository.night(for: nyNight.date))
+        #expect(stored.id == tokyoNight.id)
+        #expect(stored.revision == 1)
+        #expect(stored.analysisStatus == .revised)
+        #expect(reopenedRepository(calendar: tokyo).night(for: tokyoNight.date) == nil)   // old Tokyo key empty
     }
 
     // MARK: - Sync cursor round-trip (repository half of AC-4)

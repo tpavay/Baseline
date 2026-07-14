@@ -91,31 +91,43 @@ final class SwiftDataSleepRepository: SleepRepository {
         let rows = rows(dayKey: key)
         // Single-row invariant: collapse strays defensively before reconciling.
         for extra in rows.dropFirst() { context.delete(extra) }
-        var row = rows.first
+        let row = rows.first
 
         // Timezone-shift tolerance (AC-6): after a calendar change the same physical night
-        // re-keys to an adjacent day (the noon boundary moved). Identical composing samples ⇒
-        // identical fingerprint, so a fingerprint match under another day key is a re-key of an
-        // existing night, not a new one — move that row (benign revision churn) instead of
-        // inserting a duplicate.
-        if row == nil, let rekeyed = firstRow(fingerprint: candidate.sourceFingerprint) {
-            row = rekeyed
-            let previous = night(from: rekeyed)
+        // re-keys to an adjacent day (the noon boundary moved). Two markers identify "same
+        // physical night" under a different day key: an identical fingerprint (pure shift —
+        // identical samples), or shared composing sample UUIDs (partial shift — a boundary
+        // sample moved in/out of the shifted window, changing the fingerprint). Such rows are
+        // stale fragments of this night: when the target key is empty one is adopted (identity
+        // preserved, revision bumped — benign revision churn), and every other fragment is
+        // deleted — the same sleep must never count twice in a window query.
+        // Cheap skip: an unchanged fingerprint at the target key means an idempotent re-ingest;
+        // fragments cannot exist.
+        var fragments = row?.sourceFingerprint == candidate.sourceFingerprint
+            ? [] : fragmentRows(of: candidate, excludingDayKey: key)
+        if row == nil, !fragments.isEmpty {
+            let adopted = fragments.removeFirst()
+            for stale in fragments { context.delete(stale) }
+            let previous = night(from: adopted)
             var moved = candidate
             moved.id = previous.id
             moved.revision = previous.revision + 1
             moved.analysisStatus = .revised
-            apply(moved, dayKey: key, to: rekeyed)
+            apply(moved, dayKey: key, to: adopted)
             save()
             return .replaced
         }
+        let purgedFragments = !fragments.isEmpty
+        for stale in fragments { context.delete(stale) }
 
         let previous = row.map(night(from:))
         guard let outcome = SleepNightLifecycle.reconcile(previous: previous, candidate: candidate) else {
+            if purgedFragments { save() }
             return .unchanged
         }
         switch outcome {
         case .unchanged:
+            if purgedFragments { save() }
             return .unchanged
         case .store(let night):
             if let row {
@@ -157,16 +169,21 @@ final class SwiftDataSleepRepository: SleepRepository {
     }
 
     func latest(limit: Int) -> [SleepNight] {
+        // fetchLimit 0 means UNLIMITED under Core Data semantics — a zero/negative limit must
+        // mean "nothing", not "everything".
+        guard limit > 0 else { return [] }
         var descriptor = FetchDescriptor<SDSleepNight>(sortBy: [SortDescriptor(\.dayKey, order: .reverse)])
-        descriptor.fetchLimit = max(0, limit)
+        descriptor.fetchLimit = limit
         return ((try? context.fetch(descriptor)) ?? []).map(night(from:))
     }
 
     func nightDates(containingSampleUUIDs uuids: [UUID]) -> [Date] {
         guard !uuids.isEmpty else { return [] }
         let deleted = Set(uuids)
-        // The UUID list lives inside a blob (not predicable); the store holds ≤ ~90 nights, so a
-        // full scan is fine and keeps the schema free of a join table nothing else needs.
+        // The UUID list lives inside a blob (not predicable). A full scan is bounded-cheap at
+        // current scale (90-night backfill; nothing prunes yet, so rows accrete ~365/year — a
+        // retention policy is a Slice 4 decision) and keeps the schema free of a join table
+        // nothing else needs. Revisit alongside retention if the scan ever shows up in traces.
         let all = (try? context.fetch(FetchDescriptor<SDSleepNight>())) ?? []
         return all
             .filter { row in
@@ -255,11 +272,30 @@ final class SwiftDataSleepRepository: SleepRepository {
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    private func firstRow(fingerprint: String) -> SDSleepNight? {
-        guard !fingerprint.isEmpty else { return nil }
-        var descriptor = FetchDescriptor<SDSleepNight>(predicate: #Predicate { $0.sourceFingerprint == fingerprint })
-        descriptor.fetchLimit = 1
-        return ((try? context.fetch(descriptor)) ?? []).first
+    /// Stale rows under OTHER day keys that are the same physical night as `candidate`:
+    /// identical fingerprint, or any shared composing sample UUID. Ordered deterministically for
+    /// adoption: exact fingerprint match first, then descending UUID overlap, then ascending
+    /// day key. Same bounded-scan tradeoff as `nightDates(containingSampleUUIDs:)`.
+    private func fragmentRows(of candidate: SleepNight, excludingDayKey key: Int) -> [SDSleepNight] {
+        let candidateUUIDs = Set(candidate.composingSampleUUIDs)
+        guard !candidateUUIDs.isEmpty || !candidate.sourceFingerprint.isEmpty else { return [] }
+        let all = (try? context.fetch(FetchDescriptor<SDSleepNight>())) ?? []
+        return all
+            .filter { $0.dayKey != key }
+            .compactMap { row -> (row: SDSleepNight, exact: Bool, overlap: Int)? in
+                let rowUUIDs = SleepCoding.value([UUID].self, row.composingSampleUUIDsJSON) ?? []
+                let overlap = candidateUUIDs.intersection(rowUUIDs).count
+                let exact = !candidate.sourceFingerprint.isEmpty
+                    && row.sourceFingerprint == candidate.sourceFingerprint
+                guard exact || overlap > 0 else { return nil }
+                return (row, exact, overlap)
+            }
+            .sorted {
+                if $0.exact != $1.exact { return $0.exact }
+                if $0.overlap != $1.overlap { return $0.overlap > $1.overlap }
+                return $0.row.dayKey < $1.row.dayKey
+            }
+            .map(\.row)
     }
 
     private func syncRow(forKey key: String) -> SDSleepSyncState? {

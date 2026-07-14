@@ -96,7 +96,6 @@ final class SleepBackfillOrchestrator {
         } catch {
             return   // cursor untouched — the delta re-arrives on the next sync
         }
-        droppedUnknownSampleCount += delta.droppedUnknownCount
 
         var touchedDates = Set(delta.samples.map {
             SleepIngestionEngine.nightDate(containing: $0.end, calendar: calendar)
@@ -104,11 +103,14 @@ final class SleepBackfillOrchestrator {
         touchedDates.formUnion(nightStore.nightDates(containingSampleUUIDs: delta.deletedSampleUUIDs))
         let context = makeContext()
         var allResolved = true
+        // Drop counts commit only alongside the cursor: a held cursor replays this same delta
+        // next sync, and per-attempt counting would inflate the total on every retry.
+        var pendingDroppedCount = delta.droppedUnknownCount
         for date in touchedDates.filter({ $0 >= oldestTargetDate }).sorted() {
             let window = SleepIngestionEngine.nightWindow(for: date, calendar: calendar)
             do {
                 let batch = try await provider.sleepSamples(in: window)
-                droppedUnknownSampleCount += batch.droppedUnknownCount
+                pendingDroppedCount += batch.droppedUnknownCount
                 let candidate = SleepIngestionEngine.night(for: date, from: batch.samples, context: context)
                 if candidate == nil, nightStore.night(for: date) != nil {
                     // The fetch succeeded and the window is genuinely empty: every composing
@@ -122,6 +124,7 @@ final class SleepBackfillOrchestrator {
             }
         }
         if allResolved {
+            droppedUnknownSampleCount += pendingDroppedCount
             cursorStore.setCursor(delta.cursor, forKey: Self.sleepAnalysisCursorKey)
         }
     }

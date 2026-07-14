@@ -76,7 +76,7 @@ sets Slice 3's scoring engine will consume.
 | AC-5 | `SleepBackfillPersistenceTests` deletion cases (UUID-only delta) | Deletion fixture maps to stored night; revised/removed outcome asserted |
 | AC-6 | `SleepRepositoryTests` window queries + timezone-shift case | Boundary dates pinned; count/no-dupe asserted under calendar change |
 | AC-7 | `SleepBackfillPersistenceTests` end-to-end on SwiftData stores | Same assertions as Slice 1 idempotence, plus close/reopen mid-run |
-| AC-8 | `SleepIngestionTests` addition for unknown-case counting (fixture) | Count surfaces on result; no existing assertion weakened |
+| AC-8 | `SleepBackfillPersistenceTests/droppedUnknownSampleCountsAccumulateAcrossFetches` (fixture-driven; includes a held-cursor retry asserting no double-count) | Count surfaces on the ingestion result and commits exactly once per successful sync. The `HealthService` subtraction site (`samples.count - mapped.count` around the `@unknown default` mapping) is inspection-only evidence — not automatable without a live HealthKit store |
 | AC-9 | Full suite green; `git diff --stat` scope audit; grep for `SleepSchema` references | Proves isolation and zero app wiring |
 
 ## UX evidence

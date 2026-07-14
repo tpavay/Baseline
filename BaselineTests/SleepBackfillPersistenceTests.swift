@@ -19,11 +19,15 @@ private final class ScriptableSleepProvider: SleepSampleProviding {
     var pendingDelta = SleepSampleDelta(samples: [], cursor: nil)
     var failWindowFetches = false
     var failDeltaFetch = false
+    /// Windows containing any of these instants throw — fails ONE night's refetch while others
+    /// in the same sync succeed.
+    var failingProbeInstants: [Date] = []
     var droppedUnknownPerFetch = 0
     private(set) var receivedCursors: [Data?] = []
 
     func sleepSamples(in window: DateInterval) async throws -> SleepSampleBatch {
         guard !failWindowFetches else { throw TransientFailure() }
+        guard !failingProbeInstants.contains(where: { window.contains($0) }) else { throw TransientFailure() }
         return SleepSampleBatch(
             samples: samplesByNight.values.flatMap { $0 }.filter { window.contains($0.end) },
             droppedUnknownCount: droppedUnknownPerFetch
@@ -219,6 +223,43 @@ struct SleepBackfillPersistenceTests {
         #expect(repository.syncCursor(forKey: cursorKey) == Data([3]))
     }
 
+    @Test func partialDeltaFailureWritesSuccessesButHoldsTheCursor() async throws {
+        // Two touched nights; one refetch fails. The succeeded night is written (idempotent to
+        // replay), the failed night stays untouched, and the SINGLE cursor is held so the whole
+        // delta — including the failed night — re-arrives next sync. Pins the all-resolved
+        // semantics against a per-night-cursor regression.
+        populateHistory(nights: 20)
+        let orchestrator = makeOrchestrator()
+        await orchestrator.importRecentNights()
+        let yesterday = nightDate(offset: 1)
+
+        let awakeToday = Fix.watch(.awake, Fix.date(2026, 3, 11, 3, 0), Fix.date(2026, 3, 11, 3, 10))
+        let awakeYesterday = Fix.watch(.awake, Fix.date(2026, 3, 10, 3, 0), Fix.date(2026, 3, 10, 3, 10))
+        provider.samplesByNight[today]?.append(awakeToday)
+        provider.samplesByNight[yesterday]?.append(awakeYesterday)
+        provider.pendingDelta = SleepSampleDelta(samples: [awakeToday, awakeYesterday], cursor: Data([7]))
+        provider.failingProbeInstants = [Fix.date(2026, 3, 10, 3, 0)]   // yesterday's window only
+
+        await orchestrator.syncDelta()
+
+        let todayAfterFailure = try #require(repository.night(for: today))
+        let yesterdayAfterFailure = try #require(repository.night(for: yesterday))
+        #expect(todayAfterFailure.revision == 1)        // the successful night was written
+        #expect(yesterdayAfterFailure.revision == 0)    // the failed night was not
+        #expect(repository.syncCursor(forKey: cursorKey) == nil)   // cursor held
+
+        // Provider heals; the held cursor re-serves the same delta.
+        provider.failingProbeInstants = []
+        provider.pendingDelta = SleepSampleDelta(samples: [awakeToday, awakeYesterday], cursor: Data([7]))
+        await orchestrator.syncDelta()
+
+        let yesterdayAfterRetry = try #require(repository.night(for: yesterday))
+        let todayAfterRetry = try #require(repository.night(for: today))
+        #expect(yesterdayAfterRetry.revision == 1)      // retried and revised
+        #expect(todayAfterRetry.revision == 1)          // replay was a no-op, no double bump
+        #expect(repository.syncCursor(forKey: cursorKey) == Data([7]))
+    }
+
     // MARK: AC-5
 
     /// Today's night with an awakening whose sample UUID is known — the deletion target — plus
@@ -292,5 +333,19 @@ struct SleepBackfillPersistenceTests {
         await orchestrator.syncDelta()                        // delta (2) + one refetch (3)
 
         #expect(orchestrator.droppedUnknownSampleCount == 8)
+
+        // A held-cursor replay must not double-count: a failed sync commits nothing…
+        let awake2 = Fix.watch(.awake, Fix.date(2026, 3, 11, 5, 0), Fix.date(2026, 3, 11, 5, 5))
+        provider.samplesByNight[today]?.append(awake2)
+        provider.pendingDelta = SleepSampleDelta(samples: [awake2], cursor: Data([6]), droppedUnknownCount: 2)
+        provider.failWindowFetches = true
+        await orchestrator.syncDelta()
+        #expect(orchestrator.droppedUnknownSampleCount == 8)
+
+        // …and the successful retry counts the same delta exactly once.
+        provider.failWindowFetches = false
+        provider.pendingDelta = SleepSampleDelta(samples: [awake2], cursor: Data([6]), droppedUnknownCount: 2)
+        await orchestrator.syncDelta()
+        #expect(orchestrator.droppedUnknownSampleCount == 13)   // + delta 2 + one refetch 3
     }
 }
