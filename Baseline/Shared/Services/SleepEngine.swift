@@ -25,6 +25,13 @@ enum SleepEngine {
 
     /// All thresholds and curve shapes live here so the scoring is auditable in one place and tests
     /// pin against named constants, not magic numbers.
+    ///
+    /// **Provenance (binding product language):** the component *weights* — duration 50 / bedtime
+    /// consistency 30 / interruptions 20 — are **Apple-aligned** (Apple's published component
+    /// weighting), never "Apple-equivalent." The *curves* are **Baseline internal heuristics**:
+    /// Apple has not published the duration-taper shape (here: zero at 50 % of need) or the
+    /// interruption split (WASO 12 / awakenings 8 with grace bands). All are v1 tunables carried
+    /// under `scoreAlgorithmVersion`, so history can be recomputed if they are retuned.
     enum Tunables {
         // Duration (0–50): full at ≥ need, linear taper to zero at half the need. The floor is
         // proportional to the individual's goal (need/2) rather than a fixed clock value, keeping
@@ -122,7 +129,12 @@ enum SleepEngine {
     // MARK: - Duration (0–50)
 
     private static func durationComponent(night: SleepNight, needHours: Double) -> SleepComponent {
-        guard let asleep = night.asleepHours, asleep > 0, needHours > 0 else {
+        // AC-2b: a manual (or unknown) source never enters a duration-scoring path — its duration is
+        // persisted as evidence but earns zero scored points, so a manual night is score == nil /
+        // observed 0 / possible 0. The single manual route stays the subjective thumbs→85/35
+        // fallback `DecisionEngine` owns (Slice 4); a duration-only manual score would be a second
+        // manual path and break the Slice 4 readiness-parity guarantee.
+        guard isDeviceSourced(night), let asleep = night.asleepHours, asleep > 0, needHours > 0 else {
             return SleepComponent(kind: .duration, value: 0, max: Tunables.durationMaxPoints, isAvailable: false)
         }
         let floor = needHours * Tunables.durationFloorFraction
@@ -382,7 +394,10 @@ enum SleepEngine {
     private static func decisionEvidence(night: SleepNight,
                                          consistency: SleepConsistency,
                                          needHours: Double) -> SleepDecisionEvidence {
-        let deficit = night.asleepHours.map { Swift.max(0, needHours - $0) }
+        // Duration deficit is a device-observed decision signal only. A manual night stays fully
+        // nil here (AC-2b): Slice 4 must reach it through the subjective fallback, not a duration
+        // deficit — otherwise the manual night feeds a second scoring route through `poorSleep`.
+        let deficit = isDeviceSourced(night) ? night.asleepHours.map { Swift.max(0, needHours - $0) } : nil
         let burden = night.wasoMinutes.map {
             ($0 / Tunables.interruptionBurdenReferenceMinutes).clamped(to: 0...1)
         }
@@ -419,6 +434,15 @@ enum SleepEngine {
 
     /// Seconds since the night's own local midnight (`date`), wrapped into 0…86400 so an evening
     /// bedtime the day before wake reads as its clock time (23:00 → 82800) rather than a negative.
+    ///
+    /// WHY the fixed 86400: this is timezone/DST-naive on purpose. On the two DST-transition nights
+    /// per year an instant recorded *after* the transition can drift by up to ±60 min versus a true
+    /// Calendar wall-clock read. In practice bedtimes (pre-02:00) fall before the transition instant
+    /// and read clean; the drift only bites late-morning wake times on those two nights. The bounded
+    /// error is acceptable for Slice 3 because consistency mean/std are internal (not user-visible
+    /// until Slice 5). NOTE: this is *separate* from the circular-distance correctness the score
+    /// depends on — 11:50 PM vs 12:10 AM is 20 min apart via `deviationMinutes`'s circular min,
+    /// regardless of this anchor. A Calendar-based seconds-of-day is a possible Slice 5 refinement.
     private static func secondsOfDay(_ instant: Date, anchoredTo anchor: Date) -> Double {
         let raw = instant.timeIntervalSince(anchor).truncatingRemainder(dividingBy: secondsPerDay)
         return (raw + secondsPerDay).truncatingRemainder(dividingBy: secondsPerDay)

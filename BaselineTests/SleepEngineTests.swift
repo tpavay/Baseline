@@ -19,6 +19,7 @@ struct SleepEngineTests {
     private func mkNight(wakeDay: Date, bedtime: Date, wake: Date? = nil,
                          asleepHours: Double?, waso: Double? = 15, awakenings: Int? = 2,
                          remMin: Double = 90, deepMin: Double = 60, coreMin: Double = 260,
+                         awakeMin: Double = 0,
                          staged: Bool = true,
                          source: SleepSource = .healthKit(bundleID: Fix.watchBundle),
                          gaps: [DateInterval] = [],
@@ -32,7 +33,7 @@ struct SleepEngineTests {
             cursor = end
         }
         if staged {
-            add(.core, coreMin); add(.deep, deepMin); add(.rem, remMin)
+            add(.core, coreMin); add(.deep, deepMin); add(.rem, remMin); add(.awake, awakeMin)
         } else if let asleepHours {
             intervals.append(SleepStageInterval(
                 stage: .unspecified, start: bedtime,
@@ -110,20 +111,34 @@ struct SleepEngineTests {
 
     // MARK: - AC-2: no renormalization / observed-points path
 
-    @Test func manualNightIsDurationOnly() {
+    @Test func manualNightNeverScores() {
         let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay),
                             asleepHours: 7.5, waso: nil, awakenings: nil,
                             staged: false, source: .manual)
-        // Even with plenty of history, a manual night observes only duration.
+        // AC-2b: even with ample history a manual night takes NO scoring path — no duration points,
+        // no consistency, no interruptions. The single manual route is Slice 4's subjective fallback.
         let analysis = SleepEngine.analyze(night: night, history: priors(Array(1...10)), need: need)
 
-        #expect(analysis.component(.duration)!.isAvailable)
+        #expect(!analysis.component(.duration)!.isAvailable)         // no duration-scoring path
         #expect(!analysis.component(.bedtimeConsistency)!.isAvailable)
         #expect(!analysis.component(.interruptions)!.isAvailable)
-        #expect(analysis.possiblePoints == 50)
+        #expect(analysis.observedPoints == 0)
+        #expect(analysis.possiblePoints == 0)
         #expect(analysis.score == nil)
-        #expect(abs(Double(analysis.observedPoints) - 43.75) < 0.5)   // 50·(7.5−4)/4 = 43.75 → 44
-        #expect(analysis.observedPoints == 44)
+        #expect(abs(analysis.quality.reliability - 0.3) < 1e-9)      // lowest source tier
+        // The manual duration survives as evidence, it just earns nothing.
+        #expect(analysis.asleepHours == 7.5)
+    }
+
+    @Test func unknownSourceNightNeverScores() {
+        // A corrupt-decode (.none) source is likewise never scored.
+        let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay),
+                            asleepHours: 7.5, waso: nil, awakenings: nil,
+                            staged: false, source: .none)
+        let analysis = SleepEngine.analyze(night: night, history: priors(Array(1...10)), need: need)
+        #expect(analysis.observedPoints == 0)
+        #expect(analysis.possiblePoints == 0)
+        #expect(analysis.score == nil)
     }
 
     @Test func coldStartSuppressesConsistencyNoRenormalization() {
@@ -173,6 +188,24 @@ struct SleepEngineTests {
         #expect(a.additionalEvidence.remMinutes == 120)
         #expect(b.additionalEvidence.remMinutes == 40)
         #expect(a.additionalEvidence != b.additionalEvidence)
+    }
+
+    @Test func stageCompositionShiftAtConstantAsleepHoursDoesNotChangeScore() {
+        // Same scored facts (asleepHours / WASO / awakenings / bedtime), but the stage intervals
+        // shift minutes between asleep (core) and awake — the full stage set, not just deep/REM.
+        // If any scored component secretly read a stage proportion, the scores would diverge.
+        let history = priors(Array(1...6))
+        let low = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay), asleepHours: 7.5,
+                          waso: 15, awakenings: 2, coreMin: 300, awakeMin: 20)
+        let high = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay), asleepHours: 7.5,
+                           waso: 15, awakenings: 2, coreMin: 240, awakeMin: 80)
+        let a = SleepEngine.analyze(night: low, history: history, need: need)
+        let b = SleepEngine.analyze(night: high, history: history, need: need)
+
+        #expect(a.score == b.score)
+        #expect(a.components == b.components)
+        #expect(a.additionalEvidence.coreMinutes == 300)   // evidence differs…
+        #expect(b.additionalEvidence.coreMinutes == 240)   // …score does not
     }
 
     // MARK: - AC-4: quality separation
@@ -265,6 +298,24 @@ struct SleepEngineTests {
         #expect(abs(acute7 - expectedMean) < 1e-9)
     }
 
+    @Test func dayGapIsDSTRobustAcrossFallBack() {
+        // America/New_York falls back 2026-11-01 (a 25-hour day). Offset 7 lands on it; correct day
+        // counting must still include the boundary night (the /86400 rounding handles the extra hour).
+        let dstWake = Fix.calendar.startOfDay(for: Fix.date(2026, 11, 8))
+        func dstPrior(_ offset: Int, asleep: Double) -> SleepNight {
+            let day = Fix.calendar.date(byAdding: .day, value: -offset, to: dstWake)!
+            return mkNight(wakeDay: day, bedtime: bedtimeBefore(day), asleepHours: asleep)
+        }
+        let night = mkNight(wakeDay: dstWake, bedtime: bedtimeBefore(dstWake), asleepHours: 6.0)
+        var history = (1...6).map { dstPrior($0, asleep: 7.0) }
+        history.append(dstPrior(7, asleep: 5.0))   // the 25-hour-day night
+        let c = SleepEngine.analyze(night: night, history: history, need: need).vsBaseline
+
+        let expectedMean = 47.0 / 7   // offset 7 included → (6·7 + 5)/7
+        let acute7 = c.acute7Mean ?? -1
+        #expect(abs(acute7 - expectedMean) < 1e-9)
+    }
+
     // MARK: - AC-6: flags
 
     @Test func comparativeFlagsSuppressedBelow14RecordedNights() {
@@ -278,6 +329,18 @@ struct SleepEngineTests {
 
         let fourteen = SleepEngine.analyze(night: night, history: priors(Array(1...14)), need: need).flags
         #expect(fourteen.contains(.worstIn(days: 14)))
+    }
+
+    @Test func bestInSuppressedBelow14RecordedNights() {
+        // Tonight is the LONGEST night — bestIn shares the comparative-flag gate, so it must be
+        // suppressed at 13 recorded nights and appear at 14.
+        let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay), asleepHours: 9.0)
+
+        let thirteen = SleepEngine.analyze(night: night, history: priors(Array(1...13)), need: need).flags
+        #expect(!thirteen.contains { if case .bestIn = $0 { return true }; return false })
+
+        let fourteen = SleepEngine.analyze(night: night, history: priors(Array(1...14)), need: need).flags
+        #expect(fourteen.contains(.bestIn(days: 14)))
     }
 
     @Test func scheduleShiftFiresBeyondThreshold() {
@@ -349,7 +412,9 @@ struct SleepEngineTests {
                             asleepHours: 6.5, waso: nil, awakenings: nil,
                             staged: false, source: .manual)
         let e = SleepEngine.analyze(night: night, history: priors(Array(1...10)), need: need).decisionEvidence
-        #expect(abs((e.durationDeficitHours ?? -1) - 1.5) < 1e-9)   // still computable
+        // AC-2b: a manual night feeds NO decision signal — Slice 4 reaches it via the subjective
+        // fallback, never a duration deficit (which would be a second manual scoring route).
+        #expect(e.durationDeficitHours == nil)
         #expect(e.interruptionBurden == nil)                        // no WASO
         #expect(e.scheduleShiftMinutes == nil)                      // manual bedtime not trusted
     }

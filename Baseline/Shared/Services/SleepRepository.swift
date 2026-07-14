@@ -57,16 +57,20 @@ enum SleepCanonicalWrite: Equatable, Sendable {
 struct SleepAnalysisDerivation: Sendable {
     var currentAggregationVersion: Int
     var currentScoreAlgorithmVersion: Int
-    /// Recovery days (ending on and including the night) fetched as history for the engine. 31 →
-    /// the night plus 30 prior nights, covering the 30-day chronic mean and 14-day windows.
+    /// Recovery days (ending on and including the night) fetched as history for the engine. Sized to
+    /// the full backfill depth (90) so it never silently caps the comparison windows *or* the
+    /// notable-night flags: `bestIn`/`worstIn` spanDays reflect the available store span (AC-6's
+    /// "capped at available history"), which plan §4's "worst sleep in 46 days" needs — a 31-day
+    /// window would make any flag beyond ~30 days unreachable.
     var historyWindowDays: Int
     var analyze: @Sendable (SleepNight, [SleepNight]) -> SleepAnalysis
 
-    /// Production wiring: the pure `SleepEngine` at its current versions, default sleep need.
+    /// Production wiring: the pure `SleepEngine` at its current versions, default sleep need, full
+    /// 90-night backfill span as history.
     static let engine = SleepAnalysisDerivation(
         currentAggregationVersion: SleepEngine.aggregationVersion,
         currentScoreAlgorithmVersion: SleepEngine.scoreAlgorithmVersion,
-        historyWindowDays: 31,
+        historyWindowDays: 90,
         analyze: { SleepEngine.analyze(night: $0, history: $1) }
     )
 }

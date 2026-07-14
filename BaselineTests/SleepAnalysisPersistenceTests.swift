@@ -131,6 +131,40 @@ struct SleepAnalysisPersistenceTests {
         #expect(try storedRow().aggregationVersionBacking == 2)
     }
 
+    // MARK: - AC-6/MUST-FIX: production history window reaches flags beyond 31 days
+
+    @Test func productionHistoryWindowReachesNotableFlagsBeyond31Days() throws {
+        // The DEFAULT (.engine) derivation — its 90-night history window is what makes a
+        // notable-night flag past ~30 days reachable; a 31-day window would silently cap it.
+        let repository = SwiftDataSleepRepository(context: ModelContext(container), calendar: Fix.calendar)
+        let base = Fix.calendar.startOfDay(for: Fix.date(2026, 6, 1))
+        func noonSync(_ day: Date) -> SleepIngestionEngine.Context {
+            Fix.context(lastSyncAt: Fix.calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day)!)
+        }
+
+        // 46 prior nights at 8 h.
+        for offset in 1...46 {
+            let day = Fix.calendar.date(byAdding: .day, value: -offset, to: base)!
+            let night = try #require(Engine.night(
+                for: day, from: Fix.simpleStagedNight(wakeDay: day), context: noonSync(day)))
+            repository.replaceCanonical(night: night)
+        }
+        // Newest night is the shortest → the worst across the full 46-day span.
+        let prev = Fix.calendar.date(byAdding: .day, value: -1, to: base)!
+        let bed = Fix.calendar.date(bySettingHour: 23, minute: 0, second: 0, of: prev)!
+        let wake = Fix.calendar.date(bySettingHour: 5, minute: 0, second: 0, of: base)!  // 6 h
+        let newest = try #require(Engine.night(for: base, from: [Fix.watch(.core, bed, wake)],
+                                               context: noonSync(base)))
+        repository.replaceCanonical(night: newest)
+
+        let analysis = try #require(repository.analysis(for: base))
+        let worstDays = analysis.flags.compactMap { flag -> Int? in
+            if case .worstIn(let d) = flag { return d }; return nil
+        }.first
+        #expect(worstDays == 46)          // spans the whole store, not capped at ~30
+        #expect((worstDays ?? 0) > 31)    // unreachable under the old 31-day window
+    }
+
     // MARK: - AC-8: a facts revision invalidates the stored analysis
 
     @Test func factsRevisionInvalidatesStoredAnalysis() throws {
