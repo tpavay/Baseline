@@ -9,12 +9,18 @@ Base note: branched from the Slice 2 merge point (`363a279`). `main` remains sta
 
 ## User outcome
 
-No visible change yet. Every canonical sleep night gains a derived, versioned `SleepAnalysis`: the
-Apple-aligned 0–100 score with its duration/consistency/interruptions breakdown, stage evidence
-outside the score, evidence quality, acute-vs-chronic comparison with sleep debt, consistency
-statistics, notable-night flags, descriptive insights, and the structured decision evidence Slice 4
-will feed into `DecisionEngine`. Analyses persist on the Slice 2 store and lazily re-derive when the
-algorithm version bumps.
+No visible change yet. Every canonical sleep night gains a derived, versioned `SleepAnalysis`: an
+internal 0–100 score using **Apple-aligned component weighting** (duration 50 / bedtime consistency
+30 / interruptions 20) with its breakdown, stage evidence outside the score, evidence quality,
+acute-vs-chronic comparison with sleep debt, consistency statistics, notable-night flags, descriptive
+insights, and the structured decision evidence Slice 4 will feed into `DecisionEngine`. Analyses
+persist on the Slice 2 store and lazily re-derive when the algorithm version bumps.
+
+**Product-language precision (binding):** the score borrows Apple's published *component weights*
+(50/30/20), not Apple's formula. It is "Apple-aligned," never "Apple-equivalent." The
+duration-taper curve (zeroing at 50 % of need) and the interruption split (WASO 12 / awakenings 8
+with grace bands) are **Baseline internal heuristics** — Apple has not published those curves. All
+are v1 tunables carried under `scoreAlgorithmVersion` so history can be recomputed if retuned.
 
 ## Non-goals
 
@@ -37,10 +43,17 @@ algorithm version bumps.
       0–30 (penalty grows with |bedtime − 14-day rolling mean|), interruptions 0–20 (WASO +
       awakening penalties), and `score == duration + consistency + interruptions` on a 0–100 scale.
 - [ ] AC-2: No renormalization: when any required component is unobservable the analysis reports
-      `observedPoints/possiblePoints` and `score == nil` — never a scaled-up 0–100. Manual nights
-      are duration-only (`possiblePoints == 50`); consistency is unavailable below 5 recorded
-      nights; stage-dependent interruption evidence missing → interruptions component unavailable
-      rather than imputed.
+      `observedPoints/possiblePoints` and `score == nil` — never a scaled-up 0–100. Consistency is
+      unavailable below 5 recorded nights; stage-dependent interruption evidence missing →
+      interruptions component unavailable rather than imputed. Cold-start consistency **lowers
+      `possiblePoints`** (does not zero the whole score) and leaves `score == nil`.
+- [ ] AC-2b (manual = never a measured score): a **manual-source** night never publishes a score
+      and never enters a duration-scoring path. Its analysis is `score == nil`, `observedPoints == 0`,
+      `possiblePoints == 0`, `quality.reliability` low. The manual duration is still persisted as
+      evidence (visible in `additionalEvidence`/night facts), but there is exactly **one** manual
+      path — the existing subjective thumbs → 85/35 fallback that `DecisionEngine` already owns
+      (Slice 4). No duration points, no second manual-scoring route; this preserves the Slice 4
+      readiness-parity guarantee.
 - [ ] AC-3: Stage data never moves the score: two nights identical except for deep/REM distribution
       score identically, while `additionalEvidence` reflects the distribution difference.
 - [ ] AC-4: `SleepEvidenceQuality` separates coverage (fraction of required evidence present),
@@ -70,6 +83,22 @@ algorithm version bumps.
       types referenced only within the sleep module, `SleepRepository`, and tests; `BaselineApp.swift`,
       engines, views untouched.
 
+## Reviewer acceptance criteria (binding — the review must confirm each with a mapped test)
+
+1. A **manual source can never publish `score`** (AC-2b): `score == nil`, `observedPoints == 0`,
+   `possiblePoints == 0`, `reliability` low — even with ample history. No duration-points path.
+2. **Stage intervals cannot alter any scored component** (AC-3): proven by a stage-invariance pair
+   *and* an injection that makes a component read a stage proportion, which the AC-3 test must kill.
+3. **Circular bedtime math** treats 11:50 PM and 12:10 AM as **20 minutes** apart, not ~24 hours
+   (AC-1): explicit midnight-straddling fixture, hand-computed.
+4. **Cold-start consistency lowers `possiblePoints` and leaves `score == nil`** (AC-2) — asserted at
+   the 4-night (unavailable) vs 5-night (available) boundary.
+5. **Persisted derivations regenerate when `scoreAlgorithmVersion` changes** (AC-8), observed by
+   write counts; newer-or-equal versions are zero-write.
+6. **Every score curve has hand-calculated boundary tests**, including exact threshold values
+   (duration taper knots, consistency penalty knots, WASO/awakening grace-band edges) — not
+   round-tripped against whatever the code emits.
+
 ## State matrix
 
 | State | Expected behavior | Verification |
@@ -77,14 +106,15 @@ algorithm version bumps.
 | Happy path | Full staged night + history → complete analysis, score present | AC-1/AC-3/AC-5 tests |
 | Loading | Provisional night → analysis computed, quality status `provisional` | AC-4 tests |
 | Empty | No history → consistency unavailable, flags suppressed, score nil until observable | AC-2/AC-6 tests |
-| Error/offline | Partial/manual nights → observed-points path, decision evidence nil-safe | AC-2/AC-9 tests |
+| Error/offline | Partial nights → observed-points path; manual nights → no score (subjective fallback), decision evidence nil-safe | AC-2/AC-2b/AC-9 tests |
 
 ## Test mapping
 
 | Acceptance criterion | Automated test or evidence | Why it proves the behavior |
 |---|---|---|
 | AC-1 | `SleepEngineTests` component cases (need taper, consistency penalty curve, WASO/awakening penalties, sum) | Each component pinned against hand-computed fixture values |
-| AC-2 | `SleepEngineTests` observed-points cases (manual, cold-start, missing stages) | Asserts `score == nil` + exact observed/possible points, no scaling |
+| AC-2 | `SleepEngineTests` observed-points cases (cold-start 4-vs-5 nights, missing stages) | Asserts `score == nil` + exact observed/possible points, no scaling |
+| AC-2b | `SleepEngineTests` manual-source case | Asserts `score == nil`, `observedPoints == 0`, `possiblePoints == 0`, low reliability — no duration path |
 | AC-3 | `SleepEngineTests` stage-invariance pair | Identical scores, differing `additionalEvidence`, asserted directly |
 | AC-4 | `SleepEngineTests` quality separation cases | Coverage/reliability/status asserted independently with reasons |
 | AC-5 | `SleepEngineTests` window cases incl. DST-spanning and gap-night fixtures | Means/debt pinned to hand-computed values; no imputation asserted |
