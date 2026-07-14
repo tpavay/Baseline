@@ -50,6 +50,27 @@ enum SleepCanonicalWrite: Equatable, Sendable {
     case unchanged
 }
 
+/// How the repository derives a night's `SleepAnalysis` — **injected** so the repository stays free
+/// of scoring knowledge (plan §7 layering). It carries the current engine versions (for the lazy
+/// re-derivation staleness check, AC-8), the history window to feed the pure engine, and the pure
+/// derivation itself. Slice 4 will swap the default for one that threads `need` from `ReadinessConfig`.
+struct SleepAnalysisDerivation: Sendable {
+    var currentAggregationVersion: Int
+    var currentScoreAlgorithmVersion: Int
+    /// Recovery days (ending on and including the night) fetched as history for the engine. 31 →
+    /// the night plus 30 prior nights, covering the 30-day chronic mean and 14-day windows.
+    var historyWindowDays: Int
+    var analyze: @Sendable (SleepNight, [SleepNight]) -> SleepAnalysis
+
+    /// Production wiring: the pure `SleepEngine` at its current versions, default sleep need.
+    static let engine = SleepAnalysisDerivation(
+        currentAggregationVersion: SleepEngine.aggregationVersion,
+        currentScoreAlgorithmVersion: SleepEngine.scoreAlgorithmVersion,
+        historyWindowDays: 31,
+        analyze: { SleepEngine.analyze(night: $0, history: $1) }
+    )
+}
+
 /// The **domain-typed gateway** to the Sleep store (plan §7). The single write path — the
 /// backfill orchestrator and (from Slice 3 on) the aggregation reads all go through this;
 /// engines never import SwiftData.
@@ -60,6 +81,10 @@ protocol SleepRepository {
     /// leaves two rows for one night date.
     @discardableResult func replaceCanonical(night: SleepNight) -> SleepCanonicalWrite
     func night(for date: Date) -> SleepNight?
+    /// The night's derived analysis. Re-derives lazily and persists when the stored analysis is
+    /// absent or trails the current engine versions; returns the stored blob with zero writes when
+    /// it is current (AC-8). nil only when no night exists for the date.
+    func analysis(for date: Date) -> SleepAnalysis?
     func removeNight(for date: Date)
     /// Nights whose day keys fall in the half-open window `[start, end)`.
     func nights(in window: DateInterval) -> [SleepNight]
@@ -77,10 +102,13 @@ protocol SleepRepository {
 final class SwiftDataSleepRepository: SleepRepository {
     private let context: ModelContext
     private let calendar: Calendar
+    private let derivation: SleepAnalysisDerivation
 
-    init(context: ModelContext, calendar: Calendar = .current) {
+    init(context: ModelContext, calendar: Calendar = .current,
+         derivation: SleepAnalysisDerivation = .engine) {
         self.context = context
         self.calendar = calendar
+        self.derivation = derivation
     }
 
     // MARK: - Canonical write path
@@ -152,6 +180,31 @@ final class SwiftDataSleepRepository: SleepRepository {
 
     func night(for date: Date) -> SleepNight? {
         rows(dayKey: dayKey(for: date)).first.map(night(from:))
+    }
+
+    func analysis(for date: Date) -> SleepAnalysis? {
+        rows(dayKey: dayKey(for: date)).first.map(analysis(for:))
+    }
+
+    /// Lazy re-derivation (AC-8): a stored analysis stamped at the current engine versions is
+    /// returned untouched (zero write); an absent or version-trailing one is re-derived from current
+    /// facts and history, persisted, and returned. Facts writes clear the blob (see `apply`), so a
+    /// same-version revision also re-derives here rather than serving a stale analysis.
+    private func analysis(for row: SDSleepNight) -> SleepAnalysis {
+        if let data = row.analysisJSON,
+           let stored = SleepCoding.value(SleepAnalysis.self, data),
+           row.aggregationVersionBacking == derivation.currentAggregationVersion,
+           row.scoreAlgorithmVersionBacking == derivation.currentScoreAlgorithmVersion {
+            return stored
+        }
+        let night = night(from: row)
+        let history = nights(lastDays: derivation.historyWindowDays, endingOn: night.date)
+        let derived = derivation.analyze(night, history)
+        row.analysisJSON = SleepCoding.data(derived)
+        row.aggregationVersionBacking = derived.aggregationVersion
+        row.scoreAlgorithmVersionBacking = derived.scoreAlgorithmVersion
+        save()
+        return derived
     }
 
     func nights(in window: DateInterval) -> [SleepNight] {
@@ -230,6 +283,12 @@ final class SwiftDataSleepRepository: SleepRepository {
         row.lastSampleEndDate = night.lastSampleEndDate
         row.revision = night.revision
         row.factsSchemaVersion = night.factsSchemaVersion
+        // Facts changed ⇒ any stored analysis is stale. Clear it (and its version stamps) so the
+        // next `analysis(for:)` re-derives from the new facts. Reads without a facts change stay
+        // zero-write. Kept here (the one facts-write mapping point) so every write path invalidates.
+        row.analysisJSON = nil
+        row.aggregationVersionBacking = nil
+        row.scoreAlgorithmVersionBacking = nil
     }
 
     private func night(from row: SDSleepNight) -> SleepNight {
