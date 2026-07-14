@@ -140,3 +140,70 @@ final class HealthService {
         return samples.map { (date: $0.endDate, bpm: $0.quantity.doubleValue(for: unit)) }
     }
 }
+
+// MARK: - Sleep ingestion (Sleep Engine Slice 1)
+
+/// The raw-sample path for `SleepIngestionEngine`. Lives in this file because it needs the
+/// private `store`; kept deliberately thin — every decision (precedence, segmentation,
+/// lifecycle) happens in the pure engine, reachable by tests without HealthKit.
+extension HealthService: SleepSampleProviding {
+
+    /// Raw sleep samples in a window with the detail `sleepSummary` discards: interval
+    /// timestamps, stage, and per-sample source provenance. Empty when Health is unavailable or
+    /// access was denied — HealthKit reports read denial as no data, never as an error we
+    /// should surface.
+    func sleepSamples(in window: DateInterval) async -> [SleepSample] {
+        guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end, options: .strictEndDate)
+        let samples: [HKCategorySample] = await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, results, _ in
+                continuation.resume(returning: (results as? [HKCategorySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        return samples.compactMap(SleepSample.init(healthKitSample:))
+    }
+
+    /// New sleep samples since the opaque cursor (an archived `HKQueryAnchor` — it never leaves
+    /// this method). A failed or unauthorized query returns no samples and leaves the caller's
+    /// cursor where it was, so no delta is ever silently skipped.
+    func sleepSampleDelta(after cursor: Data?) async -> SleepSampleDelta {
+        guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
+            return SleepSampleDelta(samples: [], cursor: cursor)
+        }
+        let anchor = cursor.flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0) }
+        let (added, newAnchor): ([HKCategorySample], HKQueryAnchor?) = await withCheckedContinuation { continuation in
+            let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: HKObjectQueryNoLimit) { _, samples, _, newAnchor, _ in
+                continuation.resume(returning: ((samples as? [HKCategorySample]) ?? [], newAnchor))
+            }
+            store.execute(query)
+        }
+        let newCursor = newAnchor.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
+        return SleepSampleDelta(samples: added.compactMap(SleepSample.init(healthKitSample:)), cursor: newCursor ?? cursor)
+    }
+}
+
+private extension SleepSample {
+    /// HK → engine-input mapping, kept here so HealthKit types never leak into the pure sleep module.
+    init?(healthKitSample sample: HKCategorySample) {
+        let kind: SleepSample.Kind
+        switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
+        case .inBed: kind = .inBed
+        case .asleepUnspecified: kind = .asleepUnspecified
+        case .awake: kind = .awake
+        case .asleepCore: kind = .core
+        case .asleepDeep: kind = .deep
+        case .asleepREM: kind = .rem
+        case .none: return nil
+        @unknown default: return nil
+        }
+        self.init(
+            start: sample.startDate,
+            end: sample.endDate,
+            kind: kind,
+            sourceBundleID: sample.sourceRevision.source.bundleIdentifier,
+            deviceModel: sample.device?.model,
+            isUserEntered: (sample.metadata?[HKMetadataKeyWasUserEntered] as? Bool) ?? false
+        )
+    }
+}
