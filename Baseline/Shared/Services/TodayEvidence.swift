@@ -5,8 +5,13 @@ import Foundation
 /// entry). The chat layers structured context (constraints, time, travel) on top of this via
 /// `PlanAssembler`. Kept separate so `AgentTools.base` has one honest source.
 enum TodayEvidence {
+    /// `sleepProvider` is the Sleep Engine seam (Slice 4), defaulted to nil so every app construction
+    /// site stays on the legacy path and this stays byte-identical to pre-slice (AC-5). `referenceDate`
+    /// is the recovery day the provider is queried for; unused on the legacy path.
     @MainActor
-    static func baseInputs(readings: [Reading], todayEntry: ReadinessEntry?, health: HealthService) async -> DecisionEngine.Inputs {
+    static func baseInputs(readings: [Reading], todayEntry: ReadinessEntry?, health: HealthService,
+                           sleepProvider: SleepEvidenceProvider? = nil,
+                           referenceDate: Date = .now) async -> DecisionEngine.Inputs {
         var inputs = DecisionEngine.Inputs()
 
         // Autonomic evidence must be *today's* morning read — never a snapshot or yesterday's
@@ -26,10 +31,19 @@ enum TodayEvidence {
             inputs.rhrBaseline = ReadinessScore.baseline(from: priorMornings.map(\.meanHR))
         }
 
-        if let sleep = await health.lastNightSleep() {
-            inputs.sleepScore = ReadinessScore.sleepScore(hours: sleep.hours, efficiency: sleep.efficiency)
-            inputs.sleepHours = sleep.hours
+        // Sleep seam. Provider nil (every app call site today) → the exact pre-slice Health path via
+        // `SleepDecisionSeam.resolve(.legacy:)`; provider present → engine-sourced inputs (AC-5/AC-6).
+        // `TodayEvidence` has no manual check-in fallback, so `.none` manual is passed either way.
+        let sleepResult: SleepDecisionSeam.Result
+        if let sleepProvider {
+            sleepResult = SleepDecisionSeam.resolve(.engine(sleepProvider.sleepInputs(on: referenceDate)), manual: .none)
+        } else {
+            let health = await health.lastNightSleep().map {
+                SleepDecisionSeam.HealthSleep(hours: $0.hours, efficiency: $0.efficiency)
+            }
+            sleepResult = SleepDecisionSeam.resolve(.legacy(health), manual: .none)
         }
+        inputs.applySleep(sleepResult)
 
         if let e = todayEntry {
             inputs.energy = e.energy

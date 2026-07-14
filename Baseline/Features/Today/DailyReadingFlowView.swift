@@ -93,8 +93,9 @@ struct DailyReadingFlowView: View {
         }
     }
 
-    private func finish(_ decision: DecisionEngine.Result, _ plan: PlanningEngine.Plan) {
-        modelContext.insert(ReadinessEntry(decision: decision, plan: plan, answers: config.checkInEnabled ? answers : nil))
+    private func finish(_ decision: DecisionEngine.Result, _ plan: PlanningEngine.Plan, _ sleep: ReadinessSleepSnapshot?) {
+        modelContext.insert(ReadinessEntry(decision: decision, plan: plan,
+                                           answers: config.checkInEnabled ? answers : nil, sleep: sleep))
         dismiss()
     }
 
@@ -280,12 +281,18 @@ struct MorningReadinessScoreView: View {
     let rhrBaseline: ReadinessScore.Baseline?
     var constraints: [DecisionEngine.Constraint] = []
     var dailyContext: TrainingContextStore.DailyContext = .init()
-    let onDone: (DecisionEngine.Result, PlanningEngine.Plan) -> Void
+    /// The Sleep Engine seam (Slice 4), defaulted nil so the app builds this view on the legacy path
+    /// and readiness stays byte-identical to pre-slice (AC-5). `referenceDate` is the recovery day the
+    /// provider is queried for.
+    var sleepProvider: SleepEvidenceProvider? = nil
+    var referenceDate: Date = .now
+    let onDone: (DecisionEngine.Result, PlanningEngine.Plan, ReadinessSleepSnapshot?) -> Void
 
     @Environment(HealthService.self) private var health
     @State private var computing = true
     @State private var decision: DecisionEngine.Result?
     @State private var plan: PlanningEngine.Plan?
+    @State private var sleepSnapshot: ReadinessSleepSnapshot?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -353,7 +360,7 @@ struct MorningReadinessScoreView: View {
             .padding(.top, 18).padding(.bottom, 14)
         }
 
-        Button { onDone(decision, plan) } label: { Text("SEE YOUR DAY") }
+        Button { onDone(decision, plan, sleepSnapshot) } label: { Text("SEE YOUR DAY") }
             .buttonStyle(InstrumentButtonStyle())
             .padding(.bottom, 24)
     }
@@ -423,15 +430,22 @@ struct MorningReadinessScoreView: View {
             inputs.rhrBaseline = rhrBaseline
         }
         if config.sleepEnabled {
-            if let sleep = await health.lastNightSleep() {
-                inputs.sleepScore = ReadinessScore.sleepScore(hours: sleep.hours, efficiency: sleep.efficiency)
-                inputs.sleepHours = sleep.hours
-            } else if let hours = answers?.sleepHoursManual {
-                inputs.sleepScore = ReadinessScore.sleepScore(hours: hours)
-                inputs.sleepHours = hours
-            } else if let up = answers?.sleepThumbsUp {
-                inputs.sleepScore = up ? 85 : 35
+            // Sleep seam. Provider nil (every app call site today) → the exact pre-slice ladder
+            // (Health → manual hours → thumb) via `SleepDecisionSeam.resolve(.legacy:)`; provider
+            // present → engine-sourced inputs with the same manual fallback (AC-4/AC-5). The snapshot
+            // is captured only when the seam published a score and is frozen onto the entry (AC-7).
+            let manual = SleepDecisionSeam.ManualSleep(hours: answers?.sleepHoursManual, thumbsUp: answers?.sleepThumbsUp)
+            let result: SleepDecisionSeam.Result
+            if let sleepProvider {
+                result = SleepDecisionSeam.resolve(.engine(sleepProvider.sleepInputs(on: referenceDate)), manual: manual)
+            } else {
+                let health = await health.lastNightSleep().map {
+                    SleepDecisionSeam.HealthSleep(hours: $0.hours, efficiency: $0.efficiency)
+                }
+                result = SleepDecisionSeam.resolve(.legacy(health), manual: manual)
             }
+            inputs.applySleep(result)
+            sleepSnapshot = result.readinessSnapshot
         }
         if config.checkInEnabled {
             inputs.energy = answers?.energy
