@@ -398,9 +398,12 @@ enum SleepEngine {
         // nil here (AC-2b): Slice 4 must reach it through the subjective fallback, not a duration
         // deficit — otherwise the manual night feeds a second scoring route through `poorSleep`.
         let deficit = isDeviceSourced(night) ? night.asleepHours.map { Swift.max(0, needHours - $0) } : nil
-        let burden = night.wasoMinutes.map {
-            ($0 / Tunables.interruptionBurdenReferenceMinutes).clamped(to: 0...1)
-        }
+        // Device-gated like the other two signals so AC-2b ("manual feeds no decision signal") holds
+        // locally rather than depending on Slice 1's "WASO only on staged sources" invariant — a
+        // future ingestion change attaching WASO to a non-staged source can't leak a burden here.
+        let burden = isDeviceSourced(night)
+            ? night.wasoMinutes.map { ($0 / Tunables.interruptionBurdenReferenceMinutes).clamped(to: 0...1) }
+            : nil
         let shift: Double?
         if isDeviceSourced(night),
            consistency.isAvailable,

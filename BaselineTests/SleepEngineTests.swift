@@ -394,6 +394,21 @@ struct SleepEngineTests {
 
     // MARK: - AC-9: decision evidence
 
+    @Test func manualNightWithInjectedWASOStillFeedsNoInterruptionBurden() {
+        // Tripwire: hand-build a manual night that (against Slice 1's ingestion invariant) carries
+        // WASO + awakenings. interruptionBurden must be nil because the SOURCE is manual, not merely
+        // because WASO is absent. Fails if the isDeviceSourced gate on burden is removed — pinning
+        // AC-2b locally against a future ingestion change that attaches WASO to a non-staged source.
+        let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay),
+                            asleepHours: 6.5, waso: 30, awakenings: 3,
+                            staged: false, source: .manual)
+        #expect(night.wasoMinutes == 30)   // the fixture really did inject WASO onto a manual night
+        let e = SleepEngine.analyze(night: night, history: priors(Array(1...10)), need: need).decisionEvidence
+        #expect(e.interruptionBurden == nil)   // gated by source, not by WASO presence
+        #expect(e.durationDeficitHours == nil)
+        #expect(e.scheduleShiftMinutes == nil)
+    }
+
     @Test func decisionEvidencePopulatedForObservedNight() {
         let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay),
                             asleepHours: 7.0 + 25.0 / 60, waso: 15, awakenings: 2)
