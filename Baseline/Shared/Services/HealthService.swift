@@ -149,11 +149,14 @@ final class HealthService {
 extension HealthService: SleepSampleProviding {
 
     /// Raw sleep samples in a window with the detail `sleepSummary` discards: interval
-    /// timestamps, stage, and per-sample source provenance. Empty when Health is unavailable or
-    /// access was denied — HealthKit reports read denial as no data, never as an error we
-    /// should surface.
-    func sleepSamples(in window: DateInterval) async -> [SleepSample] {
-        guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
+    /// timestamps, stage, and per-sample source provenance — plus the count of raw samples the
+    /// mapping rejected (`@unknown default`), so data loss is a visible number, never logged
+    /// values. Empty when Health is unavailable or access was denied — HealthKit reports read
+    /// denial as no data, never as an error we should surface.
+    func sleepSamples(in window: DateInterval) async -> SleepSampleBatch {
+        guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
+            return SleepSampleBatch(samples: [])
+        }
         let predicate = HKQuery.predicateForSamples(withStart: window.start, end: window.end, options: .strictEndDate)
         let samples: [HKCategorySample] = await withCheckedContinuation { continuation in
             let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, results, _ in
@@ -161,28 +164,39 @@ extension HealthService: SleepSampleProviding {
             }
             store.execute(query)
         }
-        return samples.compactMap(SleepSample.init(healthKitSample:))
+        let mapped = samples.compactMap(SleepSample.init(healthKitSample:))
+        return SleepSampleBatch(samples: mapped, droppedUnknownCount: samples.count - mapped.count)
     }
 
-    /// New sleep samples since the opaque cursor (an archived `HKQueryAnchor` — it never leaves
-    /// this method), bounded to samples starting at or after `start` so a nil cursor can never
-    /// replay the athlete's entire Health sleep history. A failed or unauthorized query returns
-    /// no samples and leaves the caller's cursor where it was, so no delta is ever silently
-    /// skipped.
+    /// New and deleted sleep samples since the opaque cursor (an archived `HKQueryAnchor` — it
+    /// never leaves this method), bounded to samples starting at or after `start` so a nil
+    /// cursor can never replay the athlete's entire Health sleep history. A failed or
+    /// unauthorized query returns no samples and leaves the caller's cursor where it was, so no
+    /// delta is ever silently skipped.
     func sleepSampleDelta(after cursor: Data?, startingFrom start: Date) async -> SleepSampleDelta {
         guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
             return SleepSampleDelta(samples: [], cursor: cursor)
         }
         let anchor = cursor.flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0) }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: [])
-        let (added, newAnchor): ([HKCategorySample], HKQueryAnchor?) = await withCheckedContinuation { continuation in
-            let query = HKAnchoredObjectQuery(type: type, predicate: predicate, anchor: anchor, limit: HKObjectQueryNoLimit) { _, samples, _, newAnchor, _ in
-                continuation.resume(returning: ((samples as? [HKCategorySample]) ?? [], newAnchor))
+        let (added, deleted, newAnchor): ([HKCategorySample], [UUID], HKQueryAnchor?) = await withCheckedContinuation { continuation in
+            let query = HKAnchoredObjectQuery(type: type, predicate: predicate, anchor: anchor, limit: HKObjectQueryNoLimit) { _, samples, deletedObjects, newAnchor, _ in
+                continuation.resume(returning: (
+                    (samples as? [HKCategorySample]) ?? [],
+                    (deletedObjects ?? []).map(\.uuid),
+                    newAnchor
+                ))
             }
             store.execute(query)
         }
         let newCursor = newAnchor.flatMap { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
-        return SleepSampleDelta(samples: added.compactMap(SleepSample.init(healthKitSample:)), cursor: newCursor ?? cursor)
+        let mapped = added.compactMap(SleepSample.init(healthKitSample:))
+        return SleepSampleDelta(
+            samples: mapped,
+            deletedSampleUUIDs: deleted,
+            cursor: newCursor ?? cursor,
+            droppedUnknownCount: added.count - mapped.count
+        )
     }
 }
 
@@ -201,6 +215,7 @@ private extension SleepSample {
         @unknown default: return nil
         }
         self.init(
+            uuid: sample.uuid,
             start: sample.startDate,
             end: sample.endDate,
             kind: kind,

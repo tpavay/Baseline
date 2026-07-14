@@ -14,8 +14,8 @@ private final class FixtureSleepProvider: SleepSampleProviding {
     private(set) var receivedCursors: [Data?] = []
     private(set) var receivedDeltaStarts: [Date] = []
 
-    func sleepSamples(in window: DateInterval) async -> [SleepSample] {
-        samplesByNight.values.flatMap { $0 }.filter { window.contains($0.end) }
+    func sleepSamples(in window: DateInterval) async -> SleepSampleBatch {
+        SleepSampleBatch(samples: samplesByNight.values.flatMap { $0 }.filter { window.contains($0.end) })
     }
 
     func sleepSampleDelta(after cursor: Data?, startingFrom start: Date) async -> SleepSampleDelta {
@@ -38,6 +38,8 @@ private final class CountingSleepNightStore: SleepNightStore {
         upsertCount += 1
         inner.upsert(night)
     }
+    func remove(for date: Date) { inner.remove(for: date) }
+    func nightDates(containingSampleUUIDs uuids: [UUID]) -> [Date] { inner.nightDates(containingSampleUUIDs: uuids) }
     func allNights() -> [SleepNight] { inner.allNights() }
 }
 

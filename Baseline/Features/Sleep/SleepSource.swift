@@ -9,7 +9,9 @@ enum SleepSource: Equatable, Hashable, Codable, Sendable {
     case healthKit(bundleID: String)
     /// User-entered sleep (Health-app manual entry or Baseline's own check-in fallback).
     case manual
-    // Plan §3 also names a `none` case; the engine returns nil instead of an empty night, so
-    // nothing can construct it yet — it arrives with Slice 2 persistence, where a decoded row
-    // can actually carry it.
+    /// No source could be decoded. The *engine* never produces this (it returns nil instead of
+    /// an empty night); it is constructed on the repository decode path when a stored row's
+    /// source blob is missing or unreadable, so persistence corruption degrades honestly
+    /// instead of masquerading as a device source.
+    case none
 }

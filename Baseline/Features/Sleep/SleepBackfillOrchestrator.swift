@@ -30,6 +30,9 @@ final class SleepBackfillOrchestrator {
 
     private(set) var isInitialBatchComplete = false
     private(set) var isBackfillComplete = false
+    /// Running total of raw HealthKit samples the mapping rejected (`@unknown default`) —
+    /// data-loss visibility as a count only; no health values are logged or stored (AC-8).
+    private(set) var droppedUnknownSampleCount = 0
 
     init(provider: any SleepSampleProviding,
          nightStore: any SleepNightStore,
@@ -49,9 +52,11 @@ final class SleepBackfillOrchestrator {
 
     /// Batch 1: the most recent `initialBatchNightCount` nights. Callers can compute today's
     /// readiness as soon as this returns — the rest of the history follows in the background.
+    /// A transiently failed fetch leaves the flag false so callers know to re-run (idempotent).
     func importRecentNights() async {
-        await ingest(nightOffsets: 0..<Self.initialBatchNightCount)
-        isInitialBatchComplete = true
+        if await ingest(nightOffsets: 0..<Self.initialBatchNightCount) {
+            isInitialBatchComplete = true
+        }
     }
 
     /// Continues past batch 1 to the full 90-night window.
@@ -62,59 +67,93 @@ final class SleepBackfillOrchestrator {
             // import must stop. The flag stays false so a later run resumes (idempotently).
             guard !Task.isCancelled else { return }
             let batchEnd = min(next + Self.backgroundBatchNightCount, Self.targetNightCount)
-            await ingest(nightOffsets: next..<batchEnd)
+            // A failed batch also leaves the flag false — a later run retries from the store's
+            // actual state; fingerprint gating makes the overlap free.
+            guard await ingest(nightOffsets: next..<batchEnd) else { return }
             next = batchEnd
         }
         isBackfillComplete = true
     }
 
-    /// One anchored-query step: re-resolve every night the delta touches, then advance the
-    /// persisted cursor. A delta that doesn't change a night's fingerprint writes nothing.
+    /// One anchored-query step: re-resolve every night the delta touches — via its added
+    /// samples or via deleted sample UUIDs mapped through the stored nights — then advance the
+    /// persisted cursor. A delta that doesn't change a night's fingerprint writes nothing; a
+    /// night whose composing samples are ALL gone is removed.
+    ///
     /// Bounded both ways: the query starts at the 90-night window, and — defense in depth,
     /// should a provider return older samples anyway — touched dates outside that window are
-    /// skipped rather than materialized.
+    /// skipped rather than materialized. Failure handling: if the delta fetch or ANY touched
+    /// night's refetch throws, the cursor is NOT advanced, so the whole delta (and the failed
+    /// night with it) is retried on the next sync — fingerprint gating makes the replay free.
     func syncDelta() async {
         let oldestTargetDate = nightDate(offset: Self.targetNightCount - 1)
-        let delta = await provider.sleepSampleDelta(
-            after: cursorStore.cursor(forKey: Self.sleepAnalysisCursorKey),
-            startingFrom: SleepIngestionEngine.nightWindow(for: oldestTargetDate, calendar: calendar).start
-        )
-        let touchedDates = Set(delta.samples.map {
+        let delta: SleepSampleDelta
+        do {
+            delta = try await provider.sleepSampleDelta(
+                after: cursorStore.cursor(forKey: Self.sleepAnalysisCursorKey),
+                startingFrom: SleepIngestionEngine.nightWindow(for: oldestTargetDate, calendar: calendar).start
+            )
+        } catch {
+            return   // cursor untouched — the delta re-arrives on the next sync
+        }
+        droppedUnknownSampleCount += delta.droppedUnknownCount
+
+        var touchedDates = Set(delta.samples.map {
             SleepIngestionEngine.nightDate(containing: $0.end, calendar: calendar)
         })
-        .filter { $0 >= oldestTargetDate }
+        touchedDates.formUnion(nightStore.nightDates(containingSampleUUIDs: delta.deletedSampleUUIDs))
         let context = makeContext()
-        for date in touchedDates.sorted() {
+        var allResolved = true
+        for date in touchedDates.filter({ $0 >= oldestTargetDate }).sorted() {
             let window = SleepIngestionEngine.nightWindow(for: date, calendar: calendar)
-            let samples = await provider.sleepSamples(in: window)
-            reconcileAndStore(
-                date: date,
-                candidate: SleepIngestionEngine.night(for: date, from: samples, context: context)
-            )
+            do {
+                let batch = try await provider.sleepSamples(in: window)
+                droppedUnknownSampleCount += batch.droppedUnknownCount
+                let candidate = SleepIngestionEngine.night(for: date, from: batch.samples, context: context)
+                if candidate == nil, nightStore.night(for: date) != nil {
+                    // The fetch succeeded and the window is genuinely empty: every composing
+                    // sample was deleted, so the canonical night goes with them.
+                    nightStore.remove(for: date)
+                } else {
+                    reconcileAndStore(date: date, candidate: candidate)
+                }
+            } catch {
+                allResolved = false   // retried next sync — the cursor must not pass this night
+            }
         }
-        cursorStore.setCursor(delta.cursor, forKey: Self.sleepAnalysisCursorKey)
+        if allResolved {
+            cursorStore.setCursor(delta.cursor, forKey: Self.sleepAnalysisCursorKey)
+        }
     }
 
     // MARK: - Batches
 
     /// Offset 0 is the most recent night (the one ending this morning). One provider fetch spans
-    /// the whole batch; the engine then assembles each night from its own window.
-    private func ingest(nightOffsets: Range<Int>) async {
-        guard !nightOffsets.isEmpty else { return }
+    /// the whole batch; the engine then assembles each night from its own window. Returns false
+    /// when the fetch failed transiently — the caller leaves its completion flag unset.
+    private func ingest(nightOffsets: Range<Int>) async -> Bool {
+        guard !nightOffsets.isEmpty else { return true }
         let dates = nightOffsets.map(nightDate(offset:))
-        guard let newest = dates.first, let oldest = dates.last else { return }
+        guard let newest = dates.first, let oldest = dates.last else { return true }
         let window = DateInterval(
             start: SleepIngestionEngine.nightWindow(for: oldest, calendar: calendar).start,
             end: SleepIngestionEngine.nightWindow(for: newest, calendar: calendar).end
         )
-        let samples = await provider.sleepSamples(in: window)
+        let batch: SleepSampleBatch
+        do {
+            batch = try await provider.sleepSamples(in: window)
+        } catch {
+            return false
+        }
+        droppedUnknownSampleCount += batch.droppedUnknownCount
         let context = makeContext()
         for date in dates {
             reconcileAndStore(
                 date: date,
-                candidate: SleepIngestionEngine.night(for: date, from: samples, context: context)
+                candidate: SleepIngestionEngine.night(for: date, from: batch.samples, context: context)
             )
         }
+        return true
     }
 
     private func nightDate(offset: Int) -> Date {

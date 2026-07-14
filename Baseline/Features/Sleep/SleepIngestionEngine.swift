@@ -173,6 +173,7 @@ enum SleepIngestionEngine {
             resolvedSource: winner.source,
             analysisStatus: status,
             sourceFingerprint: fingerprint(of: winner.samples),
+            composingSampleUUIDs: winner.samples.map(\.uuid).sorted { $0.uuidString < $1.uuidString },
             lastHealthKitSyncAt: context.lastSyncAt,
             lastSampleEndDate: winner.samples.map(\.end).max(),
             revision: 0,

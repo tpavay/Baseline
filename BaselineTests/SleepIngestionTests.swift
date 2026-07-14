@@ -383,8 +383,8 @@ struct HealthServiceSleepSmokeTests {
 
         let window = DateInterval(start: SleepFixtures.date(2026, 3, 10, 12, 0),
                                   end: SleepFixtures.date(2026, 3, 11, 12, 0))
-        let samples = await service.sleepSamples(in: window)
-        #expect(samples.isEmpty)
+        let batch = await service.sleepSamples(in: window)
+        #expect(batch.samples.isEmpty)
 
         let delta = await service.sleepSampleDelta(after: nil, startingFrom: SleepFixtures.date(2026, 3, 1))
         #expect(delta.samples.isEmpty)

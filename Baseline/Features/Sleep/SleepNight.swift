@@ -33,6 +33,10 @@ struct SleepNight: Identifiable, Equatable, Codable, Sendable {
     /// Deterministic digest of the normalized samples composing this night (see
     /// `SleepIngestionEngine.fingerprint`). Unchanged fingerprint ⇒ the stored night stands.
     var sourceFingerprint: String
+    /// HealthKit UUIDs of the winning source's samples, in deterministic order — the identity
+    /// map for deletion deltas (`HKDeletedObject` carries only a UUID, so persisted nights must
+    /// remember which samples composed them).
+    var composingSampleUUIDs: [UUID] = []
     var lastHealthKitSyncAt: Date?
     var lastSampleEndDate: Date?
     /// Bumps on every canonical replacement (fingerprint change). 0 for a first ingestion.

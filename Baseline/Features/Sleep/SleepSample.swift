@@ -39,6 +39,11 @@ struct SleepSample: Equatable, Hashable, Sendable {
         }
     }
 
+    /// HealthKit's sample UUID — the identity deletions arrive under (`HKDeletedObject.uuid`).
+    /// Deliberately excluded from the fingerprint: the fingerprint contract is over the night's
+    /// *content* (source, start, end, value), and a re-imported identical sample must not read
+    /// as a revision just because HealthKit assigned it a fresh UUID.
+    var uuid: UUID
     var start: Date
     var end: Date
     var kind: Kind
@@ -49,8 +54,9 @@ struct SleepSample: Equatable, Hashable, Sendable {
     /// HealthKit's was-user-entered metadata — routes the sample to the manual precedence tier.
     var isUserEntered: Bool
 
-    init(start: Date, end: Date, kind: Kind, sourceBundleID: String,
+    init(uuid: UUID = UUID(), start: Date, end: Date, kind: Kind, sourceBundleID: String,
          deviceModel: String? = nil, isUserEntered: Bool = false) {
+        self.uuid = uuid
         self.start = start
         self.end = end
         self.kind = kind
@@ -60,9 +66,20 @@ struct SleepSample: Equatable, Hashable, Sendable {
     }
 }
 
-/// One anchored-query step: the new samples since the previous cursor, plus the cursor to persist
-/// for the next step. The `HKQueryAnchor` never leaves `HealthService` — callers hold opaque data.
+/// One window fetch's result: the mapped samples plus how many raw HealthKit samples were
+/// rejected by the `@unknown default` mapping — surfaced as a count so silent data loss is
+/// visible (never the values themselves; no health data is logged).
+struct SleepSampleBatch: Sendable {
+    var samples: [SleepSample]
+    var droppedUnknownCount: Int = 0
+}
+
+/// One anchored-query step: the new samples since the previous cursor, the UUIDs HealthKit
+/// reports as deleted, and the cursor to persist for the next step. The `HKQueryAnchor` never
+/// leaves `HealthService` — callers hold opaque data.
 struct SleepSampleDelta: Sendable {
     var samples: [SleepSample]
+    var deletedSampleUUIDs: [UUID] = []
     var cursor: Data?
+    var droppedUnknownCount: Int = 0
 }
