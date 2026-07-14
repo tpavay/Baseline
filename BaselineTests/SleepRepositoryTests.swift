@@ -313,6 +313,36 @@ struct SleepRepositoryTests {
             == [u1, u2].sorted { $0.uuidString < $1.uuidString })
     }
 
+    @Test func legacyRowsWithoutUUIDsAreNeverAbsorbedAsFragments() throws {
+        // A pre-UUID legacy row (empty composing UUIDs, its own fingerprint — the AC-2 shape)
+        // shares no samples with anything, so fragment matching must NEVER touch it: matching
+        // on "no UUIDs recorded" would silently delete legacy history.
+        let legacyDay = Fix.calendar.date(byAdding: .day, value: 1, to: wakeDay)!
+        let context = ModelContext(container)
+        context.insert(SDSleepNight(dayKey: 20_260_312, date: legacyDay, sourceFingerprint: "legacy-print"))
+        try context.save()
+
+        // A normal night lands at an ADJACENT day key — the legacy row must survive untouched.
+        let night = try #require(Engine.night(
+            for: wakeDay, from: Fix.stagedWatchNight(bedtime: bedtime), context: settled))
+        #expect(repository.replaceCanonical(night: night) == .inserted)
+        #expect(try rowCount() == 2)
+        let legacy = try #require(reopenedRepository().night(for: legacyDay))
+        #expect(legacy.sourceFingerprint == "legacy-print")
+
+        // Symmetric top guard: a candidate with no UUIDs and no fingerprint absorbs nothing —
+        // it inserts alongside, and both existing rows remain fetchable.
+        var blank = night
+        blank.id = UUID()
+        blank.date = Fix.calendar.date(byAdding: .day, value: 2, to: wakeDay)!
+        blank.composingSampleUUIDs = []
+        blank.sourceFingerprint = ""
+        #expect(repository.replaceCanonical(night: blank) == .inserted)
+        #expect(try rowCount() == 3)
+        #expect(reopenedRepository().night(for: legacyDay)?.sourceFingerprint == "legacy-print")
+        #expect(reopenedRepository().night(for: wakeDay) != nil)
+    }
+
     @Test func reverseTimezoneShiftRekeysSymmetrically() throws {
         // Tokyo → NY. A late Tokyo sleep (05:00–13:00, ends past Tokyo noon → Tokyo Mar 13)
         // reassembles in NY as a Mar 12 night — the day key shifts the other direction and the

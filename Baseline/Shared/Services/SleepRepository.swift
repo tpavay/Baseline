@@ -117,17 +117,17 @@ final class SwiftDataSleepRepository: SleepRepository {
             save()
             return .replaced
         }
-        let purgedFragments = !fragments.isEmpty
+        // No separate save for these deletions: fragments only exist when the candidate's
+        // fingerprint differs from the target row's, so reconcile below always lands in
+        // .store — its save commits the purge too.
         for stale in fragments { context.delete(stale) }
 
         let previous = row.map(night(from:))
         guard let outcome = SleepNightLifecycle.reconcile(previous: previous, candidate: candidate) else {
-            if purgedFragments { save() }
-            return .unchanged
+            return .unchanged   // unreachable: candidate is always non-nil
         }
         switch outcome {
         case .unchanged:
-            if purgedFragments { save() }
             return .unchanged
         case .store(let night):
             if let row {
