@@ -71,7 +71,7 @@ WASO, gaps, lifecycle, fingerprint) with deterministic multi-source resolution a
 | AC-4 | `SleepIngestionTests` fingerprint determinism + mutation cases | Hash equality/inequality asserted on controlled sample edits |
 | AC-5 | `SleepIngestionTests` lifecycle transition cases with injected clock | Status/revision observed across simulated sync points |
 | AC-6 | `SleepBackfillTests` progressive + idempotence cases with in-memory stores | Batch order, availability-after-batch-1, and store write counts asserted |
-| AC-7 | `SleepIngestionTests` boundary cases; `HealthService` fixture path for denied access | Nil/empty outcomes asserted, no crash |
+| AC-7 | `SleepIngestionTests` boundary cases + `SleepBackfillTests/emptyProviderProducesNoNightsAndDoesNotThrow` (primary denied/unavailable evidence, fixture-driven); `HealthServiceSleepSmokeTests` is smoke-only (environment-coupled: live simulator HK store, denial indistinguishable from absence) | Nil/empty outcomes asserted, no crash |
 | AC-8 | Full existing suite green with zero modified test files (`git diff --stat` on `BaselineTests/`) | Proves isolation of the slice |
 
 ## UX evidence

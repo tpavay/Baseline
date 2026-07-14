@@ -165,15 +165,18 @@ extension HealthService: SleepSampleProviding {
     }
 
     /// New sleep samples since the opaque cursor (an archived `HKQueryAnchor` — it never leaves
-    /// this method). A failed or unauthorized query returns no samples and leaves the caller's
-    /// cursor where it was, so no delta is ever silently skipped.
-    func sleepSampleDelta(after cursor: Data?) async -> SleepSampleDelta {
+    /// this method), bounded to samples starting at or after `start` so a nil cursor can never
+    /// replay the athlete's entire Health sleep history. A failed or unauthorized query returns
+    /// no samples and leaves the caller's cursor where it was, so no delta is ever silently
+    /// skipped.
+    func sleepSampleDelta(after cursor: Data?, startingFrom start: Date) async -> SleepSampleDelta {
         guard isAvailable, let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
             return SleepSampleDelta(samples: [], cursor: cursor)
         }
         let anchor = cursor.flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0) }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: [])
         let (added, newAnchor): ([HKCategorySample], HKQueryAnchor?) = await withCheckedContinuation { continuation in
-            let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: HKObjectQueryNoLimit) { _, samples, _, newAnchor, _ in
+            let query = HKAnchoredObjectQuery(type: type, predicate: predicate, anchor: anchor, limit: HKObjectQueryNoLimit) { _, samples, _, newAnchor, _ in
                 continuation.resume(returning: ((samples as? [HKCategorySample]) ?? [], newAnchor))
             }
             store.execute(query)

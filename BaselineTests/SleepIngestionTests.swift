@@ -100,6 +100,20 @@ struct SleepIngestionTests {
         #expect(nights.first?.date == wakeDay)
     }
 
+    @Test func exactlyNoonEndAssignsToNextRecoveryDay() throws {
+        // The window is half-open: an end of exactly 12:00:00 belongs to the NEXT recovery day
+        // (>= noon, not > noon), so no sample can ever fall into two windows.
+        let samples = [Fix.watch(.core, Fix.date(2026, 3, 10, 11, 0), Fix.date(2026, 3, 10, 12, 0))]
+        let nights = Engine.nights(from: samples, context: settledContext)
+        #expect(nights.count == 1)
+        #expect(nights.first?.date == wakeDay)
+
+        // One second before noon stays on the same day.
+        let beforeNoon = [Fix.watch(.core, Fix.date(2026, 3, 10, 11, 0), Fix.date(2026, 3, 10, 11, 59, 59))]
+        let earlier = Engine.nights(from: beforeNoon, context: settledContext)
+        #expect(earlier.first?.date == Fix.calendar.startOfDay(for: Fix.date(2026, 3, 10)))
+    }
+
     // MARK: - AC-3: multi-source precedence
 
     private var phoneGeneric: SleepSample {
@@ -166,14 +180,45 @@ struct SleepIngestionTests {
     }
 
     @Test func stageIntervalsAreNeverMergedAcrossSources() throws {
-        // All three sources overlap; the canonical night must contain exactly one source's
-        // intervals — the same 8 the watch produces alone (the never-merge negative assertion).
+        // All three sources overlap. The never-merge assertion is on timeline CONTENT, not
+        // labels: the canonical timeline must be identical to the watch-only timeline, so a
+        // resolver that blended sources and then relabeled the intervals with the winner's
+        // source (or leaked losing spans into the numbers) fails here.
+        let watchOnly = try #require(Engine.night(
+            for: wakeDay, from: Fix.stagedWatchNight(bedtime: bedtime), context: settledContext))
         let samples = Fix.stagedWatchNight(bedtime: bedtime) + ouraStaged + [phoneGeneric]
         let night = try #require(Engine.night(for: wakeDay, from: samples, context: settledContext))
 
-        let intervals = night.episodes.flatMap(\.intervals)
-        #expect(Set(intervals.map(\.source)) == [.healthKit(bundleID: Fix.watchBundle)])
-        #expect(intervals.count == 8)
+        #expect(night.episodes.flatMap(\.intervals) == watchOnly.episodes.flatMap(\.intervals))
+        #expect(night.sourceFingerprint == watchOnly.sourceFingerprint)   // composed of watch samples only
+        #expect(night.asleepHours == watchOnly.asleepHours)
+        let asleepHours = try #require(night.asleepHours)
+        #expect(abs(asleepHours - (7.0 + 25.0 / 60.0)) < 0.0001)          // pinned, not just relative
+    }
+
+    @Test func thirdPartyStagedBeatsLongerPhoneGeneric() throws {
+        // No Watch in the mix: tier 3 (single staged source) must beat tier 4 (generic asleep)
+        // even though the generic phone span records MORE sleep (8 h 05 m vs 7 h 40 m).
+        let samples = ouraStaged + [phoneGeneric]
+        let night = try #require(Engine.night(for: wakeDay, from: samples, context: settledContext))
+
+        #expect(night.resolvedSource == .healthKit(bundleID: Fix.ouraBundle))
+        let ouraOnly = try #require(Engine.night(for: wakeDay, from: ouraStaged, context: settledContext))
+        #expect(night.episodes.flatMap(\.intervals) == ouraOnly.episodes.flatMap(\.intervals))
+    }
+
+    @Test func deviceSourceBeatsCoexistingManualEntry() throws {
+        // Tier 4 (device-recorded generic asleep) must beat tier 5 (manual entry) even though
+        // the user-entered span is longer.
+        let manual = SleepSample(
+            start: Fix.date(2026, 3, 10, 22, 0), end: Fix.date(2026, 3, 11, 8, 0),
+            kind: .asleepUnspecified, sourceBundleID: Fix.healthAppBundle, isUserEntered: true)
+        let night = try #require(Engine.night(for: wakeDay, from: [phoneGeneric, manual], context: settledContext))
+
+        #expect(night.resolvedSource == .healthKit(bundleID: Fix.phoneBundle))
+        let phoneOnly = try #require(Engine.night(for: wakeDay, from: [phoneGeneric], context: settledContext))
+        #expect(night.episodes.flatMap(\.intervals) == phoneOnly.episodes.flatMap(\.intervals))
+        #expect(night.asleepHours == phoneOnly.asleepHours)
     }
 
     // MARK: - AC-4: fingerprint determinism
@@ -188,8 +233,11 @@ struct SleepIngestionTests {
         #expect(first.sourceFingerprint == second.sourceFingerprint)
         #expect(!first.sourceFingerprint.isEmpty)
 
+        // Fixed non-identity permutation (a rotation) — no uncontrolled randomness in tests.
         let samples = Fix.stagedWatchNight(bedtime: bedtime)
-        #expect(Engine.fingerprint(of: samples) == Engine.fingerprint(of: samples.shuffled()))
+        let rotated = Array(samples.dropFirst()) + [samples[0]]
+        #expect(rotated != samples)
+        #expect(Engine.fingerprint(of: samples) == Engine.fingerprint(of: rotated))
     }
 
     @Test func fingerprintChangesWhenAComposingSampleChanges() throws {
@@ -317,15 +365,20 @@ struct SleepIngestionTests {
     }
 }
 
-/// AC-7's error/offline row: unauthorized HealthKit reads come back as empty data, never a throw.
-/// (In the test host, sleep read access is never requested, and HealthKit reports denial and
-/// absence identically — as no samples.)
+/// SMOKE ONLY — environment-coupled by nature: it exercises the live simulator `HKHealthStore`,
+/// where denial and absence are indistinguishable, and a simulator with seeded sleep data could
+/// legitimately return samples. The *primary* AC-7 denied/unavailable evidence is the fixture
+/// path (`SleepBackfillTests.emptyProviderProducesNoNightsAndDoesNotThrow` plus the engine
+/// boundary tests above); this suite only proves the real HK calls have the no-throw,
+/// empty-not-error shape.
 @MainActor
-struct HealthServiceSleepAccessTests {
+struct HealthServiceSleepSmokeTests {
 
     @Test func unauthorizedSleepQueriesReturnEmptyWithoutThrowing() async throws {
-        let defaults = try #require(UserDefaults(suiteName: "HealthServiceSleepAccessTests"))
-        defaults.removePersistentDomain(forName: "HealthServiceSleepAccessTests")
+        let suiteName = "HealthServiceSleepSmokeTests"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }   // leave nothing behind
         let service = HealthService(defaults: defaults)
 
         let window = DateInterval(start: SleepFixtures.date(2026, 3, 10, 12, 0),
@@ -333,7 +386,7 @@ struct HealthServiceSleepAccessTests {
         let samples = await service.sleepSamples(in: window)
         #expect(samples.isEmpty)
 
-        let delta = await service.sleepSampleDelta(after: nil)
+        let delta = await service.sleepSampleDelta(after: nil, startingFrom: SleepFixtures.date(2026, 3, 1))
         #expect(delta.samples.isEmpty)
     }
 }

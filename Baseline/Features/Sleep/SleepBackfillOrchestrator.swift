@@ -58,6 +58,9 @@ final class SleepBackfillOrchestrator {
     func continueBackfill() async {
         var next = Self.initialBatchNightCount
         while next < Self.targetNightCount {
+            // Cooperative cancellation between batches: when the owning Task goes away the
+            // import must stop. The flag stays false so a later run resumes (idempotently).
+            guard !Task.isCancelled else { return }
             let batchEnd = min(next + Self.backgroundBatchNightCount, Self.targetNightCount)
             await ingest(nightOffsets: next..<batchEnd)
             next = batchEnd
@@ -67,11 +70,19 @@ final class SleepBackfillOrchestrator {
 
     /// One anchored-query step: re-resolve every night the delta touches, then advance the
     /// persisted cursor. A delta that doesn't change a night's fingerprint writes nothing.
+    /// Bounded both ways: the query starts at the 90-night window, and — defense in depth,
+    /// should a provider return older samples anyway — touched dates outside that window are
+    /// skipped rather than materialized.
     func syncDelta() async {
-        let delta = await provider.sleepSampleDelta(after: cursorStore.cursor(forKey: Self.sleepAnalysisCursorKey))
+        let oldestTargetDate = nightDate(offset: Self.targetNightCount - 1)
+        let delta = await provider.sleepSampleDelta(
+            after: cursorStore.cursor(forKey: Self.sleepAnalysisCursorKey),
+            startingFrom: SleepIngestionEngine.nightWindow(for: oldestTargetDate, calendar: calendar).start
+        )
         let touchedDates = Set(delta.samples.map {
             SleepIngestionEngine.nightDate(containing: $0.end, calendar: calendar)
         })
+        .filter { $0 >= oldestTargetDate }
         let context = makeContext()
         for date in touchedDates.sorted() {
             let window = SleepIngestionEngine.nightWindow(for: date, calendar: calendar)

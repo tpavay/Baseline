@@ -212,8 +212,14 @@ enum SleepIngestionEngine {
                 samples: group,
                 asleepSeconds: asleep,
                 hasStages: group.contains { $0.kind.isStagedSleep },
-                // Watch staged data announces itself by device model; Apple's own sleep source
-                // bundle prefix covers samples recorded without device metadata.
+                // WHY this breadth: tier 2 is "staged data from the athlete's watch". Device
+                // model "Watch" is the reliable Apple Watch marker; the com.apple.health bundle
+                // prefix additionally catches Apple-written samples that arrive without device
+                // metadata (iPhone-only Apple sleep is unstaged today, so the prefix can't
+                // false-positive into this *staged* tier). A third-party watch app writing
+                // staged data also ranks tier 2 via the "Watch" model — deliberately: it is
+                // watch staged data, and ranking it one tier above other staged sources is
+                // harmless.
                 isAppleWatch: group.contains { $0.deviceModel == "Watch" } || bundleID.hasPrefix("com.apple.health"),
                 bundleID: bundleID
             )

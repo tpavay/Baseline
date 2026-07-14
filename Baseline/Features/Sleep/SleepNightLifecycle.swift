@@ -4,6 +4,13 @@ import Foundation
 /// after wake, so a fetch made too soon sees a partial night. The rule: a sync happening at least
 /// `interval` after wake has had time to receive the full night — anything earlier is provisional.
 /// Injectable so tests (and future tuning) control it without touching the engine.
+///
+/// `complete` means "stable as of the last sync", NOT "the night's window has closed": the rule
+/// keys on the *primary episode's* wake time, so a night whose only episode ends early (an
+/// evening nap-only night, or split sleep whose first block ends before midnight) can read
+/// `complete` while its noon-to-noon window is still open. That's safe — later samples in the
+/// same window change the fingerprint and the night self-corrects to `revised` — but Slice 3+
+/// must not treat a `complete` night as final until its window has actually passed.
 struct SleepStabilizationRule: Equatable, Sendable {
     static let defaultInterval: TimeInterval = 2 * 60 * 60
 

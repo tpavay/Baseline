@@ -12,13 +12,15 @@ private final class FixtureSleepProvider: SleepSampleProviding {
     var samplesByNight: [Date: [SleepSample]] = [:]
     var pendingDelta = SleepSampleDelta(samples: [], cursor: nil)
     private(set) var receivedCursors: [Data?] = []
+    private(set) var receivedDeltaStarts: [Date] = []
 
     func sleepSamples(in window: DateInterval) async -> [SleepSample] {
         samplesByNight.values.flatMap { $0 }.filter { window.contains($0.end) }
     }
 
-    func sleepSampleDelta(after cursor: Data?) async -> SleepSampleDelta {
+    func sleepSampleDelta(after cursor: Data?, startingFrom start: Date) async -> SleepSampleDelta {
         receivedCursors.append(cursor)
+        receivedDeltaStarts.append(start)
         let delta = pendingDelta
         pendingDelta = SleepSampleDelta(samples: [], cursor: delta.cursor)
         return delta
@@ -206,8 +208,61 @@ struct SleepBackfillTests {
         #expect(cursors.cursor(forKey: SleepBackfillOrchestrator.sleepAnalysisCursorKey) == Data([8]))
     }
 
+    @Test func deltaOlderThanTargetWindowIsSkipped() async throws {
+        // History exists beyond the 90-night target (populateHistory seeds 120), so a missing
+        // skip WOULD materialize the old night and this test would catch it.
+        populateHistory()
+        let orchestrator = makeOrchestrator()
+        await orchestrator.importRecentNights()
+        await orchestrator.continueBackfill()
+        let writesAfterBackfill = store.upsertCount
+
+        // A delta lands for a night 100 days back — outside the engine's 90-night window.
+        let ancientDay = nightDate(offset: 100)
+        let awake = Fix.watch(
+            .awake,
+            Fix.calendar.date(bySettingHour: 3, minute: 0, second: 0, of: ancientDay)!,
+            Fix.calendar.date(bySettingHour: 3, minute: 10, second: 0, of: ancientDay)!)
+        provider.samplesByNight[ancientDay]?.append(awake)
+        provider.pendingDelta = SleepSampleDelta(samples: [awake], cursor: Data([9]))
+
+        await orchestrator.syncDelta()
+
+        #expect(store.night(for: ancientDay) == nil)        // never materialized
+        #expect(store.upsertCount == writesAfterBackfill)   // nothing rewritten
+        // The cursor still advances — the out-of-window delta is consumed, not replayed forever.
+        #expect(cursors.cursor(forKey: SleepBackfillOrchestrator.sleepAnalysisCursorKey) == Data([9]))
+        // And the anchored query itself was bounded to the 90-night window's start.
+        let expectedStart = SleepIngestionEngine.nightWindow(
+            for: nightDate(offset: SleepBackfillOrchestrator.targetNightCount - 1),
+            calendar: Fix.calendar
+        ).start
+        #expect(provider.receivedDeltaStarts.last == expectedStart)
+    }
+
+    @Test func cancelledBackfillStopsBetweenBatchesWithoutCompleting() async throws {
+        populateHistory()
+        let orchestrator = makeOrchestrator()
+        await orchestrator.importRecentNights()
+
+        // Cancel before the task body can run (we hold the main actor), so the cooperative
+        // check fires before the first background batch — deterministic, no timing.
+        let task = Task { await orchestrator.continueBackfill() }
+        task.cancel()
+        await task.value
+
+        #expect(!orchestrator.isBackfillComplete)
+        #expect(store.allNights().count == SleepBackfillOrchestrator.initialBatchNightCount)
+
+        // A later (uncancelled) run resumes and finishes the job.
+        await orchestrator.continueBackfill()
+        #expect(orchestrator.isBackfillComplete)
+        #expect(store.allNights().count == SleepBackfillOrchestrator.targetNightCount)
+    }
+
     @Test func emptyProviderProducesNoNightsAndDoesNotThrow() async throws {
-        // AC-7's offline/denied path at the orchestration level: no data → no nights, no crash.
+        // PRIMARY AC-7 denied/unavailable evidence: HealthKit reports denial as empty data, and
+        // this pins the whole pipeline's response to it — no nights, no writes, no crash.
         let orchestrator = makeOrchestrator()
 
         await orchestrator.importRecentNights()
