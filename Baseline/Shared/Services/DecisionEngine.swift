@@ -136,8 +136,12 @@ enum DecisionEngine {
 
     // MARK: - Sleep Engine seam tunables (Slice 4)
 
-    /// Deficit (hours short of need) at or above which the sleep cap fires — the need-relative
-    /// re-expression of the legacy `sleepHours < 4.5` rule (equivalent at the default 8 h need).
+    /// Deficit (hours short of need) at or above which the sleep cap fires. This is a **need-relative**
+    /// re-expression of the legacy `sleepHours < 4.5` rule: the cap fires at `asleep ≤ need − 3.5`.
+    /// The equivalence to the literal 4.5 h clock threshold holds exactly **only at the default 8 h
+    /// need** (8 − 3.5 = 4.5); at a user-set need ≠ 8 h the cap tracks the goal instead (e.g. a 9 h
+    /// need caps at ≤ 5.5 h), which is the intended goal-relative behavior — a short night is defined
+    /// against the athlete's own need, not a fixed clock value.
     private static let poorSleepDeficitHours = 3.5
     /// Sleep counts toward certainty (seam on) only when its evidence quality clears this bar —
     /// coverage ≥ 0.7 ∧ reliability ≥ 0.5, which the provider encodes into `sleepConfidence` (AC-3).

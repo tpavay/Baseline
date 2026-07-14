@@ -41,6 +41,24 @@ struct SleepEvidenceProviderTests {
         return try #require(Engine.night(for: wakeDay, from: Fix.simpleStagedNight(wakeDay: wakeDay), context: settled))
     }
 
+    /// A device (staged) night with a given short duration and NO history — score won't publish
+    /// (consistency needs ≥ 5 nights) but duration is observed, so the deficit still exists.
+    private func shortDeviceNight(wakeYear: Int, month: Int, day: Int, asleepHours: Double) -> SleepNight {
+        let source = SleepSource.healthKit(bundleID: Fix.watchBundle)
+        let bedtime = Fix.date(wakeYear, month, day - 1, 23, 0)
+        let wake = bedtime.addingTimeInterval(asleepHours * 3600)
+        let wakeDay = Fix.calendar.startOfDay(for: Fix.date(wakeYear, month, day))
+        let interval = SleepStageInterval(stage: .core, start: bedtime, end: wake, source: source)
+        let episode = SleepEpisode(id: UUID(), start: bedtime, end: wake, intervals: [interval], isPrimary: true, gaps: [])
+        return SleepNight(
+            id: UUID(), date: wakeDay, episodes: [episode], bedtime: bedtime, wakeTime: wake,
+            asleepHours: asleepHours, inBedHours: asleepHours, awakenings: 1, wasoMinutes: 5,
+            resolvedSource: source, analysisStatus: .complete, sourceFingerprint: "dev-short-\(day)",
+            composingSampleUUIDs: [], lastHealthKitSyncAt: nil, lastSampleEndDate: wake,
+            revision: 0, factsSchemaVersion: 1
+        )
+    }
+
     private func manualNight(wakeYear: Int, month: Int, day: Int, asleepHours: Double) -> SleepNight {
         let wakeDay = Fix.calendar.startOfDay(for: Fix.date(wakeYear, month, day))
         return SleepNight(
@@ -109,6 +127,56 @@ struct SleepEvidenceProviderTests {
     @Test func absentNightReturnsNil() {
         let provider = RepositorySleepEvidenceProvider(repository: repository)
         #expect(provider.sleepInputs(on: Fix.date(2026, 3, 11, 8, 0)) == nil)
+    }
+
+    // MARK: - Safety-cap: cold-start device night (score == nil) still caps
+
+    @Test func coldStartShortDeviceNightStillFiresPoorSleepCap() throws {
+        // A 4 h device night with NO history: consistency unavailable → score not published, but the
+        // duration is observed so the deficit exists. This must still reach the poorSleep SAFETY cap.
+        repository.replaceCanonical(night: shortDeviceNight(wakeYear: 2026, month: 3, day: 11, asleepHours: 4.0))
+        let provider = RepositorySleepEvidenceProvider(repository: repository)   // need 8 h
+        let engine = try #require(provider.sleepInputs(on: Fix.date(2026, 3, 11, 8, 0)))
+
+        // Provider: no published score, but a real deficit (8 − 4 = 4 h).
+        #expect(engine.sleepScore == nil)
+        #expect(abs(try #require(engine.sleepDurationDeficit) - 4.0) < 0.001)
+
+        // Seam routes the device night's duration/deficit through even without a score…
+        let seam = SleepDecisionSeam.resolve(.engine(engine), manual: .none)
+        #expect(seam.sleepScore == nil)          // no renormalized score published
+        #expect(seam.sleepConfidence == nil)     // no certainty credit
+        #expect(seam.sleepHours == 4.0)
+        #expect(seam.snapshot == nil)            // nothing decided from a published score
+
+        // …and DecisionEngine fires the poorSleep cap for the short cold-start night.
+        var inputs = DecisionEngine.Inputs()
+        inputs.applySleep(seam)
+        let decision = DecisionEngine.compute(inputs)
+        #expect(decision.appliedCaps.contains { $0.reason == "poorSleep" && $0.cap == 55 })
+        // And sleep earns no certainty credit (score nil → not counted).
+        #expect(decision.certainty == .low)
+    }
+
+    @Test func manualShortNightStillPublishesNothingAndFallsBack() throws {
+        // Regression guard for AC-4/AC-2b: a manual short night must feed NO cap signal and take the
+        // subjective fallback — unchanged by the cold-start device fix above.
+        repository.replaceCanonical(night: manualNight(wakeYear: 2026, month: 3, day: 11, asleepHours: 4.0))
+        let provider = RepositorySleepEvidenceProvider(repository: repository)
+        let engine = try #require(provider.sleepInputs(on: Fix.date(2026, 3, 11, 8, 0)))
+
+        // Manual → no score, no deficit (device-gated in SleepEngine).
+        #expect(engine.sleepScore == nil)
+        #expect(engine.sleepDurationDeficit == nil)
+
+        let seam = SleepDecisionSeam.resolve(.engine(engine), manual: .init(hours: nil, thumbsUp: false))
+        #expect(seam.sleepScore == 35)          // subjective fallback, not an engine signal
+        #expect(seam.sleepHours == nil)
+        #expect(seam.sleepDurationDeficit == nil)
+
+        var inputs = DecisionEngine.Inputs()
+        inputs.applySleep(seam)
+        #expect(!DecisionEngine.compute(inputs).appliedCaps.contains { $0.reason == "poorSleep" })
     }
 
     // MARK: - AC-4: quality→confidence mapping (unit level)

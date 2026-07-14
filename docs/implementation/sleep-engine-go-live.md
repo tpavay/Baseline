@@ -69,6 +69,23 @@ Once injected:
   quality clears the bar (coverage ≥ 0.7 ∧ reliability ≥ 0.5).
 - A manual/`.none` night (no published score) falls back to the existing subjective 85/35 path — the
   single manual route (AC-4).
+
+### Seam-on cap behavior to verify at go-live
+
+Two properties are only exercised once a provider is injected, so include them in the on-device
+go-live check:
+
+- **Need-relative `poorSleep` cap.** The cap threshold is need-relative — it fires at
+  `asleep ≤ need − 3.5 h`, not at a literal `< 4.5 h`. The equivalence to the old clock threshold
+  holds exactly only at the default 8 h need; a user-set need moves the cap with the goal (a 9 h need
+  caps a night at ≤ 5.5 h). Verify a short night against a *non-default* need caps as expected.
+- **Cold-start / low-coverage device nights still cap.** A device-sourced night whose score is not
+  published (cold start with < 5 nights of history, or a low-coverage night) does **not** publish a
+  score, but it still feeds `sleepHours` + `sleepDurationDeficit` to the decision so the `poorSleep`
+  training-safety cap fires — matching what the pre-slice `health.lastNightSleep()` path did.
+  `sleepScore`/`sleepConfidence` stay nil (no renormalized score, no certainty credit), and no
+  decision snapshot is frozen. Verify a genuinely short cold-start device night is still capped.
+  (A manual/`.none` night remains the sole subjective-fallback route and feeds no cap signal.)
 - The exact `SleepAnalysis` used is frozen onto `ReadinessEntry.sleepDecisionSnapshot` (with its
   aggregation/score versions), and `sleepScore`/`sleepConfidence` are recorded (AC-7).
 - A conversational sleep override (`PlanAssembler`, "I slept 5 h") still wins over the automatic base
@@ -82,6 +99,14 @@ Do this as its own commit so the legacy path stays revertible until the engine p
 field.
 At that point `SleepDecisionSeam.Source.legacy` and the `health.lastNightSleep()` calls in
 `TodayEvidence`/`MorningReadinessScoreView` can also be removed.
+
+> **Parity caveat — re-verify seam-on readiness at this step.** `ReadinessScore.sleepScore` is the
+> shared leaf of *both* the live seam and the `MorningReadinessParityTests` reference helper. The
+> parity tests only proved **seam-off** equals pre-slice; they say nothing about the engine path.
+> Retiring this function moves both sides of that comparison at once, so the parity suite cannot catch
+> a seam-on regression here. Re-verify seam-on readiness end-to-end on-device (published-score night,
+> cold-start short device night → still capped, manual night → subjective fallback) as part of this
+> commit rather than relying on the parity tests.
 
 ## Parity & rollback
 

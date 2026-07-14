@@ -134,15 +134,37 @@ enum SleepDecisionSeam {
             return Result(sleepScore: ReadinessScore.sleepScore(hours: health.hours, efficiency: health.efficiency),
                           sleepHours: health.hours)
         case .engine(let engine):
-            // Score published (all components observed) → structured engine inputs + snapshot.
-            guard let engine, engine.sleepScore != nil else { return manualFallback(manual) }
-            return Result(sleepScore: engine.sleepScore,
-                          sleepHours: engine.sleepHours,
-                          sleepConfidence: engine.sleepConfidence,
-                          sleepDurationDeficit: engine.sleepDurationDeficit,
-                          sleepInterruptionBurden: engine.sleepInterruptionBurden,
-                          sleepScheduleShift: engine.sleepScheduleShift,
-                          snapshot: engine.snapshot)
+            guard let engine else { return manualFallback(manual) }
+            // Score published (all components observed) → full structured inputs + snapshot.
+            if engine.sleepScore != nil {
+                return Result(sleepScore: engine.sleepScore,
+                              sleepHours: engine.sleepHours,
+                              sleepConfidence: engine.sleepConfidence,
+                              sleepDurationDeficit: engine.sleepDurationDeficit,
+                              sleepInterruptionBurden: engine.sleepInterruptionBurden,
+                              sleepScheduleShift: engine.sleepScheduleShift,
+                              snapshot: engine.snapshot)
+            }
+            // Score NOT published, but a *device* night with an observed duration still contributes
+            // its duration/deficit so the `poorSleep` training-SAFETY cap can fire — a genuinely
+            // short cold-start (< 5 nights → no consistency) or low-coverage device night must not
+            // silently escape the cap the pre-slice `health.lastNightSleep()` path applied. The
+            // discriminator is source + duration-observed, NOT score presence: `durationDeficitHours`
+            // is non-nil only for a device-sourced night with asleep hours (`SleepEngine` gates it),
+            // so it is exactly that signal. `sleepScore` stays nil (no renormalized score) and
+            // `sleepConfidence` stays nil (no certainty credit without a published score); no snapshot
+            // is frozen (nothing was decided from a published score). A manual/`.none` night has a nil
+            // deficit and so falls through to the single subjective fallback below (AC-4 / AC-2b intact).
+            if engine.sleepDurationDeficit != nil {
+                return Result(sleepScore: nil,
+                              sleepHours: engine.sleepHours,
+                              sleepConfidence: nil,
+                              sleepDurationDeficit: engine.sleepDurationDeficit,
+                              sleepInterruptionBurden: engine.sleepInterruptionBurden,
+                              sleepScheduleShift: engine.sleepScheduleShift,
+                              snapshot: nil)
+            }
+            return manualFallback(manual)
         }
     }
 
