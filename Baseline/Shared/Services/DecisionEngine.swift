@@ -85,6 +85,16 @@ enum DecisionEngine {
         // Sleep
         var sleepScore: Double?     // 0–100 (see ReadinessScore.sleepScore)
         var sleepHours: Double?     // raw hours, for the poor-sleep cap
+        // Sleep — structured evidence from the Sleep Engine seam (Slice 4). All optional and
+        // defaulted so omitting them yields byte-identical `compute` output to the pre-slice engine
+        // (AC-1). Only `sleepDurationDeficit` (the deficit-based poorSleep cap, AC-2) and
+        // `sleepConfidence` (certainty gating, AC-3) affect compute today; `sleepInterruptionBurden`
+        // and `sleepScheduleShift` are carried for the decision snapshot and Slice 5 narration and
+        // never move the Slice 4 score.
+        var sleepConfidence: Double?        // certainty-eligibility from SleepEvidenceQuality (0…1)
+        var sleepDurationDeficit: Double?   // hours short of need; re-expresses the poorSleep cap
+        var sleepInterruptionBurden: Double? // normalized WASO burden 0…1 (carried; inert in Slice 4)
+        var sleepScheduleShift: Double?     // bedtime minutes vs rolling mean (carried; inert in Slice 4)
         // Subjective — oriented 1–5 (5 = most recovered)
         var energy: Double?
         var mood: Double?
@@ -99,11 +109,15 @@ enum DecisionEngine {
         init(lnRMSSD: Double? = nil, hrvBaseline: ReadinessScore.Baseline? = nil,
              restingHR: Double? = nil, rhrBaseline: ReadinessScore.Baseline? = nil,
              sleepScore: Double? = nil, sleepHours: Double? = nil,
+             sleepConfidence: Double? = nil, sleepDurationDeficit: Double? = nil,
+             sleepInterruptionBurden: Double? = nil, sleepScheduleShift: Double? = nil,
              energy: Double? = nil, mood: Double? = nil, stress: Double? = nil, soreness: Double? = nil,
              loadRatio: Double? = nil, illness: Bool? = nil, constraints: [Constraint] = []) {
             self.lnRMSSD = lnRMSSD; self.hrvBaseline = hrvBaseline
             self.restingHR = restingHR; self.rhrBaseline = rhrBaseline
             self.sleepScore = sleepScore; self.sleepHours = sleepHours
+            self.sleepConfidence = sleepConfidence; self.sleepDurationDeficit = sleepDurationDeficit
+            self.sleepInterruptionBurden = sleepInterruptionBurden; self.sleepScheduleShift = sleepScheduleShift
             self.energy = energy; self.mood = mood; self.stress = stress; self.soreness = soreness
             self.loadRatio = loadRatio; self.illness = illness; self.constraints = constraints
         }
@@ -119,6 +133,15 @@ enum DecisionEngine {
     private static let coldWeights: [Domain: Double] = [
         .subjective: 0.40, .autonomic: 0.20, .trainingLoad: 0.20, .sleep: 0.10, .musculoskeletal: 0.10,
     ]
+
+    // MARK: - Sleep Engine seam tunables (Slice 4)
+
+    /// Deficit (hours short of need) at or above which the sleep cap fires — the need-relative
+    /// re-expression of the legacy `sleepHours < 4.5` rule (equivalent at the default 8 h need).
+    private static let poorSleepDeficitHours = 3.5
+    /// Sleep counts toward certainty (seam on) only when its evidence quality clears this bar —
+    /// coverage ≥ 0.7 ∧ reliability ≥ 0.5, which the provider encodes into `sleepConfidence` (AC-3).
+    private static let sleepCertaintyConfidenceMin = 0.5
 
     // MARK: - Compute
 
@@ -243,7 +266,15 @@ enum DecisionEngine {
         if let e = i.energy, e <= 2 { add(.subjective, 60, "veryLowEnergy") }
         if let st = i.stress, st <= 2 { add(.subjective, 70, "highStress") }
         if i.illness == true { add(.autonomic, 40, "illness") }   // sick → recovery, never intensity
-        if let h = i.sleepHours, h < 4.5 { add(.sleep, 55, "poorSleep") }
+        // poorSleep cap: when the Sleep Engine supplies a structured duration deficit, re-express the
+        // cap on it (deficit ≥ threshold, the need-relative equivalent of the legacy <4.5 h at an 8 h
+        // need); otherwise the legacy raw-hours rule still fires. Exactly one path applies — a nil
+        // deficit (seam off) never double-caps with the hours rule (AC-2).
+        if let deficit = i.sleepDurationDeficit {
+            if deficit >= poorSleepDeficitHours { add(.sleep, 55, "poorSleep") }
+        } else if let h = i.sleepHours, h < 4.5 {
+            add(.sleep, 55, "poorSleep")
+        }
         // Genuine suppression = low HRV AND elevated resting HR (both z negative). The opposite
         // case — low HRV with a *low* RHR — is vagal saturation, softened by the guard, not capped.
         if let hz = hrvZ, hz < -0.5, let rz = rhrZ, rz < -0.75 { add(.autonomic, 50, "autonomicSuppressed") }
@@ -263,11 +294,19 @@ enum DecisionEngine {
         var points = 0
         if i.lnRMSSD != nil { points += 1 }
         if i.restingHR != nil { points += 1 }
-        if i.sleepScore != nil { points += 1 }
+        if i.sleepScore != nil, sleepCountsTowardCertainty(i) { points += 1 }
         if i.energy != nil || i.mood != nil || i.stress != nil || i.soreness != nil { points += 1 }
         if i.loadRatio != nil { points += 1 }
         if !calibrating { points += 1 }                 // an established personal baseline
         return points >= 5 ? .high : (points >= 3 ? .medium : .low)
+    }
+
+    /// Seam off (`sleepConfidence == nil`) preserves the pre-slice rule exactly: a present sleep
+    /// score counts toward certainty. Seam on: the score counts only when its evidence quality
+    /// cleared the bar (coverage ≥ 0.7 ∧ reliability ≥ 0.5, encoded in `sleepConfidence` — AC-3).
+    private static func sleepCountsTowardCertainty(_ i: Inputs) -> Bool {
+        guard let confidence = i.sleepConfidence else { return true }
+        return confidence >= sleepCertaintyConfidenceMin
     }
 
     // MARK: - Small helpers

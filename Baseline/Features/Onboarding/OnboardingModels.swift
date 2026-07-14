@@ -141,6 +141,13 @@ struct ReadinessConfig: Codable, Equatable, Sendable {
     var sleepEnabled = true
     var checkInEnabled = true
     var checkInComponents: Set<CheckInComponent> = [.soreness, .mood, .energy, .stress]
+    /// The athlete's sleep need/goal in hours (Profile-editable; default 8:00 — plan §2). Feeds the
+    /// Sleep Engine's goal-relative duration scoring and deficit. Optional-backed so configs
+    /// persisted before this field existed decode unchanged (a missing key stays nil → 8 h default).
+    var sleepNeedHours: Double?
+
+    /// Sleep need as a `Duration` for `SleepEngine.analyze(need:)`; 8 h when unset.
+    var sleepNeed: Duration { .seconds((sleepNeedHours ?? 8) * 3600) }
 
     /// At least one input is required for a valid score.
     var isValid: Bool { heartReadingEnabled || sleepEnabled || checkInEnabled }

@@ -20,6 +20,14 @@ enum PlanAssembler {
         if let hours = dailyContext.sleepHours {
             inputs.sleepHours = hours
             inputs.sleepScore = ReadinessScore.sleepScore(hours: hours)
+            // A conversational sleep report supersedes engine-derived structured evidence: clear the
+            // Sleep Engine fields so the (manual) `sleepHours` cap and legacy certainty rule govern,
+            // making the override behave exactly as pre-slice (AC-6). No-ops when the seam is off
+            // (these are already nil), so seam-off parity is untouched.
+            inputs.sleepDurationDeficit = nil
+            inputs.sleepInterruptionBurden = nil
+            inputs.sleepScheduleShift = nil
+            inputs.sleepConfidence = nil
         }
         inputs.energy = dailyContext.energy ?? inputs.energy
         inputs.mood = dailyContext.mood ?? inputs.mood
