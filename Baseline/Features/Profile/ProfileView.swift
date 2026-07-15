@@ -23,8 +23,13 @@ struct ProfileView: View {
                         group("Baseline protocol") {
                             row(icon: "circle.hexagongrid.fill", title: "Readiness Setup",
                                 subtitle: "Which inputs build your score", destination: .soon)
-                            row(icon: "waveform.path.ecg.rectangle.fill", title: "Heart Rate Zones",
-                                subtitle: "Karvonen / LTHR zones", destination: .soon)
+                            NavigationLink {
+                                HeartRateZoneSettingsView(store: HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears }))
+                            } label: {
+                                rowBody(icon: "waveform.path.ecg.rectangle.fill", title: "Heart Rate Zones",
+                                        subtitle: "Karvonen / LTHR zones", trailing: .chevron)
+                            }
+                            .buttonStyle(.plain)
                             NavigationLink { MeasurementsView() } label: {
                                 rowBody(icon: "dot.radiowaves.left.and.right", title: "Devices",
                                         subtitle: deviceSubtitle, trailing: .chevron)
