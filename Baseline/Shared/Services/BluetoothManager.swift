@@ -43,6 +43,11 @@ final class BluetoothManager: NSObject {
     private(set) var lnRmssd: Double?
     private(set) var batteryLevel: Int?
 
+    // Live monitoring (workout heart-rate zones) — additive, independent of the reading path.
+    private(set) var liveSample: HeartRateSample?
+    @ObservationIgnored var onLiveSample: ((HeartRateSample) -> Void)?
+    @ObservationIgnored private var liveActive = false
+
     // Created lazily: instantiating CBCentralManager triggers the system Bluetooth
     // permission prompt, so it must not exist until the athlete initiates a scan/reading.
     @ObservationIgnored private var central: CBCentralManager?
@@ -76,7 +81,7 @@ final class BluetoothManager: NSObject {
     /// Start ECG @ 130 Hz, 14-bit: [start, ECG, rate-TLV(130), resolution-TLV(14)].
     @ObservationIgnored private let pmdStartECG: [UInt8] = [0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00]
 
-    private enum Intent { case idle, scan, reading }
+    private enum Intent { case idle, scan, reading, live }
 
     override init() {
         super.init()
@@ -141,6 +146,42 @@ final class BluetoothManager: NSObject {
         disconnect()
     }
 
+    // MARK: - Live monitoring (workout heart-rate)
+
+    /// Begin streaming live BPM from the saved strap for workout zones. Subscribes to the standard
+    /// HR characteristic only — no PMD/ECG and no R-R/HRV math, so the reading path is untouched.
+    func startLiveMonitoring() {
+        liveSample = nil
+        liveActive = true
+        streaming = true
+        intent = .live
+        _ = ensureCentral()
+        execute()
+    }
+
+    /// Stop live streaming and drop the connection. The reading path is unaffected.
+    func stopLiveMonitoring() {
+        liveActive = false
+        streaming = false
+        intent = .idle
+        liveSample = nil
+        disconnect()
+    }
+
+    /// Subscribe to HR notifications for live monitoring — deliberately *without* starting the PMD
+    /// ECG stream (that is reading-only, gated on `readingActive`).
+    private func subscribeLive() {
+        guard streaming, let hrCharacteristic, let peripheral else { return }
+        peripheral.setNotifyValue(true, for: hrCharacteristic)
+    }
+
+    /// Parse a live `0x2A37` payload into a `HeartRateSample`, publish it, and notify any observer.
+    private func ingestLive(_ data: Data) {
+        guard let sample = HeartRateSample.parse(data) else { return }
+        liveSample = sample
+        onLiveSample?(sample)               // invoked on the main queue; see LiveHeartRateSource
+    }
+
     // MARK: - Core (deferred until powered on)
 
     private func execute() {
@@ -154,6 +195,14 @@ final class BluetoothManager: NSObject {
         case .reading:
             if let id = connectedDeviceID, id == savedDeviceID, peripheral != nil {
                 subscribe()
+            } else if let id = savedDeviceID {
+                connectByID(id, stream: true)
+            } else {
+                startScanNow()                    // no saved strap → first found is saved
+            }
+        case .live:
+            if let id = connectedDeviceID, id == savedDeviceID, peripheral != nil {
+                subscribeLive()                   // reuse the live connection, HR notifications only
             } else if let id = savedDeviceID {
                 connectByID(id, stream: true)
             } else {
@@ -229,6 +278,12 @@ extension BluetoothManager: HeartSignalSource {
     var hasSignal: Bool { !rrIntervals.isEmpty }
 }
 
+// MARK: - LiveHeartRateSource
+
+extension BluetoothManager: LiveHeartRateSource {
+    var connectionStatus: Status { status }
+}
+
 // MARK: - CoreBluetooth delegates
 
 extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
@@ -255,8 +310,8 @@ extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
             discovered.append(device)
         }
 
-        // Auto-connect only during a reading: the saved strap, or the first found if none saved.
-        guard intent == .reading else { return }
+        // Auto-connect only during a reading or live session: the saved strap, or the first found.
+        guard intent == .reading || intent == .live else { return }
         if let saved = savedDeviceID {
             if peripheral.identifier == saved { central.stopScan(); connect(peripheral) }
         } else {
@@ -320,7 +375,7 @@ extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
     // When the raw-ECG data channel is live, kick off the ECG stream (only during a reading).
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        if characteristic.uuid == pmdDataUUID, characteristic.isNotifying, streaming, let pmdControl {
+        if characteristic.uuid == pmdDataUUID, characteristic.isNotifying, readingActive, let pmdControl {
             peripheral.writeValue(Data(pmdStartECG), for: pmdControl, type: .withResponse)
         }
     }
@@ -332,7 +387,7 @@ extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
         case batteryLevelChar:
             batteryLevel = data.first.map(Int.init)
         case hrMeasurement:
-            ingest(data)
+            if intent == .live { ingestLive(data) } else { ingest(data) }
         case pmdDataUUID:
             parsePMDFrame([UInt8](data))
         case pmdControlUUID:
