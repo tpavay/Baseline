@@ -254,7 +254,9 @@ struct SleepTimelineChart: View {
     }
 }
 
-/// Diagonal hatching used to mark tracking gaps over the sleep track.
+/// Diagonal hatching used to mark tracking gaps over the sleep track. Clipped to its own bounds so
+/// the diagonal lines can never spill past the true gap width onto adjacent real stage bands (a
+/// data-honesty requirement: a 20-min gap must look like 20 minutes, not longer).
 private struct GapHatch: View {
     var body: some View {
         Rectangle()
@@ -273,6 +275,7 @@ private struct GapHatch: View {
                     .stroke(BaselineColor.textFaint.opacity(0.6), lineWidth: 1)
                 }
             )
+            .clipped()
     }
 }
 

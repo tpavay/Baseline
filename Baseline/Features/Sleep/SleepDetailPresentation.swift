@@ -30,6 +30,9 @@ struct SleepDetailPresentation: Equatable {
     enum Headline: Equatable {
         case score(Int)
         case partial(observed: Int, possible: Int, coveragePercent: Int)
+        /// Nothing was scorable (manual entry, or a source that can't be scored) — lead with the raw
+        /// evidence (duration), never a "0 of 0" numeral that reads as a zero score (AC-3).
+        case notScored(duration: String?, caption: String)
     }
 
     struct Badge: Equatable {
@@ -54,6 +57,7 @@ struct SleepDetailPresentation: Equatable {
     }
 
     struct StageEvidenceRow: Equatable, Identifiable {
+        var stage: SleepStage     // carried so the view colors from the token, not a label string
         var label: String
         var duration: String
         var share: String         // "27% of sleep"
@@ -93,7 +97,7 @@ struct SleepDetailPresentation: Equatable {
          decision: DecisionEngine.Result? = nil,
          resolvedSource: SleepSource = .none,
          lastSyncAt: Date? = nil) {
-        self.headline = Self.headline(analysis)
+        self.headline = Self.headline(analysis, resolvedSource: resolvedSource)
         self.badge = Self.badge(analysis, resolvedSource: resolvedSource)
         self.stats = Self.stats(analysis)
         self.components = Self.components(analysis)
@@ -108,8 +112,16 @@ struct SleepDetailPresentation: Equatable {
 
     // MARK: - Sections
 
-    private static func headline(_ a: SleepAnalysis) -> Headline {
+    private static func headline(_ a: SleepAnalysis, resolvedSource: SleepSource) -> Headline {
         if let score = a.score { return .score(score) }
+        // Nothing scorable (manual, or a source with no scorable component): a "0 of 0 pts" numeral
+        // would read as a zero score, so lead with the raw evidence instead (AC-3).
+        if a.possiblePoints == 0 {
+            let caption: String
+            if case .manual = resolvedSource { caption = "Manual entry · not scored" }
+            else { caption = "Not scored" }
+            return .notScored(duration: a.asleepHours.map(SleepFormat.hours), caption: caption)
+        }
         return .partial(observed: a.observedPoints, possible: a.possiblePoints,
                         coveragePercent: Int((a.quality.coverage * 100).rounded()))
     }
@@ -140,8 +152,10 @@ struct SleepDetailPresentation: Equatable {
         var rows: [Stat] = []
         rows.append(Stat(label: "Time asleep", value: a.asleepHours.map(SleepFormat.hours) ?? "Not observed"))
         if let waso = a.wasoMinutes {
-            let awakenings = a.awakenings.map { " · \($0) awakening\($0 == 1 ? "" : "s")" } ?? ""
-            rows.append(Stat(label: "Awake in bed", value: SleepFormat.minutes(waso) + awakenings))
+            // Short tokens only — the stat sits in a narrow column, so no long word ("awakenings")
+            // that would break mid-word at large Dynamic Type.
+            let wakeups = a.awakenings.map { " · \($0)×" } ?? ""
+            rows.append(Stat(label: "Awake in bed", value: SleepFormat.minutes(waso) + wakeups))
         }
         let gap = a.additionalEvidence.gapMinutes
         if gap >= 1 { rows.append(Stat(label: "Tracking gap", value: SleepFormat.minutes(gap))) }
@@ -165,11 +179,17 @@ struct SleepDetailPresentation: Equatable {
         }
     }
 
+    /// Empty when the source carries no stage detail — the view then shows a single empty-state line
+    /// instead of three "0 min · 0%" rows that would read as a measured zero.
     private static func stageEvidence(_ e: SleepStageEvidence) -> [StageEvidenceRow] {
-        [("REM", e.remMinutes, e.remFraction),
-         ("Deep", e.deepMinutes, e.deepFraction),
-         ("Core", e.coreMinutes, e.coreFraction)].map { label, minutes, fraction in
-            StageEvidenceRow(label: label,
+        let rows: [(SleepStage, String, Double, Double)] = [
+            (.rem, "REM", e.remMinutes, e.remFraction),
+            (.deep, "Deep", e.deepMinutes, e.deepFraction),
+            (.core, "Core", e.coreMinutes, e.coreFraction),
+        ]
+        guard rows.contains(where: { $0.2 > 0 }) else { return [] }
+        return rows.map { stage, label, minutes, fraction in
+            StageEvidenceRow(stage: stage, label: label,
                              duration: SleepFormat.minutes(minutes),
                              share: "\(Int((fraction * 100).rounded()))% of sleep",
                              fraction: fraction)

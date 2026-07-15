@@ -77,7 +77,7 @@ struct SleepDetailPresentationTests {
     @Test func statsIncludeAsleepAwakeAndGap() {
         let p = SleepDetailPresentation(analysis: analysis(score: 84, wasoMinutes: 15, awakenings: 2, gapMinutes: 20))
         #expect(p.stats.contains { $0.label == "Time asleep" })
-        #expect(p.stats.contains { $0.label == "Awake in bed" && $0.value.contains("2 awakenings") })
+        #expect(p.stats.contains { $0.label == "Awake in bed" && $0.value.contains("2×") })
         #expect(p.stats.contains { $0.label == "Tracking gap" && $0.value == "20 min" })
     }
 
@@ -107,16 +107,30 @@ struct SleepDetailPresentationTests {
 
     // MARK: - Manual night (AC-3) — low reliability
 
-    @Test func manualNightIsLowReliability() {
+    @Test func manualNightIsLowReliabilityAndNotScored() {
         let p = SleepDetailPresentation(analysis: analysis(score: nil, observed: 0, possible: 0,
-                                                           reliability: 0.3),
+                                                           asleepHours: 7.25, reliability: 0.3),
                                         resolvedSource: .manual)
         #expect(p.badge.reliability == "Low reliability (manual entry)")
-        if case .partial(let o, let poss, _) = p.headline {
-            #expect(o == 0)
-            #expect(poss == 0)
+        // possiblePoints == 0 must NOT read as a "0 of 0 pts" numeral or a score (AC-3): lead with the
+        // observed duration and an honest "not scored" caption.
+        guard case .notScored(let duration, let caption) = p.headline else {
+            Issue.record("manual night must render the not-scored/duration headline, got \(p.headline)")
+            return
+        }
+        #expect(duration != nil)
+        #expect(caption == "Manual entry · not scored")
+    }
+
+    @Test func zeroPossiblePointsNeverShowsPartialOrScore() {
+        // A non-manual source with nothing scorable also collapses to the not-scored headline.
+        let p = SleepDetailPresentation(analysis: analysis(score: nil, observed: 0, possible: 0,
+                                                           asleepHours: 6.5),
+                                        resolvedSource: .healthKit(bundleID: "generic"))
+        if case .notScored(_, let caption) = p.headline {
+            #expect(caption == "Not scored")
         } else {
-            Issue.record("manual night must not show a fabricated score")
+            Issue.record("possiblePoints == 0 must be .notScored, got \(p.headline)")
         }
     }
 

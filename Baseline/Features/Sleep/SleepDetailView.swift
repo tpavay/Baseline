@@ -13,11 +13,19 @@ struct SleepDetailView: View {
     let analysis: SleepAnalysis
     var decision: DecisionEngine.Result?
 
-    private var model: SleepDetailPresentation {
-        SleepDetailPresentation(analysis: analysis,
-                                decision: decision,
-                                resolvedSource: night.resolvedSource,
-                                lastSyncAt: night.lastHealthKitSyncAt)
+    /// Built once when the view value is created, not on every property read — the mapping runs
+    /// `SleepInsights.rules` + all formatting, so rebuilding it ~10× per body pass would be wasteful
+    /// (house rule: expensive derived state outside `body`).
+    private let model: SleepDetailPresentation
+
+    init(night: SleepNight, analysis: SleepAnalysis, decision: DecisionEngine.Result? = nil) {
+        self.night = night
+        self.analysis = analysis
+        self.decision = decision
+        self.model = SleepDetailPresentation(analysis: analysis,
+                                             decision: decision,
+                                             resolvedSource: night.resolvedSource,
+                                             lastSyncAt: night.lastHealthKitSyncAt)
     }
 
     var body: some View {
@@ -77,6 +85,14 @@ struct SleepDetailView: View {
                     .font(.system(size: 13)).foregroundStyle(BaselineColor.textMid)
             }
             .accessibilityLabel("\(observed) of \(possible) possible points observed, \(coverage) percent coverage. Not enough evidence for a full score.")
+        case .notScored(let duration, let caption):
+            VStack(alignment: .leading, spacing: 2) {
+                Text(duration ?? "No sleep recorded")
+                    .font(.bMono(duration == nil ? 24 : 44, .bold)).foregroundStyle(BaselineColor.textHi)
+                    .fixedSize(horizontal: false, vertical: true)
+                InstrumentLabel(caption)
+            }
+            .accessibilityLabel(duration.map { "\($0) asleep, \(caption)" } ?? caption)
         }
     }
 
@@ -120,8 +136,9 @@ struct SleepDetailView: View {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(model.stats) { stat in
                     VStack(alignment: .leading, spacing: 4) {
+                        // One line, scaled to fit the narrow column, so a value never breaks mid-word.
                         Text(stat.value).font(.bMono(18, .bold)).foregroundStyle(BaselineColor.textHi)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(1).minimumScaleFactor(0.6)
                         InstrumentLabel(stat.label, tracking: 1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -168,23 +185,29 @@ struct SleepDetailView: View {
                 Image(systemName: "waveform.path").font(.system(size: 12)).foregroundStyle(BaselineColor.sleepREM)
                 InstrumentLabel("Sleep stages", color: BaselineColor.sleepREM)
             }
-            VStack(spacing: 10) {
-                ForEach(model.stageEvidence) { row in
-                    HStack {
-                        RoundedRectangle(cornerRadius: 3).fill(stageColor(row.label)).frame(width: 12, height: 12)
-                        Text(row.label).font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textHi)
-                        Spacer()
-                        Text(row.duration).font(.bMono(13, .bold)).foregroundStyle(BaselineColor.textMid)
-                        Text(row.share).font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
-                            .frame(width: 90, alignment: .trailing)
+            if model.stageEvidence.isEmpty {
+                Text("No stage detail from this source.")
+                    .font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(model.stageEvidence) { row in
+                        HStack {
+                            RoundedRectangle(cornerRadius: 3).fill(row.stage.color).frame(width: 12, height: 12)
+                            Text(row.label).font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textHi)
+                            Spacer()
+                            Text(row.duration).font(.bMono(13, .bold)).foregroundStyle(BaselineColor.textMid)
+                            Text(row.share).font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+                                .frame(width: 90, alignment: .trailing)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(row.label): \(row.duration), \(row.share)")
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(row.label): \(row.duration), \(row.share)")
                 }
+                Text(model.stageEvidenceCaption)
+                    .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(model.stageEvidenceCaption)
-                .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -194,15 +217,6 @@ struct SleepDetailView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(BaselineColor.sleepCore.opacity(0.4), lineWidth: 1))
         )
-    }
-
-    private func stageColor(_ label: String) -> Color {
-        switch label {
-        case "REM": BaselineColor.sleepREM
-        case "Deep": BaselineColor.sleepDeep
-        case "Core": BaselineColor.sleepCore
-        default: BaselineColor.sleepUnspecified
-        }
     }
 
     // MARK: - Comparisons + flags
