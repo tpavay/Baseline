@@ -8,6 +8,7 @@ import Testing
 /// The BLE connection lifecycle needs real hardware, so this pins the pure parse seam that the new
 /// `.live` intent depends on; the full reading suite (HRVTests, ReadingSessionTests) staying green
 /// proves the reading path is undisturbed.
+@MainActor
 struct BluetoothManagerLiveTests {
 
     // MARK: - BPM value format
@@ -64,5 +65,58 @@ struct BluetoothManagerLiveTests {
         let live = HeartRateSample.parse(data)
         #expect(live?.bpm == 60)
         #expect(live?.sensorContact == .unsupported)   // bit2 clear in 0x10
+    }
+
+    // MARK: - Routing decision (the AC-5 safety property)
+
+    /// Only `.live` streams to the live ingest; every other intent stays on the reading path. This
+    /// is the mutation killer: routing `.live` to reading would feed BPM notifications into the
+    /// R-R/HRV accumulator.
+    @Test func routeMapsOnlyLiveToLive() {
+        #expect(BluetoothManager.route(for: .live) == .live)
+        #expect(BluetoothManager.route(for: .reading) == .reading)
+        #expect(BluetoothManager.route(for: .scan) == .reading)
+        #expect(BluetoothManager.route(for: .idle) == .reading)
+    }
+
+    /// Transition seam: a `.live` payload sequence must never touch the reading accumulator, and a
+    /// subsequent `.reading` payload must land cleanly on the R-R path.
+    @Test func liveRoutingDoesNotCorruptReadingState() {
+        let bt = BluetoothManager()
+
+        bt.ingestHRMeasurement(Data([0x06, 72]), intent: .live)   // detected, 72
+        bt.ingestHRMeasurement(Data([0x00, 80]), intent: .live)   // 80
+        #expect(bt.liveSample?.bpm == 80)
+        #expect(bt.rrIntervals.isEmpty)          // reading R-R accumulator never saw live payloads
+        #expect(bt.rmssd == nil)
+        #expect(bt.lnRmssd == nil)
+        #expect(bt.currentHR == 0)               // reading HR untouched by the live stream
+
+        // Now a genuine reading payload (HR 60 + one R-R = 1000 ms) on the reading path.
+        bt.ingestHRMeasurement(Data([0x10, 60, 0x00, 0x04]), intent: .reading)
+        #expect(bt.currentHR == 60)
+        #expect(bt.rrIntervals.count == 1)
+        #expect(abs((bt.rrIntervals.first ?? 0) - 1000.0) < 0.001)
+    }
+
+    // MARK: - Mutual exclusion on the single strap
+
+    @Test func startLiveMonitoringRefusedDuringReading() {
+        let bt = BluetoothManager()
+        bt.startReadingCapture()
+        #expect(bt.captureMode == .reading)
+        bt.startLiveMonitoring()                 // refused — a reading is in progress
+        #expect(bt.captureMode == .reading)
+        #expect(bt.liveSample == nil)
+        bt.stopReadingCapture()
+    }
+
+    @Test func startReadingCaptureTearsDownLive() {
+        let bt = BluetoothManager()
+        bt.startLiveMonitoring()
+        #expect(bt.captureMode == .live)
+        bt.startReadingCapture()                 // reading takes precedence, live is torn down
+        #expect(bt.captureMode == .reading)
+        bt.stopReadingCapture()
     }
 }

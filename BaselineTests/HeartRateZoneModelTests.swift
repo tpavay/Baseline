@@ -25,6 +25,20 @@ struct HeartRateZoneModelTests {
         #expect(model.zone(forBPM: 220) == .z5)    // above max still Z5
     }
 
+    /// maxHR 185 → fractional %max thresholds (129.5, 166.5) exercise the Double-boundary compare.
+    /// Lower bounds: 111 / 129.5 / 148 / 166.5.
+    @Test func percentMaxBoundariesWithNonRoundThresholds() {
+        let model = HeartRateZoneModel(maxHR: 185)
+        #expect(model.zone(forBPM: 110) == .z1)
+        #expect(model.zone(forBPM: 111) == .z2)
+        #expect(model.zone(forBPM: 129) == .z2)    // 129 < 129.5
+        #expect(model.zone(forBPM: 130) == .z3)    // 130 ≥ 129.5
+        #expect(model.zone(forBPM: 147) == .z3)
+        #expect(model.zone(forBPM: 148) == .z4)
+        #expect(model.zone(forBPM: 166) == .z4)    // 166 < 166.5
+        #expect(model.zone(forBPM: 167) == .z5)    // 167 ≥ 166.5
+    }
+
     // MARK: - AC-2: Karvonen / HRR boundaries
 
     /// maxHR 190, resting 50 → reserve 140. target = 50 + f·140.

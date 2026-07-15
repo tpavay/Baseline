@@ -81,7 +81,32 @@ final class BluetoothManager: NSObject {
     /// Start ECG @ 130 Hz, 14-bit: [start, ECG, rate-TLV(130), resolution-TLV(14)].
     @ObservationIgnored private let pmdStartECG: [UInt8] = [0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00]
 
-    private enum Intent { case idle, scan, reading, live }
+    /// What the single strap connection is currently doing. Internal (not private) so the pure
+    /// routing decision below can be unit-tested without CoreBluetooth.
+    enum Intent { case idle, scan, reading, live }
+
+    /// Which ingest an incoming `0x2A37` payload is dispatched to.
+    enum HRRoute { case reading, live }
+
+    /// Which capture mode owns the strap, if any. Reading and live are mutually exclusive on the
+    /// single peripheral; this surfaces the winner so the invariant is observable/testable.
+    enum CaptureMode { case idle, reading, live }
+
+    /// The active capture mode. Reading takes precedence when both flags are somehow set.
+    var captureMode: CaptureMode {
+        if readingActive { return .reading }
+        if liveActive { return .live }
+        return .idle
+    }
+
+    /// Pure routing decision for an incoming heart-rate measurement. Extracted so the live/reading
+    /// split is unit-testable without a live peripheral: routing `.live` payloads into the reading
+    /// ingest would feed BPM notifications into the R-R/HRV accumulator and corrupt
+    /// `rrIntervals`/`rmssd`/`lnRmssd`. Only `.live` streams to the live path; every other intent
+    /// (including `.scan`/`.idle`, which never subscribe) stays on the reading path.
+    static func route(for intent: Intent) -> HRRoute {
+        intent == .live ? .live : .reading
+    }
 
     override init() {
         super.init()
@@ -127,6 +152,10 @@ final class BluetoothManager: NSObject {
     // MARK: - Reading capture
 
     func startReadingCapture() {
+        // Reading and live monitoring can't share the single strap. A reading is an explicit,
+        // user-initiated capture and takes precedence, so tear down any live session first rather
+        // than entering a mixed state that would cross-feed 0x2A37 payloads between the two paths.
+        if liveActive { teardownLive() }
         currentHR = 0; rrIntervals = []; rmssd = nil; lnRmssd = nil
         ecgSamples = []
         readingActive = true
@@ -150,7 +179,12 @@ final class BluetoothManager: NSObject {
 
     /// Begin streaming live BPM from the saved strap for workout zones. Subscribes to the standard
     /// HR characteristic only — no PMD/ECG and no R-R/HRV math, so the reading path is untouched.
+    ///
+    /// Refused while a reading is in progress: a resting reading is short and explicit, so we never
+    /// interrupt it to start live monitoring (the counterpart teardown lives in
+    /// `startReadingCapture`). This keeps the two modes mutually exclusive on the single peripheral.
     func startLiveMonitoring() {
+        guard !readingActive else { return }
         liveSample = nil
         liveActive = true
         streaming = true
@@ -161,11 +195,17 @@ final class BluetoothManager: NSObject {
 
     /// Stop live streaming and drop the connection. The reading path is unaffected.
     func stopLiveMonitoring() {
+        teardownLive()
+        disconnect()
+    }
+
+    /// Clear live state without dropping the connection — shared by `stopLiveMonitoring` and the
+    /// live→reading handover in `startReadingCapture`.
+    private func teardownLive() {
         liveActive = false
         streaming = false
         intent = .idle
         liveSample = nil
-        disconnect()
     }
 
     /// Subscribe to HR notifications for live monitoring — deliberately *without* starting the PMD
@@ -173,6 +213,16 @@ final class BluetoothManager: NSObject {
     private func subscribeLive() {
         guard streaming, let hrCharacteristic, let peripheral else { return }
         peripheral.setNotifyValue(true, for: hrCharacteristic)
+    }
+
+    /// Dispatch an incoming `0x2A37` payload to the live or reading ingest per `route(for:)`.
+    /// Internal so the routing + isolation can be exercised in tests with an explicit intent (the
+    /// pure ingests below touch no CoreBluetooth state).
+    func ingestHRMeasurement(_ data: Data, intent: Intent) {
+        switch Self.route(for: intent) {
+        case .live:    ingestLive(data)
+        case .reading: ingest(data)
+        }
     }
 
     /// Parse a live `0x2A37` payload into a `HeartRateSample`, publish it, and notify any observer.
@@ -387,7 +437,7 @@ extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
         case batteryLevelChar:
             batteryLevel = data.first.map(Int.init)
         case hrMeasurement:
-            if intent == .live { ingestLive(data) } else { ingest(data) }
+            ingestHRMeasurement(data, intent: intent)
         case pmdDataUUID:
             parsePMDFrame([UInt8](data))
         case pmdControlUUID:

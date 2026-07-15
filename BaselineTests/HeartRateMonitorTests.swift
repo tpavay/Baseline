@@ -79,6 +79,14 @@ struct HeartRateMonitorTests {
         #expect(monitor.sensorContact == nil)
     }
 
+    @Test func notDetectedSensorContactPropagates() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+        source.emit(bpm: 130, contact: .notDetected)
+        #expect(monitor.sensorContact == .notDetected)
+    }
+
     @Test func currentZoneUsesInjectedModel() {
         let clock = ManualClock()
         let (monitor, source) = makeMonitor(clock)
