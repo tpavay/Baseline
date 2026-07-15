@@ -19,6 +19,11 @@ struct TodayView: View {
     @State private var autoPromptedDate: Date?
     @State private var showChat = false
     @State private var live: LiveToday?
+    /// Today's sleep evidence for the tappable sleep row + detail push. Nil while the Sleep Engine is
+    /// dormant (no store registered / no provider), which keeps Today byte-identical to pre-slice
+    /// (AC-6/AC-7). Go-live wires a `SleepEvidenceProvider` read here; until then it never populates,
+    /// so no sleep row renders and nothing navigates to `SleepDetailView`.
+    @State private var todaySleep: SleepDetailContext?
 
     /// Live readiness formula, edited in Profile → sourced from the shared profile store.
     private var readinessConfig: ReadinessConfig { profile.draft.config }
@@ -130,6 +135,8 @@ struct TodayView: View {
         planCard(live, showNumber: showNumber)
         if !live.plan.why.isEmpty { whyCard(live.plan.why) }
         if !live.plan.avoid.isEmpty { avoidCard(live.plan.avoid) }
+        // Sleep row — present only when a canonical night exists for today (dormant → nil → no row).
+        TodaySleepRow(context: todaySleep)
         if !showNumber { improveCertaintyCard(present: d.domains.map(\.domain)) }
         askBaselineBar
         if readings.first != nil { lastReadingCard }
