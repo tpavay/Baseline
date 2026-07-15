@@ -36,10 +36,14 @@ struct HeartRateZoneSettingsView: View {
             BaselineColor.base.ignoresSafeArea()
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
+                    // Primary inputs → chosen method → the live spectrum, kept above the fold so the
+                    // edit→zones loop is visible while editing max/resting. Optional LTHR and the
+                    // detailed range table follow.
                     maxHRSection
                     restingSection
-                    lthrSection
                     methodSection
+                    zoneStripSection
+                    lthrSection
                     previewSection
                 }
                 .padding(20)
@@ -69,7 +73,7 @@ struct HeartRateZoneSettingsView: View {
                 HStack {
                     Text(form.maxHRCaption)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(BaselineColor.textFaint)
+                        .foregroundStyle(BaselineColor.textMid)
                     Spacer()
                     if form.hasMaxOverride {
                         Button {
@@ -121,25 +125,36 @@ struct HeartRateZoneSettingsView: View {
                     Text(form.methodTitle)
                         .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
                     Text(form.methodSubtitle)
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textMid)
                 }
                 Spacer()
             }
             .padding(14)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(BaselineColor.surface))
+        }
+    }
+
+    /// Compact, always-visible spectrum so the edit→zones loop is visible without scrolling to the
+    /// detailed table below.
+    private var zoneStripSection: some View {
+        section("Zones at a glance") {
+            HeartRateZoneStrip(model: form.previewModel)
+                .padding(.horizontal, 16).padding(.vertical, 14)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(BaselineColor.surface))
         }
     }
 
     private var previewSection: some View {
-        section("Zones") {
+        section("Zone ranges") {
             VStack(spacing: 0) {
                 ForEach(Array(form.previewRows.enumerated()), id: \.element.id) { index, row in
                     if index > 0 { Hairline().padding(.horizontal, 16) }
                     zoneRow(row)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(BaselineColor.surface))
         }
     }
 
@@ -204,7 +219,7 @@ struct HeartRateZoneSettingsView: View {
     private func caption(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .medium)).italic()
-            .foregroundStyle(BaselineColor.textFaint)
+            .foregroundStyle(BaselineColor.textMid)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16).padding(.vertical, 12)
@@ -212,7 +227,7 @@ struct HeartRateZoneSettingsView: View {
 
     private func fieldCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(spacing: 0) { content() }
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(BaselineColor.surface))
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -283,10 +298,10 @@ struct HeartRateZoneSettingsForm {
 
     // MARK: Preview (always well-formed)
 
-    /// A guaranteed non-degenerate model for the live preview: the resolved max HR with a resting HR
-    /// only when it validates (an out-of-band resting is dropped from the *preview* while the error
-    /// banner explains why it isn't committed). So the preview can render for any input.
-    private var previewModel: HeartRateZoneModel {
+    /// A guaranteed non-degenerate model for the live preview / strip: the resolved max HR with a
+    /// resting HR only when it validates (an out-of-band resting is dropped from the *preview* while
+    /// the error banner explains why it isn't committed). So the preview can render for any input.
+    var previewModel: HeartRateZoneModel {
         HeartRateZoneModel(maxHR: max(candidate.resolvedMaxHR(ageYears: ageYears), 1),
                            restingHR: candidate.validatedRestingHR(ageYears: ageYears),
                            lthr: candidate.lthr)
@@ -345,11 +360,22 @@ struct HeartRateZoneSettingsForm {
 }
 
 #Preview("Invalid · bad resting HR") {
-    // Seeded (bypassing the gated write) with an out-of-band resting HR to exercise the error banner
-    // and the dropped-resting fallback preview. In real use `store.update` refuses to persist this.
+    // Seeded (bypassing the gated write) with an out-of-band resting HR to exercise the range-band
+    // error banner and the dropped-resting fallback preview. In real use `store.update` refuses this.
     NavigationStack {
         HeartRateZoneSettingsView(store: HeartRateZoneSettingsStore(
             defaults: .previewSeeded(HeartRateZoneSettings(maxHROverride: 180, restingHR: 190)),
+            ageYears: { 40 }))
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Invalid · resting ≥ max") {
+    // Both values in-band (max 120, resting 120) so validation reaches the *relational* rule and the
+    // distinct "Resting HR must be below your max HR" message renders.
+    NavigationStack {
+        HeartRateZoneSettingsView(store: HeartRateZoneSettingsStore(
+            defaults: .previewSeeded(HeartRateZoneSettings(maxHROverride: 120, restingHR: 120)),
             ageYears: { 40 }))
     }
     .preferredColorScheme(.dark)

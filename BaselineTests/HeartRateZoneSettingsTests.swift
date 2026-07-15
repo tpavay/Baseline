@@ -129,4 +129,46 @@ struct HeartRateZoneSettingsTests {
         #expect(rows.map(\.lowerBPM) == [120, 134, 148, 162, 176])
         #expect(rows.map(\.upperBPM) == [133, 147, 161, 175, 190])
     }
+
+    // MARK: - Shared boundary accessor (one formula, consumed by preview + strip)
+
+    /// `lowerBPM(for:)` must agree with the classifier `zone(forBPM:)` at every boundary: the floor
+    /// classifies into its own zone, and one below classifies into the previous zone (sharp divider).
+    @Test func lowerBPMConsistentWithZoneForBPM() {
+        let models = [
+            HeartRateZoneModel(maxHR: 200),
+            HeartRateZoneModel(maxHR: 185),
+            HeartRateZoneModel(maxHR: 190, restingHR: 50),
+            HeartRateZoneModel(age: 45, restingHR: 60),
+        ]
+        for model in models {
+            for zone in HeartRateZone.allCases {
+                let floor = model.lowerBPM(for: zone)
+                #expect(model.zone(forBPM: floor) == zone)
+                if let previous = HeartRateZone(rawValue: zone.rawValue - 1) {
+                    #expect(model.zone(forBPM: floor - 1) == previous)
+                }
+            }
+        }
+    }
+
+    // MARK: - Strip layout (pure geometry)
+
+    @Test func stripLayoutWidthsProportionalAndFill() {
+        let rows = HeartRateZonePreview(model: HeartRateZoneModel(maxHR: 200)).rows
+        let width: CGFloat = 250
+        let spacing: CGFloat = 2
+        let layout = HeartRateZoneStripLayout(rows: rows, width: width, spacing: spacing)
+        #expect(layout.widths.count == 5)
+        // Widths (+ inter-segment gaps) fill the available width.
+        let total = layout.widths.reduce(0, +) + spacing * CGFloat(rows.count - 1)
+        #expect(abs(total - width) < 0.001)
+        #expect(layout.widths.allSatisfy { $0 > 0 })
+    }
+
+    @Test func stripLayoutHandlesZeroWidth() {
+        let rows = HeartRateZonePreview(model: HeartRateZoneModel(maxHR: 200)).rows
+        let layout = HeartRateZoneStripLayout(rows: rows, width: 0, spacing: 2)
+        #expect(layout.widths == [0, 0, 0, 0, 0])
+    }
 }

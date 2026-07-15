@@ -83,6 +83,18 @@ struct HeartRateZoneModel: Equatable, Sendable {
         return min(max(raw, 0), 1)
     }
 
+    // MARK: - Zone boundaries (shared)
+
+    /// The inclusive lower BPM of `zone` — the lowest integer heart rate the model assigns to it.
+    /// This is the single source of the boundary math: it reads the *same* `zoneLowerBounds`,
+    /// `maxHR`, and `restingHR` as `zone(forBPM:)`, and `⌈threshold⌉` is exactly the smallest integer
+    /// that is not `< threshold`, so `zone(forBPM: lowerBPM(for: z)) == z` for z2…z5 (and the Z1
+    /// nominal floor for z1). The settings preview and the live spectrum consume this rather than
+    /// re-deriving Karvonen/%max, so displayed bands can never drift from the resolver.
+    func lowerBPM(for zone: HeartRateZone) -> Int {
+        Int(threshold(at: zone.rawValue - 1).rounded(.up))
+    }
+
     // MARK: - Internals
 
     /// The BPM threshold for the zone lower-bound at `index` in `zoneLowerBounds`.

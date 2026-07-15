@@ -28,11 +28,12 @@ struct HeartRateZoneSettings: Codable, Equatable, Sendable {
 
     // MARK: - Sane bounds
 
-    /// Plausible human max HR band for an override (guards fat-finger entry). Below this a resting HR
-    /// couldn't sit under it; above it is non-physiological.
+    /// Plausible human max HR band for an override (guards fat-finger entry): below ~120 is
+    /// implausibly low, above ~230 non-physiological.
     static let maxHROverrideRange = 120...230
-    /// Plausible resting HR band. Upper bound is deliberately below the max-HR floor so the two can't
-    /// meet; the `restingHR < maxHR` check still enforces the per-config relationship.
+    /// Plausible resting HR band (guards fat-finger entry). Its upper bound (120) and the max-HR
+    /// floor (120) can meet, so these bands do NOT by themselves guarantee resting < max — the
+    /// separate `restingHR < maxHR` relational check in `validate` is what enforces that.
     static let restingHRRange = 25...120
     /// LTHR must sit inside the aerobic-to-max span: at least this fraction of max, at most max.
     static let lthrLowerFraction = 0.60
