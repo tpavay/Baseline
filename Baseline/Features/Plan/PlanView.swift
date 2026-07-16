@@ -14,6 +14,9 @@ struct PlanView: View {
     @State private var deleteTarget: DeleteTarget?
     @State private var undoMessage: String?
     @State private var importContext: ImportContext?
+    /// A scheduled workout the user chose to remove from inside its editor. The deletion runs on sheet
+    /// dismissal (in `flushExecution`) so the alert/undo never races the dismissing execution sheet.
+    @State private var queuedDeletionID: UUID?
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -52,7 +55,7 @@ struct PlanView: View {
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
         }
         .sheet(item: $execContext, onDismiss: flushExecution) { ctx in
-            WorkoutView().environment(ctx.store)
+            WorkoutView(onRequestDelete: { queuedDeletionID = ctx.id }).environment(ctx.store)
         }
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
         .fullScreenCover(item: $importContext) { context in
@@ -303,6 +306,16 @@ struct PlanView: View {
     /// On dismiss, flush any coalesced structural edits as one immutable revision — only when the
     /// workout actually changed (logging already wrote through live).
     private func flushExecution() {
+        if let id = queuedDeletionID {
+            queuedDeletionID = nil
+            let result = plan.delete(id)
+            if case .confirmationRequired(_, _, let pid) = result, let sw = plan.scheduledWorkout(id) {
+                deleteTarget = DeleteTarget(sw: sw, proposalID: pid)
+            } else {
+                apply(result, "Removed")
+            }
+            return   // the workout is being removed — skip the normal write-through flush
+        }
         guard let ctx = execContext else { return }
         if ctx.store.current != ctx.original { ctx.store.flush() }
         plan.reload()

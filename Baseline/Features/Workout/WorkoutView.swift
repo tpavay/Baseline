@@ -4,16 +4,22 @@ import SwiftUI
 /// The manual surface for a workout template and its performed log. The hierarchy stays visually
 /// stable across reading, editing, and logging; only the controls inside each row change.
 struct WorkoutView: View {
+    /// When present, the workout is a scheduled plan session and the ••• menu offers a destructive
+    /// "Remove Workout" that hands removal back to the presenter (Plan). Absent for standalone use.
+    var onRequestDelete: (() -> Void)?
+
     @Environment(WorkoutStore.self) private var store
     @Environment(PlanStore.self) private var plan
     @Environment(BluetoothManager.self) private var bluetooth
     @Environment(OnboardingStore.self) private var profile
+    @Environment(\.dismiss) private var dismiss
 
     @State private var isEditingTemplate = false
     @State private var editSnapshot: Workout?
     @State private var showChat = false
     @State private var showFinishConfirmation = false
     @State private var showDiscardConfirmation = false
+    @State private var showRemoveConfirmation = false
     @State private var showSaveTemplate = false
     @State private var templateName = ""
     @State private var templateConflict: WorkoutTemplate?
@@ -63,6 +69,15 @@ struct WorkoutView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The workout template will remain, but all actual values in this log will be removed.")
+        }
+        .alert("Remove this workout?", isPresented: $showRemoveConfirmation) {
+            Button("Remove Workout", role: .destructive) {
+                onRequestDelete?()
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the workout from your plan. You can undo it.")
         }
         .confirmationDialog(
             "A template named \"\(templateName)\" already exists",
@@ -119,6 +134,11 @@ struct WorkoutView: View {
                     if mode == .view {
                         Button { beginSaveTemplate() } label: {
                             Label("Save as Template", systemImage: "square.and.arrow.down")
+                        }
+                    }
+                    if mode == .view, onRequestDelete != nil {
+                        Button(role: .destructive) { showRemoveConfirmation = true } label: {
+                            Label("Remove Workout", systemImage: "trash")
                         }
                     }
                     if mode == .log {
