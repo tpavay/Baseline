@@ -43,6 +43,11 @@ final class AgentTools {
         case getCurrentWorkout
         case startWorkout
         case completeWorkout(confirm: Bool)
+        // Catalog retrieval - the model reads the ~900-exercise library instead of guessing names.
+        // Read-only: these never touch state.
+        case searchExercises(query: String?, muscle: String?, equipment: String?, modality: String?,
+                             pattern: String?, tag: String?, level: String?)
+        case getExercise(name: String?, id: String?)
         // Plan (week-level schedule) — reshuffle the week through the same versioned repository ops.
         case getWeekPlan
         case moveWorkout(workout: String, toDay: String)
@@ -95,6 +100,10 @@ final class AgentTools {
             case .getCurrentWorkout: return "Read the current workout"
             case .startWorkout: return "Started the workout"
             case .completeWorkout: return "Completed the workout"
+            case .searchExercises(let q, let mu, let eq, let mo, let pa, let ta, let lv):
+                let terms = [q, mu, eq, mo, pa, ta, lv].compactMap { $0 }
+                return "Searched exercises" + (terms.isEmpty ? "" : ": \(terms.joined(separator: ", "))")
+            case .getExercise(let name, let id): return "Looked up \(name ?? id ?? "an exercise")"
             case .getWeekPlan: return "Read the week's plan"
             case .moveWorkout(let w, let d): return "Moved \(w) → \(d)"
             case .swapWorkouts(let a, let b): return "Swapped \(a) ↔ \(b)"
@@ -109,6 +118,29 @@ final class AgentTools {
             case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
             case .setMetricValue(let e, let n, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
             case .removeMetric(let e, let m): return "Removed \(m.label.lowercased()) from \(e)"
+            }
+        }
+
+        /// Whether `activityLabel` belongs in the inspector's "what changed" feed. Mutations do, and so
+        /// does retrieval that reaches outside the app for the athlete's own data - pulling from Apple
+        /// Health is worth showing. Reads of state the inspector already displays, and of the static
+        /// exercise catalog, changed nothing and would only be noise.
+        ///
+        /// Exhaustive by design: a new tool must classify itself here rather than inherit a `default:`.
+        var showsInActivityFeed: Bool {
+            switch self {
+            case .getToday, .explain, .getCurrentWorkout, .getWeekPlan, .explainModification,
+                 .searchExercises, .getExercise:
+                return false
+            case .setTimeAvailable, .setEquipment, .setTraveling, .setIllness, .setSleep, .setCheckIn,
+                 .setNote, .upsertConstraint, .resolveConstraint, .openAppleHealthSetup, .getSleep,
+                 .getHRVReadings, .getRestingHeartRate, .createWorkout, .addBlock, .addExercise,
+                 .moveExercise, .replaceExercise, .requireAllOptions, .removeExercise, .updateSet,
+                 .startWorkout, .completeWorkout, .moveWorkout, .swapWorkouts, .skipWorkout,
+                 .duplicateWorkout, .deleteWorkout, .saveAsTemplate, .createFromTemplate,
+                 .updateTemplate, .updateLoggingConfig, .updateExercisePreference, .setMetricValue,
+                 .removeMetric:
+                return true
             }
         }
     }
@@ -423,10 +455,81 @@ final class AgentTools {
         case .removeMetric(let ex, let m):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.removeMetric(exerciseNamed: ex, metric: m), success: "Removed \(m.label.lowercased()) from \(ex).")
+        case .searchExercises(let query, let muscle, let equipment, let modality, let pattern, let tag, let level):
+            switch ExerciseSearch.parse(text: query, muscle: muscle, equipment: equipment, modality: modality,
+                                        pattern: pattern, tag: tag, level: level) {
+            case .failure(let bad):
+                return Response(text: "\"\(bad.value)\" isn't a \(bad.field) Baseline knows. Valid \(bad.field) values: \(bad.valid.joined(separator: ", ")). Search again with one of those, or use the query parameter for free text.",
+                                decision: nil, plan: nil)
+            case .success(let q):
+                return Response(text: searchSummary(ExerciseCatalog.search(q), q), decision: nil, plan: nil)
+            }
+        case .getExercise(let name, let id):
+            guard let asked = name ?? id else {
+                return Response(text: "get_exercise needs either a name or an id - it was called with neither. Pass the exercise's name, or the id from a search_exercises row.", decision: nil, plan: nil)
+            }
+            guard let def = ExerciseCatalog.lookUp(name: name, id: id) else {
+                return Response(text: "\"\(asked)\" isn't in Baseline's exercise catalog. Try search_exercises to find the closest real movement - don't invent one.", decision: nil, plan: nil)
+            }
+            return Response(text: exerciseDetail(def), decision: nil, plan: nil)
         case .getSleep, .getHRVReadings, .getRestingHeartRate:
             // Retrieval is async — routed through `execute`, never here.
             return Response(text: "", decision: nil, plan: nil)
         }
+    }
+
+    // MARK: - Exercise catalog retrieval - compact rows; the model reads every one of these
+
+    private func searchSummary(_ r: ExerciseSearch.Results, _ q: ExerciseSearch.Query) -> String {
+        guard !r.matches.isEmpty else {
+            return "No exercises in Baseline's catalog match \(describe(q)). The catalog is broad (\(ExerciseCatalog.definitions.count) movements) - try a looser query or drop a filter."
+        }
+        let header: String
+        if r.isBrowseSample {
+            header = "Baseline's exercise catalog holds \(r.total) exercises. A representative sample across the library (\(r.matches.count) of \(r.total)) - search by name, muscle, equipment, pattern, tag, or level to narrow it:"
+        } else if r.truncated {
+            header = "\(r.total) exercises match \(describe(q)). Showing the \(r.matches.count) best - say there are \(r.total) in total, don't imply these are all of them:"
+        } else {
+            let word = r.total == 1 ? "exercise matches" : "exercises match"
+            header = "\(r.total) \(word) \(describe(q)):"
+        }
+        return ([header] + r.matches.map(compactRow)).joined(separator: "\n")
+    }
+
+    /// One match, compact: identity + the axes that let the model pick between near-duplicates.
+    private func compactRow(_ d: ExerciseDefinition) -> String {
+        var fields = [d.id, d.name]
+        fields.append(d.primaryMuscles.isEmpty ? "-" : d.primaryMuscles.map(\.displayName).joined(separator: ", "))
+        fields.append(d.equipment.isEmpty ? "-" : d.equipment.map(\.displayName).joined(separator: ", "))
+        fields.append(d.modality?.displayName ?? "-")
+        return "- " + fields.joined(separator: " · ")
+    }
+
+    private func exerciseDetail(_ d: ExerciseDefinition) -> String {
+        func list(_ xs: [String]) -> String { xs.isEmpty ? "none" : xs.joined(separator: ", ") }
+        var lines = ["\(d.name) (id \(d.id))"]
+        lines.append("Primary muscles: \(list(d.primaryMuscles.map(\.displayName)))")
+        lines.append("Secondary muscles: \(list(d.secondaryMuscles.map(\.displayName)))")
+        lines.append("Equipment: \(list(d.equipment.map(\.displayName)))")
+        lines.append("Movement pattern: \(list(d.patterns.map(\.displayName)))")
+        lines.append("Modality: \(d.modality?.displayName ?? "unclassified"); mechanic: \(d.mechanic?.displayName ?? "unclassified"); level: \(d.level?.displayName ?? "unclassified")")
+        lines.append("Tags: \(list(d.tags.map(\.displayName)))")
+        // Metric raw values, not display names - these are what the metric tools take.
+        lines.append("Logs: \(list(d.supported.map(\.rawValue))) (defaults: \(list(d.defaults.map(\.rawValue))))")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Echo the query back so the model states what it actually searched, not what it meant to.
+    private func describe(_ q: ExerciseSearch.Query) -> String {
+        var parts: [String] = []
+        if let t = q.text { parts.append("\"\(t)\"") }
+        if let m = q.muscle { parts.append("muscle \(m.displayName)") }
+        if let e = q.equipment { parts.append("equipment \(e.displayName)") }
+        if let m = q.modality { parts.append("modality \(m.displayName)") }
+        if let p = q.pattern { parts.append("pattern \(p.displayName)") }
+        if let t = q.tag { parts.append("tag \(t.displayName)") }
+        if let l = q.level { parts.append("level \(l.displayName)") }
+        return parts.isEmpty ? "your search" : parts.joined(separator: " + ")
     }
 
     private func workoutUnavailable() -> Response {
@@ -610,6 +713,9 @@ final class AgentTools {
             items.insert("sleep for a recent night (get_sleep)", at: 0)
             items.append("resting heart-rate trend (get_resting_heart_rate)")
         }
+        // The catalog is listed here too: this line is exhaustive ("nothing else"), so leaving it out
+        // would tell the model it can't look up exercises at all.
+        items.append("Baseline's \(ExerciseCatalog.definitions.count)-exercise catalog (search_exercises, get_exercise)")
         return "You can look these up when the athlete asks — nothing else: " + items.joined(separator: ", ") + "."
     }
 

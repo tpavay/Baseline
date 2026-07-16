@@ -42,6 +42,38 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "create_workout", input: [:]) == nil)   // missing title → rejected
     }
 
+    @Test func mapsExerciseCatalogTools() {
+        #expect(ToolCallMapper.map(name: "search_exercises", input: ["query": "bench"])
+                == .searchExercises(query: "bench", muscle: nil, equipment: nil, modality: nil,
+                                    pattern: nil, tag: nil, level: nil))
+        #expect(ToolCallMapper.map(name: "search_exercises", input: ["muscle": "quadriceps", "equipment": "barbell"])
+                == .searchExercises(query: nil, muscle: "quadriceps", equipment: "barbell", modality: nil,
+                                    pattern: nil, tag: nil, level: nil))
+        #expect(ToolCallMapper.map(name: "search_exercises", input: [
+            "query": "sled", "muscle": "glutes", "equipment": "sled", "modality": "resistance",
+            "pattern": "push", "tag": "hyrox", "level": "intermediate",
+        ]) == .searchExercises(query: "sled", muscle: "glutes", equipment: "sled", modality: "resistance",
+                               pattern: "push", tag: "hyrox", level: "intermediate"))
+        // No params is a valid browse ("what exercises do you have?"), not a malformed call.
+        #expect(ToolCallMapper.map(name: "search_exercises", input: [:])
+                == .searchExercises(query: nil, muscle: nil, equipment: nil, modality: nil,
+                                    pattern: nil, tag: nil, level: nil))
+        // Blank strings are how models write "omitted" - treated as absent, not as a query for "".
+        #expect(ToolCallMapper.map(name: "search_exercises", input: ["query": "  ", "muscle": ""])
+                == .searchExercises(query: nil, muscle: nil, equipment: nil, modality: nil,
+                                    pattern: nil, tag: nil, level: nil))
+        #expect(ToolCallMapper.map(name: "search_exercises", input: ["query": " bench "])
+                == .searchExercises(query: "bench", muscle: nil, equipment: nil, modality: nil,
+                                    pattern: nil, tag: nil, level: nil))
+
+        #expect(ToolCallMapper.map(name: "get_exercise", input: ["name": "deadlift"]) == .getExercise(name: "deadlift", id: nil))
+        #expect(ToolCallMapper.map(name: "get_exercise", input: ["id": "bench_press"]) == .getExercise(name: nil, id: "bench_press"))
+        // Neither parameter still maps: AgentTools explains the miss by name, where a nil here would
+        // reach the model as the generic "that tool call wasn't valid". Blanks are absent, not "".
+        #expect(ToolCallMapper.map(name: "get_exercise", input: [:]) == .getExercise(name: nil, id: nil))
+        #expect(ToolCallMapper.map(name: "get_exercise", input: ["name": " "]) == .getExercise(name: nil, id: nil))
+    }
+
     @Test func mapsSleepAndCheckIn() {
         #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": 6.5]) == .setSleep(hours: 6.5))
         #expect(ToolCallMapper.map(name: "set_sleep", input: ["hours": 4]) == .setSleep(hours: 4))

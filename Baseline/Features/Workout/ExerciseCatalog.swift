@@ -138,14 +138,20 @@ struct ExerciseCatalogSnapshot: Sendable {
 
     /// Resolve casual language → a definition: exact name, then exact alias, then substring, else `generic`.
     func resolve(_ name: String, generic: ExerciseDefinition) -> ExerciseDefinition {
+        find(name) ?? generic
+    }
+
+    /// The same casual-language lookup as `resolve`, but nil when the catalog genuinely has no match.
+    /// Retrieval (`get_exercise`) needs to report a miss honestly; `resolve` must always yield something
+    /// to log against, so it layers the generic fallback on top of this.
+    func find(_ name: String) -> ExerciseDefinition? {
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !key.isEmpty else { return generic }
+        guard !key.isEmpty else { return nil }
         if let exact = byName[key] { return exact }
         if let alias = byAlias[key] { return alias }
-        if let fuzzy = definitions.first(where: { def in
+        return definitions.first { def in
             def.aliases.contains(where: { key.contains($0) || $0.contains(key) })
-        }) { return fuzzy }
-        return generic
+        }
     }
 }
 
@@ -168,13 +174,32 @@ enum ExerciseCatalog {
 
     /// Resolve casual language → a definition. Never nil — unknown movements get `generic`.
     static func resolve(_ name: String) -> ExerciseDefinition {
-        live.withLock { $0.resolve(name, generic: generic) }
+        snapshot.resolve(name, generic: generic)
     }
 
     /// Replace the live catalog with a fetched set. Thread-safe; the seed remains the compiled fallback.
     static func install(_ definitions: [ExerciseDefinition]) {
         live.withLock { $0 = ExerciseCatalogSnapshot(definitions) }
     }
+
+    /// Search the live catalog (the assistant's `search_exercises`).
+    static func search(_ query: ExerciseSearch.Query) -> ExerciseSearch.Results {
+        ExerciseSearch.run(query, in: snapshot)
+    }
+
+    /// One exercise by id or name (the assistant's `get_exercise`). Nil when the catalog has no match.
+    static func lookUp(name: String?, id: String?) -> ExerciseDefinition? {
+        ExerciseSearch.lookUp(name: name, id: id, in: snapshot)
+    }
+
+    /// The current live snapshot, read out of the lock so callers do their work outside the critical
+    /// section. Taking it out is cheap: `ExerciseCatalogSnapshot` is a value type whose array and
+    /// dictionaries are copy-on-write, so this retains a few references rather than copying ~900 entries.
+    /// That matters because an unfair lock has no priority donation and must not be held across work as
+    /// long as a catalog-wide scan or sort, and these callers run on the MainActor while `install(_:)`
+    /// may contend from a background refresh. One atomic read also gives the caller a consistent snapshot
+    /// even if the catalog is swapped underneath it.
+    private static var snapshot: ExerciseCatalogSnapshot { live.withLock { $0 } }
 
     /// The bundled seed — the curated built-ins overlaid with their classifications, plus the imported Free
     /// Exercise DB catalog minus any import that duplicates a curated built-in (curated wins on id and on
