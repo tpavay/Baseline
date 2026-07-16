@@ -80,8 +80,8 @@ struct WorkoutRevision: Identifiable, Codable, Equatable, Sendable {
     var workout: Workout
 }
 
-/// Forward-compat (= CLAUDE.md "Routine"): a reusable workout that can be scheduled many times and copied
-/// between programs. Modeled so `templateID` exists from day one; no v1 authoring UI.
+/// A reusable workout source that can be scheduled many times and copied between programs. Modeled so
+/// `templateID` exists from day one; image/text import becomes its primary authoring path.
 struct WorkoutTemplate: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var name: String

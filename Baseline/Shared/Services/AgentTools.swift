@@ -36,6 +36,8 @@ final class AgentTools {
         case addBlock(name: String, intent: String?)
         case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?)
         case moveExercise(exercise: String, toBlock: String)
+        case replaceExercise(exercise: String, replacement: String, block: String?, replaceAll: Bool)
+        case requireAllOptions(choice: String)
         case removeExercise(exercise: String)
         case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
         case getCurrentWorkout
@@ -86,6 +88,8 @@ final class AgentTools {
             case .addBlock(let n, _): return "Added block: \(n)"
             case .addExercise(let b, let n, _, _, _, _, _): return "Added \(n) to \(b)"
             case .moveExercise(let e, let b): return "Moved \(e) → \(b)"
+            case .replaceExercise(let e, let r, _, let all): return "Replaced \(all ? "all \(e)" : e) → \(r)"
+            case .requireAllOptions(let choice): return "Made every option required in \(choice)"
             case .removeExercise(let e): return "Removed \(e)"
             case .updateSet(let e, let n, _, _, _, _, _): return "Updated set \(n) of \(e)"
             case .getCurrentWorkout: return "Read the current workout"
@@ -279,6 +283,23 @@ final class AgentTools {
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.moveExercise(named: exercise, toBlockNamed: toBlock),
                            success: "Moved \(exercise) to \(toBlock).")
+        case .replaceExercise(let exercise, let replacement, let block, let replaceAll):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.replaceExercise(
+                    named: exercise,
+                    with: replacement,
+                    inBlock: block,
+                    replaceAll: replaceAll
+                ),
+                success: "Replaced \(replaceAll ? "every \(exercise)" : exercise) with \(replacement)."
+            )
+        case .requireAllOptions(let choice):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.requireAllOptions(choiceNamed: choice),
+                success: "Changed \(choice) from a choice to one required sequence."
+            )
         case .removeExercise(let exercise):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.removeExercise(named: exercise), success: "Removed \(exercise).")

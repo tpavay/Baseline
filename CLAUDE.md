@@ -1,113 +1,184 @@
 # Baseline — Project Guide
 
 ## What Baseline Is
-Baseline is a recovery-aware HYROX / hybrid training coach for iOS. Each morning the athlete does a quick check (a guided HRV reading via chest strap or phone camera, sleep from Apple Health, and/or a subjective check-in — the inputs are athlete-configurable); Baseline computes a readiness score and then **prescribes or modulates today's training** — running, HYROX stations, strength, and the "chassis" (joints, tendons, mobility) — adjusting the *dose* to the athlete's recovery.
+Baseline is an **AI-first adaptive training system** for iOS.
+It helps people decide what to train, create and manage plans and workouts, execute and log their training, understand their history, and continuously adapt future training toward their goals.
 
-The job it does: remove the daily "am I training the right thing today?" anxiety for self-coached hybrid athletes by automating the one judgment even elite coaches hand back to the athlete — *which dose to do today, given recovery*.
+AI is the primary interface and orchestration layer.
+A user should be able to create, import, revise, schedule, execute, and log training through natural conversation with minimal friction.
+The resulting plans, workouts, and logs remain structured, editable, and accessible through direct controls as well as conversation.
+
+Baseline builds an evolving understanding of the user from their goals, preferences, constraints, training history, completed work, and explicit feedback, plus any information sources they choose to connect.
+Apple Health, sleep, HRV, heart-rate monitors, and future integrations can improve its decisions, but no device, recovery signal, or data source is required.
+
+Baseline is not tied to a sport or training style.
+It can support strength, endurance, running, bodybuilding, functional fitness, mobility, HYROX, hybrid training, and other forms of exercise.
+HYROX and recovery-aware training are supported use cases, not the product's identity.
+
+**The core loop:** understand → plan → decide → train → log → learn → adapt.
+
+**The job it does:** remove the friction and uncertainty between a person's goals and their next training action, while making the entire training system easy to create, change, follow, and learn from.
 
 **Solo dev + AI assisted** (Tyler Pavay). Build-for-self first. Planned monetization: subscription (the recurring daily coach), via RevenueCat + SuperWall.
 
 ## What Baseline Is NOT (define the niche by exclusion)
-- **Not a generic fitness or HRV tracker.** HYROX/hybrid-specific and recovery-driven. If a feature serves "any fitness user," it probably doesn't belong.
-- **Not a passive readiness score (Whoop/Oura).** Every reading ends in a concrete session recommendation — the score is an input, not the product.
-- **Not a measurement instrument that stops at the number (Elite HRV).** The reading → readiness → *what to train today* bridge is the whole point.
-- **Not a static plan / PDF (Warrior Lab).** The program adapts daily to recovery.
-- **Not a generic logger.** Logging exists to serve the recovery-aware coaching loop.
-- **Not hardware-locked (Morpheus).** Works with a chest strap the athlete already owns, the phone camera, or no HRV hardware at all (a sleep-only score is valid).
+- **Not tied to one sport, modality, training style, or goal.** Baseline supports specialized use cases without allowing any one of them to define the product.
+- **Not a passive fitness tracker or readiness score.** Data matters when it improves a decision, plan, workout, explanation, or future adaptation.
+- **Not a static plan.** Plans and workouts are living, versioned, editable objects that can adapt as the user's goals, context, and training change.
+- **Not a generic logger.** Logging captures what actually happened so Baseline can explain progress, update its understanding, and improve future decisions.
+- **Not an AI chat wrapper around unstructured data.** Conversation is the primary interface, but structured state is the source of truth and AI actions operate through validated domain tools.
+- **Not dependent on wearables, HRV, or any single data source.** Baseline works with what the user chooses to provide and becomes more informed as optional sources are connected.
+- **Not an autonomous black box.** Baseline proposes and explains; the user owns the plan and can inspect, edit, accept, or reject changes.
 
 ## Core Product Model
-**The daily loop:** morning reading → readiness score → today's session (proposed, editable) → log → the log feeds tomorrow's readiness/recommendation.
+**The product loop:** understand → plan → decide → train → log → learn → adapt.
 
-**Three pillars** (most apps do one or two; Baseline integrates all three):
-- **Engine** — energy systems (Zone-2 aerobic base, threshold, VO2).
-- **Chassis** — joints, tendons, mobility, durability. The differentiator. On low-recovery days this is the *productive* answer (the "red-day pivot"), and there is a dedicated **base/durability phase** for athletes building tissue capacity before running volume.
-- **Recovery** — the morning reading decides which pillar/dose runs today.
+**Optional evidence stays optional.**
+Health data, sleep, HRV, check-ins, connected devices, and future signals may improve Baseline's decisions but are never prerequisites.
+If a user declines or disables a source, it stays out of the primary experience unless the user chooses to enable it again.
+Baseline uses the available evidence and communicates meaningful uncertainty without treating an unavailable optional input as an error.
 
-**Readiness score (composite, user-configurable, with a baseline ramp):**
-- **The athlete builds their own score ("your logic").** Inputs are individually toggleable: **HRV reading** (strap or camera — RMSSD vs. rolling baseline, plus resting HR and 7-day trend), **sleep (Apple Health)**, **daily check-in** (mood / energy / stress / soreness — each component individually configurable; soreness can capture body region to target the chassis pivot), and **activity impact** (prior-day training load; post-v0). At least one input required; HRV is the recommended default but **not required** — a sleep-only score is valid. Onboarding pre-checks a recommended config (HRV + check-in + sleep) from quiz answers rather than presenting a blank config. Output: a **0–100 score mapped to a recovery band** → "how recovered you are + what to do today."
-- **Cold-start:** for the first ~10–14 readings there is no reliable personal baseline — be conservative, lean on absolute values + age-population norms + the subjective check, and show "calibrating" bands. Do NOT be absolute against a baseline that doesn't exist yet.
-- **Established:** once the 7-day rolling baseline is solid, score precisely against it. A good HRV day can still score low (stress / poor sleep / soreness) — the score is a composite, not raw HRV.
+**Ask only when the answer could change the plan.**
+Infer from known context and connected sources first.
+If a material unknown or stale constraint could change the training decision, ask the smallest targeted question.
+Never ask merely to complete a score or collect data that would not affect the recommendation.
 
-**Engine logic (reverse-engineered from elite HYROX coaching — see `docs/design.md`):**
-- **Recovery bands:** ≥80% → intensity OK; 60–79% → aerobic / sub-threshold only (defer scheduled intensity later in the week); <60% → active recovery / chassis.
-- **Dose layers (cumulative):** MED (Minimum Effective Dose, always) → +HPL (High Performance Layer, recovery strong) → +MDV (Maximum Daily Volume, advanced & very strong).
-- **Hard scheduling constraints:** never two hard days in a row; a hard day is followed by aerobic or active recovery; batch intensity within the week.
-- **Periodization metadata** lives on each authored session (type, microcycle role, the three doses). The recovery % picks the dose; the plan's structure constrains which dose is *wise* (e.g., a consolidation day between two hard days defaults to MED even on a green reading).
-- **Subjective overrides:** high stress or high soreness can outrank a good HRV (recovered HRV + heavy DOMS → chassis / low-impact, not quality).
-- **Automate the week:** Baseline surfaces *today's* session by applying these rules — automating the manual week-reordering a coach otherwise hands back to the athlete.
+**Question preferences are durable.**
+A request such as "don't ask me about sleep again" becomes a structured, persistent preference that the user can change through conversation or settings.
+A suppressed signal remains unknown and must never be silently inferred.
+If a suppressed question is safety-critical, Baseline takes a conservative path and explains the limitation rather than assuming the user is safe to proceed.
 
-**Content is import-first; the session is the atomic unit** (full detail: `docs/engine-and-data-model.md`):
-- **Vocabulary:** a **Routine** = a reusable, editable *template*; a **Session** = a dated *instance* the athlete actually does and logs; a **Plan/Week** = Routines assigned to days (what the engine reshuffles).
-- **Primary path = import.** Most athletes get programming elsewhere (a coach, their own notes), so the main way workouts enter Baseline is **type or photograph a workout → translate to a native, loggable Routine** (workout- and exercise-level notes, title, tags), persisted and fully editable. Baseline's own authored program is deferred — not the v0 flagship.
-- **The recovery engine applies in layers:** (A) imports that already carry dose structure (a coach's MED/HPL/MDV) → the morning score *picks the dose*; (B) classified imports (day-type: active-recovery / aerobic / intensity / strength) → do / sub-lighter / recover; (C) no plan → recommend from Baseline's built-in chassis/recovery/aerobic library. Import is **incremental** (day/week at a time), so the engine reasons over a rolling window, not a macrocycle.
-- **Proposed but owned:** the engine *proposes* a session pre-filled; the athlete *owns* it — add / swap / reorder exercises and log actuals — during planning *and* mid-session.
+**Preserve intent, adapt dose.**
+When context warrants a change, preserve the session's intended adaptation where possible and adjust the fewest relevant training levers.
+The relevant levers and substitutions depend on the training domain and belong in domain-specific planning policies rather than one universal recovery rule.
 
-**Exercise catalog:** base = **free-exercise-db** (public domain) + a **curated Baseline extension** (the 8 HYROX stations, common CrossFit movements, cardio modalities, and the mobility/chassis/warm-up library); content-driven (grows without app releases), create-custom supported. Unified schema with a per-exercise **logging type** — `repsLoad · reps · timeHold · distance · distanceLoad · calories · timeZone` (HYROX needs distance/load/calories, not just reps/load/time). **Cardio is one modality + a structured *intent*** (easy / threshold / intervals / long / race) so trends slice by intent without separate entries. A rich **alias map** is the key to import matching (RDL ≠ generic deadlift). Detail: `docs/engine-and-data-model.md`.
+**Plan-aware recommendations.**
+Baseline considers the user's goals, current plan and phase, scheduled work, recent completed training, active constraints, explicit context, and any optional evidence they provide.
+It does not optimize one day in isolation or apply one training domain's rules universally.
 
-## Reading & Sensors
-- **Chest strap recommended; phone camera is the official secondary source.** Strap: connect a BLE Heart Rate Service (`0x180D`) strap (Polar H10 etc.), read **R-R intervals** (HR Measurement char `0x2A37`), artifact-correct, compute **RMSSD / lnRMSSD**. Camera: fingertip PPG (lens + flash) driving the same 2:30 guided reading. Wearable-via-HealthKit remains for history/context seeding, not the reading. (Chest ECG is the gold standard; present the strap as the upgrade for serious athletes, the camera as the no-hardware on-ramp.)
-- **Morning reading:** a quiet **2:30 timed read, breathing naturally** — **no paced-breathing cues** (resonance-frequency pacing inflates RSA and adds compliance noise; decided 2026-07-07) — on a dark screen, with a live **R-R curve building across the screen** (bpm Y-axis, time-in-seconds X-axis), current HR + HRV shown live, a **bell + haptic at the end**, and **averages at the end**. No "signal quality" copy. Standardization comes from consistent time + posture + natural breath, not breath control.
-- **One strap, two modes:** the morning HRV read *and* live in-session **HR-zone tracking** (kills the "stare at Polar Flow mid-workout" problem) — live zone per segment, per-segment zone history stored. Zones are computed by Baseline via **Heart-Rate-Reserve / Karvonen** from Health inputs (age + resting HR + observed max from workout history), with a Tanaka age-estimate fallback, refined over time, and **overridable** with a tested max HR or **LTHR zones (Friel)** for run training. (We compute from raw Health data, not by reading Apple's zone config.) See `docs/engine-and-data-model.md`.
-- **Don't mix sources in a baseline** — build the rolling baseline from one source; switching sources recalibrates (re-enter cold-start).
-- **Architecture:** sensor capture behind a service layer; the HRV computation is a **pure function (unit-testable without hardware)**; sensor callbacks run off-main and marshal UI updates back to main explicitly.
+**Evidence supports decisions, not scores.**
+Baseline may derive internal, explainable measures from configured evidence when useful, but no global or user-facing readiness score is required.
+The user-facing output is a specific training recommendation with the material reasons, constraints, and meaningful uncertainty behind it.
+AI never invents input values, derived metrics, or certainty.
 
-## Design System
-- Dark, **"calm precision."** Tokens: base `#0C0A10`, surface `#1C1822`, amethyst (feature surface) `#33203E`, **accent violet `#9B6DFF`**, text `#F3F0F8` / `#9B94A8` / `#6A6478`, lines `#272231`.
-- **Recovery zone colors (semantic):** blue `#4C8DFF`, green `#34D27B`, amber `#F5A623`, red `#FF5247`. The brand accent must stay *out* of these hue families so a control is never confused for a recovery state.
-- Type: **Inter** (Regular / Medium / Semi Bold / Bold). Big display numbers for readiness / HR / HRV.
-- Figma source of truth: https://www.figma.com/design/CCVlatyKW7MSHRGE3PK50i
-- See `docs/design.md` for screens + rationale, `docs/engine-and-data-model.md` for engine / data-model / catalog detail, and `docs/v0-spec.md` for v0 scope + the build-order priority stack.
+**Training logic is domain-specific.**
+Every session has an intended training effect and relevant adaptation levers.
+The appropriate levers, constraints, and substitutions depend on the training domain, plan, and individual rather than universal recovery bands or one sport's programming rules.
 
-## Tech Stack
-- **iOS 17+**, **Swift 6** strict concurrency, **SwiftUI**, `@Observable` (mark shared `@Observable` state `@MainActor`).
-- **SwiftData** on-device (editing surface / source of truth for in-flight UX).
-- **Firebase** (Auth, Firestore, Cloud Functions, Storage) for sync, content delivery, and the bounded LLM "why" narration.
-- **RevenueCat** (subscriptions) + **SuperWall** (onboarding / paywall).
-- **HealthKit** (recovery/workout reads, wearable fallback, baseline + HR-zone seeding). **CoreBluetooth** (chest strap; R-R pipeline validated on a Polar H10). **Apple Foundation Models** (on-device, `@Generable`) + **Vision** OCR for **text/photo → workout import** — free, on-device, private (native image input lands iOS 27); cloud **Claude API** is the fallback for hard parses and the bounded per-session "why" narration (structured, not open chat).
-- **Content-driven:** programs, sessions, the exercise bank, and the chassis library are hosted/versioned content — *adding content must not require an app release.*
+**The user's current condition matters.**
+Explicit reports of pain, illness, unusual fatigue, or changed circumstances can constrain a recommendation even when passive data looks favorable.
 
-## Surfaces & Integrations
-- **Apple Health (read-only) for history + context.** Import past workouts, sleep, resting HR, HRV history, and body metrics through a single read-only Health import facade — to (a) give recommendations real context on training load + recovery, and (b) **seed the baseline** from existing Health history so cold-start is short. Also the wearable fallback for the morning reading. Never write back to Health.
-- **App Intents / Siri / Apple Intelligence for natural-language control.** Expose actions (start reading, start today's workout, create/add/log an exercise) and entities (Exercise, Session, Reading, Workout) via App Intents — so Siri, Spotlight, Shortcuts, the Action button, Apple Intelligence, and dictation tools can drive the app conversationally ("do I already have this exercise?", "what's my running history?"). **Design `Exercise` / `Session` / `Reading` to be App-Entity-friendly from day one;** implement the intents layer post-v0. Verify the latest WWDC 2026 App Intents / Siri APIs when building it.
-- **Widgets / Live Activity (later):** a morning-readiness home-screen widget; a live in-session HR-zone Live Activity.
+**Training is structured, editable, and modality-agnostic.**
+Baseline represents training using exercises, Workout Templates, Sessions, and Plans rather than leaving it as unstructured conversation.
+A **Workout Template** is reusable training content that is not tied to a date.
+A **Session** is a scheduled or completed occurrence containing both the intended training and what the user actually performed.
+A **Plan** organizes sessions toward one or more goals over time and can evolve as the user's circumstances and training change.
+The Session is the core unit for scheduling, execution, logging, and adaptation.
 
-## Project tooling
-- The Xcode project is **generated by XcodeGen** from `project.yml` (not committed — see `.gitignore`). After pulling or adding files: `xcodegen generate`. Source lives under `Baseline/` (feature-folder structure), tests under `BaselineTests/`.
+**Creation and import are first-class paths.**
+Users can describe, paste, photograph, import, or manually assemble training.
+Every path resolves into the same validated, native training models.
+Baseline surfaces ambiguity instead of inventing missing details, and all resulting content remains editable through conversation and direct controls.
+
+**The user owns the result.**
+Baseline can propose and apply changes, but those changes remain inspectable, editable, and reversible before, during, and after training.
+
+**The exercise system is extensible.**
+Exercises and their logging requirements must support different modalities without encoding one sport's assumptions.
+The built-in catalog can evolve without an app release, and users can create custom exercises.
+Implementation details for the catalog, logging schemas, aliases, and import matching live in `docs/engine-and-data-model.md`.
+
+## Product Experience
+Baseline should feel calm, precise, conversational, and low-friction.
+Lead with the user's next training action and make it easy to understand or change.
+Metrics, evidence, and technical detail support the recommendation rather than becoming the primary experience.
+
+Use centralized design tokens and reusable components rather than hard-coded visual values.
+For UI work, inspect the [Figma file](https://www.figma.com/design/CCVlatyKW7MSHRGE3PK50i) and `docs/design-system/` before designing or implementing an interface.
+Use the `lavish` skill and Lavish AXI to create reviewable interactive prototypes for new screens, flows, or material visual changes when the direction is not already established.
+Lavish prototypes must use Baseline's design system rather than fallback styling.
+
+When a visual artifact conflicts with the product principles in this guide, the product principles take precedence until the artifact is updated.
+Detailed tokens, typography, components, and visual patterns belong in the design-system documentation and Figma rather than this always-loaded guide.
+
+## Technical Baseline
+- **Platform:** iOS 17+, Swift 6 with complete strict concurrency, SwiftUI, and Observation.
+- **Persistence:** SwiftData for on-device persistence. Keep domain models and decision logic independent of SwiftUI and SwiftData, and access persistence through repository boundaries.
+- **Backend:** Firebase Auth, Firestore, Cloud Functions, Storage, and App Check. Keep privileged operations and provider credentials on the server.
+- **AI architecture:** AI requests cross a provider boundary and act through validated domain tools. Structured application state remains the source of truth. Anthropic is the current server-side provider, not a permanent architectural dependency.
+- **Apple frameworks:** HealthKit, CoreBluetooth, Vision, and other system frameworks are optional feature integrations. Load the relevant skills and technical documentation when working in those domains.
+- **Dependencies:** Do not add or replace third-party dependencies without Tyler's approval. `project.yml` is the canonical dependency and target configuration.
+
+## System Surfaces
+- Model Baseline's capabilities as reusable, validated domain actions and entities.
+- In-app AI, direct controls, App Intents, Siri, Shortcuts, Spotlight, widgets, and future interfaces must reuse the same domain services and tool contracts rather than implementing separate business logic.
+- System integrations are optional adapters. Baseline's core training system must remain usable without them.
+- Health data access follows least privilege. Reads and any future writes must be explicitly authorized, consistent with user intent, provenance-preserving, and resistant to duplicate imports or writes.
+- Surface adapters must not invent unavailable data or make external frameworks the source of truth.
+- Load the relevant specialized skill and verify current platform APIs before implementing an integration.
+
+## Project Tooling
+- `project.yml` is the committed, canonical XcodeGen specification for targets, dependencies, build settings, and generated Info.plist values.
+- `Baseline.xcodeproj` and `Baseline/Info.plist` are generated and ignored. Never edit or commit them directly.
+- Run `xcodegen generate` after pulling changes or modifying project configuration, dependencies, resources, or source membership.
+- Application source lives under `Baseline/`, organized primarily by feature. Tests live under `BaselineTests/`.
 
 ---
 
 # Engineering Principles
-(ported from prior iOS work — apply to every change)
 
-## Code structure
-- **SRP** — each type does one thing. **DRY** — extract non-trivial patterns repeated 3+ times. **YAGNI** — build for what's needed now, not hypothetical flexibility.
-- **Layering** — views render; view models hold UI state and orchestrate; services own side effects (network, persistence, sensors, system APIs); models persist data. A view calling the network directly is a smell.
-- **DI over singletons** for testable business logic. Convenience singletons OK for global state (theme/settings), not for logic.
-- **Content-driven over rebuild** — shell code accepts any instance of its content type; adding content (a program, an exercise, a chassis drill) should never mean shipping code.
+## Boundaries
+- Views render state and forward user intent.
+- Presentation models hold UI state and invoke domain capabilities.
+  They do not contain business rules or import SwiftUI.
+- Domain models, policies, and engines own business meaning and decision logic.
+- Repositories and service adapters own persistence, networking, sensors, and system-framework interaction.
+- Domain logic must remain independent of SwiftUI, SwiftData, Firebase, HealthKit, and other infrastructure frameworks.
+
+## Design
+- Prefer small, cohesive types with clear ownership and one primary responsibility.
+- Use dependency injection for business logic and side effects.
+  Do not hide business behavior behind global singletons.
+- Build the smallest clear solution that satisfies the current requirement.
+- Remove duplication when a stable shared abstraction is evident.
+  Do not create speculative flexibility.
 
 ## Testability
-- **No business logic in SwiftUI view bodies** — decision-driving code must be reachable from a unit test without a view tree.
-- **ViewModels do NOT import SwiftUI** (Foundation / Combine / Observation only).
-- **Pure functions where possible** (the HRV / readiness math especially).
+- Make decision rules, calculations, parsing, validation, and state transitions pure and deterministic where practical.
+- New behavior and bug fixes require automated tests proportionate to their risk.
+- Tests should exercise behavior without a view tree, network, database, or hardware whenever those dependencies can be replaced at a boundary.
 
-## Performance & rendering
-- Render path stays cheap — no filter/reduce/sort over large arrays or SwiftData queries inside `body`. Cache derived state.
-- Don't fight SwiftUI's diff — stable identities; avoid passing fresh closures / recreated objects into deep children.
+## Performance
+- SwiftUI render paths must remain side-effect-free and inexpensive.
+- Compute, cache, or persist expensive derived state outside `body`.
+- Use stable identities for collections and long-lived state.
 
-## Code hygiene
-- Clarity over cleverness. Delete before you defend (no dead code / commented experiments / "just in case"). Comments explain WHY, not WHAT. No leftover scaffolding from refactors.
+## Code Hygiene
+- Prefer clarity over cleverness.
+- Remove dead code, commented experiments, obsolete compatibility paths, and refactoring scaffolding.
+- Comments explain decisions, constraints, and non-obvious tradeoffs rather than restating the code.
 
-# iOS Conventions
-- iOS 17+, Swift 6, strict concurrency. If a newer iOS API meaningfully helps, mention it and gate with `@available` rather than silently raising the baseline.
-- State: `@Observable` for shared state (`@MainActor`). `@Environment(Foo.self)` / `.environment(foo)`. `@State` for owned `@Observable`. plain `var foo: Foo` for passed-in observables; `@Bindable var foo` when `$foo.x` bindings are needed.
-- Concurrency: `Task` / `Task.sleep(for:)` — no `DispatchQueue`. `deinit` can't touch `@MainActor` state → `nonisolated(unsafe)` if needed for cancellation. Blocking APIs off-main via `Task.detached` with a `Sendable` wrapper.
-- No third-party frameworks without asking first. Avoid UIKit unless requested.
-- Modern Swift idioms: `replacing("a", with:"b")`, `URL.documentsDirectory`, `url.appending(path:)`, `.formatted()` / `Text(_, format:)`, `localizedStandardContains()` for user-facing filtering.
-- **Never commit API keys or secrets.**
-- **SwiftData + CloudKit:** never `@Attribute(.unique)`; properties have defaults or are optional; all relationships optional.
+# iOS Platform Rules
+- Do not raise the iOS 17 deployment target without Tyler's approval.
+- Gate newer APIs with availability checks and preserve a supported iOS 17 path.
+- Prefer SwiftUI, Observation, and structured concurrency for application code.
+- Use UIKit, dispatch queues, unsafe sendability, or other lower-level mechanisms when required by a system framework or when they provide a clear quality benefit.
+- Isolate those mechanisms behind a narrow boundary and document the invariant that makes them safe.
+- Treat Swift 6 concurrency diagnostics as correctness issues.
+- Do not silence isolation or sendability errors without understanding, documenting, and testing the underlying ownership model.
+- Never commit credentials, API keys, signing material, production tokens, or unredacted sensitive user data.
 
-# Specialized Skills (load before working in the domain)
-`swiftui-pro`, `swift-concurrency-pro`, `swiftdata-pro`, `swift-testing-pro`, `vibe-security`, `firebase-basics`, `firebase-auth-basics`, `firebase-firestore-standard`, `healthkit`, `widgetkit`, `app-intents`, `ios-accessibility`, `ios-security`, `ios-networking`, `storekit`, `app-store-review`, `debugging-instruments`, `asc-xcode-build`, `asc-release-flow`, `asc-metadata-sync`, `asc-submission-health`, `asc-testflight-orchestration`, `product-design-playbook`. Also CoreBluetooth / sensor capture for the strap reading. If a task spans domains, use every matching skill.
+# Skills And Progressive Disclosure
+- Keep this guide limited to context and rules that apply broadly across the project.
+- Put conditional domain knowledge, implementation guidance, and repeatable workflows in Agent Skills.
+- Store project-specific skills under `.agents/skills/` so supported agent harnesses discover the same canonical skill.
+- Create and update skills using `skill-creator`.
+- Give every skill a precise description that states when it should and should not load.
+- When a task matches an installed skill, load and follow it before acting.
+- If a task spans multiple domains, use every skill materially required for the work.
+- Do not maintain a manual registry of installed skills in this guide.
+  Installed skill metadata is the discovery source.
+- If a referenced skill is unavailable in the active harness, say so rather than pretending to have loaded it.
 
 # Firestore Schema-Change Rule
 - Strict `hasOnly` + `hasAll` field validation on every collection. Adding/removing/renaming a field in the app **requires a matching `firestore.rules` update**. Deploy the same rules to all environments. Order: (1) update rules, (2) update Swift model + write logic, (3) deploy rules before/with the app.

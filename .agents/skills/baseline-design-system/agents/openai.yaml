@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Design System"
+  short_description: "Design consistent Baseline product interfaces"
+  default_prompt: "Use $baseline-design-system to design, prototype, or implement a Baseline interface."

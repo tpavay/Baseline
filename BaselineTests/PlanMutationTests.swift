@@ -8,10 +8,8 @@ import Testing
 @Suite(.serialized) @MainActor
 struct PlanMutationTests {
 
-    private func makeRepo() -> SwiftDataPlanRepository {
-        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
-        let container = try! ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        return SwiftDataPlanRepository(context: container.mainContext)
+    private func makeRepo() -> PlanMutationTestHarness {
+        PlanMutationTestHarness()
     }
     private let cal = Calendar.planWeek
     private var mon: Date { cal.weekStart(for: Date(timeIntervalSince1970: 1_752_000_000)) }
@@ -28,7 +26,7 @@ struct PlanMutationTests {
     }
 
     @Test func moveIsVersionedAndUndoable() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "A", on: mon, program: p.id)
 
         #expect(r.move(a.id, toDate: day(2), timeOfDay: nil, actor: .user, reason: nil).isApplied)
@@ -41,7 +39,7 @@ struct PlanMutationTests {
     }
 
     @Test func swapExchangesDays() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "A", on: mon, program: p.id)
         let b = seed(r, "B", on: day(3), program: p.id)
         #expect(r.swap(a.id, b.id, actor: .user, reason: nil).isApplied)
@@ -50,7 +48,7 @@ struct PlanMutationTests {
     }
 
     @Test func deleteRequiresConfirmationThenApplies_andUndoRestores() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "A", on: mon, program: p.id)
 
         // First call — no proposal → confirmationRequired, nothing removed.
@@ -69,7 +67,7 @@ struct PlanMutationTests {
     }
 
     @Test func staleProposalRegeneratesInsteadOfApplying() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "A", on: mon, program: p.id)
         let b = seed(r, "B", on: mon, program: p.id)
 
@@ -85,7 +83,7 @@ struct PlanMutationTests {
     }
 
     @Test func editContentRevisionsAndUndoRestoresPriorContent() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "W", on: mon, program: p.id)
         let before = r.scheduledWorkout(a.id)!.workoutRevisionID
 
@@ -99,7 +97,7 @@ struct PlanMutationTests {
     }
 
     @Test func restoreToAnEarlierVersion() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "A", on: mon, program: p.id)
         guard case .applied(_, let v1) = r.move(a.id, toDate: day(1), timeOfDay: nil, actor: .user, reason: nil) else { Issue.record("v1"); return }
         #expect(r.move(a.id, toDate: day(4), timeOfDay: nil, actor: .user, reason: nil).isApplied)
@@ -110,7 +108,7 @@ struct PlanMutationTests {
     }
 
     @Test func undoConflictingWithAnActiveSessionIsRejected() {
-        let r = makeRepo(); let p = r.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeRepo(); let r = harness.repository; let p = r.addProgram(Program(name: "P", createdAt: mon))
         let a = seed(r, "A", on: mon, program: p.id)
         #expect(r.move(a.id, toDate: day(2), timeOfDay: nil, actor: .user, reason: nil).isApplied)
         _ = r.startSession(forScheduled: a.id, now: day(2))          // live session on A
@@ -122,7 +120,23 @@ struct PlanMutationTests {
     }
 }
 
-extension MutationResult: Equatable {
+@MainActor
+private final class PlanMutationTestHarness {
+    let container: ModelContainer
+    let repository: SwiftDataPlanRepository
+
+    init() {
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        let container = try! ModelContainer(
+            for: Schema(models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        self.container = container
+        repository = SwiftDataPlanRepository(context: container.mainContext)
+    }
+}
+
+extension MutationResult: @retroactive Equatable {
     public static func == (l: MutationResult, r: MutationResult) -> Bool {
         switch (l, r) {
         case (.rejected(let a), .rejected(let b)): return a == b

@@ -65,7 +65,7 @@ final class ReadingSession {
     private var countdownStart: Date?
     private var windowStartIndex = 0    // first beat index of the active window (preview/reading)
     private var lastBeatCount = 0       // beats already turned into hrSeries points
-    nonisolated(unsafe) private var tickTask: Task<Void, Never>?
+    @ObservationIgnored nonisolated(unsafe) private var tickTask: Task<Void, Never>?
 
     init(type: ReadingType, duration: TimeInterval? = nil, countdownDuration: TimeInterval = 6,
          usesLivePreview: Bool, source: HeartSignalSource) {

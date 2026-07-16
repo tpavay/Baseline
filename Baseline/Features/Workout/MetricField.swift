@@ -14,6 +14,7 @@ struct MetricField: View {
     let metric: MetricType
     let unit: MetricUnit
     var placeholder = "—"
+    var accessibilityName: String?
     @Binding var canonical: Double?
     var color: Color = BaselineColor.textHi
 
@@ -26,8 +27,10 @@ struct MetricField: View {
     var body: some View {
         TextField(placeholder, text: $text)
             .keyboardType(metric.isInteger ? .numberPad : .decimalPad)
-            .font(.system(size: 16, weight: .semibold)).foregroundStyle(color)
+            .font(.body.weight(.semibold)).foregroundStyle(color)
             .multilineTextAlignment(.center)
+            .accessibilityLabel(accessibilityName ?? "\(metric.label), \(unit.short)")
+            .accessibilityHint("Enter \(metric.label.lowercased())")
             .focused($focused)
             .onAppear { if !focused { sync() } }
             .onChange(of: canonical) { if !focused { sync() } }   // external edits (agent, undo) refresh the cell

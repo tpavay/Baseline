@@ -31,10 +31,11 @@ final class HealthService {
             HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!,
             HKObjectType.quantityType(forIdentifier: .restingHeartRate)!,
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
-            // Activity context (steps / distance / calories, Morpheus-parity) + workouts
+            // Activity context (steps / distance / calories / exercise minutes) + workouts
             HKObjectType.quantityType(forIdentifier: .stepCount)!,
             HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!,
             HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
+            HKObjectType.quantityType(forIdentifier: .appleExerciseTime)!,
             HKObjectType.workoutType(),
             // Characteristics that power HR zones (age → max-HR estimate) and cold-start norms
             HKObjectType.characteristicType(forIdentifier: .dateOfBirth)!,
@@ -121,6 +122,37 @@ final class HealthService {
     func lastNightSleep() async -> (hours: Double, efficiency: Double?)? {
         guard let s = await sleepSummary(nightsAgo: 0) else { return nil }
         return (s.hours, s.efficiency)
+    }
+
+    /// Active energy (kcal) and Apple exercise minutes for the day `daysAgo` back (1 = yesterday).
+    /// Returns nil when Health is unavailable or that day recorded no activity at all — the caller
+    /// then shows no activity tile rather than a misleading zero.
+    func activitySummary(daysAgo: Int = 1) async -> (activeEnergyKcal: Double, exerciseMinutes: Double)? {
+        guard isAvailable else { return nil }
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        guard let dayStart = calendar.date(byAdding: .day, value: -max(0, daysAgo), to: startOfToday),
+              let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return nil }
+        let predicate = HKQuery.predicateForSamples(withStart: dayStart, end: dayEnd, options: .strictStartDate)
+
+        // Sequential (not `async let`): both hop through this main-actor method, so the non-Sendable
+        // predicate never crosses an isolation boundary. Two quick statistics reads — order is cheap.
+        let kcal = await cumulativeSum(.activeEnergyBurned, unit: .kilocalorie(), predicate: predicate)
+        let minutes = await cumulativeSum(.appleExerciseTime, unit: .minute(), predicate: predicate)
+        guard (kcal ?? 0) > 0 || (minutes ?? 0) > 0 else { return nil }
+        return (kcal ?? 0, minutes ?? 0)
+    }
+
+    /// Cumulative sum of a quantity type over a predicate window, in `unit`, or nil if unavailable.
+    private func cumulativeSum(_ id: HKQuantityTypeIdentifier, unit: HKUnit, predicate: NSPredicate) async -> Double? {
+        guard let type = HKQuantityType.quantityType(forIdentifier: id) else { return nil }
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate,
+                                          options: .cumulativeSum) { _, stats, _ in
+                continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit))
+            }
+            store.execute(query)
+        }
     }
 
     /// Recent resting heart-rate samples from Apple Health, newest first (typically one per day).

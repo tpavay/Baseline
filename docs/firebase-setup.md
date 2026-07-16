@@ -32,7 +32,8 @@ Baseline uses **Firebase Auth + Firestore** with separate **dev** and **prod** p
 1. **Apple Developer portal** (https://developer.apple.com/account → Identifiers):
    - Ensure App ID `com.tylerpavay.Baseline` exists and has the **Sign in with Apple** capability enabled.
    - Requires a paid Apple Developer membership.
-2. **Set your Development Team** for device builds: edit `DEVELOPMENT_TEAM` in `project.yml` (then `xcodegen generate`) or set it in Xcode → Signing & Capabilities. (Simulator builds work without it.)
+2. **Development Team for device builds:** `DEVELOPMENT_TEAM` is configured in `project.yml` and must remain there because XcodeGen regenerates the Xcode project.
+   Do not treat a change made only in Xcode's Signing & Capabilities editor as persistent.
 3. **Firebase Console → Authentication → Sign-in method → enable Apple** in **both** projects (`baseline-app-dev` and `baseline-app-prod`). Apple is **not** configurable via the CLI/MCP, so this is a manual toggle. For a native iOS-only app you can enable it without a Services ID / key.
 4. (Optional) Confirm **Google** shows as enabled under the same Sign-in method screen.
 

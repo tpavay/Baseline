@@ -5,19 +5,19 @@
 > Scope + build order. Durable engine/data model: `docs/engine-and-data-model.md`. Living technical details: `docs/technical-reference.md`. Design: `docs/design.md`. **Evolving** — the current plan, not a contract.
 
 ## The reshape (how v0 actually works)
-- **Import-first, not authored-program-first.** Writing a full program is too much work, and most athletes already get programming elsewhere. So the primary content path is **type or photograph a workout → native, loggable Routine** (on-device Apple Foundation Models; free). Baseline's own authored program is deferred.
+- **Import-first, not authored-program-first.** Writing a full program is too much work, and most athletes already get programming elsewhere. So the primary content path is **type or photograph a workout → native, loggable Workout Template** (Vision OCR locally; structured parsing on-device when available, with a bounded cloud compatibility/fallback path). Baseline's own authored program is deferred.
 - **Firebase Auth + Firestore backend from day one** (same setup as Ascend).
 - **Build-for-self first** (Tyler), then open up.
 - **The engine modulates by recovery in layers** (A: dose-pick coach content · B: classify → do/sub/recover · C: built-in library) — see the engine doc.
 - **Live in-session HR zones** is a flagship, not a nice-to-have — one app, no more Polar Flow.
-- **Monetization deferred** to the end; **not** forced by AI cost (import runs on-device for free).
+- **Monetization deferred** to the end; import cost stays bounded through local OCR, task-specific model routing, quotas, and on-device parsing when available.
 - **The long-term product loop is the full training loop:** Plan → start workout → log performance → add Athlete Notes/context → complete or modify session → recompute training state → adapt the remaining plan. v0 starts with the readiness and logging spine, but the product direction is a complete training system.
 
 ## Priority stack (build order)
 1. **The spine (= the launch MVP)** — Reading → readiness score → band guidance + HR zones. HRV (✅ validated on H10) + the configurable readiness composite + band-level guidance copy ("intensity is on" / "keep it easy — active recovery") + zones for anyone with an HR source (capped on low days: "stay in Z1–Z2"). **No session prescription at launch** (decided 2026-07-07) — the score, the guidance, and the zones are the product; concrete sessions arrive with priority 5. User-facing copy never says "chassis" — say "active recovery" / "mobility" (chassis stays internal/engine vocabulary).
 2. **Usable daily** — structured workout model + exercise catalog + modality-specific logging (sets/reps/load, intervals, run environment, erg pace/power, isometrics) + **live HR zones** + complete → **calendar / streak**. Preserve planned-vs-performed from the first logger. (Off Polar Flow immediately.)
-3. **Import: text → Routine** (on-device FM) + auto day-type classification.
-4. **Import: photo → Routine** (Vision OCR now / native image input on iOS 27).
+3. **Import: text → Workout Template** (on-device FM when available / bounded cloud compatibility path) + auto day-type classification.
+4. **Import: photo → Workout Template** (Vision OCR now / native image input on iOS 27).
 5. **Recovery modulation & session recommendation** — dose-pick (A) + do/sub/recover (B) + recommend from the built-in active-recovery/aerobic library (C). This is where "what to do today" becomes a concrete session — post-launch.
 6. **Voice/chat-assisted logging** — natural-language updates become validated workout tool calls (`logSet`, `logInterval`, `skipExercise`, Athlete Notes), not unstructured chat history.
 7. **Mid-workout adaptation** — pain/context events update constraints, recompute remaining work, and propose substitutions/skips.

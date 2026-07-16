@@ -12,6 +12,7 @@ struct TodayView: View {
     @Environment(OnboardingStore.self) private var profile
     @Environment(HealthService.self) private var health
     @Environment(TrainingContextStore.self) private var context
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
@@ -24,6 +25,12 @@ struct TodayView: View {
     /// (AC-6/AC-7). Go-live wires a `SleepEvidenceProvider` read here; until then it never populates,
     /// so no sleep row renders and nothing navigates to `SleepDetailView`.
     @State private var todaySleep: SleepDetailContext?
+
+    /// Apple Health evidence tiles: last night's asleep hours and yesterday's activity. Each is nil
+    /// (its tile hidden) until Health is connected and the day actually recorded data — never a
+    /// misleading zero. Loaded in `reassemble`.
+    @State private var sleepHours: Double?
+    @State private var yesterdayActivity: DayActivity?
 
     /// Live readiness formula, edited in Profile → sourced from the shared profile store.
     private var readinessConfig: ReadinessConfig { profile.draft.config }
@@ -81,6 +88,7 @@ struct TodayView: View {
 
     @ViewBuilder private var content: some View {
         if let live {
+            evidenceTiles
             switch live.decision.evidenceTier {
             case .none:        noEvidenceHome
             case .partial:     planFirst(live, showNumber: false)
@@ -361,13 +369,82 @@ struct TodayView: View {
     private func reassemble() async {
         context.rolloverIfNeeded()   // never plan today off yesterday's context
         let today = entries.first { Calendar.current.isDateInToday($0.date) }
-        let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
+        // Sleep Engine seam (go-live): read the canonical night for today over the shared store,
+        // threading the athlete's sleep need from the live config. No night → provider returns nil →
+        // the decision falls back to the legacy/manual path, so this stays safe with an empty store.
+        let sleepRepo = SwiftDataSleepRepository(context: modelContext)
+        let sleepProvider = RepositorySleepEvidenceProvider(repository: sleepRepo, config: readinessConfig)
+        let base = await TodayEvidence.baseInputs(
+            readings: readings, todayEntry: today, health: health,
+            sleepProvider: sleepProvider, referenceDate: .now)
         let (decision, plan) = PlanAssembler.assemble(
             base: base,
             dailyContext: context.daily,
             constraints: context.activeConstraints
         )
         live = LiveToday(decision: decision, plan: plan)
+        // Populate the tappable sleep row from the same canonical night. Present only when a night
+        // exists for today; otherwise the row stays absent (dormant layout preserved).
+        if let night = sleepRepo.night(for: .now), let analysis = sleepRepo.analysis(for: .now) {
+            todaySleep = SleepDetailContext(night: night, analysis: analysis, decision: decision)
+        } else {
+            todaySleep = nil
+        }
+
+        // Apple Health evidence tiles — hours asleep last night + yesterday's activity. Both stay nil
+        // (tiles hidden) when Health is unavailable/unconnected or the day had no data.
+        sleepHours = await health.lastNightSleep()?.hours
+        if let a = await health.activitySummary(daysAgo: 1) {
+            yesterdayActivity = DayActivity(kcal: a.activeEnergyKcal, minutes: a.exerciseMinutes)
+        } else {
+            yesterdayActivity = nil
+        }
+    }
+
+    // MARK: - Evidence tiles (Apple Health + today's reading)
+
+    /// Today's HRV reading if one was taken today, else nil (yesterday's reading is not "today").
+    private var todayReading: Reading? {
+        readings.first.flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
+    }
+
+    private var hasAnyTile: Bool { sleepHours != nil || todayReading != nil || yesterdayActivity != nil }
+
+    /// A compact, glanceable evidence row: Sleep · HRV · Activity. Each tile appears only when its
+    /// data exists, so the row is never padded with empty placeholders.
+    @ViewBuilder private var evidenceTiles: some View {
+        if hasAnyTile {
+            HStack(spacing: 10) {
+                if let sleepHours {
+                    statTile(value: String(format: "%.1fh", sleepHours), label: "SLEEP", tint: BaselineColor.sleepCore)
+                }
+                if let r = todayReading {
+                    statTile(value: "\(Int(r.rmssd.rounded()))", unit: "ms", label: "HRV TODAY", tint: BaselineColor.accent)
+                }
+                if let a = yesterdayActivity {
+                    statTile(value: activityValue(a), label: "ACTIVE · YEST", tint: BaselineColor.zoneGreen)
+                }
+            }
+        }
+    }
+
+    private func activityValue(_ a: DayActivity) -> String {
+        a.minutes >= 1 ? "\(Int(a.minutes.rounded()))m" : "\(Int(a.kcal.rounded()))cal"
+    }
+
+    private func statTile(value: String, unit: String = "", label: String, tint: Color) -> some View {
+        VStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value).font(.system(size: 22, weight: .bold, design: .rounded)).foregroundStyle(BaselineColor.textHi)
+                if !unit.isEmpty {
+                    Text(unit).font(.system(size: 11, weight: .semibold)).foregroundStyle(BaselineColor.textFaint)
+                }
+            }
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.8)
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity).frame(height: 76)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
     }
 
     private func connectHealth() {
@@ -421,6 +498,12 @@ struct TodayView: View {
 private struct LiveToday {
     let decision: DecisionEngine.Result
     let plan: PlanningEngine.Plan
+}
+
+/// Yesterday's activity for the Home evidence tile — Apple exercise minutes with a calorie fallback.
+private struct DayActivity: Equatable {
+    let kcal: Double
+    let minutes: Double
 }
 
 private enum TodayModal: Identifiable, Equatable {

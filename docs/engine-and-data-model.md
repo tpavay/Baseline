@@ -34,18 +34,23 @@ A longer training structure, such as a multi-week HYROX block. A Program may con
 
 Baseline does not require a full Program to work. It can reason over a single imported day, a rolling week, or a larger plan.
 
-### Routine
-A reusable template for training content. A Routine can be imported, created manually, copied from past work, or shipped as Baseline content. Starting a Routine creates a planned or ad-hoc session instance.
+### Workout Template
+A reusable source for training content. A Workout Template can be imported, created manually, copied from past work, or shipped as Baseline content. Scheduling a Workout Template creates an independent planned session instance.
 
 ### Planned Session
 A dated intended workout (the athlete-facing "Workout"). This is what Baseline or the athlete meant to do on a given day.
 
-A Planned Session is organized into Workout Blocks, which hold planned exercises. It may come from a Routine, an imported coach plan, a generated recommendation, a previous workout, or a manual entry.
+A Planned Session is organized into Workout Blocks. Each block holds ordered workout nodes: exercises, nested groups, explicit rest, or choices. A simple workout still contains only exercise nodes and reads as a flat list. It may come from a Workout Template, an imported coach plan, a generated recommendation, a previous workout, or a manual entry.
 
 ### Workout Block
 A semantic group of exercises inside a workout — warm-up, strength, conditioning/metcon, HYROX station work, cooldown. It captures **purpose**: why those exercises sit together, and how they should adapt.
 
 A Workout Block is a **semantic container, not an atomic unit**. It helps Baseline reason about intent and adaptation, but it never locks its contents: exercises can be added, removed, reordered, or moved between blocks, and blocks themselves can be added, removed, reordered, or re-scoped.
+
+### Workout Group
+A composable prescription node for work that repeats or has shared timing: fixed rounds, intervals, circuits, AMRAPs, EMOM/E2MOM cadence, and similar structures. A group owns its repetition rule, optional start cadence, scoring method, duration adjustments, ordered child nodes, guidance, dose layer, and optionality.
+
+Ranges and formulas remain authored targets rather than expanded copies. For example, `10 calories + 1 each round` is stored as a 10-calorie base with a round progression. During execution, the log creates iteration-specific actuals only as the athlete performs them.
 
 ### Fully editable hierarchy
 No layer of the plan is immutable. Baseline supports validated, reversible edits at **every level** — program, phase, week, day, workout, block, exercise, prescription, and individual set/interval. Structural edits (add/remove/reorder/move blocks and exercises, split/merge workouts) and fine-grained edits (one set's load, one exercise's tempo) are both first-class. Every future-facing change is versioned and explainable (see `docs/implementation/plan-engine.md`).
@@ -92,7 +97,7 @@ The base guidance remains unchanged. The contextual layer is generated for the c
 ### Workout Log / Performed Session
 The actual work performed. It records what happened during training: completed work, skipped work, substitutions, added exercises, modified targets, pain events, performance metrics, and athlete notes.
 
-The Workout Log links back to the Planned Session when one exists. It never overwrites the plan.
+The Workout Log links back to the Planned Session when one exists. Set actuals also carry optional group and iteration identity, group logs store target versus performed duration and completed rounds, and choice logs store the option actually used. It never overwrites the plan.
 
 ### Athlete Notes
 User-generated execution notes. Athlete Notes describe what happened or how it felt in a specific workout, exercise, set, interval, or day.

@@ -110,13 +110,13 @@
       "publicationStatus": "published"
     },
     "ski_erg": {
-      "sourceFilename": "SkiErg.png",
-      "thumbnailPath": "exercise-media/ski_erg/v1/thumbnail.png",
-      "detailPath": "exercise-media/ski_erg/v1/detail.png",
+      "sourceFilename": "skiErg.png",
+      "thumbnailPath": "exercise-media/ski_erg/v2/thumbnail.png",
+      "detailPath": "exercise-media/ski_erg/v2/detail.png",
       "previewVideoPath": null,
       "instructionalVideoPath": null,
-      "version": 1,
-      "publicationStatus": "blocked"
+      "version": 2,
+      "publicationStatus": "published"
     },
     "sled_push": {
       "sourceFilename": "SledPush.png",
@@ -146,13 +146,274 @@
       "publicationStatus": "published"
     },
     "wall_balls": {
-      "sourceFilename": "WallBalls.png",
-      "thumbnailPath": "exercise-media/wall_balls/v1/thumbnail.png",
-      "detailPath": "exercise-media/wall_balls/v1/detail.png",
+      "sourceFilename": "wallballs.png",
+      "thumbnailPath": "exercise-media/wall_balls/v2/thumbnail.png",
+      "detailPath": "exercise-media/wall_balls/v2/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 2,
+      "publicationStatus": "published"
+    },
+    "barbell_box_squat": {
+      "sourceFilename": "BarbellBoxSquat.jpg",
+      "thumbnailPath": "exercise-media/barbell_box_squat/v1/thumbnail.png",
+      "detailPath": "exercise-media/barbell_box_squat/v1/detail.png",
       "previewVideoPath": null,
       "instructionalVideoPath": null,
       "version": 1,
-      "publicationStatus": "blocked"
+      "publicationStatus": "published"
+    },
+    "box_jump": {
+      "sourceFilename": "BoxJump.jpg",
+      "thumbnailPath": "exercise-media/box_jump/v1/thumbnail.png",
+      "detailPath": "exercise-media/box_jump/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "box_step_over": {
+      "sourceFilename": "BoxStepOvers.jpg",
+      "thumbnailPath": "exercise-media/box_step_over/v1/thumbnail.png",
+      "detailPath": "exercise-media/box_step_over/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "burpee_to_plate": {
+      "sourceFilename": "BurpeeToPlate.jpg",
+      "thumbnailPath": "exercise-media/burpee_to_plate/v1/thumbnail.png",
+      "detailPath": "exercise-media/burpee_to_plate/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "calf_raise": {
+      "sourceFilename": "CalfRaise.jpg",
+      "thumbnailPath": "exercise-media/calf_raise/v1/thumbnail.png",
+      "detailPath": "exercise-media/calf_raise/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "dual_db_thruster": {
+      "sourceFilename": "DualDumbbellThruster.jpg",
+      "thumbnailPath": "exercise-media/dual_db_thruster/v1/thumbnail.png",
+      "detailPath": "exercise-media/dual_db_thruster/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "dumbbell_bench_press": {
+      "sourceFilename": "DumbbellBenchPress.jpg",
+      "thumbnailPath": "exercise-media/dumbbell_bench_press/v1/thumbnail.png",
+      "detailPath": "exercise-media/dumbbell_bench_press/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "echo_bike": {
+      "sourceFilename": "AirBike.jpg",
+      "thumbnailPath": "exercise-media/echo_bike/v1/thumbnail.png",
+      "detailPath": "exercise-media/echo_bike/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "elliptical": {
+      "sourceFilename": "Elliptical.jpg",
+      "thumbnailPath": "exercise-media/elliptical/v1/thumbnail.png",
+      "detailPath": "exercise-media/elliptical/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "hand_release_push_up": {
+      "sourceFilename": "HandReleasePushUps.jpg",
+      "thumbnailPath": "exercise-media/hand_release_push_up/v1/thumbnail.png",
+      "detailPath": "exercise-media/hand_release_push_up/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "hanging_leg_raise": {
+      "sourceFilename": "HangingLegRaises.jpg",
+      "thumbnailPath": "exercise-media/hanging_leg_raise/v1/thumbnail.png",
+      "detailPath": "exercise-media/hanging_leg_raise/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "lateral_burpee_over_barbell": {
+      "sourceFilename": "BurpeesOverBar.jpg",
+      "thumbnailPath": "exercise-media/lateral_burpee_over_barbell/v1/thumbnail.png",
+      "detailPath": "exercise-media/lateral_burpee_over_barbell/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "leg_press": {
+      "sourceFilename": "LegPress.jpg",
+      "thumbnailPath": "exercise-media/leg_press/v1/thumbnail.png",
+      "detailPath": "exercise-media/leg_press/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "plank": {
+      "sourceFilename": "Plank.jpg",
+      "thumbnailPath": "exercise-media/plank/v1/thumbnail.png",
+      "detailPath": "exercise-media/plank/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "stair_stepper": {
+      "sourceFilename": "Stairstepper.jpg",
+      "thumbnailPath": "exercise-media/stair_stepper/v1/thumbnail.png",
+      "detailPath": "exercise-media/stair_stepper/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "bike_erg": {
+      "sourceFilename": "BikeErg.png",
+      "thumbnailPath": "exercise-media/bike_erg/v1/thumbnail.png",
+      "detailPath": "exercise-media/bike_erg/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "sled_pull": {
+      "sourceFilename": "sledpull.png",
+      "thumbnailPath": "exercise-media/sled_pull/v1/thumbnail.png",
+      "detailPath": "exercise-media/sled_pull/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "barbell_overhead_press": {
+      "sourceFilename": "barbelloverheadpress.png",
+      "thumbnailPath": "exercise-media/barbell_overhead_press/v1/thumbnail.png",
+      "detailPath": "exercise-media/barbell_overhead_press/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "front_squat": {
+      "sourceFilename": "frontSquat.png",
+      "thumbnailPath": "exercise-media/front_squat/v1/thumbnail.png",
+      "detailPath": "exercise-media/front_squat/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "kettlebell_swing": {
+      "sourceFilename": "kettlebellSwing.png",
+      "thumbnailPath": "exercise-media/kettlebell_swing/v1/thumbnail.png",
+      "detailPath": "exercise-media/kettlebell_swing/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "medicine_ball_slam": {
+      "sourceFilename": "medicineballslams.png",
+      "thumbnailPath": "exercise-media/medicine_ball_slam/v1/thumbnail.png",
+      "detailPath": "exercise-media/medicine_ball_slam/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "barbell_hip_thrust": {
+      "sourceFilename": "BarbellHipThrust.png",
+      "thumbnailPath": "exercise-media/barbell_hip_thrust/v1/thumbnail.png",
+      "detailPath": "exercise-media/barbell_hip_thrust/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "goblet_squat": {
+      "sourceFilename": "GobletSquat.png",
+      "thumbnailPath": "exercise-media/goblet_squat/v1/thumbnail.png",
+      "detailPath": "exercise-media/goblet_squat/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "bodyweight_walking_lunge": {
+      "sourceFilename": "Lunge.png",
+      "thumbnailPath": "exercise-media/bodyweight_walking_lunge/v1/thumbnail.png",
+      "detailPath": "exercise-media/bodyweight_walking_lunge/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "dumbbell_walking_lunge": {
+      "sourceFilename": "DumbbellLunge.png",
+      "thumbnailPath": "exercise-media/dumbbell_walking_lunge/v1/thumbnail.png",
+      "detailPath": "exercise-media/dumbbell_walking_lunge/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "barbell_walking_lunge": {
+      "sourceFilename": "BarbellLunge.png",
+      "thumbnailPath": "exercise-media/barbell_walking_lunge/v1/thumbnail.png",
+      "detailPath": "exercise-media/barbell_walking_lunge/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "bodyweight_hip_thrust": {
+      "sourceFilename": "HipThrust.png",
+      "thumbnailPath": "exercise-media/bodyweight_hip_thrust/v1/thumbnail.png",
+      "detailPath": "exercise-media/bodyweight_hip_thrust/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "single_leg_hip_thrust": {
+      "sourceFilename": "SingleLegHipThrust.png",
+      "thumbnailPath": "exercise-media/single_leg_hip_thrust/v1/thumbnail.png",
+      "detailPath": "exercise-media/single_leg_hip_thrust/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
+    },
+    "single_arm_dumbbell_row": {
+      "sourceFilename": "SingleArmDumbbellRow.png",
+      "thumbnailPath": "exercise-media/single_arm_dumbbell_row/v1/thumbnail.png",
+      "detailPath": "exercise-media/single_arm_dumbbell_row/v1/detail.png",
+      "previewVideoPath": null,
+      "instructionalVideoPath": null,
+      "version": 1,
+      "publicationStatus": "published"
     }
   }
 }

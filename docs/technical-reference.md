@@ -68,11 +68,16 @@ Station and interval summaries should support rep count, distance, time, calorie
 
 ## Import Pipeline
 Current implementation direction:
-- Text to structured workout: Apple Foundation Models when available.
-- Photo to structured workout: Vision OCR, then structured parsing.
-- Cloud fallback: Claude API through a controlled backend path for messy or unsupported imports.
+- Import output is the ordinary reviewed `WorkoutDraft`; models never write canonical workout or plan state directly.
+- Text to structured workout: Apple Foundation Models when available, with a bounded cloud compatibility path.
+- Photo to structured workout: Vision OCR evidence, then structured parsing; complex layouts may later route the normalized image plus OCR evidence to a multimodal parser.
+- Provider output becomes validated semantic transactions applied to a transient `CandidateGraph` inside `ImportSession`.
+- Deterministic normalization, catalog resolution, unit conversion, and structural audit construct the ordinary `WorkoutDraft` before atomic ownership handoff.
+- The editor never renders OCR, candidates, provider output, or structurally invalid workout content.
+- Cloud parsing uses a controlled backend path with task-specific models, authentication, App Check, quotas, and strict request/response schemas.
 - Import should extract more than exercise names: day type, intensity, targets, duration, dose layers when present, and confidence.
 - Low-confidence imports should be confirmed before becoming planned work.
+- Full implementation plan: `docs/implementation/workout-image-import.md`.
 
 ## App Capabilities In Conversation
 - Baseline injects **live capability state** into the conversation (supported? current status? which action tool?), not static prose — the model must answer "how do I…/can I…" from runtime state, never from documentation that can go stale (e.g. claiming Health is disconnected when it's connected, or describing a moved control).

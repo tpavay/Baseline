@@ -17,7 +17,7 @@ struct MeasurementsView: View {
             BaselineColor.base.ignoresSafeArea()
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    section("Primary method") {
+                    section("HRV measurement method") {
                         methodCard(.camera)
                         methodCard(.strap)
                         Text("Your baseline calibrates separately for each method, so switching won't corrupt your history.")
@@ -34,7 +34,7 @@ struct MeasurementsView: View {
                 .padding(20)
             }
         }
-        .navigationTitle("Measurement")
+        .navigationTitle("Devices")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(BaselineColor.base, for: .navigationBar)
         .onAppear { if source == .strap { bluetooth.startScanning() } }

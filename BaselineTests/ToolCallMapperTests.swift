@@ -28,8 +28,16 @@ struct ToolCallMapperTests {
                 == .addExercise(block: "Stations", name: "Overhead carry", sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150))
         #expect(ToolCallMapper.map(name: "move_exercise", input: ["exercise": "Bench", "to_block": "Warm-up"])
                 == .moveExercise(exercise: "Bench", toBlock: "Warm-up"))
+        #expect(ToolCallMapper.map(name: "replace_exercise", input: [
+            "exercise": "Treadmill Run", "replacement": "Run", "replace_all": true,
+        ]) == .replaceExercise(exercise: "Treadmill Run", replacement: "Run", block: nil, replaceAll: true))
+        #expect(ToolCallMapper.map(name: "replace_exercise", input: [
+            "exercise": "Treadmill Run", "replacement": "Run", "block": "Warm-up",
+        ]) == .replaceExercise(exercise: "Treadmill Run", replacement: "Run", block: "Warm-up", replaceAll: false))
         #expect(ToolCallMapper.map(name: "update_set", input: ["exercise": "Row", "set_number": 1, "distance_m": 1000])
                 == .updateSet(exercise: "Row", setNumber: 1, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 1000, rpe: nil))
+        #expect(ToolCallMapper.map(name: "require_all_options", input: ["choice": "Option B"])
+                == .requireAllOptions(choice: "Option B"))
         #expect(ToolCallMapper.map(name: "get_current_workout", input: [:]) == .getCurrentWorkout)
         #expect(ToolCallMapper.map(name: "create_workout", input: [:]) == nil)   // missing title → rejected
     }
@@ -67,6 +75,7 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "upsert_constraint", input: ["location": "knee", "kind": "sprain",
                                                                       "severity": 1, "affectsTraining": true]) == nil) // bad kind
         #expect(ToolCallMapper.map(name: "resolve_constraint", input: ["id": "not-a-uuid"]) == nil)
+        #expect(ToolCallMapper.map(name: "replace_exercise", input: ["exercise": "Run"]) == nil)
         #expect(ToolCallMapper.map(name: "delete_everything", input: [:]) == nil)                          // unknown tool
     }
 }

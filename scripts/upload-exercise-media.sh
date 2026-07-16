@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <firebase-storage-bucket>" >&2
-  echo "Example: $0 baseline-app-dev.firebasestorage.app" >&2
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <firebase-storage-bucket> [exercise-id ...]" >&2
+  echo "Example: $0 baseline-app-dev.firebasestorage.app elliptical stair_stepper" >&2
   exit 1
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bucket="$1"
+shift
+exercise_ids=("$@")
 generated_root="$repo_root/.generated"
 manifest="$repo_root/Baseline/Resources/ExerciseMedia/exercise-media-manifest.json"
 
@@ -19,7 +21,24 @@ for command_name in jq gcloud; do
   fi
 done
 
-jq -r '.exercises | to_entries[] | select(.value.publicationStatus == "ready") | [.key, .value.thumbnailPath, .value.detailPath] | @tsv' "$manifest" |
+if (( ${#exercise_ids[@]} > 0 )); then
+  requested_ids="$(printf '%s\n' "${exercise_ids[@]}" | jq -R . | jq -s .)"
+  for exercise_id in "${exercise_ids[@]}"; do
+    status="$(jq -r --arg exercise_id "$exercise_id" '.exercises[$exercise_id].publicationStatus // "missing"' "$manifest")"
+    if [[ "$status" != "ready" ]]; then
+      echo "$exercise_id must exist with publicationStatus=ready; got $status" >&2
+      exit 1
+    fi
+  done
+  selection='select(.key as $id | $requested_ids | index($id))'
+else
+  requested_ids='[]'
+  selection='select(.value.publicationStatus == "ready")'
+fi
+
+jq -r --argjson requested_ids "$requested_ids" \
+  ".exercises | to_entries[] | $selection | [.key, .value.thumbnailPath, .value.detailPath] | @tsv" \
+  "$manifest" |
 while IFS=$'\t' read -r exercise_id thumbnail_path detail_path; do
   for storage_path in "$thumbnail_path" "$detail_path"; do
     local_path="$generated_root/$storage_path"

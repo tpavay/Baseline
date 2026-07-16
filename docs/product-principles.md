@@ -74,6 +74,15 @@ Each engine has a single responsibility and can be tested on its own. External i
 - **Rules out:** business logic embedded in views; AI calls mixed with scoring; HealthKit dependencies inside planning logic.
 - *Not just an engineering preference — it's what lets Baseline evolve over years.*
 
+### 16. Confirmed imported content becomes ordinary authored content
+Import is an input method, not a permanent content type.
+During interpretation, `ImportSession` owns temporary source photos, OCR evidence, checkpoints, candidates, diagnostics, and provider work.
+It atomically hands one structurally valid `WorkoutDraft` to the athlete before the ordinary editor opens.
+After handoff, the import pipeline cannot mutate workout content.
+Imported and manually created drafts and templates use the same editing, scheduling, adaptation, history, agent, and learning paths.
+- **Rules in:** one canonical `WorkoutDraft` and `WorkoutTemplate` model; targeted review issues as temporary sidecar metadata; generic creation provenance for analytics; identical repository and engine behavior regardless of authoring path.
+- **Rules out:** permanent imported-template subclasses or behavior flags; import-specific editors, scheduling, or adaptation branches; rendering OCR, candidates, parser output, or malformed workout content in the editor; carrying OCR confidence, source images, crops, or provider output into training history.
+
 ---
 
 ## The one-line test

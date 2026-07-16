@@ -63,6 +63,18 @@ enum ToolCallMapper {
         case "move_exercise":
             guard let exercise = input["exercise"] as? String, let toBlock = input["to_block"] as? String else { return nil }
             return .moveExercise(exercise: exercise, toBlock: toBlock)
+        case "replace_exercise":
+            guard let exercise = input["exercise"] as? String,
+                  let replacement = input["replacement"] as? String else { return nil }
+            return .replaceExercise(
+                exercise: exercise,
+                replacement: replacement,
+                block: input["block"] as? String,
+                replaceAll: boolOrNil(input["replace_all"]) ?? false
+            )
+        case "require_all_options":
+            guard let choice = input["choice"] as? String else { return nil }
+            return .requireAllOptions(choice: choice)
         case "remove_exercise":
             guard let exercise = input["exercise"] as? String else { return nil }
             return .removeExercise(exercise: exercise)

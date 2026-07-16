@@ -61,6 +61,9 @@ struct DailyReadingFlowView: View {
                         rhrBaseline: rhrBaseline,
                         constraints: context.activeConstraints,
                         dailyContext: context.daily,
+                        sleepProvider: RepositorySleepEvidenceProvider(
+                            repository: SwiftDataSleepRepository(context: modelContext), config: config),
+                        referenceDate: .now,
                         onDone: finish
                     )
                 }
@@ -219,6 +222,7 @@ struct DailyCheckInView: View {
     @Binding var answers: CheckInAnswers
     let onContinue: () -> Void
     let onSkip: () -> Void
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -237,7 +241,11 @@ struct DailyCheckInView: View {
                         CheckInScaleView(scale: component.scale, value: binding(component))
                     }
                     if config.sleepEnabled {
-                        SleepCheckInCard(answers: $answers)
+                        // Go-live: feed the Sleep Engine's analysis for last night so the card shows the
+                        // score/quality readout. Nil (empty store) → the legacy Health/manual card.
+                        SleepCheckInCard(
+                            answers: $answers,
+                            analysis: SwiftDataSleepRepository(context: modelContext).analysis(for: .now))
                     }
                 }
                 .padding(.top, 24)

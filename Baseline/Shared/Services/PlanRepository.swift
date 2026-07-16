@@ -56,8 +56,11 @@ protocol PlanRepository {
     // touches already-scheduled workouts (they keep their own revision + template-revision attribution).
     func templates() -> [WorkoutTemplate]
     func template(named name: String) -> WorkoutTemplate?
+    func workout(forTemplate id: UUID) -> Workout?
     @discardableResult func saveAsTemplate(name: String, from workout: Workout, tags: [WorkoutTag]) -> WorkoutTemplate
     @discardableResult func updateTemplate(_ id: UUID, from workout: Workout) -> WorkoutTemplate?
+    @discardableResult func saveImportedTemplate(name: String, from workout: Workout, tags: [WorkoutTag]) throws -> WorkoutTemplate
+    @discardableResult func updateImportedTemplate(_ id: UUID, from workout: Workout) throws -> WorkoutTemplate?
     /// Instantiate a template onto a date as an INDEPENDENT scheduled workout (its own fresh revision),
     /// recording templateID + templateRevisionID for attribution. Versioned + undoable.
     @discardableResult func instantiateTemplate(_ id: UUID, on date: Date, programID: UUID, actor: PlanActor) -> ScheduledWorkout?
@@ -86,9 +89,15 @@ enum PlanCoding {
 @MainActor
 final class SwiftDataPlanRepository: PlanRepository {
     private let context: ModelContext
+    /// ModelContext does not keep its container alive. The repository owns both so an injected
+    /// context can never outlive the persistent store that backs it.
+    private let container: ModelContainer
     private let calendar = Calendar.planWeek
 
-    init(context: ModelContext) { self.context = context }
+    init(context: ModelContext) {
+        self.context = context
+        container = context.container
+    }
 
     // MARK: Reads
 
@@ -201,9 +210,17 @@ final class SwiftDataPlanRepository: PlanRepository {
         let open = Self.openWork(plan: sw.workout, log: session.log)
         if open.sets > 0 && !acknowledgingOpenWork { return .unloggedWork(sets: open.sets, exercises: open.exercises) }
 
-        let completed = CompletedWorkoutLog(scheduledWorkoutID: id, finishedAt: now, log: session.log)
-        context.insert(SDCompletedLog(id: completed.id, scheduledWorkoutID: id, finishedAt: now, logJSON: PlanCoding.data(session.log)))
+        var completedLog = session.log
+        completedLog.isComplete = true
+        let completed = CompletedWorkoutLog(scheduledWorkoutID: id, finishedAt: now, log: completedLog)
+        context.insert(SDCompletedLog(
+            id: completed.id,
+            scheduledWorkoutID: id,
+            finishedAt: now,
+            logJSON: PlanCoding.data(completedLog)
+        ))
         indexCompletedExercises(completed, plan: sw)
+        sd.logJSON = PlanCoding.data(completedLog)
         sd.statusRaw = SessionStatus.completed.rawValue
         save()
         return .completed(completed)
@@ -321,6 +338,13 @@ final class SwiftDataPlanRepository: PlanRepository {
         return templates().first { $0.name.lowercased() == key }
     }
 
+    func workout(forTemplate id: UUID) -> Workout? {
+        guard let template = firstSD(SDWorkoutTemplate.self, where: #Predicate { $0.id == id }) else { return nil }
+        let revisionID = template.currentRevisionID
+        return firstSD(SDWorkoutRevision.self, where: #Predicate { $0.id == revisionID })
+            .flatMap { PlanCoding.value(Workout.self, $0.workoutJSON) }
+    }
+
     @discardableResult func saveAsTemplate(name: String, from workout: Workout, tags: [WorkoutTag]) -> WorkoutTemplate {
         // The template's content is its own immutable revision (independent of any scheduled workout).
         let rev = SDWorkoutRevision(workoutID: UUID(), createdAt: Date(), workoutJSON: PlanCoding.data(workout))
@@ -337,6 +361,26 @@ final class SwiftDataPlanRepository: PlanRepository {
         context.insert(rev)               // new immutable template revision; the old one is kept (attribution)
         sd.currentRevisionID = rev.id      // last-write-wins on the pointer (v1: no conflict detection)
         save()
+        return mapTemplate(sd)
+    }
+
+    @discardableResult func saveImportedTemplate(name: String, from workout: Workout, tags: [WorkoutTag]) throws -> WorkoutTemplate {
+        let rev = SDWorkoutRevision(workoutID: UUID(), createdAt: Date(), workoutJSON: try PlanCoding.encoder.encode(workout))
+        context.insert(rev)
+        let sd = SDWorkoutTemplate(name: name.trimmingCharacters(in: .whitespacesAndNewlines), currentRevisionID: rev.id,
+                                   tagsJSON: tags.isEmpty ? nil : try PlanCoding.encoder.encode(tags))
+        context.insert(sd)
+        try context.save()
+        return mapTemplate(sd)
+    }
+
+    @discardableResult func updateImportedTemplate(_ id: UUID, from workout: Workout) throws -> WorkoutTemplate? {
+        guard let sd = firstSD(SDWorkoutTemplate.self, where: #Predicate { $0.id == id }) else { return nil }
+        let rev = SDWorkoutRevision(workoutID: UUID(), createdAt: Date(), workoutJSON: try PlanCoding.encoder.encode(workout))
+        context.insert(rev)
+        sd.name = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        sd.currentRevisionID = rev.id
+        try context.save()
         return mapTemplate(sd)
     }
 

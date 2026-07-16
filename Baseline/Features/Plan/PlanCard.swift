@@ -2,87 +2,76 @@ import SwiftUI
 
 /// Structural actions a card can request; `PlanView` maps each to a versioned repository mutation.
 enum PlanCardAction: Equatable {
-    case primary, open, complete, duplicate, skip, unskip, delete, move(Date)
+    case open, duplicate, skip, unskip, delete, move(Date)
 }
 
-/// One adaptive workout card in the timeline. Shares a structure across modalities; the summary line is
-/// derived from the workout's content. Completed cards read quiet; today/active read prominent. Full
-/// execution (logging) opens via `.open`; structural edits go through the ⋯ menu; drag-drop is added by
-/// the enclosing timeline.
+/// A compact disclosure row in the plan timeline. Tapping opens the workout detail, where starting and
+/// logging live; plan-level organization remains available from the row's context menu.
 struct ScheduledWorkoutCard: View {
     let scheduled: ScheduledWorkout
     let status: ScheduleStatus
     var weekDays: [Date] = []
     let onAction: (PlanCardAction) -> Void
-    @State private var expanded = false
     private let cal = Calendar.planWeek
 
     private var quiet: Bool { if case .completed = status { return true }; if case .skipped = status { return true }; return false }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface).frame(width: 42, height: 42)
-                    .overlay(Image(systemName: scheduled.workout.allExercises.first?.definition.category.glyph ?? "figure.strengthtraining.traditional")
-                        .font(.system(size: 18)).foregroundStyle(quiet ? BaselineColor.textFaint : BaselineColor.textMid))
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(scheduled.workout.title).font(.system(size: 18, weight: .bold)).italic()
+        Button { onAction(.open) } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(scheduled.workout.title)
+                        .font(.headline)
                         .foregroundStyle(quiet ? BaselineColor.textMid : BaselineColor.textHi)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 6) {
-                        ForEach(modalityLabels, id: \.self) { chip($0, color: BaselineColor.accent) }
-                        if let d = durationLabel { chip(d, color: BaselineColor.textFaint) }
+
+                    HStack(spacing: 8) {
+                        if let (label, color) = PlanStatusStyle.chip(status) {
+                            Text(label)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(color)
+                        }
+                        if let summaryLabel {
+                            Text(summaryLabel)
+                                .font(.caption)
+                                .foregroundStyle(BaselineColor.textFaint)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
-                Menu {
-                    if let p = primaryLabel { Button(p) { onAction(.primary) } }
-                    if case .inProgress = status { Button("Complete") { onAction(.complete) } }
-                    if case .paused = status { Button("Complete") { onAction(.complete) } }
-                    Button("Open") { onAction(.open) }
-                    if !weekDays.isEmpty {
-                        Menu("Move to") {
-                            ForEach(weekDays, id: \.self) { d in
-                                Button(d.formatted(.dateTime.weekday(.wide))) { onAction(.move(d)) }
-                                    .disabled(cal.isDate(d, inSameDayAs: scheduled.date))
-                            }
-                        }
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BaselineColor.textFaint)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(quiet ? BaselineColor.surface.opacity(0.45) : BaselineColor.surface))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Opens workout details")
+        .contextMenu {
+            if !weekDays.isEmpty {
+                Menu("Move to") {
+                    ForEach(weekDays, id: \.self) { date in
+                        Button(date.formatted(.dateTime.weekday(.wide))) { onAction(.move(date)) }
+                            .disabled(cal.isDate(date, inSameDayAs: scheduled.date))
                     }
-                    Button("Duplicate") { onAction(.duplicate) }
-                    if scheduled.skipped { Button("Unskip") { onAction(.unskip) } }
-                    else { Button("Skip") { onAction(.skip) } }
-                    Button("Delete", role: .destructive) { onAction(.delete) }
-                } label: { Image(systemName: "ellipsis").font(.system(size: 16)).foregroundStyle(BaselineColor.textFaint).padding(6) }
-            }
-            if let (label, color) = PlanStatusStyle.chip(status) {
-                Text(label).font(.system(size: 11, weight: .bold)).tracking(0.6).foregroundStyle(color)
-            }
-            if expanded { exerciseList }
-            HStack(spacing: 12) {
-                Button { expanded.toggle() } label: {
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 13, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
-                }.buttonStyle(.plain)
-                Spacer()
-                if let label = primaryLabel {
-                    Button { onAction(.primary) } label: {
-                        Text(label).font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(prominent ? Color(hex: 0x120B21) : BaselineColor.accent)
-                            .padding(.horizontal, 20).frame(height: 42)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(prominent ? BaselineColor.textHi : BaselineColor.surface))
-                    }.buttonStyle(.plain)
                 }
             }
+            Button("Duplicate") { onAction(.duplicate) }
+            if scheduled.skipped {
+                Button("Unskip") { onAction(.unskip) }
+            } else {
+                Button("Skip") { onAction(.skip) }
+            }
+            Button("Delete", role: .destructive) { onAction(.delete) }
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(quiet ? BaselineColor.surface.opacity(0.4) : BaselineColor.surface))
-        .contentShape(Rectangle())
-        .onTapGesture { onAction(.open) }
     }
-
-    private var prominent: Bool {
-        switch status { case .today, .inProgress, .paused, .missed: return true; default: return false }
-    }
-    private var primaryLabel: String? { PlanStatusStyle.primaryLabel(status) }
 
     private var modalityLabels: [String] {
         var seen = Set<ActivityCategory>(), out: [String] = []
@@ -98,24 +87,17 @@ struct ScheduledWorkoutCard: View {
         return total > 0 ? PlanFormat.durationShort(Int(total)) : nil
     }
 
-    private func chip(_ text: String, color: Color) -> some View {
-        Text(text.uppercased()).font(.system(size: 11, weight: .bold)).tracking(0.4).foregroundStyle(color)
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Capsule().fill(color.opacity(0.14)))
+    private var summaryLabel: String? {
+        let parts = modalityLabels + [durationLabel].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ").uppercased()
     }
 
-    private var exerciseList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(scheduled.workout.allExercises) { ex in
-                HStack {
-                    Text(ex.exerciseName).font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textHi)
-                    Spacer()
-                    Text("\(ex.prescription.sets.count)×").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-                }
-            }
-        }
-        .padding(.vertical, 8).padding(.horizontal, 12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.base.opacity(0.5)))
+    private var accessibilityLabel: String {
+        let date = scheduled.date.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        let statusLabel = PlanStatusStyle.chip(status)?.0
+        return [date, scheduled.workout.title, statusLabel, summaryLabel]
+            .compactMap { $0 }
+            .joined(separator: ", ")
     }
 }
 
@@ -124,7 +106,7 @@ struct ScheduledWorkoutCard: View {
 enum PlanStatusStyle {
     static func chip(_ s: ScheduleStatus) -> (String, Color)? {
         switch s {
-        case .today(let m): return todayChip(m)
+        case .today(let modification): return todayChip(modification)
         case .inProgress: return ("IN PROGRESS", BaselineColor.accent)
         case .paused: return ("PAUSED", BaselineColor.zoneAmber)
         case .completed: return ("COMPLETED", BaselineColor.zoneGreen)
@@ -134,22 +116,13 @@ enum PlanStatusStyle {
         case .modifiedIntent(let a): return ("\(a.rawValue.uppercased()) MODIFIED", BaselineColor.accent)
         }
     }
-    private static func todayChip(_ m: TodayModification) -> (String, Color) {
-        switch m {
-        case .asPlanned: return ("AS PLANNED", BaselineColor.zoneGreen)
-        case .modified: return ("MODIFIED TODAY", BaselineColor.accent)
+    private static func todayChip(_ modification: TodayModification) -> (String, Color)? {
+        switch modification {
+        case .asPlanned: return nil
+        case .modified: return ("MODIFIED", BaselineColor.accent)
         case .constraintActive: return ("CONSTRAINT ACTIVE", BaselineColor.zoneAmber)
         case .swapSuggested: return ("SWAP SUGGESTED", BaselineColor.zoneAmber)
         case .reducedVolume(let p): return (p.map { "VOLUME −\($0)%" } ?? "REDUCED VOLUME", BaselineColor.zoneAmber)
-        }
-    }
-    static func primaryLabel(_ s: ScheduleStatus) -> String? {
-        switch s {
-        case .today, .missed: return "Start Workout"
-        case .inProgress, .paused: return "Resume"
-        case .completed: return "View Log"
-        case .planned, .modifiedIntent: return "Preview"
-        case .skipped: return nil
         }
     }
     static func modalityLabel(_ c: ActivityCategory) -> String {
@@ -159,4 +132,3 @@ enum PlanStatusStyle {
         }
     }
 }
-

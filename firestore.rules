@@ -64,5 +64,19 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if false;
     }
+
+    // OCR observations and parser results are private server-job data. Clients access only the
+    // authenticated callable status projection, never Firestore documents directly.
+    match /workoutImportJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /workoutImportJobSections/{sectionId} {
+      allow read, write: if false;
+    }
+
+    match /workoutImportJobCancellations/{cancellationId} {
+      allow read, write: if false;
+    }
   }
 }

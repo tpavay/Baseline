@@ -7,10 +7,14 @@ import Testing
 /// buffer both write through to the Plan repository via a `PlanSink` — one mutation path, no divergence.
 @Suite(.serialized) @MainActor
 struct PlanBindingTests {
+    /// SwiftData contexts do not retain their container. Keep the in-memory containers alive for the
+    /// duration of this serialized suite so repository calls cannot outlive their stores.
+    private static var retainedContainers: [ModelContainer] = []
 
     private func makeStore() -> PlanStore {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
         let container = try! ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        Self.retainedContainers.append(container)
         return PlanStore(repo: SwiftDataPlanRepository(context: container.mainContext))
     }
     private func work(_ t: String) -> Workout {
@@ -63,6 +67,39 @@ struct PlanBindingTests {
         let ex = store.current!.allExercises.first!
         store.editLog { $0.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: ex.prescription.sets[0].id) { $0.completed = true } }
         #expect(plan.session(for: sw.id)?.log.performed(forPlanned: ex.id)?.setLogs.first?.completed == true)
+
+        store.completeWorkout()
+        #expect(store.currentLog?.isComplete == true)
+    }
+
+    @Test func discardedLogDoesNotReturnWhenWorkoutIsReopened() {
+        let plan = makeStore()
+        let program = plan.addProgram(Program(name: "P", createdAt: Date()))
+        plan.addScheduled(ScheduledWorkout(
+            programID: program.id,
+            date: Date(),
+            origin: .userCreated,
+            workoutID: UUID(),
+            workoutRevisionID: UUID(),
+            workout: work("W")
+        ))
+        let scheduled = plan.todayScheduled()!
+
+        let firstStore = buffer()
+        firstStore.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: true)
+        firstStore.startWorkout()
+        #expect(firstStore.currentLog != nil)
+        #expect(firstStore.currentLogStartedAt != nil)
+
+        firstStore.discardLog()
+        #expect(plan.session(for: scheduled.id)?.status == .discarded)
+        #expect(firstStore.currentLog == nil)
+        #expect(firstStore.currentLogStartedAt == nil)
+
+        let reopenedStore = buffer()
+        reopenedStore.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: true)
+        #expect(reopenedStore.currentLog == nil)
+        #expect(reopenedStore.currentLogStartedAt == nil)
     }
 
     @Test func manualAddWorkoutCreatesAnEmptyVersionedWorkoutOnThatDay() {

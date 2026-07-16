@@ -86,8 +86,25 @@ final class PlanStore {
 
     func templates() -> [WorkoutTemplate] { repo.templates() }
     func template(named name: String) -> WorkoutTemplate? { repo.template(named: name) }
+    func templateWorkout(_ id: UUID) -> Workout? { repo.workout(forTemplate: id) }
+    func templates(matchingFingerprintOf workout: Workout) -> [WorkoutTemplate] {
+        let fingerprint = WorkoutFingerprint.value(for: workout)
+        return templates().filter { template in
+            templateWorkout(template.id).map { WorkoutFingerprint.value(for: $0) == fingerprint } ?? false
+        }
+    }
     @discardableResult func saveAsTemplate(name: String, from workout: Workout, tags: [WorkoutTag] = []) -> WorkoutTemplate { repo.saveAsTemplate(name: name, from: workout, tags: tags) }
     @discardableResult func updateTemplate(_ id: UUID, from workout: Workout) -> WorkoutTemplate? { repo.updateTemplate(id, from: workout) }
+    @discardableResult func saveImportedTemplate(name: String, workout: Workout, tags: [WorkoutTag] = []) throws -> WorkoutTemplate {
+        let saved = try repo.saveImportedTemplate(name: name, from: workout, tags: tags)
+        reload()
+        return saved
+    }
+    @discardableResult func updateImportedTemplate(_ id: UUID, workout: Workout) throws -> WorkoutTemplate? {
+        let saved = try repo.updateImportedTemplate(id, from: workout)
+        reload()
+        return saved
+    }
     /// Instantiate a template onto a date (its own program, or a new Baseline program). Versioned.
     @discardableResult func instantiateTemplate(_ id: UUID, on date: Date, actor: PlanActor = .user) -> ScheduledWorkout? {
         defer { reload() }
@@ -111,7 +128,11 @@ final class PlanStore {
             discard: { [weak self] in self?.discard(id) },
             reload: { [weak self] in
                 guard let self, let sw = self.scheduledWorkout(id) else { return nil }
-                return (sw.workout, self.session(for: id)?.log)
+                let session = self.session(for: id)
+                guard session?.status != .discarded else {
+                    return (sw.workout, nil, nil)
+                }
+                return (sw.workout, session?.log, session?.startedAt)
             })
     }
 

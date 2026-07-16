@@ -345,12 +345,37 @@ export const TOOLS = [
     },
   },
   {
+    name: "replace_exercise",
+    description: "Replace an existing exercise in place while preserving its sets, targets, notes, order, and workout identity. ALWAYS use this for replacements — never simulate replacement with add_exercise + remove_exercise. Set replace_all=true when the athlete says all/every instance; otherwise qualify a duplicate with block.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string", description: "Current exercise name." },
+        replacement: { type: "string", description: "Replacement exercise from the catalog." },
+        block: { type: "string", description: "Optional block name to target one duplicate." },
+        replace_all: { type: "boolean", description: "Replace every matching instance. Use when the athlete says all/every." },
+      },
+      required: ["exercise", "replacement"],
+    },
+  },
+  {
     name: "remove_exercise",
     description: "Remove an exercise from the workout by name.",
     input_schema: {
       type: "object",
       properties: { exercise: { type: "string" } },
       required: ["exercise"],
+    },
+  },
+  {
+    name: "require_all_options",
+    description: "Convert one incorrectly inferred either/or choice into a required ordered group containing every existing option. Use when the athlete says both/all movements are required, such as 'Option B contains deadlifts AND lateral burpees.' Preserves the child exercises and their prescriptions.",
+    input_schema: {
+      type: "object",
+      properties: {
+        choice: { type: "string", description: "The current choice label, or an unambiguous part of it." },
+      },
+      required: ["choice"],
     },
   },
   {

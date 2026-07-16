@@ -6,6 +6,8 @@
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",
+    "test": "npm run build && node --test test/tools.test.js test/workoutImport.test.js test/workoutImportRuntime.test.js",
+    "test:firestore-emulator": "npm run build && firebase --config ../firebase.json emulators:exec --project baseline-import-test --only firestore \"node --test test/workoutImportFirestore.integration.test.js\"",
     "deploy": "npm run build && firebase deploy --only functions",
     "logs": "firebase functions:log"
   },

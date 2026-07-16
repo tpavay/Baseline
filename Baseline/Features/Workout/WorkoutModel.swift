@@ -25,13 +25,62 @@ enum TrainingIntent: String, Codable, Sendable, CaseIterable {
 struct PlannedSet: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var values = MetricValues()
+    var role: SetRole = .working
+    var effortTarget: EffortTarget?
+    var ranges: [MetricTargetRange] = []
+    var progressions: [MetricProgression] = []
+    var alternatives: [PlannedSetAlternative] = []
 
-    init(reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
-         distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil) {
+    init(id: UUID = UUID(), reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
+         distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil,
+         role: SetRole = .working, effortTarget: EffortTarget? = nil,
+         ranges: [MetricTargetRange] = [], progressions: [MetricProgression] = [],
+         alternatives: [PlannedSetAlternative] = []) {
+        self.id = id
+        self.role = role
+        self.effortTarget = effortTarget
+        self.ranges = ranges
+        self.progressions = progressions
+        self.alternatives = alternatives
         values.setInt(.reps, reps); values[.load] = load; values.setInt(.duration, duration)
         values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
     }
-    init(values: MetricValues) { self.values = values }
+    init(id: UUID = UUID(), values: MetricValues, role: SetRole = .working,
+         effortTarget: EffortTarget? = nil, ranges: [MetricTargetRange] = [],
+         progressions: [MetricProgression] = [], alternatives: [PlannedSetAlternative] = []) {
+        self.id = id
+        self.values = values
+        self.role = role
+        self.effortTarget = effortTarget
+        self.ranges = ranges
+        self.progressions = progressions
+        self.alternatives = alternatives
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, values, role, effortTarget, ranges, progressions, alternatives
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        values = try container.decode(MetricValues.self, forKey: .values)
+        role = try container.decodeIfPresent(SetRole.self, forKey: .role) ?? .working
+        effortTarget = try container.decodeIfPresent(EffortTarget.self, forKey: .effortTarget)
+        ranges = try container.decodeIfPresent([MetricTargetRange].self, forKey: .ranges) ?? []
+        progressions = try container.decodeIfPresent([MetricProgression].self, forKey: .progressions) ?? []
+        alternatives = try container.decodeIfPresent([PlannedSetAlternative].self, forKey: .alternatives) ?? []
+    }
+
+    func expectedValues(iteration: Int) -> MetricValues {
+        var result = values
+        for progression in progressions {
+            if let base = values[progression.metric] {
+                result[progression.metric] = progression.value(base: base, iteration: iteration)
+            }
+        }
+        return result
+    }
 
     var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
     var load: Double? { get { values[.load] } set { values[.load] = newValue } }
@@ -48,6 +97,31 @@ struct Prescription: Codable, Equatable, Sendable {
     var intent: TrainingIntent?
     var targetZone: Int?       // HR zone 1–5
     var tempo: String?         // e.g. "3-1-1-0"
+    var intensityTargets: [IntensityTarget] = []
+
+    init(sets: [PlannedSet] = [], restSeconds: Int? = nil, intent: TrainingIntent? = nil,
+         targetZone: Int? = nil, tempo: String? = nil, intensityTargets: [IntensityTarget] = []) {
+        self.sets = sets
+        self.restSeconds = restSeconds
+        self.intent = intent
+        self.targetZone = targetZone
+        self.tempo = tempo
+        self.intensityTargets = intensityTargets
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sets, restSeconds, intent, targetZone, tempo, intensityTargets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sets = try container.decodeIfPresent([PlannedSet].self, forKey: .sets) ?? []
+        restSeconds = try container.decodeIfPresent(Int.self, forKey: .restSeconds)
+        intent = try container.decodeIfPresent(TrainingIntent.self, forKey: .intent)
+        targetZone = try container.decodeIfPresent(Int.self, forKey: .targetZone)
+        tempo = try container.decodeIfPresent(String.self, forKey: .tempo)
+        intensityTargets = try container.decodeIfPresent([IntensityTarget].self, forKey: .intensityTargets) ?? []
+    }
 }
 
 /// Authored "how and why to do it" — kept separate from the prescription and from Athlete Notes.
@@ -62,6 +136,9 @@ struct CoachGuidance: Codable, Equatable, Sendable {
 struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var exerciseName: String
+    /// Optional workout-local wording such as "Station B". The canonical catalog identity remains
+    /// `exerciseName`/`definitionId`, so labels never corrupt history or exercise matching.
+    var displayLabel: String?
     var definitionId: String?                       // stable catalog identity (nil = uncurated)
     var selectedMetrics: [MetricType] = []          // which metrics this instance logs/shows
     var displayUnits: [MetricType: MetricUnit] = [:] // this-instance unit overrides
@@ -73,23 +150,11 @@ struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     var supportedMetrics: [MetricType] { definition.supported }
 }
 
-/// A semantic group inside a workout (warm-up, strength, metcon, station work). Explains *purpose*;
-/// does not lock its contents.
-struct WorkoutBlock: Identifiable, Codable, Equatable, Sendable {
-    var id = UUID()
-    var name: String
-    var intent: String?
-    var exercises: [PlannedExercise] = []
-    /// The auto-created container every workout has. Its card/header is hidden while it's the only
-    /// block and carries no name or goal — so a simple workout reads flat, though the model stays
-    /// `Workout → Block → Exercise`. Progressive complexity without a mixed hierarchy.
-    var isDefault = false
-}
-
 struct Workout: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var goal: String?
+    var guidance: CoachGuidance?
     var scheduledDate: Date?          // the day this workout is for; nil = legacy/unstamped
     var blocks: [WorkoutBlock] = []
 }
@@ -100,6 +165,7 @@ extension Workout {
 
     // Workout level
     mutating func updateGoal(_ goal: String?) { self.goal = goal }
+    mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
 
     // Block level
@@ -155,16 +221,19 @@ extension Workout {
     }
 
     @discardableResult
+    mutating func setBlockGuidance(_ id: UUID, _ guidance: CoachGuidance?) -> Bool {
+        guard let i = blocks.firstIndex(where: { $0.id == id }) else { return false }
+        blocks[i].guidance = guidance
+        return true
+    }
+
+    @discardableResult
     mutating func duplicateBlock(_ id: UUID) -> UUID? {
         guard let i = blocks.firstIndex(where: { $0.id == id }) else { return nil }
         var copy = blocks[i]
         copy.id = UUID()
         copy.name += " (copy)"
-        copy.exercises = copy.exercises.map { ex in
-            var e = ex; e.id = UUID()
-            e.prescription.sets = e.prescription.sets.map { var s = $0; s.id = UUID(); return s }
-            return e
-        }
+        for index in copy.nodes.indices { copy.nodes[index].regenerateIDs() }
         blocks.insert(copy, at: i + 1)
         return copy.id
     }
@@ -173,82 +242,119 @@ extension Workout {
     @discardableResult
     mutating func addExercise(_ exercise: PlannedExercise, toBlock blockID: UUID) -> Bool {
         guard let i = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
-        blocks[i].exercises.append(exercise)
+        blocks[i].nodes.append(.exercise(exercise))
         return true
     }
 
     @discardableResult
     mutating func removeExercise(_ id: UUID) -> Bool {
-        guard let loc = locate(id) else { return false }
-        blocks[loc.block].exercises.remove(at: loc.exercise)
-        return true
+        for index in blocks.indices {
+            if blocks[index].nodes.removeExercise(id) { return true }
+        }
+        return false
     }
 
     /// Move an exercise to another block (or reposition within one) — the cross-block move the docs
     /// call out. `index` clamps into the destination.
     @discardableResult
     mutating func moveExercise(_ id: UUID, toBlock blockID: UUID, at index: Int? = nil) -> Bool {
-        guard let loc = locate(id), let dest = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
-        let exercise = blocks[loc.block].exercises.remove(at: loc.exercise)
-        let target = min(max(index ?? blocks[dest].exercises.count, 0), blocks[dest].exercises.count)
-        blocks[dest].exercises.insert(exercise, at: target)
+        guard let dest = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
+        var extracted: PlannedExercise?
+        for source in blocks.indices where extracted == nil {
+            extracted = blocks[source].nodes.extractExercise(id)
+        }
+        guard let exercise = extracted else { return false }
+        let target = min(max(index ?? blocks[dest].nodes.count, 0), blocks[dest].nodes.count)
+        blocks[dest].nodes.insert(.exercise(exercise), at: target)
         return true
     }
 
     @discardableResult
     mutating func reorderExercise(_ id: UUID, to index: Int) -> Bool {
-        guard let loc = locate(id) else { return false }
-        var exercises = blocks[loc.block].exercises
-        guard index >= 0, index <= exercises.count - 1 else { return false }
-        let exercise = exercises.remove(at: loc.exercise)
-        exercises.insert(exercise, at: index)
-        blocks[loc.block].exercises = exercises
-        return true
+        for block in blocks.indices {
+            if blocks[block].nodes.reorderExercise(id, to: index) { return true }
+        }
+        return false
+    }
+
+    @discardableResult
+    mutating func duplicateExercise(_ id: UUID) -> UUID? {
+        for block in blocks.indices {
+            if let copyID = blocks[block].nodes.duplicateExercise(id) { return copyID }
+        }
+        return nil
     }
 
     /// Swap the movement while keeping the exercise's identity + position (so history/undo stay
     /// stable). Prescription is replaced; guidance is dropped unless carried by the caller.
     @discardableResult
     mutating func substituteExercise(_ id: UUID, withName name: String, prescription: Prescription) -> Bool {
-        guard let loc = locate(id) else { return false }
-        blocks[loc.block].exercises[loc.exercise].exerciseName = name
-        blocks[loc.block].exercises[loc.exercise].prescription = prescription
-        return true
+        updateExercise(id) {
+            $0.exerciseName = name
+            $0.prescription = prescription
+        }
     }
 
     @discardableResult
     mutating func updateGuidance(_ exerciseID: UUID, _ guidance: CoachGuidance?) -> Bool {
-        guard let loc = locate(exerciseID) else { return false }
-        blocks[loc.block].exercises[loc.exercise].guidance = guidance
-        return true
+        updateExercise(exerciseID) { $0.guidance = guidance }
     }
 
     // Set level — one set changes without rewriting the exercise
     @discardableResult
     mutating func addSet(_ set: PlannedSet, toExercise exerciseID: UUID) -> Bool {
-        guard let loc = locate(exerciseID) else { return false }
-        blocks[loc.block].exercises[loc.exercise].prescription.sets.append(set)
-        return true
+        updateExercise(exerciseID) { $0.prescription.sets.append(set) }
     }
 
     @discardableResult
     mutating func removeSet(_ setID: UUID) -> Bool {
-        guard let loc = locateSet(setID) else { return false }
-        blocks[loc.block].exercises[loc.exercise].prescription.sets.remove(at: loc.set)
-        return true
+        guard let exerciseID = allExercises.first(where: { exercise in
+            exercise.prescription.sets.contains { $0.id == setID }
+        })?.id else { return false }
+        return updateExercise(exerciseID) { $0.prescription.sets.removeAll { $0.id == setID } }
     }
 
     @discardableResult
     mutating func updateSet(_ setID: UUID, _ transform: (inout PlannedSet) -> Void) -> Bool {
-        guard let loc = locateSet(setID) else { return false }
-        transform(&blocks[loc.block].exercises[loc.exercise].prescription.sets[loc.set])
-        return true
+        guard let exerciseID = allExercises.first(where: { exercise in
+            exercise.prescription.sets.contains { $0.id == setID }
+        })?.id else { return false }
+        return updateExercise(exerciseID) { exercise in
+            guard let index = exercise.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
+            transform(&exercise.prescription.sets[index])
+        }
     }
 
     @discardableResult
     mutating func updateExercise(_ id: UUID, _ transform: (inout PlannedExercise) -> Void) -> Bool {
-        guard let loc = locate(id) else { return false }
-        transform(&blocks[loc.block].exercises[loc.exercise])
+        for index in blocks.indices {
+            if blocks[index].nodes.updateExercise(id, transform) { return true }
+        }
+        return false
+    }
+
+    @discardableResult
+    mutating func updateGroup(_ id: UUID, _ transform: (inout WorkoutGroup) -> Void) -> Bool {
+        for index in blocks.indices {
+            if blocks[index].nodes.updateGroup(id, transform) { return true }
+        }
+        return false
+    }
+
+    /// Converts a parser/user choice into one required sequence without changing child identities.
+    /// This is the lossless correction for text such as "B. Deadlifts + lateral burpees."
+    @discardableResult
+    mutating func convertChoiceToRequiredGroup(_ id: UUID) -> Bool {
+        for index in blocks.indices {
+            if blocks[index].nodes.convertChoiceToRequiredGroup(id) { return true }
+        }
+        return false
+    }
+
+    @discardableResult
+    mutating func addNode(_ node: WorkoutNode, toBlock blockID: UUID) -> Bool {
+        guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
+        blocks[index].nodes.append(node)
         return true
     }
 
@@ -256,24 +362,10 @@ extension Workout {
 
     // MARK: - Lookup helpers
 
-    private func locate(_ exerciseID: UUID) -> (block: Int, exercise: Int)? {
-        for (b, block) in blocks.enumerated() {
-            if let e = block.exercises.firstIndex(where: { $0.id == exerciseID }) { return (b, e) }
-        }
-        return nil
-    }
-
-    private func locateSet(_ setID: UUID) -> (block: Int, exercise: Int, set: Int)? {
-        for (b, block) in blocks.enumerated() {
-            for (e, ex) in block.exercises.enumerated() {
-                if let s = ex.prescription.sets.firstIndex(where: { $0.id == setID }) { return (b, e, s) }
-            }
-        }
-        return nil
-    }
-
     /// All planned exercises across blocks, in order.
     var allExercises: [PlannedExercise] { blocks.flatMap(\.exercises) }
+    var allGroups: [WorkoutGroup] { blocks.flatMap(\.groups) }
+    var allChoices: [WorkoutChoice] { blocks.flatMap(\.choices) }
 }
 
 // MARK: - Performed side (actual training — owned by Workout Execution)
@@ -287,27 +379,67 @@ enum PerformedStatus: String, Codable, Sendable {
 struct SetLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var plannedSetID: UUID?
+    var groupID: UUID?
+    var iteration: Int?
     var values = MetricValues()
-    /// Set-level completion — the Hevy "check the row" gesture. When every planned set has a
-    /// completed log, the exercise auto-completes; there is no separate exercise-level "Complete".
-    var completed = false
+    var outcome: SetLogOutcome = .pending
 
-    init(plannedSetID: UUID? = nil, reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
-         distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil) {
+    /// Compatibility sugar for the existing checkmark flow. A skipped set is handled but is never
+    /// reported as completed.
+    var completed: Bool {
+        get { outcome == .completed }
+        set { outcome = newValue ? .completed : .pending }
+    }
+
+    var isHandled: Bool { outcome == .completed || outcome == .skipped }
+
+    init(plannedSetID: UUID? = nil, groupID: UUID? = nil, iteration: Int? = nil,
+         reps: Int? = nil, load: Double? = nil, duration: Int? = nil,
+         distance: Double? = nil, calories: Double? = nil, rpe: Double? = nil,
+         outcome: SetLogOutcome = .pending) {
         self.plannedSetID = plannedSetID
+        self.groupID = groupID
+        self.iteration = iteration
+        self.outcome = outcome
         values.setInt(.reps, reps); values[.load] = load; values.setInt(.duration, duration)
         values[.distance] = distance; values[.calories] = calories; values[.rpe] = rpe
     }
-    init(plannedSetID: UUID? = nil, values: MetricValues) { self.plannedSetID = plannedSetID; self.values = values }
+    init(plannedSetID: UUID? = nil, groupID: UUID? = nil, iteration: Int? = nil,
+         values: MetricValues, outcome: SetLogOutcome = .pending) {
+        self.plannedSetID = plannedSetID
+        self.groupID = groupID
+        self.iteration = iteration
+        self.values = values
+        self.outcome = outcome
+    }
 
-    // Codable-tolerant of the pre-`completed` on-disk shape (dev logs written before this field).
-    private enum CodingKeys: String, CodingKey { case id, plannedSetID, values, completed }
+    // Codable-tolerant of the earlier Boolean completion field and the shape before it existed.
+    private enum CodingKeys: String, CodingKey {
+        case id, plannedSetID, groupID, iteration, values, outcome, completed
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         plannedSetID = try c.decodeIfPresent(UUID.self, forKey: .plannedSetID)
+        groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
+        iteration = try c.decodeIfPresent(Int.self, forKey: .iteration)
         values = try c.decode(MetricValues.self, forKey: .values)
-        completed = try c.decodeIfPresent(Bool.self, forKey: .completed) ?? false
+        if let decoded = try c.decodeIfPresent(SetLogOutcome.self, forKey: .outcome) {
+            outcome = decoded
+        } else {
+            outcome = try c.decodeIfPresent(Bool.self, forKey: .completed) == true ? .completed : .pending
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(plannedSetID, forKey: .plannedSetID)
+        try c.encodeIfPresent(groupID, forKey: .groupID)
+        try c.encodeIfPresent(iteration, forKey: .iteration)
+        try c.encode(values, forKey: .values)
+        try c.encode(outcome, forKey: .outcome)
     }
 
     var reps: Int? { get { values.int(.reps) } set { values.setInt(.reps, newValue) } }
@@ -329,14 +461,66 @@ struct PerformedExercise: Identifiable, Codable, Equatable, Sendable {
     var athleteNotes: [String] = []
 }
 
+struct GroupLog: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var plannedGroupID: UUID
+    var targetDurationSeconds: Int?
+    var performedDurationSeconds: Int?
+    var completedIterations = 0
+    var partialReps: Int?
+    var isComplete = false
+}
+
+struct ChoiceLog: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var plannedChoiceID: UUID
+    var selectedOptionIDs: [UUID]
+}
+
 /// The performed record for a workout. It references the planned workout but is a distinct object —
 /// the plan is never mutated by logging.
 struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var plannedWorkoutID: UUID?
     var exercises: [PerformedExercise] = []
+    var groups: [GroupLog] = []
+    var choices: [ChoiceLog] = []
+    var exerciseAdjustments: [ExerciseLogAdjustment] = []
     var athleteNotes: [String] = []
     var isComplete = false
+
+    init(id: UUID = UUID(), plannedWorkoutID: UUID? = nil, exercises: [PerformedExercise] = [],
+         groups: [GroupLog] = [], choices: [ChoiceLog] = [],
+         exerciseAdjustments: [ExerciseLogAdjustment] = [], athleteNotes: [String] = [],
+         isComplete: Bool = false) {
+        self.id = id
+        self.plannedWorkoutID = plannedWorkoutID
+        self.exercises = exercises
+        self.groups = groups
+        self.choices = choices
+        self.exerciseAdjustments = exerciseAdjustments
+        self.athleteNotes = athleteNotes
+        self.isComplete = isComplete
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, plannedWorkoutID, exercises, groups, choices, exerciseAdjustments, athleteNotes, isComplete
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        plannedWorkoutID = try container.decodeIfPresent(UUID.self, forKey: .plannedWorkoutID)
+        exercises = try container.decodeIfPresent([PerformedExercise].self, forKey: .exercises) ?? []
+        groups = try container.decodeIfPresent([GroupLog].self, forKey: .groups) ?? []
+        choices = try container.decodeIfPresent([ChoiceLog].self, forKey: .choices) ?? []
+        exerciseAdjustments = try container.decodeIfPresent(
+            [ExerciseLogAdjustment].self,
+            forKey: .exerciseAdjustments
+        ) ?? []
+        athleteNotes = try container.decodeIfPresent([String].self, forKey: .athleteNotes) ?? []
+        isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? false
+    }
 }
 
 extension WorkoutLog {
@@ -358,19 +542,60 @@ extension WorkoutLog {
 
     /// Find-or-create the actual for one planned set and edit it in place — the training table edits
     /// cells directly (Hevy-style) rather than appending free-floating logs.
-    mutating func upsertSetLog(forPlanned plannedID: UUID, name: String, plannedSetID: UUID, _ transform: (inout SetLog) -> Void) {
+    mutating func upsertSetLog(forPlanned plannedID: UUID, name: String, plannedSetID: UUID,
+                               groupID: UUID? = nil, iteration: Int? = nil,
+                               _ transform: (inout SetLog) -> Void) {
         let i = index(forPlanned: plannedID, name: name)
-        if let s = exercises[i].setLogs.firstIndex(where: { $0.plannedSetID == plannedSetID }) {
+        if let s = exercises[i].setLogs.firstIndex(where: {
+            $0.plannedSetID == plannedSetID && $0.groupID == groupID && $0.iteration == iteration
+        }) {
             transform(&exercises[i].setLogs[s])
         } else {
-            var new = SetLog(plannedSetID: plannedSetID)
+            var new = SetLog(plannedSetID: plannedSetID, groupID: groupID, iteration: iteration)
             transform(&new)
             exercises[i].setLogs.append(new)
         }
     }
 
-    func setLog(forPlanned plannedID: UUID, plannedSetID: UUID) -> SetLog? {
-        performed(forPlanned: plannedID)?.setLogs.first { $0.plannedSetID == plannedSetID }
+    func setLog(forPlanned plannedID: UUID, plannedSetID: UUID,
+                groupID: UUID? = nil, iteration: Int? = nil) -> SetLog? {
+        performed(forPlanned: plannedID)?.setLogs.first {
+            $0.plannedSetID == plannedSetID && $0.groupID == groupID && $0.iteration == iteration
+        }
+    }
+
+    mutating func updateGroupLog(_ groupID: UUID, _ transform: (inout GroupLog) -> Void) {
+        guard let index = groups.firstIndex(where: { $0.plannedGroupID == groupID }) else { return }
+        transform(&groups[index])
+    }
+
+    mutating func upsertGroupLog(_ groupID: UUID, targetDurationSeconds: Int? = nil,
+                                 _ transform: (inout GroupLog) -> Void) {
+        if let index = groups.firstIndex(where: { $0.plannedGroupID == groupID }) {
+            transform(&groups[index])
+        } else {
+            var group = GroupLog(plannedGroupID: groupID, targetDurationSeconds: targetDurationSeconds)
+            transform(&group)
+            groups.append(group)
+        }
+    }
+
+    func selectedOptions(for choiceID: UUID) -> Set<UUID> {
+        Set(choices.first { $0.plannedChoiceID == choiceID }?.selectedOptionIDs ?? [])
+    }
+
+    mutating func selectOption(_ optionID: UUID, for choiceID: UUID, selectionCount: Int) {
+        guard let index = choices.firstIndex(where: { $0.plannedChoiceID == choiceID }) else {
+            choices.append(ChoiceLog(plannedChoiceID: choiceID, selectedOptionIDs: [optionID]))
+            return
+        }
+        if selectionCount <= 1 {
+            choices[index].selectedOptionIDs = [optionID]
+        } else if choices[index].selectedOptionIDs.contains(optionID) {
+            choices[index].selectedOptionIDs.removeAll { $0 == optionID }
+        } else if choices[index].selectedOptionIDs.count < selectionCount {
+            choices[index].selectedOptionIDs.append(optionID)
+        }
     }
 
     mutating func setStatus(_ status: PerformedStatus, forPlanned plannedID: UUID, name: String, reason: String? = nil) {
@@ -392,6 +617,136 @@ extension WorkoutLog {
     mutating func removeSetLog(_ id: UUID) {
         for e in exercises.indices { exercises[e].setLogs.removeAll { $0.id == id } }
     }
+
+    func exerciseAdjustment(
+        for plannedExerciseID: UUID,
+        groupID: UUID? = nil,
+        iteration: Int? = nil
+    ) -> ExerciseLogAdjustment? {
+        if let groupID, let iteration,
+           let exact = exerciseAdjustments.last(where: {
+               $0.plannedExerciseID == plannedExerciseID
+                   && $0.groupID == groupID
+                   && $0.iteration == iteration
+           }) {
+            return exact
+        }
+        if let groupID,
+           let groupWide = exerciseAdjustments.last(where: {
+               $0.plannedExerciseID == plannedExerciseID
+                   && $0.groupID == groupID
+                   && $0.iteration == nil
+           }) {
+            return groupWide
+        }
+        return exerciseAdjustments.last {
+            $0.plannedExerciseID == plannedExerciseID
+                && $0.groupID == nil
+                && $0.iteration == nil
+        }
+    }
+
+    func effectiveExercise(
+        for planned: PlannedExercise,
+        groupID: UUID? = nil,
+        iteration: Int? = nil
+    ) -> PlannedExercise {
+        guard let adjustment = exerciseAdjustment(
+            for: planned.id,
+            groupID: groupID,
+            iteration: iteration
+        ), adjustment.outcome == .substituted, let substitution = adjustment.substitution else {
+            return planned
+        }
+        return substitution.applying(to: planned)
+    }
+
+    func isExerciseSkipped(
+        _ plannedExerciseID: UUID,
+        groupID: UUID? = nil,
+        iteration: Int? = nil
+    ) -> Bool {
+        exerciseAdjustment(
+            for: plannedExerciseID,
+            groupID: groupID,
+            iteration: iteration
+        )?.outcome == .skipped
+    }
+
+    mutating func setExerciseAdjustment(
+        plannedExerciseID: UUID,
+        groupID: UUID? = nil,
+        iteration: Int? = nil,
+        outcome: ExerciseLogAdjustment.Outcome,
+        substitution: LoggedExerciseSubstitution? = nil,
+        name: String
+    ) {
+        if iteration == nil {
+            exerciseAdjustments.removeAll {
+                $0.plannedExerciseID == plannedExerciseID && $0.groupID == groupID
+            }
+        } else {
+            exerciseAdjustments.removeAll {
+                $0.plannedExerciseID == plannedExerciseID
+                    && $0.groupID == groupID
+                    && $0.iteration == iteration
+            }
+        }
+        exerciseAdjustments.append(
+            ExerciseLogAdjustment(
+                plannedExerciseID: plannedExerciseID,
+                groupID: groupID,
+                iteration: iteration,
+                outcome: outcome,
+                substitution: substitution
+            )
+        )
+
+        let status: PerformedStatus = switch outcome {
+        case .original: .pending
+        case .skipped: iteration == nil ? .skipped : .modified
+        case .substituted: iteration == nil ? .substituted : .modified
+        }
+        setStatus(status, forPlanned: plannedExerciseID, name: name)
+    }
+
+    mutating func restoreExercise(
+        plannedExerciseID: UUID,
+        groupID: UUID? = nil,
+        iteration: Int? = nil,
+        name: String
+    ) {
+        if let iteration {
+            exerciseAdjustments.removeAll {
+                $0.plannedExerciseID == plannedExerciseID
+                    && $0.groupID == groupID
+                    && $0.iteration == iteration
+            }
+            if exerciseAdjustments.contains(where: {
+                $0.plannedExerciseID == plannedExerciseID
+                    && $0.groupID == groupID
+                    && $0.iteration == nil
+            }) {
+                exerciseAdjustments.append(
+                    ExerciseLogAdjustment(
+                        plannedExerciseID: plannedExerciseID,
+                        groupID: groupID,
+                        iteration: iteration,
+                        outcome: .original
+                    )
+                )
+            }
+        } else {
+            exerciseAdjustments.removeAll {
+                $0.plannedExerciseID == plannedExerciseID && $0.groupID == groupID
+            }
+        }
+
+        let stillAdjusted = exerciseAdjustments.contains {
+            $0.plannedExerciseID == plannedExerciseID && $0.outcome != .original
+        }
+        setStatus(stillAdjusted ? .modified : .pending, forPlanned: plannedExerciseID, name: name)
+    }
 }
 
 extension Workout {
@@ -402,6 +757,12 @@ extension Workout {
         let performed = allExercises.map {
             PerformedExercise(plannedExerciseID: $0.id, exerciseName: $0.exerciseName)
         }
-        return WorkoutLog(plannedWorkoutID: id, exercises: performed)
+        let groupLogs = allGroups.map {
+            GroupLog(plannedGroupID: $0.id, targetDurationSeconds: $0.execution.repetition.durationSeconds)
+        }
+        let choiceLogs = allChoices.map {
+            ChoiceLog(plannedChoiceID: $0.id, selectedOptionIDs: Array($0.options.prefix($0.selectionCount).map(\.id)))
+        }
+        return WorkoutLog(plannedWorkoutID: id, exercises: performed, groups: groupLogs, choices: choiceLogs)
     }
 }

@@ -9,6 +9,10 @@ functional fallback.
 Every published exercise may have two still-image variants. Both are transparent PNGs with no card,
 panel, text, watermark, or third-party logo baked into the artwork.
 
+Source artwork may arrive as a transparent PNG or as a 1024 x 1024 JPEG with a rendered
+checkerboard. JPEG sources are import material only; the normalizer uses Apple Vision foreground
+instance masking before creating the canonical transparent PNG exports.
+
 ### Detail
 
 - Canvas: 1024 x 1024 pixels.
@@ -65,20 +69,43 @@ Run the normalizer from the repository root:
 
 ```bash
 scripts/normalize-exercise-media.sh ~/Downloads
+scripts/normalize-exercise-media.sh ~/Downloads "$PWD/.generated" elliptical plank
 ```
+
+The first form rebuilds the full manifest. The second processes only the requested exercise IDs and
+is the preferred path for incremental single or batch additions.
+
+The normalizer requires `jq`, ImageMagick, and the Xcode command-line tools. For a source without an
+alpha channel, it compiles `scripts/extract-exercise-media-foreground.swift` and preserves every
+foreground instance Vision identifies. This avoids color-keying the off-white mannequin or graphite
+equipment. Foreground extraction is not publication approval: always inspect thin bars, cables,
+motion marks, and enclosed equipment areas because an automated mask can omit them.
 
 Outputs are written to `.generated/exercise-media/` using the exact Firebase Storage paths in the
 manifest. The directory is intentionally ignored by Git and is not part of the app binary.
+
+Generate dark, light, and 48-point QA sheets for one or more normalized entries:
+
+```bash
+scripts/create-exercise-media-contact-sheets.sh elliptical plank
+```
 
 After the Firebase Storage bucket has been provisioned, deploy the locked-down client rules and
 upload only entries whose status is `ready`:
 
 ```bash
 npx -y firebase-tools@latest deploy --only storage --project baseline-app-dev
-scripts/upload-exercise-media.sh baseline-app-dev.firebasestorage.app
+scripts/upload-exercise-media.sh baseline-app-dev.firebasestorage.app elliptical plank
+scripts/verify-exercise-media.sh baseline-app-dev.firebasestorage.app elliptical plank
+
+scripts/upload-exercise-media.sh baseline-app-prod.firebasestorage.app elliptical plank
+scripts/verify-exercise-media.sh baseline-app-prod.firebasestorage.app elliptical plank
+
+scripts/promote-exercise-media.sh elliptical plank
 ```
 
-Verify the remote objects before changing their manifest status to `published`. The upload script
+The verifier compares object path, content type, immutable cache control, size, and exact MD5 with
+the generated local file. Promote only after every requested environment passes. The upload script
 does not promote statuses automatically, so a partial upload can never make the app request files
 that are not present.
 

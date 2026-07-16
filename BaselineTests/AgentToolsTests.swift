@@ -20,8 +20,8 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
-        t.dispatch(.addBlock(name: "Strength", intent: nil))
+        _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.addBlock(name: "Strength", intent: nil))
         let r = t.dispatch(.addExercise(block: "Strength", name: "Bench press", sets: 3, reps: 8, load: 60, durationSeconds: nil, distanceMeters: nil))
         #expect(r.text.localizedCaseInsensitiveContains("bench press"))       // reply echoes the updated workout
         #expect(wk.current?.allExercises.first?.exerciseName == "Bench press")
@@ -32,14 +32,106 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        t.dispatch(.createWorkout(title: "First", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.createWorkout(title: "First", goal: nil, replaceExisting: false))
         // Second create without confirmation → refused; existing workout preserved.
         let r = t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: false))
         #expect(r.text.localizedCaseInsensitiveContains("already"))
         #expect(wk.current?.title == "First")
         // With confirmation → replaced.
-        t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: true))
+        _ = t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: true))
         #expect(wk.current?.title == "Second")
+    }
+
+    @Test func replaceExerciseUsesAtomicStoreMutationForEveryMatch() throws {
+        let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let tools = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
+        _ = tools.dispatch(.createWorkout(title: "Outdoor Run", goal: nil, replaceExisting: false))
+        _ = tools.dispatch(.addBlock(name: "Warm-up", intent: nil))
+        _ = tools.dispatch(.addBlock(name: "Main Run", intent: nil))
+        _ = tools.dispatch(.addExercise(block: "Warm-up", name: "Treadmill Run", sets: 1, reps: nil, load: nil, durationSeconds: 300, distanceMeters: nil))
+        _ = tools.dispatch(.addExercise(block: "Main Run", name: "Treadmill Run", sets: 1, reps: nil, load: nil, durationSeconds: 1_800, distanceMeters: nil))
+        let before = try #require(wk.current?.allExercises)
+
+        let response = tools.dispatch(.replaceExercise(
+            exercise: "Treadmill Run",
+            replacement: "Run",
+            block: nil,
+            replaceAll: true
+        ))
+
+        let after = try #require(wk.current?.allExercises)
+        #expect(response.text.localizedCaseInsensitiveContains("replaced every treadmill run"))
+        #expect(after.count == before.count)
+        #expect(Set(after.map(\.id)) == Set(before.map(\.id)))
+        #expect(after.allSatisfy { $0.exerciseName == "Run" })
+    }
+
+    @Test func requireAllOptionsToolPreservesEveryImportedMovement() {
+        let context = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let workouts = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        workouts.create(title: "AMRAP", goal: nil)
+        let deadlift = PlannedExercise(
+            id: UUID(),
+            exerciseName: "Deadlift",
+            definitionId: "deadlift",
+            selectedMetrics: [.reps, .load],
+            prescription: Prescription(
+                sets: [PlannedSet(id: UUID(), reps: 12)],
+                intensityTargets: [.descriptive("Load target: Bodyweight")]
+            ),
+            guidance: CoachGuidance(formCues: ["Brace before each rep"])
+        )
+        let burpee = PlannedExercise(
+            id: UUID(),
+            exerciseName: "Lateral Burpee Over Barbell",
+            definitionId: "lateral_burpee_over_barbell",
+            selectedMetrics: [.reps],
+            prescription: Prescription(sets: [PlannedSet(id: UUID(), reps: 12)])
+        )
+        workouts.edit { workout in
+            workout.blocks[0].nodes.append(.choice(WorkoutChoice(label: "Option B", options: [
+                .exercise(deadlift),
+                .exercise(burpee),
+            ])))
+        }
+        let tools = AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts)
+
+        let response = tools.dispatch(.requireAllOptions(choice: "Option B"))
+
+        #expect(response.text.localizedCaseInsensitiveContains("required sequence"))
+        #expect(workouts.current?.allChoices.isEmpty == true)
+        #expect(workouts.current?.allExercises == [deadlift, burpee])
+        #expect(workouts.current?.allGroups.first?.children.map(\.id) == [deadlift.id, burpee.id])
+    }
+
+    @Test func importConversationScopeAllowsDraftEditsButRejectsUnrelatedMutations() {
+        let service = ConversationService(
+            tools: tools(base: DecisionEngine.Inputs()),
+            scope: .workoutImport
+        )
+
+        #expect(service.permits(.replaceExercise(
+            exercise: "Stationary Bike",
+            replacement: "Echo Bike",
+            block: nil,
+            replaceAll: false
+        )))
+        #expect(service.permits(.updateLoggingConfig(
+            exercise: "Sled Pull",
+            enabledMetrics: [.distance, .load],
+            units: [.load: .pounds]
+        )))
+        #expect(!service.permits(.updateExercisePreference(
+            exercise: "Sled Pull",
+            scope: .exercise,
+            units: [.load: .pounds],
+            selectedMetrics: [.distance, .load]
+        )))
+        #expect(!service.permits(.setSleep(hours: 4)))
+        #expect(!service.permits(.moveWorkout(workout: "AMRAP", toDay: "Friday")))
+        #expect(!service.permits(.startWorkout))
+        #expect(!service.permits(.saveAsTemplate(name: "Imported")))
     }
 
     @Test func workoutEditWithoutStoreIsGraceful() {
@@ -51,8 +143,8 @@ struct AgentToolsTests {
 
     @Test func contextSummarySurfacesSavedConstraintAndContext() {
         let t = tools(base: DecisionEngine.Inputs())
-        t.dispatch(.upsertConstraint(id: nil, kind: .injury, location: "right achilles", severity: 2, affectsTraining: true))
-        t.dispatch(.setSleep(hours: 4))
+        _ = t.dispatch(.upsertConstraint(id: nil, kind: .injury, location: "right achilles", severity: 2, affectsTraining: true))
+        _ = t.dispatch(.setSleep(hours: 4))
         let summary = t.contextSummary()
         #expect(summary.localizedCaseInsensitiveContains("achilles"))
         #expect(summary.contains("slept 4h"))
@@ -61,7 +153,7 @@ struct AgentToolsTests {
     @Test func freshToolsOnSameStoreStillKnowTheConstraint() {
         // Starting a new conversation must not erase structured context.
         let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
-        AgentTools(store: store, base: DecisionEngine.Inputs())
+        _ = AgentTools(store: store, base: DecisionEngine.Inputs())
             .dispatch(.upsertConstraint(id: nil, kind: .pain, location: "left calf", severity: 2, affectsTraining: true))
         // A brand-new AgentTools (i.e. a fresh chat) over the same store still sees it.
         let summary = AgentTools(store: store, base: DecisionEngine.Inputs()).contextSummary()
@@ -72,8 +164,8 @@ struct AgentToolsTests {
         let store = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let t = AgentTools(store: store, base: DecisionEngine.Inputs())
         // "My right calf hurts" then "actually it's not limiting training" — same body part twice.
-        t.dispatch(.upsertConstraint(id: nil, kind: .pain, location: "right calf", severity: 1, affectsTraining: true))
-        t.dispatch(.upsertConstraint(id: nil, kind: .pain, location: "Right Calf", severity: 1, affectsTraining: false))
+        _ = t.dispatch(.upsertConstraint(id: nil, kind: .pain, location: "right calf", severity: 1, affectsTraining: true))
+        _ = t.dispatch(.upsertConstraint(id: nil, kind: .pain, location: "Right Calf", severity: 1, affectsTraining: false))
         #expect(store.activeConstraintRecords.count == 1)                 // folded, not duplicated
         #expect(store.activeConstraintRecords.first?.affectsTraining == false)
     }

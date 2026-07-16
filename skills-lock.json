@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "skills": {
+    "baseline-add-exercises": {
+      "source": "/Users/tylerpavay/.codex/skills/baseline-add-exercises",
+      "sourceType": "local",
+      "computedHash": "820c90f27931c7f788ea1281c19afea2e7dac92db40eeeffc087241bf9dab711"
+    },
+    "baseline-design-system": {
+      "source": "/Users/tylerpavay/Documents/Development/iOS/Baseline/.agents/skills/baseline-design-system",
+      "sourceType": "local",
+      "computedHash": "be5da6d9108b16039c4743311a4533a2c0d779f05133451956104b7aaba1ceec"
+    },
+    "baseline-hrv-reading": {
+      "source": "/Users/tylerpavay/Documents/Development/iOS/Baseline/.agents/skills/baseline-hrv-reading",
+      "sourceType": "local",
+      "computedHash": "ebf0385a6eec2e039fa6c9adc4b89922433a3576b0a92ae9c41cf3329b000bca"
+    },
+    "baseline-live-heart-rate": {
+      "source": "/Users/tylerpavay/Documents/Development/iOS/Baseline/.agents/skills/baseline-live-heart-rate",
+      "sourceType": "local",
+      "computedHash": "b6bf955cb78da5bca5002d129ed52c953f2157a5bc5d5037afebc0a487662cf8"
+    },
+    "lavish": {
+      "source": "kunchenguid/lavish-axi",
+      "sourceType": "github",
+      "skillPath": "skills/lavish/SKILL.md",
+      "computedHash": "bdca0069c8d4aa89ea3a3e3b1c394de36431f91ec96531e277c2f23f6d92d6b7"
+    }
+  }
+}

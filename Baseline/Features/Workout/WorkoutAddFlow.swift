@@ -15,6 +15,7 @@ struct AddExerciseFlow: View {
     @State private var selected: [String] = []          // definition ids, in tap order
     @State private var category: ActivityCategory?
     @State private var showCustom = false
+    @ScaledMetric(relativeTo: .body) private var exerciseThumbnailSize: CGFloat = 64
 
     private var recents: [ExerciseDefinition] {
         store.recentDefinitions.filter { matches($0) }
@@ -102,17 +103,30 @@ struct AddExerciseFlow: View {
         let isSel = selected.contains(def.id)
         return Button { toggle(def.id) } label: {
             HStack(spacing: 12) {
-                ExerciseThumbnailView(definition: def, size: 38)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(def.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-                    Text(def.category.rawValue.capitalized).font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
+                Capsule()
+                    .fill(isSel ? BaselineColor.accent : .clear)
+                    .frame(width: 4, height: exerciseThumbnailSize - 8)
+                    .accessibilityHidden(true)
+                ExerciseThumbnailView(definition: def, size: exerciseThumbnailSize)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(def.name)
+                        .font(.headline)
+                        .foregroundStyle(BaselineColor.textHi)
+                    Text(def.category.rawValue.capitalized)
+                        .font(.subheadline)
+                        .foregroundStyle(BaselineColor.textFaint)
                 }
                 Spacer()
-                Image(systemName: isSel ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20)).foregroundStyle(isSel ? BaselineColor.accent : BaselineColor.line)
             }
-            .padding(.vertical, 4)
-        }.buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isSel ? "Selected" : "Not selected")
+        .accessibilityHint(isSel ? "Removes this exercise from the list to add" : "Adds this exercise to the list to add")
+        .accessibilityAddTraits(isSel ? .isSelected : [])
     }
 
     private var customRow: some View {
@@ -164,7 +178,7 @@ struct AddExerciseFlow: View {
 
 // MARK: - Deliberate custom exercise creation
 
-private struct CustomExerciseForm: View {
+struct CustomExerciseForm: View {
     let seedName: String
     let onCreate: (ExerciseDefinition) -> Void
     @Environment(WorkoutStore.self) private var store

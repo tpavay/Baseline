@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiveHeartRateView — states prototype</title>
+<style>
+  :root{
+    /* Baseline "Instrument" tokens (docs/design-system) */
+    --base:#0C0A10; --surface:#1C1822; --amethyst:#33203E; --accent:#9B6DFF;
+    --textHi:#F3F0F8; --textMid:#9B94A8; --textFaint:#6A6478; --line:#272231;
+    --z1:#4C8DFF; --z2:#34D27B; --z3:#F5A623; --z4:#FF7A33; --z5:#FF5247;
+    --mono:ui-monospace,"SF Mono","SFMono-Regular",Menlo,monospace;
+    --sans:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#050409;color:var(--textHi);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;padding:32px 20px 80px}
+  .wrap{max-width:1240px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--textMid);max-width:760px;line-height:1.5;margin:0 0 8px}
+  .meta{font-family:var(--mono);font-size:12px;color:var(--textFaint);margin:0 0 28px}
+  h2{font-size:13px;font-family:var(--mono);text-transform:uppercase;letter-spacing:2px;
+    color:var(--textFaint);margin:40px 0 16px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px}
+  .cell{min-width:0}
+  .note{font-size:12.5px;color:var(--textMid);line-height:1.5;margin:12px 4px 0}
+  .note b{color:var(--textHi);font-weight:600}
+  .cap{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
+    color:var(--textFaint);margin:14px 4px 0}
+
+  /* ---- device frame ---- */
+  .phone{background:var(--base);border:1px solid var(--line);border-radius:34px;
+    padding:20px 20px 26px;position:relative;overflow:hidden;
+    box-shadow:0 20px 50px -20px #000,inset 0 1px 0 #ffffff08}
+  .statusbar{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:11px;color:var(--textFaint);margin-bottom:20px}
+
+  /* ---- header row: label + connection chip ---- */
+  .hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .hlabel{font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;
+    color:var(--textFaint)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.5px;color:var(--textMid)}
+  .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  .dot.on{background:var(--z2);box-shadow:0 0 8px var(--z2)}
+  .dot.warn{background:var(--z3);box-shadow:0 0 8px var(--z3)}
+  .dot.off{background:var(--textFaint)}
+  .pulse{animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* ---- big BPM readout ---- */
+  .readout{display:flex;flex-direction:column;align-items:center;padding:14px 0 4px}
+  .bpm{font-family:var(--mono);font-weight:700;font-size:76px;line-height:1.22;
+    letter-spacing:-.03em;font-variant-numeric:tabular-nums;padding:2px 6px}
+  .bpm.muted{color:var(--textFaint)}
+  .bpmlabel{font-family:var(--mono);font-size:11px;letter-spacing:3px;color:var(--textFaint);
+    margin-top:2px;padding-left:3px}
+  .zonename{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.5px;
+    margin-top:14px;text-align:center;line-height:1.35;padding:0 4px}
+  /* three-stat row: AVG · TIME · MAX */
+  .stats{display:flex;margin-top:18px;width:100%}
+  .stat{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px 4px}
+  .stat + .stat{border-left:1px solid var(--line)}
+  .stat .sv{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--textMid);
+    font-variant-numeric:tabular-nums;line-height:1.1}
+  .stat .sl{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;color:var(--textFaint)}
+
+  /* navigation mock: workout log + segmented toggle */
+  .wtitle{font-size:17px;font-weight:700;color:var(--textHi);margin-bottom:14px}
+  .segctl{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;
+    padding:3px;gap:3px;margin-bottom:18px}
+  .opt{flex:1;min-width:0;text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;
+    letter-spacing:1px;padding:10px 4px;border-radius:8px;color:var(--textFaint);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .opt.active{background:var(--amethyst);color:var(--textHi)}
+  .opt.live.active{background:var(--z3);color:var(--base)}
+  .exrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:14px 2px;
+    border-bottom:1px solid var(--line)}
+  .exrow .nm{color:var(--textHi);font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .exrow .dt{font-family:var(--mono);color:var(--textFaint);font-size:12px;flex:0 0 auto}
+  .flowarrow{display:flex;align-items:center;justify-content:center;font-family:var(--mono);
+    color:var(--accent);font-size:12px;letter-spacing:1px;padding:10px 4px;text-align:center}
+  .statusmsg{font-family:var(--sans);font-size:13px;color:var(--textMid);margin-top:14px;
+    text-align:center;line-height:1.4;max-width:220px}
+
+  /* ---- spectrum ---- */
+  .spectrum{margin-top:22px;padding:0 6px}
+  .targetcap{display:flex;justify-content:center;margin-bottom:7px;min-height:16px;line-height:1.4}
+  .tgt{font-family:var(--mono);font-size:9.5px;letter-spacing:1.5px;color:var(--textFaint);
+    display:inline-flex;align-items:center;gap:5px}
+  .tgt .sw{width:9px;height:9px;border:1.5px dashed var(--textMid);border-radius:2px}
+  .bar{position:relative;height:26px;display:flex;gap:2px}
+  .seg{flex:1;border-radius:3px;position:relative;display:flex;align-items:center;justify-content:center}
+  .seg .zl{font-family:var(--mono);font-size:9px;font-weight:700;color:#0C0A10;opacity:.8}
+  .seg.dim{opacity:.32}
+  .seg.cur{box-shadow:0 0 14px -2px currentColor, inset 0 0 0 1.5px #ffffffcc}
+  /* continuous planned target band across a zone RANGE (may span >1 zone) */
+  .tgtoverlay{position:absolute;top:-4px;bottom:-4px;outline:1.6px dashed var(--textHi);
+    border-radius:5px;pointer-events:none}
+  /* moving marker */
+  .marker{position:absolute;top:-6px;bottom:-6px;width:3px;background:var(--textHi);
+    border-radius:2px;box-shadow:0 0 0 2px #0C0A10,0 0 10px #fff;transform:translateX(-50%)}
+  .marker::after{content:"";position:absolute;left:50%;top:-7px;width:9px;height:9px;
+    border-radius:50%;background:var(--textHi);transform:translateX(-50%);box-shadow:0 0 8px #fff}
+  .ends{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;
+    color:var(--textFaint);margin-top:8px}
+  .divs{display:flex;font-family:var(--mono);font-size:9px;color:var(--textFaint);margin-top:2px}
+
+  /* connect button for disconnected */
+  .btn{margin-top:20px;width:100%;height:46px;border-radius:10px;background:var(--accent);
+    color:var(--base);font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:1px;
+    border:none;box-shadow:0 8px 22px -8px var(--accent)}
+  .btn.ghost{background:transparent;color:var(--textMid);border:1px solid var(--line);box-shadow:none}
+
+  /* ---- settings screens ---- */
+  .scrtitle{font-size:19px;font-weight:700;color:var(--textHi);margin-bottom:16px}
+  .setlabel{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--textFaint);
+    text-transform:uppercase;margin:20px 0 9px}
+  .setlabel:first-of-type{margin-top:0}
+  .setcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:0;overflow:hidden}
+  .setpad{padding:14px 16px}
+  .setrow{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .setname{font-size:14px;font-weight:600;color:var(--textHi);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .setval{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--textHi);font-variant-numeric:tabular-nums}
+  .setunit{font-family:var(--mono);font-size:10px;color:var(--textFaint);letter-spacing:1px;margin-left:5px}
+  .setcap{font-size:11.5px;color:var(--textMid);line-height:1.45}
+  .hair{height:1px;background:var(--line)}
+  .pill{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;font-weight:700;padding:3px 7px;border-radius:5px;flex:0 0 auto}
+  .pill.green{color:var(--z2);border:1px solid var(--z2)}
+  .forget{font-size:12px;font-weight:700;color:var(--z5);flex:0 0 auto}
+  .link{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:1px;color:var(--accent);flex:0 0 auto}
+  .methodicon{width:38px;height:38px;border-radius:9px;background:var(--amethyst);display:flex;
+    align-items:center;justify-content:center;color:var(--accent);font-size:15px;flex:0 0 auto}
+  .battery{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;color:var(--textMid)}
+  .zr{display:flex;align-items:center;gap:12px;padding:11px 16px}
+  .zrbar{width:9px;height:30px;border-radius:4px;flex:0 0 auto}
+  .zrname{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--textHi)}
+  .zrsub{font-size:11px;color:var(--textFaint)}
+  .zrrange{margin-left:auto;font-family:var(--mono);font-size:14px;font-weight:600;color:var(--textHi);flex:0 0 auto}
+  .zrrange .u{font-size:9px;color:var(--textFaint);margin-left:3px}
+  .ministrip{display:flex;gap:2px;height:16px;margin-bottom:8px}
+  .ministrip .s{flex:1;border-radius:3px;display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:8px;font-weight:700;color:var(--base);opacity:.9}
+  .stripends{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--textFaint)}
+  .scanrow{display:flex;align-items:center;gap:10px;color:var(--textMid);font-size:13px}
+  .spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:spin .9s linear infinite;flex:0 0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .devrow{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;color:var(--textHi)}
+  .radio{width:20px;height:20px;border-radius:50%;border:2px solid var(--accent);display:flex;
+    align-items:center;justify-content:center;flex:0 0 auto}
+  .radio .in{width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  .radio.off{border-color:var(--textFaint)}
+
+  /* ---- current-app screens (Home / Profile / Devices) ---- */
+  .tabbar{display:flex;justify-content:space-around;border-top:1px solid var(--line);
+    margin:20px -20px -26px;padding:12px 0 8px}
+  .tab{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:9.5px;color:var(--textFaint)}
+  .tab.active{color:var(--accent)}
+  .tab .ic{font-size:17px;line-height:1}
+  .greet{font-size:26px;font-weight:700;color:var(--textHi)}
+  .greetdate{font-size:14px;font-weight:500;color:var(--textFaint);margin:2px 0 20px}
+  .avatar{width:72px;height:72px;border-radius:50%;background:var(--amethyst);
+    border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;
+    color:var(--accent);font-size:30px;margin:8px auto 12px}
+  .pname{text-align:center;font-size:20px;font-weight:800;font-style:italic;color:var(--textHi)}
+  .pstat{text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:1px;
+    color:var(--textFaint);margin-top:8px}
+  .grp{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--textFaint);
+    text-transform:uppercase;margin:22px 0 10px}
+  .prow{display:flex;align-items:center;gap:14px;background:var(--surface);border-radius:14px;
+    padding:14px;margin-bottom:10px}
+  .prow.soon{opacity:.6}
+  .picon{width:38px;height:38px;border-radius:10px;background:var(--amethyst);display:flex;
+    align-items:center;justify-content:center;color:var(--accent);font-size:15px;flex:0 0 auto}
+  .ptitle{font-size:15px;font-weight:600;color:var(--textHi)}
+  .psub{font-size:12px;color:var(--textFaint);margin-top:2px}
+  .soonpill{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1px;
+    color:var(--textFaint);background:var(--line);padding:3px 8px;border-radius:20px;flex:0 0 auto}
+  .chev{color:var(--textFaint);flex:0 0 auto;font-size:14px}
+  .bigbtn{background:var(--accent);color:var(--base);border-radius:16px;padding:16px;
+    text-align:center;font-size:16px;font-weight:600;margin:16px 0}
+  .toggle{display:flex;justify-content:space-between;align-items:center;background:var(--surface);
+    border-radius:14px;padding:14px 16px}
+  .tgtrack{width:44px;height:26px;border-radius:20px;background:var(--accent);position:relative;flex:0 0 auto}
+  .tgtrack .k{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:#fff}
+  .signout{background:var(--surface);border-radius:14px;padding:15px;text-align:center;
+    color:var(--z5);font-weight:600;font-size:15px;margin-top:14px}
+  .methodcard{display:flex;align-items:center;gap:14px;background:var(--surface);border-radius:16px;
+    padding:16px;margin-bottom:10px;border:1px solid var(--line)}
+  .methodcard.sel{border-color:var(--accent);border-width:1.5px}
+  .miconbig{width:46px;height:46px;border-radius:12px;background:var(--amethyst);display:flex;
+    align-items:center;justify-content:center;color:var(--accent);font-size:18px;flex:0 0 auto}
+  .mname{font-size:16px;font-weight:800;font-style:italic;color:var(--textHi)}
+  .msub{font-size:12px;font-weight:500;margin-top:2px}
+
+  /* ---- proposed Home ---- */
+  .tiles{display:flex;gap:10px;margin:6px 0 18px}
+  .tile{flex:1;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:13px 8px;text-align:center}
+  .tile .tv{font-family:var(--mono);font-size:23px;font-weight:700;color:var(--textHi);
+    font-variant-numeric:tabular-nums;line-height:1}
+  .tile .tu{font-family:var(--mono);font-size:9px;color:var(--textFaint);margin-left:2px}
+  .tile .tl{font-family:var(--mono);font-size:8.5px;letter-spacing:1.2px;color:var(--textFaint);
+    text-transform:uppercase;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .tv.good{color:var(--z2)}
+  .tile .tv.warn{color:var(--z3)}
+  .plancard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+  .plchip{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--accent);text-transform:uppercase}
+  .plchip.faint{color:var(--textFaint)}
+  .pltitle{font-size:17px;font-weight:700;color:var(--textHi);margin:9px 0 4px}
+  .plsub{font-size:13px;color:var(--textMid);line-height:1.45}
+  .plbtn{background:var(--accent);color:var(--base);border-radius:12px;padding:13px;text-align:center;
+    font-size:14px;font-weight:700;margin-top:14px}
+  .plghost{border:1px solid var(--line);color:var(--textMid);border-radius:12px;padding:12px;
+    text-align:center;font-size:13px;font-weight:600;margin-top:10px}
+
+  .legend{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+    margin-bottom:8px}
+  .legend h3{margin:0 0 12px;font-size:13px;font-family:var(--mono);letter-spacing:1px;
+    text-transform:uppercase;color:var(--textMid)}
+  .legrow{display:flex;flex-wrap:wrap;gap:18px}
+  .legitem{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--textMid)}
+  .legsw{width:26px;height:12px;border-radius:3px}
+  .q{background:linear-gradient(180deg,#221a2e,#1a1522);border:1px solid var(--accent);
+    border-radius:14px;padding:16px 20px;margin:14px 0 4px}
+  .q h3{margin:0 0 8px;font-size:13px;color:var(--accent);font-family:var(--mono);letter-spacing:1px;
+    text-transform:uppercase}
+  .q ol{margin:0;padding-left:20px;color:var(--textMid);line-height:1.7;font-size:13.5px}
+  .q b{color:var(--textHi)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LiveHeartRateView — state prototype</h1>
+  <p class="sub">The standalone live-HR HUD from issue&nbsp;#12, Slice&nbsp;3. Big live BPM + zone
+    + an <b>AVG · TIME · MAX</b> stat row + the <b>HeartRateZoneSpectrum</b> hero (segmented Z1–Z5 bar, current zone highlighted,
+    a moving marker at <code>position(forBPM:)</code>, optional planned target-zone outline), plus
+    the honest connection states. Rendered in Baseline's real Instrument tokens.</p>
+  <p class="meta">Model for these mocks: maxHR 190, restingHR 50 (Karvonen) → Z1 120 · Z2 134 · Z3 148 · Z4 162 · Z5 176 · top 190</p>
+
+  <div class="legend">
+    <h3>Spectrum legend</h3>
+    <div class="legrow">
+      <div class="legitem"><span class="legsw" style="background:var(--z1)"></span>Z1 Recovery</div>
+      <div class="legitem"><span class="legsw" style="background:var(--z2)"></span>Z2 Easy</div>
+      <div class="legitem"><span class="legsw" style="background:var(--z3)"></span>Z3 Aerobic</div>
+      <div class="legitem"><span class="legsw" style="background:var(--z4)"></span>Z4 Threshold</div>
+      <div class="legitem"><span class="legsw" style="background:var(--z5)"></span>Z5 Max</div>
+      <div class="legitem"><span class="legsw" style="border:1.5px dashed var(--textHi);background:transparent"></span>Planned target outline</div>
+      <div class="legitem"><span class="legsw" style="width:3px;background:var(--textHi);box-shadow:0 0 8px #fff"></span>Live marker</div>
+    </div>
+  </div>
+
+  <div class="q">
+    <h3>Open design questions — please annotate</h3>
+    <ol>
+      <li><b>Updated per your note:</b> the line under the BPM now shows <b>session average HR</b> (not the zone name — zone still reads from the highlighted spectrum segment + the tinted number). Placement/label OK? The average <b>persists through a dropout</b> since it's a real aggregate; only the live number blanks.</li>
+      <li>Should the <b>big BPM number be tinted with the current zone color</b> (shown here) or stay neutral white? Tint = instant intensity read; white = calmer.</li>
+      <li>Current-zone emphasis: I <b>dim the other four segments to ~32%</b> and ring the active one. Too much, or right?</li>
+      <li><b>No-signal / stale</b>: I show <b>no number at all</b> (honest — never a fabricated BPM) with the spectrum desaturated. Prefer that, or show the last-known BPM greyed with a "stale" tag?</li>
+      <li>Planned target zone: dashed <b>outline around the target segment</b> + tiny "TARGET Z3" caption. Enough, or also an above/below-target callout on the BPM?</li>
+      <li>App is dark-only today (fixed dark palette). Issue mentions light+dark previews — do you want me to introduce a light variant, or keep dark-only?</li>
+    </ol>
+  </div>
+
+  <h2>Navigation · how you reach this view</h2>
+  <div class="q" style="border-color:var(--z3);background:linear-gradient(180deg,#1a2320,#141d1a)">
+    <h3 style="color:var(--z3)">Proposal — a Log / Heart Rate toggle on the active workout</h3>
+    <ol style="list-style:none;padding-left:0">
+      <li>① While a workout is <b>active</b> and a strap is <b>streaming</b>, a segmented control appears at the top of the workout: <b>LOG</b> ↔ <b>♥&nbsp;LIVE</b>. The live option carries the current BPM + zone color, so heart rate is glanceable even from the log.</li>
+      <li>② Tapping <b>♥&nbsp;LIVE</b> (or swiping) switches the same screen to the full-screen HUD below. Tapping <b>LOG</b> returns to logging. No navigation push — it's one workout surface with two faces.</li>
+      <li>③ <b>No strap, no tab.</b> If nothing is streaming, the toggle is hidden and the workout looks exactly as it does today — this is the "no behavior change until go-live" guarantee.</li>
+      <li style="color:var(--textFaint)"><b>Scope note:</b> issue&nbsp;#12 builds <b>LiveHeartRateView standalone</b> (the HUD + previews). Dropping it into the real workout surface with this toggle is the documented <b>go-live</b> step (<code>live-heart-rate-go-live.md</code>), since the workout views are owner-WIP. This mock is the intended target so the standalone view is shaped to fit it.</li>
+    </ol>
+  </div>
+  <div class="grid" style="margin-bottom:8px">
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="wtitle">Threshold Intervals</div>
+        <div class="segctl">
+          <div class="opt active">LOG</div>
+          <div class="opt live">♥ 155 · Z3</div>
+        </div>
+        <div class="exrow"><span class="nm">Warm-up · 10:00</span><span class="dt">done</span></div>
+        <div class="exrow"><span class="nm">4 × 4:00 @ threshold</span><span class="dt">2 / 4</span></div>
+        <div class="exrow"><span class="nm">Recovery · 2:00</span><span class="dt">—</span></div>
+        <div class="exrow"><span class="nm">Cool-down · 8:00</span><span class="dt">—</span></div>
+      </div>
+      <div class="cap">① Log tab · live HR glanceable in the toggle</div>
+    </div>
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="wtitle">Threshold Intervals</div>
+        <div class="segctl">
+          <div class="opt">LOG</div>
+          <div class="opt live active">♥ 155 · Z3</div>
+        </div>
+        <div class="readout">
+          <div class="bpm" style="color:var(--z3)">155</div>
+          <div class="bpmlabel">BPM</div>
+          <div class="stats">
+            <div class="stat"><span class="sv">148</span><span class="sl">AVG</span></div>
+            <div class="stat"><span class="sv">24:18</span><span class="sl">TIME</span></div>
+            <div class="stat"><span class="sv">167</span><span class="sl">MAX</span></div>
+          </div>
+        </div>
+        <div class="spectrum">
+          <div class="targetcap"></div>
+          <div class="bar" id="navbar"></div>
+          <div class="ends"><span>120</span><span>190</span></div>
+        </div>
+      </div>
+      <div class="cap">② Heart Rate tab · the full HUD, same screen</div>
+    </div>
+  </div>
+
+  <h2>Connected · live in each zone</h2>
+  <div class="grid" id="zones"></div>
+
+  <h2>Connected · single planned target zone (Z3)</h2>
+  <div class="grid" id="targets"></div>
+
+  <h2>Connected · target zone RANGE — "live in Z1–Z2"</h2>
+  <div class="grid" id="ranges"></div>
+
+  <h2>Honest connection &amp; sensor states</h2>
+  <div class="grid" id="states"></div>
+
+  <h2>Current app · the screens that exist today</h2>
+  <div class="q" style="border-color:var(--textMid);background:linear-gradient(180deg,#1b1822,#151220)">
+    <h3 style="color:var(--textMid)">Answering your IA question directly</h3>
+    <ol>
+      <li>You're right — <b>we do NOT need a new "Heart Rate" settings screen.</b> The app already has a <b>Devices</b> screen (connect the strap) and a <b>Heart Rate Zones</b> screen (configure zones), both reached from <b>Profile</b>. I was wrong to merge them.</li>
+      <li>So live-HR adds <b>no new settings screen</b>. The strap you connect in <b>Devices</b> is the same one live HR uses. Zones come from the existing <b>Heart Rate Zones</b> page. The only genuinely new surface is the <b>in-workout HUD</b> + the toggle to reach it (shown further down).</li>
+      <li>Below are the four real screens, rendered from the current source so we're grounded. I dropped "zones at a glance" per your note.</li>
+    </ol>
+  </div>
+  <div class="grid" style="margin-bottom:8px">
+
+    <!-- HOME / Today -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="greet">Good morning</div>
+        <div class="greetdate">Tuesday, Jul 15</div>
+        <div style="font-size:22px;font-weight:700;color:var(--textHi);margin-bottom:8px">Let's build today's plan.</div>
+        <div style="font-size:14px;color:var(--textMid);line-height:1.5">I don't know enough about today yet. Tell me how you're feeling and what you've got time for — I'll turn it into a plan.</div>
+        <div class="bigbtn">＋  Talk to Baseline</div>
+        <div class="grp" style="margin-top:6px">Or add evidence for a sharper plan</div>
+        <div class="prow"><div class="picon">🫀</div><div style="flex:1;min-width:0"><div class="ptitle">Take a reading</div><div class="psub">HRV · 60s</div></div><span class="chev">›</span></div>
+        <div class="prow"><div class="picon">🌙</div><div style="flex:1;min-width:0"><div class="ptitle">Sleep</div><div class="psub">From Apple Health</div></div><span class="chev">›</span></div>
+        <div class="tabbar">
+          <div class="tab active"><span class="ic">▦</span>Today</div>
+          <div class="tab"><span class="ic">▤</span>Plan</div>
+          <div class="tab"><span class="ic">◯</span>Profile</div>
+        </div>
+      </div>
+      <div class="cap">Home · Today tab (empty state)</div>
+      <div class="note">Returning users see a <b>TODAY'S PLAN</b> card here with a readiness number and Start buttons. Note: <b>nothing about heart rate lives on Home</b> today.</div>
+    </div>
+
+    <!-- PROFILE / Settings -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="avatar">👤</div>
+        <div class="pname">TYLER</div>
+        <div class="pstat">128 READINGS  ·  6-DAY STREAK</div>
+        <div class="grp">Setup</div>
+        <div class="prow soon"><div class="picon">⬡</div><div style="flex:1;min-width:0"><div class="ptitle">Readiness Setup</div><div class="psub">Which inputs build your score</div></div><span class="soonpill">SOON</span></div>
+        <div class="prow"><div class="picon">〰️</div><div style="flex:1;min-width:0"><div class="ptitle">Heart Rate Zones</div><div class="psub">Karvonen / LTHR zones</div></div><span class="chev">›</span></div>
+        <div class="prow"><div class="picon">📡</div><div style="flex:1;min-width:0"><div class="ptitle">Devices</div><div class="psub">Polar H10 connected</div></div><span class="chev">›</span></div>
+        <div class="grp">Integrations</div>
+        <div class="prow soon"><div class="picon">❤️</div><div style="flex:1;min-width:0"><div class="ptitle">Apple Health</div><div class="psub">Sleep, resting HR, history</div></div><span class="soonpill">SOON</span></div>
+        <div class="prow soon"><div class="picon">🔔</div><div style="flex:1;min-width:0"><div class="ptitle">Notifications</div><div class="psub">Morning reading reminder</div></div><span class="soonpill">SOON</span></div>
+        <div class="tabbar">
+          <div class="tab"><span class="ic">▦</span>Today</div>
+          <div class="tab"><span class="ic">▤</span>Plan</div>
+          <div class="tab active"><span class="ic">◯</span>Profile</div>
+        </div>
+      </div>
+      <div class="cap">Settings · Profile tab</div>
+      <div class="note">The two HR rows already exist: <b>Heart Rate Zones</b> and <b>Devices</b>. This is the whole "settings" story for live HR — no additions needed.</div>
+    </div>
+
+    <!-- DEVICES / Measurements -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="scrtitle">Devices</div>
+        <div class="setlabel">HRV measurement method</div>
+        <div class="methodcard">
+          <div class="miconbig">📷</div>
+          <div style="flex:1;min-width:0"><div class="mname">PHONE CAMERA</div><div class="msub" style="color:var(--textFaint)">Back telephoto lens + LED flash</div></div>
+          <div class="radio off"></div>
+        </div>
+        <div class="methodcard sel">
+          <div class="miconbig">♥</div>
+          <div style="flex:1;min-width:0"><div class="mname">CHEST STRAP</div><div class="msub" style="color:var(--accent)">BLE Heart Rate Monitor</div></div>
+          <div class="radio"><div class="in"></div></div>
+        </div>
+        <div class="setlabel">Strap connection</div>
+        <div class="setcard"><div class="setpad setrow">
+          <div style="min-width:0;flex:1"><div class="setname">Polar H10</div><div class="setcap" style="color:var(--z2)">Connected</div></div>
+          <div class="battery">🔋 82%</div>
+          <div class="forget" style="margin-left:12px">Forget</div>
+        </div></div>
+        <div class="tabbar">
+          <div class="tab"><span class="ic">▦</span>Today</div>
+          <div class="tab"><span class="ic">▤</span>Plan</div>
+          <div class="tab active"><span class="ic">◯</span>Profile</div>
+        </div>
+      </div>
+      <div class="cap">Devices · Profile → Devices (connect strap)</div>
+      <div class="note">Where the strap is connected today — camera vs strap for the morning reading, plus scan/connect/forget. <b>Live HR reuses this exact connection.</b></div>
+    </div>
+
+    <!-- HEART RATE ZONES (existing) -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="scrtitle">Heart Rate Zones</div>
+        <div class="setlabel">Max heart rate</div>
+        <div class="setcard">
+          <div class="setpad setrow"><span class="setname">MAX HR</span><span><span class="setval">190</span><span class="setunit">BPM</span></span></div>
+          <div class="hair"></div>
+          <div class="setpad setrow"><span class="setcap">Your entered max HR</span><span class="link">USE AGE ESTIMATE</span></div>
+        </div>
+        <div class="setlabel">Resting heart rate</div>
+        <div class="setcard">
+          <div class="setpad setrow"><span class="setname">RESTING HR</span><span><span class="setval">50</span><span class="setunit">BPM</span></span></div>
+          <div class="hair"></div>
+          <div class="setpad"><span class="setcap">Using Karvonen (heart-rate reserve) — zones personalized to your range.</span></div>
+        </div>
+        <div class="setlabel">Method</div>
+        <div class="setcard"><div class="setpad setrow" style="justify-content:flex-start;gap:12px">
+          <div class="methodicon">📈</div>
+          <div style="min-width:0"><div class="setname">Karvonen · Heart-rate reserve</div><div class="setcap">Zones scaled between resting and max HR</div></div>
+        </div></div>
+        <div class="setlabel">Zone ranges</div>
+        <div class="setcard" id="zrtable"></div>
+      </div>
+      <div class="cap">Heart Rate Zones · already built (Slice 2)</div>
+      <div class="note">Reached from Profile → Heart Rate Zones. Fully implemented. Configures the boundaries the live spectrum uses.</div>
+    </div>
+
+  </div>
+
+  <h2>Your notes on the current screens</h2>
+  <div class="q" style="border-color:var(--z3)">
+    <h3 style="color:var(--z3)">What's real vs. what to change</h3>
+    <ol>
+      <li><b>Apple Health = "SOON" is the real current state</b> — the integration isn't built yet (it's stubbed in <code>ProfileView</code>). So the Home redesign below <b>depends on building Apple Health first</b>; that's separate work from live HR. When built, the row becomes tappable to connect.</li>
+      <li><b>"Baseline protocol"</b> was the real section header — agreed it's opaque. Renamed to <b>"Setup"</b> in the mock. Open to other names (e.g. "Your Baseline", "Configure").</li>
+      <li><b>Devices screen:</b> retitled top to <b>"Devices"</b> (was "Measurement") and the section to <b>"HRV measurement method"</b>, per your note.</li>
+      <li><b>Scope flag:</b> this is now a Home + Apple Health redesign, well beyond issue&nbsp;#12 (live-HR HUD). I'll prototype it here, but we should track it as its own work so the live-HR slice doesn't balloon.</li>
+    </ol>
+  </div>
+
+  <h2>Proposed Home · evidence-aware, low-text</h2>
+  <div class="grid" style="margin-bottom:8px">
+
+    <!-- rich: everything available -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="greet">Good morning</div>
+        <div class="greetdate">Tuesday, Jul 15</div>
+        <div class="tiles">
+          <div class="tile"><div><span class="tv good">82</span><span class="tu">/100</span></div><div class="tl">Sleep</div></div>
+          <div class="tile"><div><span class="tv">48</span><span class="tu">ms</span></div><div class="tl">HRV today</div></div>
+          <div class="tile"><div><span class="tv">41</span><span class="tu">m</span></div><div class="tl">Active · yest</div></div>
+        </div>
+        <div class="plancard">
+          <div class="plchip">Today's plan</div>
+          <div class="pltitle">Threshold intervals</div>
+          <div class="plsub">45 min · 4 × 4:00 @ threshold. Sleep and HRV both look good — you're clear for the hard session.</div>
+          <div class="plbtn">Start workout</div>
+        </div>
+      </div>
+      <div class="cap">Home · Apple Health + reading present, workout planned</div>
+      <div class="note">Three compact evidence tiles (each shown <b>only if available</b>) + the planned session. Tiles are glanceable, not a wall of text.</div>
+    </div>
+
+    <!-- partial: only HRV reading, no Apple Health -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="greet">Good morning</div>
+        <div class="greetdate">Tuesday, Jul 15</div>
+        <div class="tiles">
+          <div class="tile"><div><span class="tv">52</span><span class="tu">ms</span></div><div class="tl">HRV today</div></div>
+        </div>
+        <div class="plancard">
+          <div class="plchip">Today's plan</div>
+          <div class="pltitle">Easy Z2 run</div>
+          <div class="plsub">30 min conversational. Connect Apple Health to factor in last night's sleep.</div>
+          <div class="plbtn">Start workout</div>
+        </div>
+      </div>
+      <div class="cap">Home · only a reading (Apple Health off)</div>
+      <div class="note">No sleep/activity tiles when Apple Health is off — only the HRV tile the athlete actually captured. A subtle prompt to connect Health sits in the plan copy, not as clutter.</div>
+    </div>
+
+    <!-- sparse: nothing planned, nothing captured -->
+    <div class="cell">
+      <div class="phone">
+        <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+        <div class="greet">Good morning</div>
+        <div class="greetdate">Tuesday, Jul 15</div>
+        <div class="plancard" style="border-color:var(--accent)">
+          <div class="plchip">Suggested for today</div>
+          <div class="pltitle">Easy aerobic, 30 min</div>
+          <div class="plsub">Your last three days were hard — an easy Z2 day fits. Nothing's planned yet.</div>
+          <div class="plbtn">Add to today</div>
+          <div class="plghost">Talk to Baseline</div>
+        </div>
+      </div>
+      <div class="cap">Home · nothing planned → suggestion + CTA</div>
+      <div class="note">When there's no plan and no evidence, lead with a <b>training suggestion based on what we know</b>, plus a clear CTA to plan or talk — instead of an empty screen or a big block of text.</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const ZC = {1:'--z1',2:'--z2',3:'--z3',4:'--z4',5:'--z5'};
+const ZNAME = {1:'Recovery',2:'Easy',3:'Aerobic',4:'Threshold',5:'Max'};
+const FLOORS = {1:120,2:134,3:148,4:162,5:176};
+const LOW=120, HIGH=190;
+function zoneForBPM(b){ if(b<134)return 1; if(b<148)return 2; if(b<162)return 3; if(b<176)return 4; return 5; }
+function pos(b){ return Math.min(Math.max((b-LOW)/(HIGH-LOW),0),1); }
+
+// state: {bpm, conn, connDot, msg, target, muted, showMarker, hideBpm}
+function phone(s){
+  const zone = s.hideBpm ? null : zoneForBPM(s.bpm);
+  const zvar = zone ? `var(${ZC[zone]})` : 'var(--textFaint)';
+  const p = zone!==null ? pos(s.bpm) : null;
+
+  // target may be a single zone (number) or a zone RANGE ([lo,hi], e.g. [1,2] = "live in Z1–Z2")
+  const tgt = Array.isArray(s.target) ? s.target : (s.target ? [s.target, s.target] : null);
+
+  // segments
+  let segs='';
+  for(let z=1;z<=5;z++){
+    const isCur = zone===z && !s.muted;
+    let cls='seg';
+    if(s.muted || (zone!==null && !isCur)) cls+=' dim';
+    if(isCur) cls+=' cur';
+    segs+=`<div class="${cls}" style="background:var(${ZC[z]});color:var(${ZC[z]})"><span class="zl">Z${z}</span></div>`;
+  }
+  // continuous dashed band across the target range (fifths; the 2px gaps drift <2px — fine for a mock)
+  const bandOverlay = tgt
+    ? `<div class="tgtoverlay" style="left:${(tgt[0]-1)*20}%;width:${(tgt[1]-tgt[0]+1)*20}%"></div>` : '';
+  const marker = (s.showMarker!==false && p!==null && !s.muted)
+    ? `<div class="marker" style="left:${(p*100).toFixed(1)}%"></div>` : '';
+
+  // Per review: the planned target is shown by the dashed band outline ALONE — no target text.
+  // Marker-vs-band position + the tinted zone already communicate in/above/below.
+  const targetcap = '';
+
+  // Session aggregates — AVG · TIME · MAX. All are real aggregates, so they persist through a
+  // dropout (no fabrication of the *current* number). Absent only before a session has any data.
+  const hasStats = s.avg || s.dur || s.max;
+  const stats = hasStats ? `<div class="stats">
+      <div class="stat"><span class="sv">${s.avg??'–'}</span><span class="sl">AVG</span></div>
+      <div class="stat"><span class="sv">${s.dur??'–'}</span><span class="sl">TIME</span></div>
+      <div class="stat"><span class="sv">${s.max??'–'}</span><span class="sl">MAX</span></div>
+    </div>` : '';
+
+  // readout
+  let readout;
+  if(s.hideBpm){
+    readout = `<div class="bpm muted">– –</div><div class="bpmlabel">BPM</div>${stats}
+      ${s.msg?`<div class="statusmsg">${s.msg}</div>`:''}`;
+  } else {
+    readout = `<div class="bpm" style="color:${s.muted?'var(--textFaint)':zvar}">${s.bpm}</div>
+      <div class="bpmlabel">BPM</div>${stats}
+      ${s.msg?`<div class="statusmsg">${s.msg}</div>`:''}`;
+  }
+
+  const chip = `<span class="chip"><span class="dot ${s.connDot} ${s.connPulse?'pulse':''}"></span>${s.conn}</span>`;
+  const btn = s.btn ? `<button class="btn ${s.btnGhost?'ghost':''}">${s.btn}</button>` : '';
+
+  return `<div class="cell">
+    <div class="phone">
+      <div class="statusbar"><span>9:41</span><span>▲ 100%</span></div>
+      <div class="hdr"><span class="hlabel">Live Heart Rate</span>${chip}</div>
+      <div class="readout">${readout}</div>
+      <div class="spectrum">
+        <div class="targetcap">${targetcap}</div>
+        <div class="bar">${segs}${bandOverlay}${marker}</div>
+        <div class="ends"><span>${LOW}</span><span>${HIGH}</span></div>
+      </div>
+      ${btn}
+    </div>
+    <div class="cap">${s.cap}</div>
+    ${s.designNote?`<div class="note">${s.designNote}</div>`:''}
+  </div>`;
+}
+
+const zones=[
+  {bpm:125,avg:118,dur:'08:12',max:129,conn:'Connected',connDot:'on',cap:'Z1 · Recovery'},
+  {bpm:140,avg:132,dur:'14:47',max:151,conn:'Connected',connDot:'on',cap:'Z2 · Easy'},
+  {bpm:155,avg:148,dur:'24:18',max:167,conn:'Connected',connDot:'on',cap:'Z3 · Aerobic'},
+  {bpm:168,avg:159,dur:'31:05',max:174,conn:'Connected',connDot:'on',cap:'Z4 · Threshold'},
+  {bpm:182,avg:171,dur:'38:52',max:186,conn:'Connected',connDot:'on',cap:'Z5 · Max'},
+];
+const targets=[
+  {bpm:128,avg:141,dur:'22:40',max:172,conn:'Connected',connDot:'on',target:3,cap:'Below target',
+    designNote:'<b>Below target.</b> Marker sits left of the outlined Z3. Now that the zone name is gone, above/below target reads only from marker-vs-outline — want an explicit "Below target" hint too?'},
+  {bpm:155,avg:149,dur:'25:03',max:168,conn:'Connected',connDot:'on',target:3,cap:'In target',
+    designNote:'<b>In the planned zone.</b> Current segment is Z3 and it is the outlined target — the ideal "you are here" moment.'},
+  {bpm:182,avg:160,dur:'27:19',max:184,conn:'Connected',connDot:'on',target:3,cap:'Above target',
+    designNote:'<b>Above target.</b> Marker is right of the outlined Z3, current zone Z5.'},
+];
+// "I want to live in Z1–Z2" — a target that SPANS a range of zones, not one.
+const rangeTargets=[
+  {bpm:125,avg:121,dur:'12:30',max:138,conn:'Connected',connDot:'on',target:[1,2],cap:'In target · low easy',
+    designNote:'<b>Z1–Z2 target, currently Z1.</b> The dashed band spans both zones; the "IN TARGET" status confirms the athlete is inside the range — the whole point of a wide easy/recovery target.'},
+  {bpm:142,avg:128,dur:'20:15',max:150,conn:'Connected',connDot:'on',target:[1,2],cap:'In target · upper',
+    designNote:'<b>Still in target, now Z2.</b> Anywhere across the two-zone band reads as "IN" — no penalty for drifting between Z1 and Z2.'},
+  {bpm:168,avg:139,dur:'24:40',max:171,conn:'Connected',connDot:'on',target:[1,2],cap:'Above target',
+    designNote:'<b>Drifted out the top.</b> Current Z4 is past the band, so status flips to "ABOVE" (red) — the cue to ease off and get back under Z2.'},
+];
+const states=[
+  {hideBpm:true,avg:152,dur:'19:30',max:178,conn:'No signal',connDot:'warn',muted:true,showMarker:false,
+    msg:'No signal from strap. Check the fit and moisten the contacts.',cap:'No signal / stale',
+    designNote:'<b>Stale beyond the freshness window.</b> No current number — the HUD never fabricates a BPM when the strap goes silent. But the <b>aggregates persist</b> (AVG/TIME/MAX are real, not live guesses). TIME keeps counting session elapsed.'},
+  {hideBpm:true,avg:150,dur:'19:44',max:178,conn:'Reconnecting…',connDot:'warn',connPulse:true,muted:true,showMarker:false,
+    msg:'Reconnecting to your strap…',cap:'Reconnecting',
+    designNote:'<b>Link dropped, auto-retrying.</b> Amber pulsing dot; current held blank, aggregates still shown.'},
+  {bpm:150,avg:149,dur:'21:10',max:178,conn:'No contact',connDot:'warn',target:null,
+    msg:'Strap not detecting skin contact — reading may be unreliable.',cap:'Sensor contact not detected',
+    designNote:'<b>Streaming but flagged.</b> Sensor-contact bit says "not detected", so the BPM is shown but captioned as unreliable rather than trusted silently.'},
+  {hideBpm:true,conn:'Disconnected',connDot:'off',muted:true,showMarker:false,
+    msg:'',cap:'Disconnected',btn:'Connect strap',
+    designNote:'<b>No device.</b> No session yet, so no aggregates. Spectrum shown as a dim scale for context; primary action is to connect the remembered strap.'},
+];
+
+// Spectrum bar for the navigation HUD mock (Z3 current, marker at 155 BPM).
+(function(){
+  const cur = zoneForBPM(155), p = pos(155);
+  let segs='';
+  for(let z=1;z<=5;z++){
+    let cls='seg'+(z===cur?' cur':' dim');
+    segs+=`<div class="${cls}" style="background:var(${ZC[z]});color:var(${ZC[z]})"><span class="zl">Z${z}</span></div>`;
+  }
+  document.getElementById('navbar').innerHTML = segs +
+    `<div class="marker" style="left:${(p*100).toFixed(1)}%"></div>`;
+})();
+
+// Zone-ranges table for the settings mock — floors from the model (Karvonen 50/190), uppers one
+// below the next floor, Z5 closes at maxHR. Matches HeartRateZonePreview.
+(function(){
+  const rows = [
+    {z:1,lo:120,hi:133},{z:2,lo:134,hi:147},{z:3,lo:148,hi:161},
+    {z:4,lo:162,hi:175},{z:5,lo:176,hi:190},
+  ];
+  const el = document.getElementById('zrtable');
+  if(el) el.innerHTML = rows.map((r,i)=>`
+    <div class="zr" style="${i>0?'border-top:1px solid var(--line)':''}">
+      <div class="zrbar" style="background:var(${ZC[r.z]})"></div>
+      <div><div class="zrname">Z${r.z}</div><div class="zrsub">${ZNAME[r.z]}</div></div>
+      <div class="zrrange">${r.lo}–${r.hi}<span class="u">BPM</span></div>
+    </div>`).join('');
+})();
+
+document.getElementById('zones').innerHTML = zones.map(phone).join('');
+document.getElementById('targets').innerHTML = targets.map(phone).join('');
+document.getElementById('ranges').innerHTML = rangeTargets.map(phone).join('');
+document.getElementById('states').innerHTML = states.map(phone).join('');
+</script>
+</body>
+</html>

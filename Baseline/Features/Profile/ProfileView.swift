@@ -9,6 +9,7 @@ struct ProfileView: View {
     @Environment(AuthViewModel.self) private var authVM
     @Environment(AppSettings.self) private var settings
     @Environment(BluetoothManager.self) private var bluetooth
+    @Environment(HealthService.self) private var health
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
 
     var body: some View {
@@ -20,7 +21,7 @@ struct ProfileView: View {
                     VStack(alignment: .leading, spacing: 26) {
                         headerCard
 
-                        group("Baseline protocol") {
+                        group("Setup") {
                             row(icon: "circle.hexagongrid.fill", title: "Readiness Setup",
                                 subtitle: "Which inputs build your score", destination: .soon)
                             NavigationLink {
@@ -38,8 +39,7 @@ struct ProfileView: View {
                         }
 
                         group("Integrations") {
-                            row(icon: "heart.text.square.fill", title: "Apple Health",
-                                subtitle: "Sleep, resting HR, history", destination: .soon)
+                            appleHealthRow
                             row(icon: "bell.fill", title: "Notifications",
                                 subtitle: "Morning reading reminder", destination: .soon)
                             row(icon: "paintbrush.fill", title: "Appearance",
@@ -93,10 +93,25 @@ struct ProfileView: View {
     // MARK: - Rows
 
     private enum RowDestination { case soon }
-    private enum Trailing { case chevron, soon }
+    private enum Trailing { case chevron, soon, connected }
 
     private func row(icon: String, title: String, subtitle: String, destination: RowDestination) -> some View {
         rowBody(icon: icon, title: title, subtitle: subtitle, trailing: .soon)
+    }
+
+    /// Apple Health is a real integration (auth is requested here or during onboarding). Once asked,
+    /// Health hides whether reads were granted, so we reflect "Connected" from having requested; a
+    /// fresh install can tap to connect. Data-off is surfaced by empty tiles on Today, not here.
+    private var appleHealthRow: some View {
+        Button {
+            if !health.requested { Task { await health.requestReadAccess() } }
+        } label: {
+            rowBody(icon: "heart.text.square.fill", title: "Apple Health",
+                    subtitle: health.requested ? "Connected" : "Sleep, resting HR, activity",
+                    trailing: health.requested ? .connected : .chevron)
+        }
+        .buttonStyle(.plain)
+        .disabled(health.requested)
     }
 
     private func rowBody(icon: String, title: String, subtitle: String, trailing: Trailing) -> some View {
@@ -117,6 +132,11 @@ struct ProfileView: View {
                 Text("SOON").font(.bMono(10, .bold)).tracking(1).foregroundStyle(BaselineColor.textFaint)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(BaselineColor.line))
+            case .connected:
+                Label("Connected", systemImage: "checkmark.circle.fill")
+                    .labelStyle(.titleAndIcon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(BaselineColor.zoneGreen)
             }
         }
         .padding(14)
@@ -184,6 +204,7 @@ struct ProfileView: View {
         .environment(AuthViewModel())
         .environment(AppSettings())
         .environment(BluetoothManager())
+        .environment(HealthService())
         .modelContainer(for: Reading.self, inMemory: true)
         .preferredColorScheme(.dark)
 }

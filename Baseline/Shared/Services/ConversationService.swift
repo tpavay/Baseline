@@ -10,6 +10,11 @@ import Foundation
 @Observable
 final class ConversationService {
 
+    enum Scope: Equatable, Sendable {
+        case general
+        case workoutImport
+    }
+
     struct Message: Identifiable, Sendable {
         enum Role: Sendable { case you, baseline }
         let id = UUID()
@@ -35,15 +40,21 @@ final class ConversationService {
 
     private let tools: AgentTools
     private let functions: Functions
+    private let scope: Scope
     private var transcript: [[String: Any]] = []      // Anthropic wire-format messages
     private let maxToolRounds = 6                       // safety bound on tool ping-pong
 
-    init(tools: AgentTools, functions: Functions = Functions.functions()) {
+    init(
+        tools: AgentTools,
+        functions: Functions = Functions.functions(),
+        scope: Scope = .general
+    ) {
         self.tools = tools
         self.functions = functions
+        self.scope = scope
     }
 
-    func send(_ text: String) async {
+    func send(_ text: String) {
         let userText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !userText.isEmpty, !isThinking else { return }
         log.append(Message(role: .you, text: userText))
@@ -53,9 +64,12 @@ final class ConversationService {
         let checkpoint = transcript.count
         transcript.append(["role": "user", "content": userText])
         isThinking = true
-        defer { isThinking = false }
-        let completed = await runLoop()
-        if !completed { transcript.removeLast(transcript.count - checkpoint) }
+        Task { [weak self] in
+            guard let self else { return }
+            let completed = await runLoop()
+            if !completed { transcript.removeLast(transcript.count - checkpoint) }
+            isThinking = false
+        }
     }
 
     /// Returns true only on a clean finish (a final assistant reply). False on a network failure or
@@ -88,17 +102,21 @@ final class ConversationService {
                     break
                 }
             }
-            if !text.isEmpty { log.append(Message(role: .baseline, text: text)) }
-            if toolUses.isEmpty { return true }            // final reply, no tools → clean finish
+            if toolUses.isEmpty {
+                if !text.isEmpty { log.append(Message(role: .baseline, text: text)) }
+                return true                                // final reply, no tools → clean finish
+            }
 
             // Execute each requested tool on-device and feed results back for the model's follow-up.
             var results: [[String: Any]] = []
             for tu in toolUses {
                 let resultText: String
-                if let call = ToolCallMapper.map(name: tu.name, input: tu.input) {
+                if let call = ToolCallMapper.map(name: tu.name, input: tu.input), permits(call) {
                     let response = await tools.execute(call)   // retrieval tools query HealthKit / the store
                     resultText = response.text
                     record(call, response)
+                } else if scope == .workoutImport {
+                    resultText = "That action isn't available while fixing an imported workout. Only edit the draft workout."
                 } else {
                     resultText = "That tool call wasn't valid."
                 }
@@ -126,7 +144,9 @@ final class ConversationService {
         let today = tools.dispatch(.getToday)
         latestDecision = today.decision
         latestPlan = today.plan
-        let contextSummary = tools.contextSummary()   // full durable state = the model's memory
+        let contextSummary = scope == .workoutImport
+            ? "CURRENT SURFACE: Fixing an imported workout draft. Only inspect or edit this workout. Do not change readiness, health context, the week plan, logging state, or saved templates.\n\n\(tools.contextSummary())"
+            : tools.contextSummary()   // full durable state = the model's memory
         // The transcript is heterogeneous JSON (non-Sendable), so ship it as a string; the request
         // dict is then [String: String] (Sendable) and safe to send across the callable boundary.
         guard let data = try? JSONSerialization.data(withJSONObject: transcript),
@@ -138,6 +158,18 @@ final class ConversationService {
             return payload?["content"] as? [[String: Any]]
         } catch {
             return nil
+        }
+    }
+
+    func permits(_ call: AgentTools.Call) -> Bool {
+        guard scope == .workoutImport else { return true }
+        switch call {
+        case .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
+             .removeExercise, .updateSet, .getCurrentWorkout, .updateLoggingConfig,
+             .setMetricValue, .removeMetric:
+            return true
+        default:
+            return false
         }
     }
 }

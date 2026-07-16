@@ -61,6 +61,38 @@ struct WorkoutStoreTests {
         #expect(s.current?.allExercises.count == 2)
     }
 
+    @Test func replaceAllExercisesPreservesIdentityAndPrescription() throws {
+        let s = store()
+        s.create(title: "Outdoor Run", goal: nil)
+        s.addBlock(name: "Warm-up", intent: nil)
+        s.addBlock(name: "Main Run", intent: nil)
+        s.addExercise(name: "Treadmill Run", toBlockNamed: "Warm-up", sets: 1, reps: nil, load: nil, durationSeconds: 300)
+        s.addExercise(name: "Treadmill Run", toBlockNamed: "Main Run", sets: 1, reps: nil, load: nil, durationSeconds: 1_800)
+
+        let originalIDs = try #require(s.current?.allExercises.map(\.id))
+        s.edit { workout in
+            _ = workout.updateExercise(originalIDs[0]) { $0.prescription.sets[0].rpe = 2 }
+            _ = workout.updateExercise(originalIDs[1]) { $0.prescription.sets[0].rpe = 3 }
+        }
+
+        let before = try #require(s.current?.allExercises)
+        let prescriptions = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0.prescription) })
+
+        guard case .ambiguous = s.replaceExercise(named: "Treadmill Run", with: "Run") else {
+            Issue.record("A duplicate replacement without a scope should be ambiguous.")
+            return
+        }
+        #expect(s.current?.allExercises.allSatisfy { $0.exerciseName == "Treadmill Run" } == true)
+
+        #expect(s.replaceExercise(named: "Treadmill Run", with: "Run", replaceAll: true).succeeded)
+        let after = try #require(s.current?.allExercises)
+        #expect(after.count == 2)
+        #expect(Set(after.map(\.id)) == Set(before.map(\.id)))
+        #expect(after.allSatisfy { $0.exerciseName == "Run" })
+        #expect(after.allSatisfy { $0.definitionId == "run" })
+        #expect(after.allSatisfy { prescriptions[$0.id] == $0.prescription })
+    }
+
     @Test func startWorkoutAndLoggedActualsPersistWithoutTouchingPlan() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
         let s1 = WorkoutStore(defaults: d)
@@ -192,6 +224,148 @@ struct WorkoutStoreTests {
         #expect(s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: [.duration]).succeeded)
         // The global/default preference is untouched by a this-workout change.
         #expect(s.preferences.selectedByExercise["stationary_bike"] == nil)
+    }
+
+    @Test func idBasedMetricConfigTargetsOneDuplicateExercise() throws {
+        let s = store()
+        s.create(title: "Bike intervals", goal: nil)
+        let blockID = try #require(s.current?.blocks.first?.id)
+        let first = PlannedExercise(
+            exerciseName: "Stationary Bike",
+            definitionId: "stationary_bike",
+            selectedMetrics: [.duration, .distance]
+        )
+        let second = PlannedExercise(
+            exerciseName: "Stationary Bike",
+            definitionId: "stationary_bike",
+            selectedMetrics: [.duration, .distance]
+        )
+        s.addExercise(first, toBlockID: blockID)
+        s.addExercise(second, toBlockID: blockID)
+
+        #expect(s.setLoggingConfig(exerciseID: second.id, enabled: [.duration], units: [:]))
+        #expect(s.current?.exercise(first.id)?.selectedMetrics == [.duration, .distance])
+        #expect(s.current?.exercise(second.id)?.selectedMetrics == [.duration])
+    }
+
+    @Test func agentSummaryPreservesNestedStructureNotesLabelsTargetsMetricsAndUnits() {
+        let s = store()
+        s.create(title: "Aerobic capacity", goal: "Consolidate")
+        let sled = PlannedExercise(
+            exerciseName: "Sled Pull",
+            displayLabel: "Option B sled",
+            definitionId: "sled_pull",
+            selectedMetrics: [.distance, .load],
+            displayUnits: [.load: .pounds],
+            prescription: Prescription(
+                sets: [PlannedSet(
+                    distance: 25,
+                    effortTarget: .rpe(7),
+                    alternatives: [PlannedSetAlternative(
+                        label: "Short course",
+                        values: MetricValues([.distance: 15]),
+                        ranges: [MetricTargetRange(metric: .load, lower: 20, upper: 30)]
+                    )]
+                )],
+                intensityTargets: [.descriptive("Load target: Race weight")]
+            ),
+            guidance: CoachGuidance(formCues: ["Keep the rope tight"])
+        )
+        let group = WorkoutGroup(
+            label: "Option B",
+            phase: .main,
+            execution: GroupExecution(
+                repetition: .count(4),
+                totalTargets: MetricValues([.distance: 100]),
+                adjustments: [MetricAdjustment(metric: .load, step: 5, minimum: 20, maximum: 60)]
+            ),
+            children: [.exercise(sled)],
+            guidance: CoachGuidance(formCues: ["Complete every movement"]),
+            doseLayer: .med,
+            isOptional: true
+        )
+        let choice = WorkoutChoice(label: "Bike modality", options: [
+            .exercise(PlannedExercise(exerciseName: "Echo Bike", definitionId: "echo_bike")),
+            .exercise(PlannedExercise(exerciseName: "Concept2 Bike", definitionId: "concept2_bike")),
+        ])
+        s.edit { workout in
+            workout.guidance = CoachGuidance(formCues: ["Protect the next intensity day"])
+            workout.blocks[0].guidance = CoachGuidance(formCues: ["Stay aerobic"])
+            workout.blocks[0].nodes = [.group(group), .choice(choice)]
+        }
+
+        let summary = s.summary
+
+        #expect(summary.contains("REQUIRED GROUP: Option B"))
+        #expect(summary.contains("CHOICE: Bike modality — choose 1 of 2"))
+        #expect(summary.contains("Option B sled [exercise: Sled Pull]"))
+        #expect(summary.contains("Metrics: Distance (m), Load (lb)"))
+        #expect(summary.contains("Distance=25 m"))
+        #expect(summary.contains("Load=blank"))
+        #expect(summary.contains("Target: Load target: Race weight"))
+        #expect(summary.contains("Effort target: RPE 7"))
+        #expect(summary.contains("Alternative Short course: Distance=15 m"))
+        #expect(summary.contains("Range: Load"))
+        #expect(summary.contains("phase main"))
+        #expect(summary.contains("dose MED"))
+        #expect(summary.contains("optional"))
+        #expect(summary.contains("Total targets: Distance=100 m"))
+        #expect(summary.contains("Adjustment: Load step 5, minimum 20, maximum 60"))
+        #expect(summary.contains("Protect the next intensity day"))
+        #expect(summary.contains("Complete every movement"))
+        #expect(summary.contains("Keep the rope tight"))
+    }
+
+    @Test func transientReviewStoreKeepsDraftEditsIsolatedButSharesDeliberateDefaults() {
+        let defaults = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
+        let source = WorkoutStore(defaults: defaults)
+        source.create(title: "Today's workout", goal: nil)
+        let imported = Workout(
+            title: "Imported draft",
+            blocks: [WorkoutBlock(name: "Main", exercises: [
+                PlannedExercise(exerciseName: "Stationary Bike", definitionId: "stationary_bike"),
+            ])]
+        )
+        let review = WorkoutStore(transientWorkout: imported, configurationFrom: source)
+
+        review.edit { $0.rename("Edited import") }
+        #expect(review.current?.title == "Edited import")
+        #expect(source.current?.title == "Today's workout")
+        #expect(WorkoutStore(defaults: defaults).current?.title == "Today's workout")
+
+        #expect(review.setExercisePreference(
+            exerciseNamed: "Stationary Bike",
+            scope: .exercise,
+            units: [.distance: .miles]
+        ).succeeded)
+        #expect(source.preferences.unitsByExercise["stationary_bike"]?[.distance] == .miles)
+
+        let custom = review.createCustomDefinition(
+            name: "Heavy Rope Drag",
+            category: .carry,
+            supported: [.distance, .load]
+        )
+        #expect(source.customDefinitions.contains { $0.id == custom.id })
+    }
+
+    @Test func requireAllOptionsConvertsOnlyTheNamedChoice() {
+        let s = store()
+        s.create(title: "AMRAP", goal: nil)
+        let choice = WorkoutChoice(label: "Option B", options: [
+            .exercise(PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift")),
+            .exercise(PlannedExercise(
+                exerciseName: "Lateral Burpee Over Barbell",
+                definitionId: "lateral_burpee_over_barbell"
+            )),
+        ])
+        s.edit { workout in
+            workout.blocks[0].nodes.append(.choice(choice))
+        }
+
+        #expect(s.requireAllOptions(choiceNamed: "option b").succeeded)
+        #expect(s.current?.allChoices.isEmpty == true)
+        #expect(s.current?.allGroups.first?.children.count == 2)
+        #expect(!s.requireAllOptions(choiceNamed: "missing").succeeded)
     }
 
     @Test func unsupportedMetricIsRejected() {

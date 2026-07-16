@@ -1,348 +1,422 @@
 import SwiftData
 import SwiftUI
 
-/// The manual workout screen — the **ground-truth UI** for the structured workout the agent edits.
-/// Narrow on purpose: expandable blocks → exercises → prescriptions, structure edits (add / remove /
-/// move / substitute), manual set logging, skip / complete, notes, and a persistent chat entry.
-/// Everything here drives the same `WorkoutStore` the conversation does, so any mutation is
-/// inspectable and correctable by hand. No charts / PRs / calendar / voice yet.
+/// The manual surface for a workout template and its performed log. The hierarchy stays visually
+/// stable across reading, editing, and logging; only the controls inside each row change.
 struct WorkoutView: View {
     @Environment(WorkoutStore.self) private var store
-    @Environment(PlanStore.self) private var plan            // for the "previous" column (exercise history)
-    @State private var collapsedBlocks: Set<UUID> = []       // blocks expanded by default
-    @State private var expandedExercises: Set<UUID> = []     // exercises collapsed by default
-    @State private var sheet: WorkoutSheet?
+    @Environment(PlanStore.self) private var plan
+    @Environment(BluetoothManager.self) private var bluetooth
+    @Environment(OnboardingStore.self) private var profile
+
+    @State private var isEditingTemplate = false
+    @State private var editSnapshot: Workout?
     @State private var showChat = false
-    @State private var historyExercise: PlannedExercise?
+    @State private var showFinishConfirmation = false
+    @State private var showDiscardConfirmation = false
     @State private var showSaveTemplate = false
     @State private var templateName = ""
     @State private var templateConflict: WorkoutTemplate?
 
-    private var executing: Bool { store.currentLog != nil }
+    /// Live heart-rate monitor for the active log, created only while logging with a saved strap.
+    /// The HUD reads it; the workout owns its start/stop lifecycle (this is the go-live wiring).
+    @State private var hrMonitor: HeartRateMonitor?
+    /// Whether the log surface is showing the live-HR HUD instead of the exercise log.
+    @State private var showLiveHR = false
+
+    private var mode: WorkoutPresentationMode {
+        if let log = store.currentLog { return log.isComplete ? .completed : .log }
+        return isEditingTemplate ? .editTemplate : .view
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 BaselineColor.base.ignoresSafeArea()
                 if let workout = store.current {
-                    content(workout)
+                    workoutContent(workout)
                 } else {
                     emptyState
                 }
-                chatBar
             }
-            .navigationTitle("Workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
-            .toolbar { toolbar }
+            .toolbar { workoutToolbar }
         }
-        .sheet(item: $sheet) { sheetView($0) }
-        .sheet(item: $historyExercise) { ExerciseHistoryView(exercise: $0) }
+        .tint(BaselineColor.accent)
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
         .alert("Save as template", isPresented: $showSaveTemplate) {
             TextField("Template name", text: $templateName)
             Button("Save") { saveTemplate() }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Reuse this workout later from + Add workout on the Plan tab.") }
-        .confirmationDialog("A template named \"\(templateName)\" already exists",
-                            isPresented: Binding(get: { templateConflict != nil }, set: { if !$0 { templateConflict = nil } }),
-                            presenting: templateConflict) { existing in
-            Button("Update \"\(existing.name)\"") { if let w = store.current { plan.updateTemplate(existing.id, from: w) }; templateConflict = nil }
-            Button("Save as new") { if let w = store.current { plan.saveAsTemplate(name: templateName, from: w) }; templateConflict = nil }
+        } message: {
+            Text("Reuse this workout later from Add Workout on the Plan tab.")
+        }
+        .alert("Finish workout?", isPresented: $showFinishConfirmation) {
+            Button("Finish Workout") { store.completeWorkout() }
+            Button("Keep Logging", role: .cancel) {}
+        } message: {
+            Text("Logged work will be kept even if you changed, skipped, or did not finish part of the prescription.")
+        }
+        .alert("Discard this log?", isPresented: $showDiscardConfirmation) {
+            Button("Discard Log", role: .destructive) { store.discardLog() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The workout template will remain, but all actual values in this log will be removed.")
+        }
+        .confirmationDialog(
+            "A template named \"\(templateName)\" already exists",
+            isPresented: Binding(
+                get: { templateConflict != nil },
+                set: { if !$0 { templateConflict = nil } }
+            ),
+            presenting: templateConflict
+        ) { existing in
+            Button("Update \"\(existing.name)\"") {
+                if let workout = store.current { plan.updateTemplate(existing.id, from: workout) }
+                templateConflict = nil
+            }
+            Button("Save as New") {
+                if let workout = store.current { plan.saveAsTemplate(name: templateName, from: workout) }
+                templateConflict = nil
+            }
             Button("Cancel", role: .cancel) { templateConflict = nil }
+        }
+        .onDisappear {
+            if isEditingTemplate { finishEditing() }
+            stopLiveMonitor()
+        }
+        .onAppear { syncLiveMonitor() }
+        .onChange(of: mode) { _, _ in syncLiveMonitor() }
+    }
+
+    // MARK: - Navigation
+
+    @ToolbarContentBuilder private var workoutToolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            navigationTitleView
+        }
+
+        if isEditingTemplate {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Cancel", action: cancelEditing)
+                    .accessibilityHint("Discards changes made since editing began")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done", action: finishEditing).fontWeight(.semibold)
+            }
+        } else if store.current != nil {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if mode == .view {
+                    Button("Edit", action: beginEditing).fontWeight(.semibold)
+                } else if store.currentLog?.isComplete == false {
+                    Button("Finish") { showFinishConfirmation = true }.fontWeight(.semibold)
+                }
+                Menu {
+                    Button { showChat = true } label: {
+                        Label("Talk to Baseline", systemImage: "bubble.left.and.text.bubble.right")
+                    }
+                    if mode == .view {
+                        Button { beginSaveTemplate() } label: {
+                            Label("Save as Template", systemImage: "square.and.arrow.down")
+                        }
+                    }
+                    if mode == .log {
+                        Button(role: .destructive) { showDiscardConfirmation = true } label: {
+                            Label("Discard Log", systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                        .accessibilityLabel("More workout actions")
+                }
+            }
         }
     }
 
-    // MARK: - Toolbar
+    private var navigationTitle: String {
+        if isEditingTemplate { return "Edit Workout" }
+        if store.currentLog?.isComplete == true { return "Workout Summary" }
+        return "Workout"
+    }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            if store.current != nil {
-                Menu {
-                    Button { addBlock() } label: { Label("Add block", systemImage: "plus.rectangle.on.rectangle") }
-                    Button { beginSaveTemplate() } label: { Label("Save as template", systemImage: "square.and.arrow.down") }
-                    if !executing {
-                        Button { store.startWorkout() } label: { Label("Start workout", systemImage: "play.fill") }
-                    } else if store.currentLog?.isComplete == false {
-                        Button { store.completeWorkout() } label: { Label("Complete workout", systemImage: "checkmark.circle") }
-                    }
-                    Button(role: .destructive) { store.discardLog() } label: { Label("Discard log", systemImage: "trash") }
-                        .disabled(!executing)
-                } label: { Image(systemName: "ellipsis.circle").foregroundStyle(BaselineColor.accent) }
+    @ViewBuilder private var navigationTitleView: some View {
+        if mode == .log, let startedAt = store.currentLogStartedAt {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let elapsed = WorkoutPresentationFormatter.elapsedDuration(
+                    from: startedAt,
+                    to: context.date
+                )
+                Text(elapsed)
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(BaselineColor.textHi)
+                    .accessibilityLabel("Workout duration \(elapsed)")
             }
+        } else if mode == .log {
+            Text("00:00:00")
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(BaselineColor.textHi)
+                .accessibilityLabel("Workout duration 00:00:00")
+        } else {
+            Text(navigationTitle)
+                .font(.headline)
+                .foregroundStyle(BaselineColor.textHi)
         }
     }
 
     // MARK: - Content
 
-    private func content(_ workout: Workout) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                header(workout).padding(.bottom, 6)
-                if isFlat(workout), let def = workout.blocks.first {
-                    // Flat, Hevy-style: exercises are light rows separated by whitespace — no cards.
-                    ForEach(def.exercises) { ex in exerciseRow(ex, in: def) }
-                    if def.exercises.isEmpty {
-                        Text("No exercises yet — add one to get started.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint).padding(.vertical, 12)
-                    }
-                    addRowButton("Add exercise") { addExercise(to: def.id) }
-                    addRowButton("Add block") { addBlock() }
-                } else {
-                    // The default "Main" block never shows a header — only user-created blocks do.
-                    // Any loose exercises in it render flat at the top.
-                    ForEach(workout.blocks) { block in
-                        if block.isDefault {
-                            if !block.exercises.isEmpty {
-                                ForEach(block.exercises) { ex in exerciseRow(ex, in: block) }
-                                addRowButton("Add exercise") { addExercise(to: block.id) }
-                            }
-                        } else {
-                            blockSection(block)
-                        }
-                    }
-                    addRowButton("Add block") { addBlock() }
+    @ViewBuilder private func workoutContent(_ workout: Workout) -> some View {
+        if mode.isEditing {
+            WorkoutTemplateEditor {
+                EmptyView()
+            } bottomContent: {
+                Button("Ask Baseline about this workout", systemImage: "sparkles") {
+                    showChat = true
                 }
-                Color.clear.frame(height: 80)   // clear the chat bar
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(BaselineColor.textMid)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .buttonStyle(.plain)
+                .padding(.top, 18)
             }
-            .padding(.horizontal, 16)
+        } else {
+            VStack(spacing: 0) {
+                // In an active log with a saved strap, offer a Log ↔ ♥ Live toggle (no strap → no
+                // toggle, and the workout looks exactly as before).
+                if mode == .log, hrMonitor != nil {
+                    liveHRToggle
+                }
+
+                if showLiveHR, let monitor = hrMonitor {
+                    ScrollView {
+                        LiveHeartRateView(provider: monitor, targetZones: nil)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 4)
+                            .padding(.bottom, 28)
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            workoutHeader(workout)
+                                .padding(.bottom, 18)
+
+                            if mode == .view {
+                                startButton
+                                    .padding(.bottom, 22)
+                            }
+
+                            ForEach(workout.blocks) { block in
+                                blockSection(block, blockCount: workout.blocks.count)
+                            }
+
+                            Button("Ask Baseline about this workout", systemImage: "sparkles") {
+                                showChat = true
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BaselineColor.textMid)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .buttonStyle(.plain)
+                            .padding(.top, 18)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 28)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                }
+            }
         }
     }
 
-    /// A workout reads flat while it has only the default block with no name or goal.
-    private func isFlat(_ w: Workout) -> Bool {
-        guard w.blocks.count == 1, let b = w.blocks.first, b.isDefault else { return false }
-        return b.name.trimmingCharacters(in: .whitespaces).isEmpty
-            && (b.intent?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
+    // MARK: - Live heart rate (active log)
+
+    /// Create + start the monitor when a log is active and a strap is saved; tear it down otherwise.
+    /// Idempotent, so it is safe to call from `onAppear` and every `mode` change.
+    private func syncLiveMonitor() {
+        guard mode == .log, bluetooth.savedDeviceID != nil else {
+            stopLiveMonitor()
+            return
+        }
+        guard hrMonitor == nil else { return }
+        let settings = HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears })
+        let model = settings.model ?? HeartRateZoneModel(age: profile.draft.ageYears)
+        let monitor = HeartRateMonitor(source: bluetooth, zoneModel: model)
+        hrMonitor = monitor
+        monitor.startMonitoring()
     }
 
-    private func header(_ workout: Workout) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(workout.title).font(.system(size: 22, weight: .bold)).foregroundStyle(BaselineColor.textHi)
-            if let goal = workout.goal {
-                Text(goal).font(.system(size: 14)).foregroundStyle(BaselineColor.textMid)
+    private func stopLiveMonitor() {
+        hrMonitor?.stopMonitoring()
+        hrMonitor = nil
+        showLiveHR = false
+    }
+
+    /// The segmented Log ↔ ♥ Live control. The live tab shows the current BPM once streaming, tinted
+    /// with the live zone — heart rate is glanceable even from the log.
+    private var liveHRToggle: some View {
+        HStack(spacing: 4) {
+            liveToggleButton(title: "LOG", isLive: false)
+            liveToggleButton(title: hrMonitor?.currentBPM.map { "♥ \($0)" } ?? "♥ LIVE", isLive: true)
+        }
+        .padding(4)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(BaselineColor.surface))
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+    }
+
+    private func liveToggleButton(title: String, isLive: Bool) -> some View {
+        let selected = showLiveHR == isLive
+        let fill: Color = !selected ? .clear
+            : isLive ? (hrMonitor?.currentZone?.color ?? BaselineColor.accent) : BaselineColor.amethyst
+        let fg: Color = !selected ? BaselineColor.textFaint
+            : isLive ? BaselineColor.base : BaselineColor.textHi
+        return Button { showLiveHR = isLive } label: {
+            Text(title)
+                .font(.bMono(12, .bold)).tracking(1)
+                .frame(maxWidth: .infinity).frame(height: 34)
+                .foregroundStyle(fg)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(fill))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isLive ? "Live heart rate" : "Workout log")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder private func workoutHeader(_ workout: Workout) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(workout.title)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(BaselineColor.textHi)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let goal = workout.goal, !goal.isEmpty {
+                Text(goal)
+                    .font(.body)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
+            if let guidance = workout.guidance {
+                WorkoutInstructionText(lines: [guidance.goal].compactMap { $0 } + guidance.formCues)
+            }
+
             HStack(spacing: 8) {
-                if executing {
-                    let done = store.currentLog?.isComplete == true
-                    Text(done ? "COMPLETED" : "IN PROGRESS")
-                        .font(.system(size: 11, weight: .bold)).tracking(0.6)
-                        .foregroundStyle(done ? BaselineColor.zoneGreen : BaselineColor.accent)
+                if mode.usesPerformedData {
+                    let completed = store.currentLog?.isComplete == true
+                    Label(completed ? "Completed" : "In progress",
+                          systemImage: completed ? "checkmark.circle.fill" : "circle.dotted")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(completed ? BaselineColor.zoneGreen : BaselineColor.accent)
                 }
-                if !store.currentIsForToday, let d = workout.scheduledDate {
-                    Text("FROM \(d.formatted(.dateTime.month().day()).uppercased()) — NOT TODAY")
-                        .font(.system(size: 11, weight: .bold)).tracking(0.4).foregroundStyle(BaselineColor.zoneAmber)
+                if !store.currentIsForToday, let date = workout.scheduledDate {
+                    Text("Scheduled \(date.formatted(.dateTime.month().day()))")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BaselineColor.zoneAmber)
                 }
             }
-            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 12)
     }
 
-    // MARK: - Block (lightweight section header, Apple-Notes style — not a card)
+    private var startButton: some View {
+        Button { store.startWorkout() } label: {
+            Label("Start Workout", systemImage: "play.fill")
+                .font(.headline)
+                .foregroundStyle(BaselineColor.base)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(RoundedRectangle(cornerRadius: 12).fill(BaselineColor.accent))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Creates a log while keeping this prescription unchanged")
+    }
 
-    private func blockSection(_ block: WorkoutBlock) -> some View {
-        let expanded = !collapsedBlocks.contains(block.id)
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Button { toggle(&collapsedBlocks, block.id) } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 11, weight: .bold)).foregroundStyle(BaselineColor.textFaint).frame(width: 14)
-                }.buttonStyle(.plain)
-                TextField("", text: blockNameBinding(block), prompt: Text(block.isDefault ? "Main" : "Block").foregroundStyle(BaselineColor.textFaint))
-                    .font(.system(size: 14, weight: .bold)).tracking(0.6).foregroundStyle(BaselineColor.textMid)
-                if let g = block.intent, !g.isEmpty { Text(g).font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint) }
-                Spacer()
-                Menu {
-                    TextField("Goal", text: blockGoalBinding(block))
-                    Button { addExercise(to: block.id) } label: { Label("Add exercise", systemImage: "plus") }
-                    Button { store.edit { $0.duplicateBlock(block.id) } } label: { Label("Duplicate block", systemImage: "plus.square.on.square") }
-                    Button(role: .destructive) {
-                        store.edit { w in
-                            w.removeBlock(block.id)
-                            if w.blocks.isEmpty { w.blocks.append(WorkoutBlock(name: "", isDefault: true)) }  // always ≥1 block
-                        }
-                    } label: { Label("Delete block", systemImage: "trash") }
-                } label: { Image(systemName: "ellipsis").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).padding(6) }
+    private func blockSection(_ block: WorkoutBlock, blockCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if shouldShowHeader(for: block, blockCount: blockCount) {
+                blockHeader(block)
+                    .padding(.top, 16)
+                    .padding(.bottom, 10)
             }
-            .padding(.top, 16).padding(.bottom, 6)
-            Rectangle().fill(BaselineColor.line).frame(height: 1)
-            if expanded {
-                ForEach(block.exercises) { ex in exerciseRow(ex, in: block) }
-                addRowButton("Add exercise") { addExercise(to: block.id) }
+
+            StructuredWorkoutBlockView(block: block, mode: mode)
+
+            if block.nodes.isEmpty {
+                Text("No exercises yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(BaselineColor.textFaint)
+                    .padding(.vertical, 16)
+            }
+
+        }
+    }
+
+    private func blockHeader(_ block: WorkoutBlock) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(block.name.isEmpty ? "Main" : block.name)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(BaselineColor.textHi)
+            if let intent = WorkoutPresentationFormatter.blockIntent(
+                name: block.name,
+                intent: block.intent
+            ) {
+                Text(intent)
+                    .font(.subheadline)
+                    .foregroundStyle(BaselineColor.textMid)
+            }
+            if let guidance = block.guidance {
+                WorkoutInstructionText(lines: [guidance.goal].compactMap { $0 } + guidance.formCues)
             }
         }
     }
 
-    // MARK: - Exercise (light row → expands to a logging table)
+    private func shouldShowHeader(for block: WorkoutBlock, blockCount: Int) -> Bool {
+        blockCount > 1 || !block.isDefault || !block.name.isEmpty || !(block.intent?.isEmpty ?? true)
+            || block.guidance != nil
+    }
 
-    private func exerciseRow(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
-        let expanded = expandedExercises.contains(ex.id)
-        let performed = store.currentLog?.performed(forPlanned: ex.id)
-        return VStack(alignment: .leading, spacing: 0) {
-            // Header — thumbnail + big accent name, ⋯ top-aligned. Tap the name area to collapse.
-            HStack(alignment: .top, spacing: 12) {
-                Button { toggle(&expandedExercises, ex.id) } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        thumbnail(ex)
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 8) {
-                                Text(ex.exerciseName).font(.system(size: 18, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                                    .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
-                                statusChip(performed?.status)
-                            }
-                            if !expanded { Text(prescriptionLine(ex)).font(.system(size: 14)).foregroundStyle(BaselineColor.textMid) }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(.plain)
-                exerciseMenu(ex, in: block)
-            }
-            .padding(.vertical, 14)
-            if expanded {
-                VStack(alignment: .leading, spacing: 12) {
-                    if executing { noteField(ex, performed: performed) }   // note directly under the exercise
-                    setTable(ex, performed: performed)
-                    Button { addSet(to: ex) } label: {
-                        Label("Add set", systemImage: "plus").font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                            .frame(maxWidth: .infinity).frame(height: 40)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
-                    }.buttonStyle(.plain)
-                    if !executing {
-                        let unused = ex.supportedMetrics.filter { !ex.selectedMetrics.contains($0) }
-                        if !unused.isEmpty {
-                            Menu { ForEach(unused, id: \.self) { m in Button(m.label) { addMetric(m, to: ex) } } }
-                            label: { Label("Add metric", systemImage: "plus").font(.system(size: 13, weight: .medium)).foregroundStyle(BaselineColor.textFaint) }
-                        }
-                    }
-                }
-                .padding(.bottom, 12)
-            }
-            Rectangle().fill(BaselineColor.line).frame(height: 1)   // full-width separator between rows
+    // MARK: - Editing
+
+    private func beginEditing() {
+        guard store.currentLog == nil, let workout = store.current else { return }
+        editSnapshot = workout
+        isEditingTemplate = true
+    }
+
+    private func cancelEditing() {
+        if let snapshot = editSnapshot {
+            store.edit { $0 = snapshot }
+            store.flush()
         }
+        editSnapshot = nil
+        isEditingTemplate = false
     }
 
-    /// Stand-in exercise thumbnail — a rounded tile with the category glyph until real media exists.
-    private func thumbnail(_ ex: PlannedExercise) -> some View {
-        RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface)
-            .frame(width: 46, height: 46)
-            .overlay(Image(systemName: ex.definition.category.glyph).font(.system(size: 20)).foregroundStyle(BaselineColor.textMid))
+    private func finishEditing() {
+        store.flush()
+        editSnapshot = nil
+        isEditingTemplate = false
     }
 
-    /// Sets as a dense table — metric headers once, values in aligned columns. Two reads of the same
-    /// table: **planning** edits the prescription; **training** edits the actual into pre-filled cells
-    /// (the plan value is the placeholder) and checks each row off. No planned-vs-actual columns —
-    /// they're separated by mode, not by column.
-    @ViewBuilder private func setTable(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
-        let metrics = ex.selectedMetrics
-        let activeIdx = executing ? ex.prescription.sets.firstIndex(where: { !setComplete(performed, $0.id) }) : nil
-        // Hevy "previous" column — last completed actuals for this exercise identity (only while logging,
-        // and only when real history exists — never a faked value).
-        let previous = executing ? ex.definitionId.flatMap { plan.previousPerformance(exerciseDefinitionID: $0) } : nil
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Text("SET").frame(width: 40).font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
-                if previous != nil {
-                    Text("PREVIOUS").frame(maxWidth: .infinity).font(.system(size: 12, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
-                }
-                ForEach(metrics, id: \.self) { m in
-                    Text(columnHeader(m, for: ex)).frame(maxWidth: .infinity).font(.system(size: 12, weight: .bold)).tracking(0.3).foregroundStyle(BaselineColor.textFaint)
-                }
-                Image(systemName: "checkmark").frame(width: 44).font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint)
-            }
-            .padding(.bottom, 8)
-            ForEach(Array(ex.prescription.sets.enumerated()), id: \.element.id) { i, s in
-                let done = executing && setComplete(performed, s.id)
-                let active = executing && i == activeIdx
-                SwipeToDeleteRow(onDelete: { deleteSet(s.id, from: ex) }) {
-                    HStack(spacing: 0) {
-                        Text("\(i + 1)").frame(width: 40).font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(done ? BaselineColor.textFaint : (active ? BaselineColor.accent : BaselineColor.textHi))
-                        if let previous {
-                            Text(previousCell(previous, i, for: ex)).frame(maxWidth: .infinity)
-                                .font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint).lineLimit(1).minimumScaleFactor(0.7)
-                        }
-                        ForEach(metrics, id: \.self) { m in
-                            if executing {
-                                MetricField(metric: m, unit: store.displayUnit(m, for: ex),
-                                            placeholder: cellText(s.values, m, for: ex),
-                                            canonical: logCanonicalBinding(ex, s, m),
-                                            color: done ? BaselineColor.textFaint : BaselineColor.textHi)
-                                    .frame(maxWidth: .infinity)
-                            } else {
-                                MetricField(metric: m, unit: store.displayUnit(m, for: ex),
-                                            canonical: planCanonicalBinding(ex, s.id, m))
-                                    .frame(maxWidth: .infinity)
-                            }
-                        }
-                        if executing {
-                            Button { toggleComplete(ex, s) } label: { checkbox(done: done) }.buttonStyle(.plain).frame(width: 44)
-                        } else {
-                            Button { duplicateSet(s.id, in: ex) } label: {
-                                Image(systemName: "plus.square.on.square").font(.system(size: 15)).foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 32)
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 10)
-                    .background(active ? BaselineColor.surface.opacity(0.6) : BaselineColor.base)
-                }
-            }
+    // MARK: - Templates
+
+    private func beginSaveTemplate() {
+        templateName = store.current?.title ?? "New template"
+        showSaveTemplate = true
+    }
+
+    private func saveTemplate() {
+        let name = templateName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let workout = store.current else { return }
+        if let existing = plan.template(named: name) {
+            templateConflict = existing
+        } else {
+            plan.saveAsTemplate(name: name, from: workout)
         }
-    }
-
-    /// Hevy's rounded-square completion control — faint when open, green with a white check when done.
-    private func checkbox(done: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 8).fill(done ? BaselineColor.zoneGreen : BaselineColor.surface)
-            .frame(width: 30, height: 30)
-            .overlay(Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
-                .foregroundStyle(done ? .white : BaselineColor.textFaint.opacity(0.4)))
-    }
-
-    private func setComplete(_ performed: PerformedExercise?, _ setID: UUID) -> Bool {
-        performed?.setLogs.first { $0.plannedSetID == setID }?.completed ?? false
-    }
-
-    /// The prior session's actuals for set `i`, in this exercise's display units (or "—" if that session
-    /// had fewer sets). Real data only — the column is hidden entirely when there's no history.
-    private func previousCell(_ previous: ExercisePerformance, _ i: Int, for ex: PlannedExercise) -> String {
-        i < previous.sets.count ? metricText(previous.sets[i], for: ex) : "—"
-    }
-
-    private func columnHeader(_ m: MetricType, for ex: PlannedExercise) -> String {
-        MetricFormat.columnHeader(m, unit: store.displayUnit(m, for: ex))
-    }
-
-    private func cellText(_ values: MetricValues, _ m: MetricType, for ex: PlannedExercise) -> String {
-        guard let v = values[m] else { return "—" }
-        return MetricFormat.editText(v, m, unit: store.displayUnit(m, for: ex))
-    }
-
-    private func noteField(_ ex: PlannedExercise, performed: PerformedExercise?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(performed?.athleteNotes ?? [], id: \.self) { n in
-                Text("“\(n)”").font(.system(size: 14)).italic().foregroundStyle(BaselineColor.textMid)
-            }
-            NoteEntry { note in store.editLog { $0.addNote(note, forPlanned: ex.id, name: ex.exerciseName) } }
-        }
-    }
-
-    private func exerciseMenu(_ ex: PlannedExercise, in block: WorkoutBlock) -> some View {
-        Menu {
-            Button { historyExercise = ex } label: { Label("History", systemImage: "clock.arrow.circlepath") }
-            Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName, focus: .metrics) } label: { Label("Metrics", systemImage: "slider.horizontal.3") }
-            Button { sheet = .configure(exerciseID: ex.id, name: ex.exerciseName, focus: .units) } label: { Label("Units", systemImage: "ruler") }
-            Button { sheet = .substitute(exerciseID: ex.id, current: ex.exerciseName) } label: { Label("Replace", systemImage: "arrow.triangle.2.circlepath") }
-            Menu {
-                ForEach(otherBlocks(than: block.id)) { b in
-                    Button(b.name.isEmpty ? "Main" : b.name) { store.edit { $0.moveExercise(ex.id, toBlock: b.id) } }
-                }
-                Button { reorder(ex, in: block, by: -1) } label: { Label("Move up", systemImage: "arrow.up") }
-                Button { reorder(ex, in: block, by: 1) } label: { Label("Move down", systemImage: "arrow.down") }
-            } label: { Label("Move", systemImage: "arrow.up.arrow.down") }
-            Button { duplicateExercise(ex, in: block) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-            if executing {
-                Button { store.editLog { $0.setStatus(.skipped, forPlanned: ex.id, name: ex.exerciseName) } } label: { Label("Skip exercise", systemImage: "forward.end") }
-            }
-            Button(role: .destructive) { store.edit { $0.removeExercise(ex.id) } } label: { Label("Delete", systemImage: "trash") }
-        } label: { Image(systemName: "ellipsis").font(.system(size: 14)).foregroundStyle(BaselineColor.textFaint).padding(6) }
     }
 
     // MARK: - Empty state
@@ -350,310 +424,35 @@ struct WorkoutView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "figure.strengthtraining.traditional").font(.system(size: 40)).foregroundStyle(BaselineColor.textFaint)
-            Text("No workout yet").font(.system(size: 18, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-            Text("Build one by hand, or ask Baseline to make one.").font(.system(size: 14)).foregroundStyle(BaselineColor.textMid)
+            Image(systemName: "figure.strengthtraining.traditional")
+                .font(.largeTitle)
+                .foregroundStyle(BaselineColor.textFaint)
+            Text("No workout yet")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(BaselineColor.textHi)
+            Text("Create one by hand or import a workout to turn it into a loggable template.")
+                .font(.body)
+                .foregroundStyle(BaselineColor.textMid)
                 .multilineTextAlignment(.center)
-            Button { store.create(title: "Today's workout", goal: nil) } label: {
-                Text("New workout").font(.system(size: 15, weight: .semibold)).foregroundStyle(Color(hex: 0x120B21))
-                    .frame(width: 200, height: 50).background(RoundedRectangle(cornerRadius: 14).fill(BaselineColor.accent))
-            }.buttonStyle(.plain)
-            Spacer(); Spacer()
+            Button("New Workout") { store.create(title: "Today's workout", goal: nil) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            Spacer()
+            Spacer()
         }
         .padding(24)
-    }
-
-    private var chatBar: some View {
-        VStack {
-            Spacer()
-            Button { showChat = true } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "bubble.left.and.text.bubble.right.fill").font(.system(size: 15))
-                    Text("Talk to Baseline").font(.system(size: 15, weight: .semibold))
-                    Spacer()
-                    Image(systemName: "mic.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-                }
-                .foregroundStyle(BaselineColor.textHi)
-                .padding(.horizontal, 16).frame(height: 50)
-                .background(Capsule().fill(BaselineColor.surface).overlay(Capsule().strokeBorder(BaselineColor.accent.opacity(0.35), lineWidth: 1)))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16).padding(.bottom, 8)
-        }
-    }
-
-    // MARK: - Sheets
-
-    @ViewBuilder private func sheetView(_ sheet: WorkoutSheet) -> some View {
-        switch sheet {
-        case .addExercise(let blockID):
-            if let target = blockID ?? store.current?.blocks.first?.id {
-                AddExerciseFlow(blockID: target) { newIDs in    // catalog-first, multi-select insert
-                    if newIDs.count == 1, let only = newIDs.first { expandedExercises.insert(only) }
-                }
-            } else {
-                Text("Add a block first.").font(.system(size: 15)).foregroundStyle(BaselineColor.textMid).padding(40)
-            }
-        case .substitute(let id, let current):
-            SubstituteSheet(currentName: current) { name, prescription in
-                store.edit { $0.substituteExercise(id, withName: name, prescription: prescription) }
-            }
-        case .configure(let id, let name, let focus):
-            if let ex = store.current?.exercise(id) {
-                MetricConfigSheet(exercise: ex, focus: focus, unitFor: { store.displayUnit($0, for: ex) }) { enabled, units in
-                    store.setLoggingConfig(exerciseNamed: name, enabled: enabled, units: units)
-                }
-            }
-        }
-    }
-
-    // MARK: - Direct manipulation (no forms, no save — autosaves via the store)
-
-    private func beginSaveTemplate() {
-        templateName = store.current?.title ?? "New template"
-        showSaveTemplate = true
-    }
-    private func saveTemplate() {
-        let name = templateName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, let w = store.current else { return }
-        if let existing = plan.template(named: name) { templateConflict = existing }   // ask: update or save new
-        else { plan.saveAsTemplate(name: name, from: w) }
-    }
-
-    private func addBlock() {
-        // The new block is empty-named and prompts for a name inline; the empty default is dropped so
-        // there's no phantom "Main" section beside it.
-        store.edit { $0.addUserBlock(name: "") }
-    }
-
-    private func addExercise(to blockID: UUID) { sheet = .addExercise(blockID: blockID) }
-
-    private func blockNameBinding(_ block: WorkoutBlock) -> Binding<String> {
-        Binding(get: { store.current?.blocks.first { $0.id == block.id }?.name ?? block.name },
-                set: { new in store.edit { $0.renameBlock(block.id, to: new) } })
-    }
-
-    /// "+ Set" copies the last set's structure + values (like duplicating a row) — only the values
-    /// then need changing.
-    private func addSet(to ex: PlannedExercise) {
-        store.edit { w in
-            w.updateExercise(ex.id) { e in
-                var copy = e.prescription.sets.last ?? PlannedSet()
-                copy.id = UUID()
-                e.prescription.sets.append(copy)
-            }
-        }
-    }
-
-    private func deleteSet(_ setID: UUID, from ex: PlannedExercise) {
-        store.edit { $0.updateExercise(ex.id) { $0.prescription.sets.removeAll { $0.id == setID } } }
-    }
-
-    /// Canonical value of one metric of one planned set — `MetricField` owns display/parse.
-    private func planCanonicalBinding(_ ex: PlannedExercise, _ setID: UUID, _ metric: MetricType) -> Binding<Double?> {
-        Binding(
-            get: { store.current?.exercise(ex.id)?.prescription.sets.first(where: { $0.id == setID })?.values[metric] },
-            set: { newValue in
-                store.edit { w in
-                    w.updateExercise(ex.id) { e in
-                        guard let i = e.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
-                        e.prescription.sets[i].values[metric] = newValue.map { max(0, $0) }
-                    }
-                }
-            }
-        )
-    }
-
-    /// Training-mode cell: the canonical *actual* for one metric of one set (on the log, never the
-    /// plan). Empty until edited — the plan value is the placeholder.
-    private func logCanonicalBinding(_ ex: PlannedExercise, _ set: PlannedSet, _ metric: MetricType) -> Binding<Double?> {
-        Binding(
-            get: { store.currentLog?.setLog(forPlanned: ex.id, plannedSetID: set.id)?.values[metric] },
-            set: { newValue in
-                store.editLog { log in
-                    log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
-                        s.values[metric] = newValue.map { max(0, $0) }
-                    }
-                }
-            }
-        )
-    }
-
-    /// Check / uncheck a set. First check seeds any untouched metric from the plan (logged as
-    /// prescribed); when every planned set is checked the exercise auto-completes.
-    private func toggleComplete(_ ex: PlannedExercise, _ set: PlannedSet) {
-        store.editLog { log in
-            let wasDone = log.setLog(forPlanned: ex.id, plannedSetID: set.id)?.completed ?? false
-            log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
-                if !wasDone { for m in ex.selectedMetrics where s.values[m] == nil { s.values[m] = set.values[m] } }
-                s.completed = !wasDone
-            }
-            let ids = ex.prescription.sets.map(\.id)
-            let allDone = !ids.isEmpty && ids.allSatisfy { log.setLog(forPlanned: ex.id, plannedSetID: $0)?.completed == true }
-            log.setStatus(allDone ? .completed : .pending, forPlanned: ex.id, name: ex.exerciseName)
-        }
-    }
-
-    private func addMetric(_ metric: MetricType, to ex: PlannedExercise) {
-        store.edit { $0.updateExercise(ex.id) { e in
-            var s = Set(e.selectedMetrics); s.insert(metric)
-            e.selectedMetrics = MetricType.allCases.filter { s.contains($0) }
-        }}
-    }
-
-    private func blockGoalBinding(_ block: WorkoutBlock) -> Binding<String> {
-        Binding(get: { store.current?.blocks.first { $0.id == block.id }?.intent ?? "" },
-                set: { new in store.edit { $0.setBlockIntent(block.id, new.trimmingCharacters(in: .whitespaces).isEmpty ? nil : new) } })
-    }
-
-    private func duplicateSet(_ setID: UUID, in ex: PlannedExercise) {
-        store.edit { $0.updateExercise(ex.id) { e in
-            guard let i = e.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
-            var copy = e.prescription.sets[i]; copy.id = UUID()
-            e.prescription.sets.insert(copy, at: i + 1)
-        }}
-    }
-
-    private func duplicateExercise(_ ex: PlannedExercise, in block: WorkoutBlock) {
-        store.edit { w in
-            guard let bi = w.blocks.firstIndex(where: { $0.id == block.id }),
-                  let ei = w.blocks[bi].exercises.firstIndex(where: { $0.id == ex.id }) else { return }
-            var copy = w.blocks[bi].exercises[ei]
-            copy.id = UUID()
-            copy.prescription.sets = copy.prescription.sets.map { var s = $0; s.id = UUID(); return s }
-            w.blocks[bi].exercises.insert(copy, at: ei + 1)
-        }
-    }
-
-    /// The shared full-width, lightweight "Add …" row — Add Block and Add Exercise use the same one.
-    private func addRowButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: "plus").font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(BaselineColor.accent).frame(maxWidth: .infinity).frame(height: 42)
-                .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface.opacity(0.5)))
-        }.buttonStyle(.plain).padding(.top, 8)
-    }
-
-    // MARK: - Helpers
-
-    private func toggle(_ set: inout Set<UUID>, _ id: UUID) {
-        if set.contains(id) { set.remove(id) } else { set.insert(id) }
-    }
-
-    private func otherBlocks(than id: UUID) -> [WorkoutBlock] {
-        (store.current?.blocks ?? []).filter { $0.id != id }
-    }
-
-    private func reorder(_ ex: PlannedExercise, in block: WorkoutBlock, by delta: Int) {
-        guard let idx = block.exercises.firstIndex(where: { $0.id == ex.id }) else { return }
-        store.edit { $0.reorderExercise(ex.id, to: idx + delta) }
-    }
-
-    @ViewBuilder private func statusChip(_ status: PerformedStatus?) -> some View {
-        if let status, status != .pending {
-            let (label, color): (String, Color) = switch status {
-            case .completed: ("done", BaselineColor.zoneGreen)
-            case .skipped: ("skipped", BaselineColor.zoneAmber)
-            case .substituted: ("subbed", BaselineColor.accent)
-            case .modified: ("modified", BaselineColor.accent)
-            case .pending: ("", BaselineColor.textFaint)
-            }
-            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4).foregroundStyle(color)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Capsule().fill(color.opacity(0.15)))
-        }
-    }
-
-    private func prescriptionLine(_ ex: PlannedExercise) -> String {
-        guard let first = ex.prescription.sets.first else { return "no sets" }
-        let body = metricText(first.values, for: ex)
-        return "\(ex.prescription.sets.count)× " + (body == "—" ? ex.selectedMetrics.map(\.label).joined(separator: " · ").lowercased() : body)
-    }
-
-    /// Render a set's values in each metric's display unit (per this exercise's prefs). Only metrics
-    /// that actually have a value show — no blank fields.
-    private func metricText(_ values: MetricValues, for ex: PlannedExercise) -> String {
-        let parts = values.present.map { metric -> String in
-            let unit = store.displayUnit(metric, for: ex)
-            let text = MetricFormat.value(values[metric]!, metric, unit: unit)
-            return (unit.short.isEmpty && !metric.isDurationKind) ? "\(text) \(metric.label.lowercased())" : text
-        }
-        return parts.isEmpty ? "—" : parts.joined(separator: ", ")
-    }
-
-}
-
-private enum WorkoutSheet: Identifiable {
-    case addExercise(blockID: UUID?)
-    case substitute(exerciseID: UUID, current: String)
-    case configure(exerciseID: UUID, name: String, focus: MetricConfigFocus)
-
-    var id: String {
-        switch self {
-        case .configure(let id, _, let f): "config-\(f)-\(id)"
-        case .addExercise(let b): "addExercise-\(b?.uuidString ?? "none")"
-        case .substitute(let id, _): "sub-\(id)"
-        }
-    }
-}
-
-/// Inline note entry — submit to append an athlete note.
-private struct NoteEntry: View {
-    let onSubmit: (String) -> Void
-    @State private var text = ""
-    var body: some View {
-        HStack {
-            TextField("", text: $text, prompt: Text("Add notes here…").foregroundStyle(BaselineColor.textFaint))
-                .font(.system(size: 15)).foregroundStyle(BaselineColor.textHi)
-                .onSubmit(submit)
-            if !text.isEmpty { Button("Add", action: submit).font(.system(size: 14, weight: .semibold)).foregroundStyle(BaselineColor.accent) }
-        }
-    }
-    private func submit() {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        onSubmit(t); text = ""
-    }
-}
-
-/// Swipe a row left to reveal a trash affordance; tap it to delete. A self-contained wrapper so each
-/// row owns its own offset — used for set rows (the only way to remove a set).
-private struct SwipeToDeleteRow<Content: View>: View {
-    let onDelete: () -> Void
-    @ViewBuilder var content: () -> Content
-    @State private var offset: CGFloat = 0
-    private let revealWidth: CGFloat = 76
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            Button {
-                withAnimation(.easeOut(duration: 0.2)) { offset = 0 }
-                onDelete()
-            } label: {
-                Image(systemName: "trash").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: revealWidth).frame(maxHeight: .infinity).background(BaselineColor.zoneRed)
-            }.buttonStyle(.plain)
-            content()
-                .offset(x: offset)
-                .gesture(
-                    DragGesture(minimumDistance: 18)
-                        .onChanged { v in
-                            let base = offset <= -revealWidth ? -revealWidth : 0
-                            offset = min(0, max(-revealWidth, base + v.translation.width))
-                        }
-                        .onEnded { _ in
-                            withAnimation(.easeOut(duration: 0.2)) { offset = offset < -revealWidth / 2 ? -revealWidth : 0 }
-                        }
-                )
-        }
-        .clipped()
     }
 }
 
 #Preview {
     let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
-    let container = try! ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    let container = try! ModelContainer(
+        for: Schema(models),
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
     return WorkoutView()
         .environment(WorkoutStore(defaults: UserDefaults(suiteName: "preview")!))
         .environment(PlanStore(context: container.mainContext))
+        .environment(BluetoothManager())
+        .environment(OnboardingStore())
 }

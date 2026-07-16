@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Add Exercises"
+  short_description: "Add and publish Baseline exercise media"
+  default_prompt: "Use $baseline-add-exercises to add these exercise images to the Baseline catalog and publish them safely."

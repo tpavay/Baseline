@@ -173,7 +173,134 @@ struct WorkoutModelTests {
         let legacy = #"{"id":"\#(UUID().uuidString)","values":{"reps":8}}"#
         let decoded = try JSONDecoder().decode(SetLog.self, from: Data(legacy.utf8))
         #expect(decoded.completed == false)
+        #expect(decoded.outcome == .pending)
         #expect(decoded.reps == 8)
+    }
+
+    @Test func setLogMigratesLegacyCompletionAndPersistsSkippedOutcome() throws {
+        let legacy = #"{"id":"\#(UUID().uuidString)","values":{"reps":8},"completed":true}"#
+        let completed = try JSONDecoder().decode(SetLog.self, from: Data(legacy.utf8))
+        #expect(completed.outcome == .completed)
+        #expect(completed.isHandled)
+
+        let skipped = SetLog(reps: 8, outcome: .skipped)
+        let decoded = try JSONDecoder().decode(SetLog.self, from: JSONEncoder().encode(skipped))
+        #expect(decoded.outcome == .skipped)
+        #expect(decoded.completed == false)
+        #expect(decoded.isHandled)
+    }
+
+    @Test func exerciseSubstitutionCanApplyToOnlyOneRound() {
+        let exercise = PlannedExercise(
+            exerciseName: "Run",
+            definitionId: "run",
+            selectedMetrics: [.distance],
+            prescription: Prescription(sets: [PlannedSet(distance: 100)])
+        )
+        let groupID = UUID()
+        var log = WorkoutLog(exercises: [
+            PerformedExercise(plannedExerciseID: exercise.id, exerciseName: exercise.exerciseName),
+        ])
+        let substitution = LoggedExerciseSubstitution(
+            exerciseName: "Treadmill Run",
+            definitionId: "treadmill_run",
+            selectedMetrics: [.distance],
+            displayUnits: [:],
+            prescription: exercise.prescription
+        )
+
+        log.setExerciseAdjustment(
+            plannedExerciseID: exercise.id,
+            groupID: groupID,
+            iteration: 2,
+            outcome: .substituted,
+            substitution: substitution,
+            name: exercise.exerciseName
+        )
+
+        #expect(log.effectiveExercise(for: exercise, groupID: groupID, iteration: 1).definitionId == "run")
+        #expect(log.effectiveExercise(for: exercise, groupID: groupID, iteration: 2).definitionId == "treadmill_run")
+        #expect(log.performed(forPlanned: exercise.id)?.status == .modified)
+    }
+
+    @Test func oneRoundCanRestoreOriginalAfterAllRoundsWereRemoved() {
+        let exerciseID = UUID()
+        let groupID = UUID()
+        var log = WorkoutLog(exercises: [
+            PerformedExercise(plannedExerciseID: exerciseID, exerciseName: "Run"),
+        ])
+        log.setExerciseAdjustment(
+            plannedExerciseID: exerciseID,
+            groupID: groupID,
+            outcome: .skipped,
+            name: "Run"
+        )
+        #expect(log.isExerciseSkipped(exerciseID, groupID: groupID, iteration: 1))
+        #expect(log.isExerciseSkipped(exerciseID, groupID: groupID, iteration: 2))
+
+        log.restoreExercise(
+            plannedExerciseID: exerciseID,
+            groupID: groupID,
+            iteration: 2,
+            name: "Run"
+        )
+        #expect(log.isExerciseSkipped(exerciseID, groupID: groupID, iteration: 1))
+        #expect(log.isExerciseSkipped(exerciseID, groupID: groupID, iteration: 2) == false)
+
+        log.restoreExercise(plannedExerciseID: exerciseID, groupID: groupID, name: "Run")
+        #expect(log.isExerciseSkipped(exerciseID, groupID: groupID, iteration: 1) == false)
+        #expect(log.exerciseAdjustments.isEmpty)
+    }
+
+    @Test func legacyFlatBlockDecodesAsExerciseNodes() throws {
+        struct LegacyBlock: Encodable {
+            let id: UUID
+            let name: String
+            let intent: String?
+            let exercises: [PlannedExercise]
+            let isDefault: Bool
+        }
+        let exercise = PlannedExercise(exerciseName: "Run", prescription: Prescription(sets: [PlannedSet(duration: 600)]))
+        let data = try JSONEncoder().encode(LegacyBlock(id: UUID(), name: "Main", intent: nil,
+                                                       exercises: [exercise], isDefault: true))
+        let block = try JSONDecoder().decode(WorkoutBlock.self, from: data)
+        #expect(block.nodes.count == 1)
+        #expect(block.exercises.first?.id == exercise.id)
+    }
+
+    @Test func progressionProducesExpectedRoundTargetsWithoutChangingTemplate() {
+        let set = PlannedSet(calories: 10, progressions: [
+            MetricProgression(metric: .calories, delta: 1, every: 1, unit: .round),
+        ])
+        #expect(set.expectedValues(iteration: 1)[.calories] == 10)
+        #expect(set.expectedValues(iteration: 7)[.calories] == 16)
+        #expect(set.calories == 10)
+    }
+
+    @Test func repeatedGroupActualsAreKeyedByIteration() throws {
+        let exerciseID = UUID()
+        let setID = UUID()
+        let groupID = UUID()
+        var log = WorkoutLog(exercises: [PerformedExercise(plannedExerciseID: exerciseID, exerciseName: "Wall Balls")])
+        log.upsertSetLog(forPlanned: exerciseID, name: "Wall Balls", plannedSetID: setID,
+                         groupID: groupID, iteration: 1) { $0.reps = 12 }
+        log.upsertSetLog(forPlanned: exerciseID, name: "Wall Balls", plannedSetID: setID,
+                         groupID: groupID, iteration: 2) { $0.reps = 15 }
+        #expect(log.performed(forPlanned: exerciseID)?.setLogs.count == 2)
+        #expect(log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 1)?.reps == 12)
+        #expect(log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 2)?.reps == 15)
+    }
+
+    @Test func startLogSnapshotsGroupsAndDefaultsChoices() throws {
+        let bikeErg = PlannedExercise(exerciseName: "BikeErg")
+        let echo = PlannedExercise(exerciseName: "Echo Bike")
+        let choice = WorkoutChoice(label: "Choose a bike", options: [.exercise(bikeErg), .exercise(echo)])
+        let group = WorkoutGroup(label: "AMRAP", execution: GroupExecution(repetition: .until(seconds: 4_200)),
+                                 children: [.choice(choice)])
+        let workout = Workout(title: "Hybrid", blocks: [WorkoutBlock(name: "Main", nodes: [.group(group)])])
+        let log = workout.startLog()
+        #expect(log.groups.first?.targetDurationSeconds == 4_200)
+        #expect(log.selectedOptions(for: choice.id) == [bikeErg.id])
     }
 
     @Test func addUserBlockDropsTheEmptyDefaultButKeepsAPopulatedOne() {
@@ -188,11 +315,61 @@ struct WorkoutModelTests {
         // Default holding loose exercises → kept; the user's block is added alongside.
         var loose = Workout(title: "Loose")
         var def = WorkoutBlock(name: "", isDefault: true)
-        def.exercises = [PlannedExercise(exerciseName: "Curl")]
+        def.nodes = [.exercise(PlannedExercise(exerciseName: "Curl"))]
         loose.blocks = [def]
         loose.addUserBlock(name: "")
         #expect(loose.blocks.count == 2)
         #expect(loose.blocks.contains { $0.isDefault && $0.exercises.count == 1 })
+    }
+
+    @Test func workoutDisplayLabelRoundTripsWithoutChangingCatalogIdentity() throws {
+        let exercise = PlannedExercise(
+            exerciseName: "Deadlift",
+            displayLabel: "Option B",
+            definitionId: "deadlift",
+            selectedMetrics: [.reps, .load]
+        )
+        let workout = Workout(
+            title: "Imported",
+            blocks: [WorkoutBlock(name: "Main", exercises: [exercise])]
+        )
+
+        let decoded = try JSONDecoder().decode(Workout.self, from: JSONEncoder().encode(workout))
+        let restored = try #require(decoded.allExercises.first)
+
+        #expect(restored.displayLabel == "Option B")
+        #expect(restored.exerciseName == "Deadlift")
+        #expect(restored.definitionId == "deadlift")
+    }
+
+    @Test func convertingChoiceToRequiredGroupPreservesOrderIdentityAndPrescription() throws {
+        let deadlift = PlannedExercise(
+            exerciseName: "Deadlift",
+            definitionId: "deadlift",
+            prescription: Prescription(sets: [PlannedSet(reps: 12)])
+        )
+        let burpee = PlannedExercise(
+            exerciseName: "Lateral Burpee Over Barbell",
+            definitionId: "lateral_burpee_over_barbell",
+            prescription: Prescription(sets: [PlannedSet(reps: 12)])
+        )
+        let choice = WorkoutChoice(
+            label: "Option B",
+            options: [.exercise(deadlift), .exercise(burpee)]
+        )
+        var workout = Workout(
+            title: "AMRAP",
+            blocks: [WorkoutBlock(name: "Main", nodes: [.choice(choice)])]
+        )
+
+        let converted = workout.convertChoiceToRequiredGroup(choice.id)
+        #expect(converted)
+        let group = try #require(workout.allGroups.first)
+
+        #expect(workout.allChoices.isEmpty)
+        #expect(group.id == choice.id)
+        #expect(group.children.map(\.id) == [deadlift.id, burpee.id])
+        #expect(group.children.flatMap(\.exercises).map { $0.prescription.sets.first?.reps } == [12, 12])
     }
 
     // MARK: - Validation

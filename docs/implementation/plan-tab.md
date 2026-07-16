@@ -97,8 +97,8 @@ avoid painful `@Model` migrations later; only Phase-optional and the WorkoutSess
 - **`WorkoutSession` (point 7):** renamed from `ActiveWorkoutSession`, with `status` (active/paused/
   completed/discarded). Completion still freezes the immutable `CompletedWorkoutLog`.
 - **`RecurrenceRule?` (point 8):** optional field on `ScheduledWorkout`, modeled/unused in v1.
-- **`WorkoutTemplate` (point 10):** first-class fwd-compat entity (`Template → Revision → Scheduled`), =
-  CLAUDE.md "Routine". `templateID?` on `ScheduledWorkout`. No v1 authoring (deferred with import).
+- **`WorkoutTemplate` (point 10):** first-class reusable entity (`Template → Revision → Scheduled`).
+  `templateID?` on `ScheduledWorkout`. Authoring begins with import.
 - Points 2 (revisions) and 9 (`PendingPlanProposal`) already landed in round 3 — approved, unchanged.
 - **Verdict from review: ~9.8/10, implementation-ready. Stop refining, start building.**
 
@@ -201,7 +201,7 @@ struct ProgramSection     { id; programID; name; role?; dateRange? }       // wa
 enum WorkoutTag           { threshold, strength, recovery, mobility, capacity, durability, raceSpecific, … }
 
 // FORWARD-COMPAT (modeled now so the schema anticipates them; authoring/generation deferred with import):
-struct WorkoutTemplate    { id; name; currentRevisionID; tags }   // point 10 = CLAUDE.md "Routine" (reusable)
+struct WorkoutTemplate    { id; name; currentRevisionID; tags }   // reusable source
 enum   RecurrenceRule     { … }                                   // point 8 — "every Tuesday", "every 3 weeks"
 
 // DERIVED projections (assembled by the repository from ScheduledWorkout.date — NOT stored)

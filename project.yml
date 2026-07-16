@@ -18,7 +18,7 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    DEVELOPMENT_TEAM: ""          # set your team in Xcode (Signing & Capabilities) — required for Sign in with Apple on device
+    DEVELOPMENT_TEAM: QWGVB7TN4T
 targets:
   Baseline:
     type: application
@@ -38,6 +38,8 @@ targets:
         product: FirebaseFunctions
       - package: Firebase
         product: FirebaseStorage
+      - package: Firebase
+        product: FirebaseAppCheck
       - package: GoogleSignIn
         product: GoogleSignIn
     info:
@@ -74,6 +76,14 @@ targets:
     platform: iOS
     sources:
       - path: BaselineTests
+      - path: fixtures/workout-import/canonical-assembled-document.json
+        buildPhase: resources
+      - path: fixtures/workout-import/realistic-five-page-ocr.json
+        buildPhase: resources
+      - path: fixtures/workout-import/realistic-five-page-request.json
+        buildPhase: resources
+      - path: fixtures/workout-import/realistic-five-page-response.json
+        buildPhase: resources
     dependencies:
       - target: Baseline
     settings:

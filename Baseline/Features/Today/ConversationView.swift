@@ -4,6 +4,11 @@ import SwiftData
 /// "Ask Baseline" — the Context Engine's surface. Presents the conversation once today's base
 /// evidence is assembled, so the agent reasons about the athlete's real state. The tool loop and
 /// state live on-device (AgentTools); this view only shows the exchange.
+enum AskBaselineContext: Equatable {
+    case general
+    case workoutImport
+}
+
 struct AskBaselineSheet: View {
     @Environment(TrainingContextStore.self) private var context
     @Environment(HealthService.self) private var health
@@ -16,13 +21,18 @@ struct AskBaselineSheet: View {
 
     @State private var service: ConversationService?
     @State private var showInspector = false
+    let mode: AskBaselineContext
+
+    init(mode: AskBaselineContext = .general) {
+        self.mode = mode
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 BaselineColor.base.ignoresSafeArea()
                 if let service {
-                    ConversationView(service: service)
+                    ConversationView(service: service, mode: mode)
                 } else {
                     ProgressView().tint(BaselineColor.accent)
                 }
@@ -37,9 +47,12 @@ struct AskBaselineSheet: View {
                     }
                     .foregroundStyle(BaselineColor.accent)
                     .disabled(service == nil)
+                    .accessibilityLabel(mode == .workoutImport ? "Inspect imported workout context" : "Inspect Baseline context")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.foregroundStyle(BaselineColor.accent)
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(BaselineColor.accent)
+                        .disabled(service?.isThinking == true)
                 }
             }
         }
@@ -50,23 +63,32 @@ struct AskBaselineSheet: View {
         // A partial bottom sheet, not a takeover — drag down to peek at the workout behind and keep
         // talking mid-session. Chat never navigates away.
         .presentationDetents([.large, .medium])
-        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        .presentationBackgroundInteraction(
+            mode == .workoutImport ? .disabled : .enabled(upThrough: .medium)
+        )
+        .interactiveDismissDisabled(service?.isThinking == true)
     }
 
     private func setUp() async {
         guard service == nil else { return }
-        workouts.reloadFromPlan()   // freshen the bound today-workout in case the Plan tab changed it
+        if mode == .general {
+            workouts.reloadFromPlan()   // freshen the bound today-workout in case the Plan tab changed it
+        }
         let today = entries.first { Calendar.current.isDateInToday($0.date) }
         let base = await TodayEvidence.baseInputs(readings: readings, todayEntry: today, health: health)
         let tools = AgentTools(store: context, base: base,
                                health: health, hrvConfigured: profile.draft.config.heartSource != nil,
-                               readings: readings, workouts: workouts, plan: plan)
-        service = ConversationService(tools: tools)
+                               readings: readings, workouts: workouts, plan: mode == .general ? plan : nil)
+        service = ConversationService(
+            tools: tools,
+            scope: mode == .workoutImport ? .workoutImport : .general
+        )
     }
 }
 
 private struct ConversationView: View {
     let service: ConversationService
+    let mode: AskBaselineContext
     @State private var draft = ""
     @FocusState private var inputFocused: Bool
 
@@ -92,18 +114,29 @@ private struct ConversationView: View {
 
     private var greeting: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Ask Baseline").font(.system(size: 20, weight: .bold)).foregroundStyle(BaselineColor.textHi)
-            Text("Tell me what changed and I'll adjust today's plan — \u{201C}only 30 minutes\u{201D}, \u{201C}my Achilles hurts\u{201D}, \u{201C}I'm traveling\u{201D} — or ask why.")
-                .font(.system(size: 14)).foregroundStyle(BaselineColor.textMid).fixedSize(horizontal: false, vertical: true)
+            Text(mode == .workoutImport ? "Fix this workout" : "Ask Baseline")
+                .font(.title3.bold())
+                .foregroundStyle(BaselineColor.textHi)
+            Text(greetingCopy)
+                .font(.callout).foregroundStyle(BaselineColor.textMid).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+    }
+
+    private var greetingCopy: String {
+        switch mode {
+        case .general:
+            "Tell me what changed and I'll adjust today's plan — \u{201C}only 30 minutes\u{201D}, \u{201C}my Achilles hurts\u{201D}, \u{201C}I'm traveling\u{201D} — or ask why."
+        case .workoutImport:
+            "Tell me what the photos meant — \u{201C}that's Echo Bike\u{201D}, \u{201C}add a load field to the sled pull\u{201D}, or \u{201C}replace bench with dumbbell push press\u{201D}."
+        }
     }
 
     private func bubble(_ m: ConversationService.Message) -> some View {
         HStack {
             if m.role == .you { Spacer(minLength: 40) }
             Text(m.text)
-                .font(.system(size: 14.5)).lineSpacing(2)
+                .font(.body).lineSpacing(2)
                 .foregroundStyle(m.role == .you ? Color(hex: 0x120B21) : BaselineColor.textHi)
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -126,18 +159,20 @@ private struct ConversationView: View {
     private var composer: some View {
         HStack(spacing: 10) {
             TextField("", text: $draft, prompt: Text("Message Baseline\u{2026}").foregroundStyle(BaselineColor.textFaint), axis: .vertical)
-                .font(.system(size: 15)).foregroundStyle(BaselineColor.textHi)
+                .font(.body).foregroundStyle(BaselineColor.textHi)
                 .lineLimit(1...4).focused($inputFocused)
                 .padding(.horizontal, 15).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(BaselineColor.surface).overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(BaselineColor.line, lineWidth: 1)))
             Button { send() } label: {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .bold)).foregroundStyle(Color(hex: 0x120B21))
-                    .frame(width: 38, height: 38)
+                    .font(.headline.weight(.bold)).foregroundStyle(Color(hex: 0x120B21))
+                    .frame(width: 44, height: 44)
                     .background(Circle().fill(canSend ? BaselineColor.accent : BaselineColor.line))
             }
             .disabled(!canSend)
+            .accessibilityLabel("Send message")
+            .accessibilityHint("Sends your workout correction to Baseline")
         }
         .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 12)
         .background(BaselineColor.base)
@@ -149,7 +184,7 @@ private struct ConversationView: View {
     private func send() {
         let text = draft
         draft = ""
-        Task { await service.send(text) }
+        service.send(text)
     }
 }
 
@@ -191,7 +226,7 @@ private struct StateInspectorView: View {
     @ViewBuilder private var planSection: some View {
         card("TODAY'S PLAN") {
             if let d = service.latestDecision, let p = service.latestPlan {
-                Text(p.summary).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                Text(p.summary).font(.body.weight(.semibold)).foregroundStyle(BaselineColor.textHi)
                     .fixedSize(horizontal: false, vertical: true)
                 Divider().overlay(BaselineColor.line)
                 row("Readiness", "\(d.score)")
@@ -213,11 +248,11 @@ private struct StateInspectorView: View {
     @ViewBuilder private var workoutSection: some View {
         card(workoutTitle) {
             if let w = workouts.current {
-                Text(w.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+                Text(w.title).font(.body.weight(.semibold)).foregroundStyle(BaselineColor.textHi)
                 if let g = w.goal { row("Goal", g) }
                 ForEach(w.blocks) { block in
                     Text(block.name.uppercased() + (block.intent.map { " · \($0)" } ?? ""))
-                        .font(.system(size: 11, weight: .semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
+                        .font(.caption2.weight(.semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
                         .padding(.top, 2)
                     if block.exercises.isEmpty {
                         empty("(empty)")
@@ -272,8 +307,8 @@ private struct StateInspectorView: View {
             } else {
                 ForEach(service.toolActivity.reversed()) { event in
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "arrow.turn.down.right").font(.system(size: 11)).foregroundStyle(BaselineColor.accent).padding(.top, 3)
-                        Text(event.label).font(.system(size: 13.5)).foregroundStyle(BaselineColor.textMid)
+                        Image(systemName: "arrow.turn.down.right").font(.caption2).foregroundStyle(BaselineColor.accent).padding(.top, 3)
+                        Text(event.label).font(.subheadline).foregroundStyle(BaselineColor.textMid)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -301,21 +336,21 @@ private struct StateInspectorView: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top) {
-            Text(label).font(.system(size: 13.5)).foregroundStyle(BaselineColor.textFaint)
+            Text(label).font(.subheadline).foregroundStyle(BaselineColor.textFaint)
             Spacer(minLength: 12)
-            Text(value).font(.system(size: 13.5, weight: .medium)).foregroundStyle(BaselineColor.textHi)
+            Text(value).font(.subheadline.weight(.medium)).foregroundStyle(BaselineColor.textHi)
                 .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func empty(_ text: String) -> some View {
-        Text(text).font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+        Text(text).font(.caption).foregroundStyle(BaselineColor.textFaint)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func card<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.accent)
+            Text(title).font(.caption2.weight(.semibold)).tracking(0.5).foregroundStyle(BaselineColor.accent)
             content()
         }
         .padding(16)

@@ -8,10 +8,8 @@ import Testing
 @Suite(.serialized) @MainActor
 struct PlanAgentToolsTests {
 
-    private func makeStore() -> PlanStore {
-        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
-        let container = try! ModelContainer(for: Schema(models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        return PlanStore(repo: SwiftDataPlanRepository(context: container.mainContext), today: mon)
+    private func makeStore() -> PlanAgentToolsTestHarness {
+        PlanAgentToolsTestHarness(today: mon)
     }
     private let cal = Calendar.planWeek
     private var mon: Date { cal.weekStart(for: Date(timeIntervalSince1970: 1_752_000_000)) }
@@ -25,7 +23,7 @@ struct PlanAgentToolsTests {
     private func tools(_ plan: PlanStore) -> AgentTools { AgentTools(store: TrainingContextStore(), plan: plan) }
 
     @Test func getWeekPlanListsScheduledWorkouts() {
-        let plan = makeStore(); let p = plan.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeStore(); let plan = harness.store; let p = plan.addProgram(Program(name: "P", createdAt: mon))
         seed(plan, "Threshold Run", on: mon, program: p.id)
         seed(plan, "Recovery Ride", on: day(2), program: p.id)
         let out = tools(plan).dispatch(.getWeekPlan).text
@@ -34,7 +32,7 @@ struct PlanAgentToolsTests {
     }
 
     @Test func moveByNameRoutesThroughVersionedMutation() {
-        let plan = makeStore(); let p = plan.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeStore(); let plan = harness.store; let p = plan.addProgram(Program(name: "P", createdAt: mon))
         seed(plan, "Threshold Run", on: mon, program: p.id)
         let out = tools(plan).dispatch(.moveWorkout(workout: "threshold", toDay: "Thursday")).text
         #expect(out.contains("Moved"))
@@ -44,7 +42,7 @@ struct PlanAgentToolsTests {
     }
 
     @Test func ambiguousNameAsksInsteadOfGuessing() {
-        let plan = makeStore(); let p = plan.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeStore(); let plan = harness.store; let p = plan.addProgram(Program(name: "P", createdAt: mon))
         seed(plan, "Threshold Run", on: mon, program: p.id)
         seed(plan, "Threshold Run", on: day(1), program: p.id)
         let out = tools(plan).dispatch(.moveWorkout(workout: "Threshold Run", toDay: "Friday")).text
@@ -54,10 +52,26 @@ struct PlanAgentToolsTests {
     }
 
     @Test func deleteToolIsConfirmationGated() {
-        let plan = makeStore(); let p = plan.addProgram(Program(name: "P", createdAt: mon))
+        let harness = makeStore(); let plan = harness.store; let p = plan.addProgram(Program(name: "P", createdAt: mon))
         seed(plan, "Recovery Ride", on: mon, program: p.id)
         let first = tools(plan).dispatch(.deleteWorkout(workout: "recovery", proposalID: nil)).text
         #expect(first.contains("proposal_id"))
         #expect(plan.week.days.flatMap(\.sessions).count == 1)   // not deleted yet
+    }
+}
+
+@MainActor
+private final class PlanAgentToolsTestHarness {
+    let container: ModelContainer
+    let store: PlanStore
+
+    init(today: Date) {
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        let container = try! ModelContainer(
+            for: Schema(models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        self.container = container
+        store = PlanStore(repo: SwiftDataPlanRepository(context: container.mainContext), today: today)
     }
 }

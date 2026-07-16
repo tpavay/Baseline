@@ -5,21 +5,79 @@ import Testing
 struct ExerciseMediaTests {
     @Test func bundledManifestMatchesCatalog() throws {
         let manifest = ExerciseMediaManifest.current
+        let mediaBackedCatalogIDs = Set(ExerciseCatalog.definitions.filter { $0.media != nil }.map(\.id))
         #expect(manifest.schemaVersion == 1)
-        #expect(manifest.exercises.count == 17)
-        #expect(manifest.exercises.values.filter { $0.publicationStatus == .published }.count == 15)
-        #expect(manifest.exercises.values.filter { $0.publicationStatus == .blocked }.count == 2)
-
-        for exerciseID in manifest.exercises.keys {
-            #expect(ExerciseCatalog.definition(id: exerciseID) != nil)
-        }
+        #expect(Set(manifest.exercises.keys) == mediaBackedCatalogIDs,
+                "Every media-backed catalog exercise should have exactly one manifest entry.")
+        #expect(manifest.exercises.values.filter {
+            $0.publicationStatus == .draft || $0.publicationStatus == .blocked ||
+                $0.publicationStatus == .retired
+        }.isEmpty)
+        #expect(manifest.exercises.values.filter {
+            $0.publicationStatus == .ready || $0.publicationStatus == .published
+        }.count == manifest.exercises.count)
 
         let wallBalls = try #require(manifest.exercises["wall_balls"])
-        #expect(wallBalls.sourceFilename == "WallBalls.png")
-        #expect(wallBalls.publicationStatus == .blocked)
+        #expect(wallBalls.sourceFilename == "wallballs.png")
+        #expect(wallBalls.version == 2)
 
         let skiErg = try #require(manifest.exercises["ski_erg"])
-        #expect(skiErg.publicationStatus == .blocked)
+        #expect(skiErg.sourceFilename == "skiErg.png")
+        #expect(skiErg.version == 2)
+    }
+
+    @Test(arguments: [
+        "barbell_box_squat",
+        "box_jump",
+        "box_step_over",
+        "burpee_to_plate",
+        "calf_raise",
+        "dual_db_thruster",
+        "dumbbell_bench_press",
+        "echo_bike",
+        "elliptical",
+        "hand_release_push_up",
+        "hanging_leg_raise",
+        "lateral_burpee_over_barbell",
+        "leg_press",
+        "plank",
+        "stair_stepper",
+    ])
+    func expandedLibraryIsPublishedAndLinkedToCatalog(_ exerciseID: String) throws {
+        let manifestMedia = try #require(ExerciseMediaManifest.current.exercises[exerciseID])
+        let definition = try #require(ExerciseCatalog.definition(id: exerciseID))
+
+        #expect(manifestMedia.publicationStatus == .published)
+        #expect(manifestMedia.publishedThumbnailPath != nil)
+        #expect(manifestMedia.publishedDetailPath != nil)
+        #expect(definition.media == manifestMedia)
+    }
+
+    @Test(arguments: [
+        "barbell_hip_thrust",
+        "barbell_overhead_press",
+        "barbell_walking_lunge",
+        "bike_erg",
+        "bodyweight_hip_thrust",
+        "bodyweight_walking_lunge",
+        "dumbbell_walking_lunge",
+        "front_squat",
+        "goblet_squat",
+        "kettlebell_swing",
+        "medicine_ball_slam",
+        "single_arm_dumbbell_row",
+        "single_leg_hip_thrust",
+        "ski_erg",
+        "sled_pull",
+        "wall_balls",
+    ])
+    func incomingBatchIsDeployableAndLinkedToCatalog(_ exerciseID: String) throws {
+        let manifestMedia = try #require(ExerciseMediaManifest.current.exercises[exerciseID])
+        let definition = try #require(ExerciseCatalog.definition(id: exerciseID))
+
+        #expect(manifestMedia.publicationStatus == .ready ||
+                manifestMedia.publicationStatus == .published)
+        #expect(definition.media == manifestMedia)
     }
 
     @Test func onlyPublishedMediaExposesNetworkPaths() {

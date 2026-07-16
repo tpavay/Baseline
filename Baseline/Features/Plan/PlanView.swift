@@ -8,13 +8,12 @@ struct PlanView: View {
     @Environment(PlanStore.self) private var plan
     @State private var selectedDay: Date = Calendar.planWeek.startOfDay(for: Date())
     @State private var execContext: ExecContext?
-    @State private var confirmComplete: ScheduledWorkout?
-    @State private var openWorkMessage = ""
     @State private var showChat = false
     @State private var dropTargetDate: Date?
     @State private var pendingDrop: PendingDrop?
     @State private var deleteTarget: DeleteTarget?
     @State private var undoMessage: String?
+    @State private var importContext: ImportContext?
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -26,6 +25,7 @@ struct PlanView: View {
     /// A drag dropped onto a day that already has session(s) — resolved via an action sheet.
     struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
     struct DeleteTarget: Identifiable { let id = UUID(); let sw: ScheduledWorkout; let proposalID: UUID }
+    struct ImportContext: Identifiable { let id = UUID(); let date: Date }
 
     private let cal = Calendar.planWeek
     private var today: Date { cal.startOfDay(for: Date()) }
@@ -38,9 +38,9 @@ struct PlanView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         weekNav
                         SevenDayStrip(week: plan.week, today: today, selected: selectedDay) { selectedDay = $0 }
-                            .padding(.top, 14)
-                        aggregates.padding(.top, 22)
-                        timeline.padding(.top, 22)
+                            .padding(.top, 8)
+                        aggregates.padding(.top, 10)
+                        timeline.padding(.top, 14)
                         Color.clear.frame(height: 90)
                     }
                     .padding(.horizontal, 16)
@@ -55,10 +55,9 @@ struct PlanView: View {
             WorkoutView().environment(ctx.store)
         }
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
-        .alert("Finish workout?", isPresented: Binding(get: { confirmComplete != nil }, set: { if !$0 { confirmComplete = nil } })) {
-            Button("Finish anyway", role: .destructive) { if let sw = confirmComplete { _ = plan.complete(sw.id, acknowledgingOpenWork: true) }; confirmComplete = nil }
-            Button("Keep logging", role: .cancel) { confirmComplete = nil }
-        } message: { Text(openWorkMessage) }
+        .fullScreenCover(item: $importContext) { context in
+            WorkoutImportView(suggestedDate: context.date) { scheduled in openExecution(scheduled) }
+        }
         .alert("Delete workout?", isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), presenting: deleteTarget) { t in
             Button("Delete", role: .destructive) { apply(plan.delete(t.sw.id, proposalID: t.proposalID), "Deleted"); deleteTarget = nil }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
@@ -134,12 +133,16 @@ struct PlanView: View {
 
     private var weekNav: some View {
         HStack {
-            Button { plan.prevWeek() } label: { Image(systemName: "chevron.left").foregroundStyle(BaselineColor.textFaint) }
+            Button { plan.prevWeek() } label: {
+                Image(systemName: "chevron.left").foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 44)
+            }
             Spacer()
-            Text(weekRangeLabel).font(.system(size: 15, weight: .semibold, design: .monospaced)).tracking(1).foregroundStyle(BaselineColor.textHi)
+            Text(weekRangeLabel).font(.subheadline.weight(.semibold).monospaced()).tracking(0.8).foregroundStyle(BaselineColor.textHi)
             Spacer()
-            Button { plan.nextWeek() } label: { Image(systemName: "chevron.right").foregroundStyle(BaselineColor.textFaint) }
-        }.padding(.top, 8)
+            Button { plan.nextWeek() } label: {
+                Image(systemName: "chevron.right").foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 44)
+            }
+        }
     }
 
     private var weekRangeLabel: String {
@@ -151,20 +154,14 @@ struct PlanView: View {
     // MARK: Aggregates
 
     private var aggregates: some View {
-        let sessions = plan.week.days.flatMap(\.sessions)
-        let aggs = AggregateProvider.aggregates(for: sessions)
-        let completed = sessions.filter { plan.completed(for: $0.id) != nil }.count
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("THIS WEEK").font(.system(size: 13, weight: .bold)).tracking(1.5).foregroundStyle(BaselineColor.textFaint)
-                Spacer()
-                Text("\(completed) / \(sessions.count) SESSIONS").font(.system(size: 13, weight: .bold)).tracking(0.5).foregroundStyle(BaselineColor.zoneGreen)
-            }
+        let aggs = AggregateProvider.aggregates(for: plan.week.days.flatMap(\.sessions))
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("THIS WEEK").font(.caption.weight(.bold)).tracking(1).foregroundStyle(BaselineColor.textFaint)
             if aggs.filter({ $0.key != .sessions }).isEmpty {
-                Text("No planned volume yet.").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
+                Text("No planned volume yet.").font(.caption).foregroundStyle(BaselineColor.textFaint)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 8) {
                         ForEach(aggs.filter { $0.key != .sessions }) { AggregateCard(aggregate: $0) }
                     }
                 }
@@ -176,26 +173,28 @@ struct PlanView: View {
 
     private var timeline: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("TIMELINE").font(.system(size: 13, weight: .bold)).tracking(1.5).foregroundStyle(BaselineColor.textFaint)
-                .padding(.bottom, 14)
+            Text("TIMELINE").font(.caption.weight(.bold)).tracking(1).foregroundStyle(BaselineColor.textFaint)
+                .padding(.bottom, 10)
             ForEach(plan.week.days) { day in   // every day of the week — empty days are add points + drop targets
-                VStack(alignment: .leading, spacing: 0) {
-                    dayHeader(day)
-                    if day.sessions.isEmpty {
-                        addWorkoutRow(on: day.date)
-                    } else {
-                        ForEach(day.sessions) { sw in
-                            ScheduledWorkoutCard(
-                                scheduled: sw,
-                                status: plan.status(for: sw, today: Date()),
-                                weekDays: plan.week.days.map(\.date),
-                                onAction: { handle($0, sw) })
-                            .padding(.leading, 22).padding(.bottom, 14)
-                            .draggable(sw.id.uuidString)
+                HStack(alignment: .top, spacing: 10) {
+                    dayDate(day.date)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if day.sessions.isEmpty {
+                            addWorkoutRow(on: day.date)
+                        } else {
+                            ForEach(day.sessions) { sw in
+                                ScheduledWorkoutCard(
+                                    scheduled: sw,
+                                    status: plan.status(for: sw, today: Date()),
+                                    weekDays: plan.week.days.map(\.date),
+                                    onAction: { handle($0, sw) })
+                                .draggable(sw.id.uuidString)
+                            }
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 8)
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
                     guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
@@ -211,26 +210,28 @@ struct PlanView: View {
     /// still a drop target, so a dragged workout can also land here. When templates exist, offer them.
     @ViewBuilder private func addWorkoutRow(on date: Date) -> some View {
         let templates = plan.templates()
-        if templates.isEmpty {
-            Button { addWorkout(on: date) } label: { addWorkoutLabel }.buttonStyle(.plain)
-        } else {
-            Menu {
-                Button("Blank workout") { addWorkout(on: date) }
+        Menu {
+            Button("Import from image", systemImage: "doc.viewfinder") { importContext = ImportContext(date: date) }
+            Button("Blank workout", systemImage: "plus.rectangle") { addWorkout(on: date) }
+            if !templates.isEmpty {
                 Menu("From template") {
                     ForEach(templates) { t in Button(t.name) { addFromTemplate(t.id, on: date) } }
                 }
-            } label: { addWorkoutLabel }.buttonStyle(.plain)
-        }
+            }
+        } label: { addWorkoutLabel }.buttonStyle(.plain)
     }
 
     private var addWorkoutLabel: some View {
         HStack(spacing: 8) {
-            Image(systemName: "plus").font(.system(size: 13, weight: .bold))
-            Text("Add workout").font(.system(size: 14, weight: .medium))
+            Image(systemName: "plus").font(.subheadline.weight(.semibold))
+            Text("Add workout").font(.subheadline.weight(.medium))
             Spacer()
         }
         .foregroundStyle(BaselineColor.textFaint)
-        .padding(.leading, 22).padding(.vertical, 12).padding(.bottom, 8)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 12).fill(BaselineColor.surface.opacity(0.45)))
         .contentShape(Rectangle())
     }
 
@@ -241,26 +242,30 @@ struct PlanView: View {
         if let sw = plan.instantiateTemplate(id, on: date) { openExecution(sw) }
     }
 
-    private func dayHeader(_ day: TrainingDay) -> some View {
-        let isToday = cal.isDate(day.date, inSameDayAs: today)
-        return HStack(spacing: 8) {
-            Circle().fill(isToday ? BaselineColor.zoneAmber : BaselineColor.textFaint).frame(width: 7, height: 7)
-            Text(day.date.formatted(.dateTime.weekday(.wide)).uppercased())
-                .font(.system(size: 13, weight: .bold, design: .monospaced)).tracking(1)
-                .foregroundStyle(isToday ? BaselineColor.accent : BaselineColor.textMid)
-            if isToday { Text("· TODAY").font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.accent) }
-            else { Text("// \(day.date.formatted(.dateTime.month(.abbreviated).day()))".uppercased()).font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint) }
-            Spacer()
-        }.padding(.bottom, 12)
+    private func dayDate(_ date: Date) -> some View {
+        let isToday = cal.isDate(date, inSameDayAs: today)
+        let color = isToday ? BaselineColor.accent : BaselineColor.textFaint
+        return VStack(spacing: 0) {
+            Text(PlanFormat.weekdayAbbreviation(date, calendar: cal))
+                .font(.caption.weight(.bold))
+            Text(date.formatted(.dateTime.day()))
+                .font(.headline.monospacedDigit())
+            Text(date.formatted(.dateTime.month(.abbreviated)).uppercased())
+                .font(.caption.weight(.semibold))
+        }
+        .foregroundStyle(color)
+        .frame(width: 52)
+        .frame(minHeight: 64, alignment: .top)
+        .padding(.top, 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(date.formatted(.dateTime.weekday(.wide).month(.wide).day()) + (isToday ? ", today" : ""))
     }
 
     // MARK: Actions
 
     private func handle(_ action: PlanCardAction, _ sw: ScheduledWorkout) {
         switch action {
-        case .primary: primaryAction(sw)
         case .open: openExecution(sw)
-        case .complete: attemptComplete(sw)
         case .duplicate: apply(plan.duplicate(sw.id, toDate: nil), "Duplicated")
         case .skip: apply(plan.setSkipped(sw.id, true), "Skipped")
         case .unskip: apply(plan.setSkipped(sw.id, false), "Unskipped")
@@ -283,25 +288,6 @@ struct PlanView: View {
     /// Surface an Undo affordance after an applied mutation.
     private func apply(_ result: MutationResult, _ verb: String) {
         if result.isApplied { withAnimation { undoMessage = verb } }
-    }
-
-    private func primaryAction(_ sw: ScheduledWorkout) {
-        switch plan.status(for: sw, today: Date()) {
-        case .today, .missed, .planned, .modifiedIntent:
-            _ = plan.start(sw.id)
-        case .inProgress, .paused:
-            _ = plan.resume(sw.id)
-        case .completed, .skipped:
-            break
-        }
-        openExecution(plan.scheduledWorkout(sw.id) ?? sw)
-    }
-
-    private func attemptComplete(_ sw: ScheduledWorkout) {
-        if case .unloggedWork(let sets, let exercises) = plan.complete(sw.id, acknowledgingOpenWork: false) {
-            openWorkMessage = "You still have \(sets) unlogged set\(sets == 1 ? "" : "s") across \(exercises) exercise\(exercises == 1 ? "" : "s")."
-            confirmComplete = sw
-        }
     }
 
     // MARK: Execution bridge — reuse WorkoutView, write through to the repository
@@ -355,32 +341,32 @@ struct SevenDayStrip: View {
                 let isToday = cal.isDate(day.date, inSameDayAs: today)
                 let isSel = cal.isDate(day.date, inSameDayAs: selected)
                 Button { onSelect(day.date) } label: {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 4) {
                         Text(day.date.formatted(.dateTime.weekday(.narrow)))
-                            .font(.system(size: 13, weight: .bold)).foregroundStyle(isToday ? BaselineColor.accent : BaselineColor.textFaint)
+                            .font(.caption.weight(.bold)).foregroundStyle(isToday ? BaselineColor.accent : BaselineColor.textFaint)
                         marker(for: day, isToday: isToday)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 6)
                     .background(isSel ? RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface) : nil)
                 }.buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 6).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.line, lineWidth: 1))
+        .padding(.horizontal, 4).padding(.vertical, 2)
+        .background(RoundedRectangle(cornerRadius: 12).strokeBorder(BaselineColor.line, lineWidth: 1))
     }
 
     @ViewBuilder private func marker(for day: TrainingDay, isToday: Bool) -> some View {
         let count = day.sessions.count
         if count == 0 {
-            Circle().fill(.clear).frame(width: 16, height: 16)                       // rest — no marker
+            Circle().fill(.clear).frame(width: 12, height: 12)                       // rest — no marker
         } else if count > 1 {
-            Text("\(count)").font(.system(size: 11, weight: .bold)).foregroundStyle(BaselineColor.textHi)
-                .frame(width: 16, height: 16).background(Circle().fill(BaselineColor.amethyst))
+            Text("\(count)").font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textHi)
+                .frame(width: 14, height: 14).background(Circle().fill(BaselineColor.amethyst))
         } else if isToday {
-            Circle().strokeBorder(BaselineColor.accent, lineWidth: 2).frame(width: 14, height: 14)  // today ring
+            Circle().strokeBorder(BaselineColor.accent, lineWidth: 2).frame(width: 11, height: 11)  // today ring
         } else {
-            Circle().fill(BaselineColor.textFaint).frame(width: 7, height: 7)         // scheduled
+            Circle().fill(BaselineColor.textFaint).frame(width: 6, height: 6)         // scheduled
         }
     }
 }
@@ -390,21 +376,27 @@ struct SevenDayStrip: View {
 struct AggregateCard: View {
     let aggregate: Aggregate
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(PlanFormat.aggregateTitle(aggregate.key)).font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.textFaint)
+        VStack(alignment: .leading, spacing: 1) {
+            Text(PlanFormat.aggregateTitle(aggregate.key)).font(.caption.weight(.semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(PlanFormat.aggregateValue(aggregate)).font(.system(size: 26, weight: .bold, design: .rounded)).foregroundStyle(BaselineColor.textHi)
-                if let u = PlanFormat.aggregateUnit(aggregate.key) { Text(u).font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textFaint) }
+                Text(PlanFormat.aggregateValue(aggregate)).font(.headline).bold().foregroundStyle(BaselineColor.textHi)
+                if let u = PlanFormat.aggregateUnit(aggregate.key) { Text(u).font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textFaint) }
             }
         }
-        .padding(16).frame(minWidth: 120, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.line, lineWidth: 1))
+        .padding(.horizontal, 10).padding(.vertical, 6).frame(minWidth: 88, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).strokeBorder(BaselineColor.line, lineWidth: 1))
     }
 }
 
 // MARK: - Formatting
 
 enum PlanFormat {
+    static func weekdayAbbreviation(_ date: Date, calendar: Calendar) -> String {
+        let weekday = calendar.component(.weekday, from: date)
+        guard calendar.shortWeekdaySymbols.indices.contains(weekday - 1) else { return "" }
+        return String(calendar.shortWeekdaySymbols[weekday - 1].prefix(2)).uppercased()
+    }
+
     static func aggregateTitle(_ k: AggregateKey) -> String {
         switch k { case .sessions: "SESSIONS"; case .duration: "DURATION"; case .distance: "RUNNING"; case .strengthSets: "STRENGTH"; case .calories: "CALORIES" }
     }
@@ -418,8 +410,5 @@ enum PlanFormat {
         case .strengthSets, .sessions, .calories: return String(Int(a.total))
         }
     }
-    static func durationShort(_ seconds: Int) -> String {
-        let m = seconds / 60
-        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
-    }
+    static func durationShort(_ seconds: Int) -> String { MetricFormat.durationLong(Double(seconds)) }
 }
