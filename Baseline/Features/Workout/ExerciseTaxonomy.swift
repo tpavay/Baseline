@@ -227,6 +227,32 @@ enum ExerciseLevel: String, Codable, Sendable, CaseIterable {
     }
 }
 
+extension Modality {
+    /// Infer the modality from the metrics an exercise logs — used when a custom exercise doesn't set one
+    /// explicitly. reps/load → resistance, distance/pace/power/calories → cardio, a held duration alone → hold.
+    static func inferred(fromMetrics metrics: [MetricType]) -> Modality {
+        let set = Set(metrics)
+        if set.contains(.reps) || set.contains(.load) { return .resistance }
+        if set.contains(.distance) || set.contains(.pace) || set.contains(.power) || set.contains(.calories) { return .cardio }
+        if set.contains(.duration) { return .hold }
+        return .resistance
+    }
+}
+
+extension ActivityCategory {
+    /// A best-effort value for the retained legacy category, derived from the new axes (until the enum is
+    /// retired). Carries win first; otherwise it follows the modality.
+    static func legacy(modality: Modality, patterns: [MovementPattern]) -> ActivityCategory {
+        if patterns.contains(.carry) { return .carry }
+        switch modality {
+        case .resistance: return .strength
+        case .cardio: return .other
+        case .hold: return .isometric
+        case .mobility: return .other
+        }
+    }
+}
+
 // MARK: - Discipline tags
 
 /// Cross-cutting discipline labels — what a movement is "for", spanning categories. Non-exclusive and

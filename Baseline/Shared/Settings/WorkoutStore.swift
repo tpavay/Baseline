@@ -164,12 +164,27 @@ final class WorkoutStore {
 
     /// Deliberately create a custom definition (reuses one with the same name if it exists).
     @discardableResult
-    func createCustomDefinition(name: String, category: ActivityCategory, supported: [MetricType]) -> ExerciseDefinition {
+    func createCustomDefinition(
+        name: String,
+        category: ActivityCategory? = nil,
+        supported: [MetricType],
+        equipment: [Equipment] = [],
+        primaryMuscles: [Muscle] = [],
+        secondaryMuscles: [Muscle] = [],
+        patterns: [MovementPattern] = [],
+        tags: [ExerciseTag] = [],
+        level: ExerciseLevel? = .intermediate
+    ) -> ExerciseDefinition {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let existing = customDefinitions.first(where: { $0.name.lowercased() == trimmed.lowercased() }) { return existing }
         let metrics = supported.isEmpty ? [.reps, .load] : supported
-        let def = ExerciseDefinition(id: "custom_\(UUID().uuidString.prefix(8))", name: trimmed, category: category,
-                                     supported: metrics, defaults: metrics, aliases: [trimmed.lowercased()])
+        let modality = Modality.inferred(fromMetrics: metrics)
+        let cat = category ?? ActivityCategory.legacy(modality: modality, patterns: patterns)
+        let def = ExerciseDefinition(id: "custom_\(UUID().uuidString.prefix(8))", name: trimmed, category: cat,
+                                     supported: metrics, defaults: metrics, aliases: [trimmed.lowercased()],
+                                     primaryMuscles: primaryMuscles, secondaryMuscles: secondaryMuscles,
+                                     patterns: patterns, equipment: equipment, mechanic: nil,
+                                     modality: modality, level: level, tags: tags)
         customDefinitions.append(def)
         return def
     }

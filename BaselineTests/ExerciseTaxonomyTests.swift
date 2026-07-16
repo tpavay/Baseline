@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Baseline
 
@@ -62,5 +63,33 @@ struct ExerciseTaxonomyTests {
     @Test func swimIsBeginnerAndBoxStepOverIsIntermediate() {
         #expect(ExerciseCatalog.definition(id: "swim")?.level == .beginner)
         #expect(ExerciseCatalog.definition(id: "box_step_over")?.level == .intermediate)
+    }
+
+    @Test func modalityInfersFromMetrics() {
+        #expect(Modality.inferred(fromMetrics: [.reps, .load, .rpe]) == .resistance)
+        #expect(Modality.inferred(fromMetrics: [.distance, .pace, .duration]) == .cardio)
+        #expect(Modality.inferred(fromMetrics: [.duration, .rpe]) == .hold)
+        #expect(Modality.inferred(fromMetrics: [.distance, .load, .duration]) == .resistance) // loaded carry
+    }
+
+    @Test @MainActor func customExerciseCarriesItsTaxonomy() {
+        let store = WorkoutStore(defaults: UserDefaults(suiteName: "test.custom.\(UUID().uuidString)")!)
+        let def = store.createCustomDefinition(
+            name: "Single-Arm Sled Drag",
+            supported: [.distance, .load, .duration],
+            equipment: [.sled],
+            primaryMuscles: [.lats, .quadriceps],
+            secondaryMuscles: [.biceps, .forearms],
+            patterns: [.pull, .gait],
+            tags: [.hyrox],
+            level: .intermediate)
+        #expect(def.equipment == [.sled])
+        #expect(def.primaryMuscles == [.lats, .quadriceps])
+        #expect(def.secondaryMuscles == [.biceps, .forearms])
+        #expect(def.patterns == [.pull, .gait])
+        #expect(def.tags == [.hyrox])
+        #expect(def.level == .intermediate)
+        #expect(def.modality == .resistance) // .load present
+        #expect(def.category == .strength)   // legacy value derived from modality
     }
 }
