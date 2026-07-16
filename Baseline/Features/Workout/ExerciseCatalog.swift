@@ -174,7 +174,7 @@ enum ExerciseCatalog {
 
     /// Resolve casual language → a definition. Never nil — unknown movements get `generic`.
     static func resolve(_ name: String) -> ExerciseDefinition {
-        live.withLock { $0.resolve(name, generic: generic) }
+        snapshot.resolve(name, generic: generic)
     }
 
     /// Replace the live catalog with a fetched set. Thread-safe; the seed remains the compiled fallback.
@@ -182,17 +182,24 @@ enum ExerciseCatalog {
         live.withLock { $0 = ExerciseCatalogSnapshot(definitions) }
     }
 
-    /// Search the live catalog (the assistant's `search_exercises`). Runs inside the lock against the
-    /// snapshot rather than over a copy of `definitions` - the catalog is ~900 entries and copying the
-    /// whole array per search would dwarf the search itself.
+    /// Search the live catalog (the assistant's `search_exercises`).
     static func search(_ query: ExerciseSearch.Query) -> ExerciseSearch.Results {
-        live.withLock { ExerciseSearch.run(query, in: $0) }
+        ExerciseSearch.run(query, in: snapshot)
     }
 
     /// One exercise by id or name (the assistant's `get_exercise`). Nil when the catalog has no match.
     static func lookUp(name: String?, id: String?) -> ExerciseDefinition? {
-        live.withLock { ExerciseSearch.lookUp(name: name, id: id, in: $0) }
+        ExerciseSearch.lookUp(name: name, id: id, in: snapshot)
     }
+
+    /// The current live snapshot, read out of the lock so callers do their work outside the critical
+    /// section. Taking it out is cheap: `ExerciseCatalogSnapshot` is a value type whose array and
+    /// dictionaries are copy-on-write, so this retains a few references rather than copying ~900 entries.
+    /// That matters because an unfair lock has no priority donation and must not be held across work as
+    /// long as a catalog-wide scan or sort, and these callers run on the MainActor while `install(_:)`
+    /// may contend from a background refresh. One atomic read also gives the caller a consistent snapshot
+    /// even if the catalog is swapped underneath it.
+    private static var snapshot: ExerciseCatalogSnapshot { live.withLock { $0 } }
 
     /// The bundled seed — the curated built-ins overlaid with their classifications, plus the imported Free
     /// Exercise DB catalog minus any import that duplicates a curated built-in (curated wins on id and on

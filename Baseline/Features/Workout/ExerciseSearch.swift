@@ -204,16 +204,25 @@ enum ExerciseSearch {
     /// "Seated Cable Rows" but not "Eyebrow". Compared on a form where punctuation reads as a separator
     /// ("Push-Up" → "push up"), with both sides already padded by `separated`.
     ///
-    /// A trailing "s" on the matched word counts as the same word: the catalog names one movement both
-    /// ways ("Bent Over Barbell Row", "Seated Cable Rows"), and a plural is not a weaker match than a
-    /// singular. Without this, plural names fall to the substring tier and rank among incidental hits
-    /// like "Prowler Sprint". This only ever promotes a name that already matched there - a haystack
-    /// holding "rows" holds "row" too - so it reorders the page without changing what is on it.
+    /// A trailing "s" on the matched word is ignored in BOTH directions, so "row" and "rows" reach the
+    /// same family: the catalog names one movement both ways ("Bent Over Barbell Row", "Seated Cable
+    /// Rows") and a query should not have to guess which. This is a trailing-"s" rule, not stemming -
+    /// "flies" still misses "Fly", and no irregular plurals are handled.
+    ///
+    /// The two directions differ in consequence. Reaching plural names from a singular query only
+    /// reorders the page, because a name holding "rows" holds "row" once squashed and so already matched
+    /// on the substring tier. Reaching singular names from a plural query genuinely widens the results,
+    /// because squashing "Bent Over Barbell Row" never contains "rows" and it matched nothing at all:
+    /// "do you have any rows?" answered with the plural-named handful and read as the whole catalog.
     private static func containsWord(_ needle: String, in haystack: String) -> Bool {
         let words = separated(haystack)
         let target = separated(needle)
         guard !target.isEmpty else { return false }
-        return words.contains(target) || words.contains(String(target.dropLast()) + "s ")
+        if words.contains(target) { return true }
+        let stem = String(target.dropLast())                    // the trailing pad space
+        if words.contains(stem + "s ") { return true }
+        guard stem.hasSuffix("s") else { return false }
+        return words.contains(String(stem.dropLast()) + " ")
     }
 
     /// Lowercased, punctuation-to-space, single-spaced, and padded - so a boundary test is a substring test.

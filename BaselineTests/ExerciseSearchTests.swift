@@ -77,13 +77,21 @@ struct ExerciseSearchTests {
         #expect(r.total > r.matches.count)                           // and the mid-word hits are in the total
     }
 
-    @Test func aPluralNameIsTheSameWordNotAnIncidentalMatch() throws {
-        // The catalog names one movement both ways, so "row" has to reach "Seated Cable Rows" on the
-        // word. Matching " row " alone drops it to the substring tier, where 35 singular rows take every
-        // page slot ahead of it and a real row goes missing behind hits like "Prowler Sprint".
-        let plural = "Seated Cable Rows"
-        #expect(ExerciseCatalog.seedDefinitions.contains { $0.name == plural })
-        #expect(try search(text: "row").matches.map(\.name).contains(plural))
+    @Test func singularAndPluralQueriesReachTheSameFamily() throws {
+        // The catalog names one movement both ways, so neither spelling may strand the other half of the
+        // family. Each direction fails differently without the trailing-"s" rule: "row" drops the plural
+        // names to the substring tier, where 35 singular rows take every page slot ahead of them; "rows"
+        // misses the singular names at every tier, so it answered with the plural-named handful and read
+        // as the catalog holding nine rows.
+        let singular = "Bent Over Barbell Row", plural = "Seated Cable Rows"
+        #expect([singular, plural].allSatisfy { n in ExerciseCatalog.seedDefinitions.contains { $0.name == n } })
+
+        for query in ["row", "rows"] {
+            let names = try search(text: query).matches.map(\.name)
+            #expect(try search(text: query).matches.first?.id == "row")   // the canonical row leads either way
+            #expect(names.contains(singular))
+            #expect(names.contains(plural))
+        }
     }
 
     @Test func nonsenseQueryReturnsNothingRatherThanTheWholeCatalog() throws {
