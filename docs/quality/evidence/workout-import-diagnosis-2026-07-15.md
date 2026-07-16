@@ -124,3 +124,22 @@ isn't met.
   chars for this workout — the text is captured fine.
 - App Check is **not enforced** (logs: *"Allowing request with invalid AppCheck token because enforcement is
   disabled"*), so it is not blocking calls today — but it must be enabled before prod (release checklist).
+
+## Status (2026-07-15, overnight)
+
+- **Fix #2 (standalone rule) is committed and deployed to `baseline-app-dev`** (all import
+  functions redeployed). It is strictly more permissive, so it cannot regress a
+  currently-working parse. Both captured failing jobs (`C9AFE279…`, `2A5E3B07…`) failed
+  *only* on `source_standalone_movement`, so a re-import of that class of workout should now
+  produce a structured result instead of the OCR-dump fallback.
+- **To verify:** re-run the same import on a device pointed at dev and confirm you get a real
+  tempo-run structure (warm-up + 3×13:00 block + rest), not "Recognized text - needs review."
+  If it still falls back, pull that job's `workout_import_job.validation_failed` logs — a
+  *different* `relationshipRule` will name the next rule to address.
+- **Not done (needs your call, not deployed):** fix #1 (make the remaining `assembly.relationship`
+  rules non-fatal at repair-budget exhaustion — keep the parse + attach ReviewIssues), fix #3
+  (dense-section token budget / the observed `provider_output_truncated`), and the multi-movement
+  sibling rules (`source_alternative_movements` / `source_required_movements` / `source_timed_work`),
+  which were left strict deliberately — no production evidence they misfire, and relaxing them could
+  mask genuinely dropped movements. The right holistic fix is #1.
+- **Prod (`baseline-app-prod`) is untouched.**
