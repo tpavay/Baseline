@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// A stable **exercise definition** — identity + the metrics the modality supports + a default
 /// metric selection + an activity category + casual-language aliases. Global and stable: how one
@@ -106,9 +107,74 @@ extension ExerciseDefinition {
     }
 }
 
+/// An immutable, indexed view of a set of exercise definitions. Precomputes an id index and lowercased
+/// exact name/alias indices so `definition(id:)` and `resolve` stay O(1) rather than scanning the whole
+/// list on every call — both are hit per row render, and the catalog is heading from ~50 to ~800 entries.
+/// A value type so it can be swapped atomically under a lock (see `ExerciseCatalog`).
+struct ExerciseCatalogSnapshot: Sendable {
+    let definitions: [ExerciseDefinition]
+    private let byID: [String: ExerciseDefinition]
+    private let byName: [String: ExerciseDefinition]   // lowercased exact name → first definition in order
+    private let byAlias: [String: ExerciseDefinition]  // lowercased exact alias → first definition in order
+
+    init(_ definitions: [ExerciseDefinition]) {
+        self.definitions = definitions
+        var byID: [String: ExerciseDefinition] = [:]
+        var byName: [String: ExerciseDefinition] = [:]
+        var byAlias: [String: ExerciseDefinition] = [:]
+        // First-in-list wins on any collision, matching the previous `first(where:)` scan semantics.
+        for def in definitions {
+            if byID[def.id] == nil { byID[def.id] = def }
+            let name = def.name.lowercased()
+            if byName[name] == nil { byName[name] = def }
+            for alias in def.aliases where byAlias[alias] == nil { byAlias[alias] = def }
+        }
+        self.byID = byID
+        self.byName = byName
+        self.byAlias = byAlias
+    }
+
+    func definition(id: String) -> ExerciseDefinition? { byID[id] }
+
+    /// Resolve casual language → a definition: exact name, then exact alias, then substring, else `generic`.
+    func resolve(_ name: String, generic: ExerciseDefinition) -> ExerciseDefinition {
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return generic }
+        if let exact = byName[key] { return exact }
+        if let alias = byAlias[key] { return alias }
+        if let fuzzy = definitions.first(where: { def in
+            def.aliases.contains(where: { key.contains($0) || $0.contains(key) })
+        }) { return fuzzy }
+        return generic
+    }
+}
+
 enum ExerciseCatalog {
-    /// The public catalog — each base definition overlaid with its classification (see `classifications`).
-    static let definitions: [ExerciseDefinition] = baseDefinitions.map { def in
+    /// The live catalog, swappable behind a lock. Defaults to the bundled seed; a fetched catalog is
+    /// installed at startup/refresh via `install(_:)` (Slice 2). An unfair lock is right here: reads are
+    /// frequent and cheap, writes are rare (app launch and occasional refresh). Readers see a new snapshot
+    /// atomically on their next call. Value-type domain models reach this façade directly, so the swap
+    /// point stays here rather than being threaded through every call site.
+    private static let live = OSAllocatedUnfairLock(initialState: ExerciseCatalogSnapshot(seedDefinitions))
+
+    /// The public catalog — the current live snapshot's definitions.
+    static var definitions: [ExerciseDefinition] { live.withLock { $0.definitions } }
+
+    static func definition(id: String) -> ExerciseDefinition? { live.withLock { $0.definition(id: id) } }
+
+    /// Resolve casual language → a definition. Never nil — unknown movements get `generic`.
+    static func resolve(_ name: String) -> ExerciseDefinition {
+        live.withLock { $0.resolve(name, generic: generic) }
+    }
+
+    /// Replace the live catalog with a fetched set. Thread-safe; the seed remains the compiled fallback.
+    static func install(_ definitions: [ExerciseDefinition]) {
+        live.withLock { $0 = ExerciseCatalogSnapshot(definitions) }
+    }
+
+    /// The bundled seed — each base definition overlaid with its classification (see `classifications`).
+    /// Shipped in the binary so search, planning, logging, and import matching work offline before any fetch.
+    static let seedDefinitions: [ExerciseDefinition] = baseDefinitions.map { def in
         classifications[def.id].map { def.applying($0) } ?? def
     }
 
@@ -481,21 +547,4 @@ enum ExerciseCatalog {
         id: "generic", name: "Exercise", category: .other,
         supported: [.reps, .load, .duration, .distance, .calories, .rpe],
         defaults: [], aliases: [])
-
-    /// Resolve casual language → a definition: exact name, then alias, then substring. Never nil —
-    /// unknown movements get the generic definition (so nothing fails; identity just isn't curated).
-    static func resolve(_ name: String) -> ExerciseDefinition {
-        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !key.isEmpty else { return generic }
-        if let exact = definitions.first(where: { $0.name.lowercased() == key }) { return exact }
-        if let alias = definitions.first(where: { $0.aliases.contains(key) }) { return alias }
-        if let fuzzy = definitions.first(where: { def in
-            def.aliases.contains(where: { key.contains($0) || $0.contains(key) })
-        }) { return fuzzy }
-        return generic
-    }
-
-    static func definition(id: String) -> ExerciseDefinition? {
-        definitions.first { $0.id == id }
-    }
 }
