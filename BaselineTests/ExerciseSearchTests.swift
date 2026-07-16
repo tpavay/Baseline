@@ -62,12 +62,19 @@ struct ExerciseSearchTests {
         #expect(r.total > 1)   // the family (Romanian, sumo, …) still comes back
     }
 
-    @Test func aWordQueryDoesNotMatchMidWord() throws {
-        // "row" must not drag in every exercise whose name merely contains r-o-w.
+    @Test func wordBoundaryMatchesOutrankIncidentalMidWordOnes() throws {
+        // "Prowler", "Narrow", and "Throw" all contain r-o-w, so they do match "row" - mid-word hits are
+        // deliberate, and the total counts them. But every exercise with "row" as an actual word ranks
+        // above them, and there are enough of those to fill the page, so none of them reach it.
+        let incidental = ["Prowler Sprint", "Narrow Stance Squats", "Backward Medicine Ball Throw"]
+        // Without this the test would pass vacuously if the catalog ever stopped carrying them.
+        #expect(incidental.allSatisfy { name in ExerciseCatalog.seedDefinitions.contains { $0.name == name } })
+
         let r = try search(text: "row")
-        #expect(r.matches.allSatisfy { def in
-            def.name.localizedCaseInsensitiveContains("row") || def.aliases.contains { $0.contains("row") }
-        })
+        #expect(r.matches.first?.id == "row")                        // the exact name still wins outright
+        #expect(r.matches.count == ExerciseSearch.resultLimit)
+        #expect(r.matches.allSatisfy { !incidental.contains($0.name) })
+        #expect(r.total > r.matches.count)                           // and the mid-word hits are in the total
     }
 
     @Test func nonsenseQueryReturnsNothingRatherThanTheWholeCatalog() throws {

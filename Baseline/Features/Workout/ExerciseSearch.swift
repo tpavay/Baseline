@@ -206,7 +206,7 @@ enum ExerciseSearch {
         let words = separated(haystack)
         let target = separated(needle)
         guard !target.isEmpty else { return false }
-        return words.contains(" \(target) ")
+        return words.contains(target)   // both sides are already padded by `separated`
     }
 
     /// Lowercased, punctuation-to-space, single-spaced, and padded - so a boundary test is a substring test.

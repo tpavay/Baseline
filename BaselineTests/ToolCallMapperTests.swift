@@ -68,8 +68,10 @@ struct ToolCallMapperTests {
 
         #expect(ToolCallMapper.map(name: "get_exercise", input: ["name": "deadlift"]) == .getExercise(name: "deadlift", id: nil))
         #expect(ToolCallMapper.map(name: "get_exercise", input: ["id": "bench_press"]) == .getExercise(name: nil, id: "bench_press"))
-        #expect(ToolCallMapper.map(name: "get_exercise", input: [:]) == nil)                 // nothing to look up
-        #expect(ToolCallMapper.map(name: "get_exercise", input: ["name": " "]) == nil)       // blank is nothing
+        // Neither parameter still maps: AgentTools explains the miss by name, where a nil here would
+        // reach the model as the generic "that tool call wasn't valid". Blanks are absent, not "".
+        #expect(ToolCallMapper.map(name: "get_exercise", input: [:]) == .getExercise(name: nil, id: nil))
+        #expect(ToolCallMapper.map(name: "get_exercise", input: ["name": " "]) == .getExercise(name: nil, id: nil))
     }
 
     @Test func mapsSleepAndCheckIn() {

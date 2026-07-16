@@ -120,6 +120,29 @@ final class AgentTools {
             case .removeMetric(let e, let m): return "Removed \(m.label.lowercased()) from \(e)"
             }
         }
+
+        /// Whether `activityLabel` belongs in the inspector's "what changed" feed. Mutations do, and so
+        /// does retrieval that reaches outside the app for the athlete's own data - pulling from Apple
+        /// Health is worth showing. Reads of state the inspector already displays, and of the static
+        /// exercise catalog, changed nothing and would only be noise.
+        ///
+        /// Exhaustive by design: a new tool must classify itself here rather than inherit a `default:`.
+        var showsInActivityFeed: Bool {
+            switch self {
+            case .getToday, .explain, .getCurrentWorkout, .getWeekPlan, .explainModification,
+                 .searchExercises, .getExercise:
+                return false
+            case .setTimeAvailable, .setEquipment, .setTraveling, .setIllness, .setSleep, .setCheckIn,
+                 .setNote, .upsertConstraint, .resolveConstraint, .openAppleHealthSetup, .getSleep,
+                 .getHRVReadings, .getRestingHeartRate, .createWorkout, .addBlock, .addExercise,
+                 .moveExercise, .replaceExercise, .requireAllOptions, .removeExercise, .updateSet,
+                 .startWorkout, .completeWorkout, .moveWorkout, .swapWorkouts, .skipWorkout,
+                 .duplicateWorkout, .deleteWorkout, .saveAsTemplate, .createFromTemplate,
+                 .updateTemplate, .updateLoggingConfig, .updateExercisePreference, .setMetricValue,
+                 .removeMetric:
+                return true
+            }
+        }
     }
 
     struct Response: Sendable {
@@ -442,8 +465,10 @@ final class AgentTools {
                 return Response(text: searchSummary(ExerciseCatalog.search(q), q), decision: nil, plan: nil)
             }
         case .getExercise(let name, let id):
+            guard let asked = name ?? id else {
+                return Response(text: "get_exercise needs either a name or an id - it was called with neither. Pass the exercise's name, or the id from a search_exercises row.", decision: nil, plan: nil)
+            }
             guard let def = ExerciseCatalog.lookUp(name: name, id: id) else {
-                let asked = name ?? id ?? ""
                 return Response(text: "\"\(asked)\" isn't in Baseline's exercise catalog. Try search_exercises to find the closest real movement - don't invent one.", decision: nil, plan: nil)
             }
             return Response(text: exerciseDetail(def), decision: nil, plan: nil)

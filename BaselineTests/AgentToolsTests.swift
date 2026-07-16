@@ -92,6 +92,29 @@ struct AgentToolsTests {
         #expect(!text.contains("(id generic)"))        // never pass the generic fallback off as a real hit
     }
 
+    @Test func getExerciseWithNeitherParameterNamesWhatItNeeded() {
+        // The schema has no required[], so the either/or lands here - and a rejection the model can act
+        // on beats the runtime's generic "that tool call wasn't valid".
+        let text = catalogTools().dispatch(.getExercise(name: nil, id: nil)).text
+        #expect(text.contains("name"))
+        #expect(text.contains("id"))
+        #expect(text.contains("search_exercises"))
+        #expect(!text.contains("(id generic)"))
+    }
+
+    @Test func catalogReadsStayOutOfTheWhatChangedFeed() {
+        // The inspector's feed is what the conversation *changed*. A search changes nothing, so it
+        // belongs with the other pure reads, not with the mutations.
+        #expect(!AgentTools.Call.searchExercises(query: "bench", muscle: nil, equipment: nil,
+                                                 modality: nil, pattern: nil, tag: nil,
+                                                 level: nil).showsInActivityFeed)
+        #expect(!AgentTools.Call.getExercise(name: "deadlift", id: nil).showsInActivityFeed)
+        #expect(!AgentTools.Call.getWeekPlan.showsInActivityFeed)
+        // Mutations and Health retrieval still show: the athlete should see those.
+        #expect(AgentTools.Call.addBlock(name: "Strength", intent: nil).showsInActivityFeed)
+        #expect(AgentTools.Call.getSleep(nightsAgo: 0).showsInActivityFeed)
+    }
+
     @Test func catalogToolsAreReadOnly() {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
@@ -225,6 +248,13 @@ struct AgentToolsTests {
             units: [.load: .pounds],
             selectedMetrics: [.distance, .load]
         )))
+        // Fixing a draft means naming exercises, and the prompt tells the model to search before it
+        // adds one it's unsure of - refusing the catalog here would leave it guessing against the
+        // generic fallback. Both reads change nothing the scope guards.
+        #expect(service.permits(.searchExercises(query: "bike", muscle: nil, equipment: nil,
+                                                 modality: nil, pattern: nil, tag: nil, level: nil)))
+        #expect(service.permits(.getExercise(name: "Echo Bike", id: nil)))
+
         #expect(!service.permits(.setSleep(hours: 4)))
         #expect(!service.permits(.moveWorkout(workout: "AMRAP", toDay: "Friday")))
         #expect(!service.permits(.startWorkout))

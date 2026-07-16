@@ -129,15 +129,12 @@ final class ConversationService {
         return false   // tool rounds exhausted → transcript ends on a tool_result; roll it back
     }
 
-    /// Keep the inspector's live view in sync: refresh the plan snapshot, and log mutations (not
-    /// the automatic reads) to the activity feed.
+    /// Keep the inspector's live view in sync: refresh the plan snapshot, and log the calls worth
+    /// showing as "what changed" to the activity feed.
     private func record(_ call: AgentTools.Call, _ response: AgentTools.Response) {
         if let d = response.decision { latestDecision = d }
         if let p = response.plan { latestPlan = p }
-        switch call {
-        case .getToday, .explain, .getCurrentWorkout, .getWeekPlan, .explainModification: break   // pure reads — not "what changed"
-        default: toolActivity.append(ToolEvent(label: call.activityLabel))
-        }
+        if call.showsInActivityFeed { toolActivity.append(ToolEvent(label: call.activityLabel)) }
     }
 
     private func callFunction() async -> [[String: Any]]? {
@@ -161,12 +158,16 @@ final class ConversationService {
         }
     }
 
+    /// An allowlist, denying by default: a tool added later stays out of the import scope until someone
+    /// decides it belongs. The catalog reads are in because fixing a draft means naming exercises, and
+    /// a guessed name that isn't in the catalog logs against the generic placeholder - the exact failure
+    /// search_exercises exists to prevent. They read a static library and change nothing.
     func permits(_ call: AgentTools.Call) -> Bool {
         guard scope == .workoutImport else { return true }
         switch call {
         case .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
              .removeExercise, .updateSet, .getCurrentWorkout, .updateLoggingConfig,
-             .setMetricValue, .removeMetric:
+             .setMetricValue, .removeMetric, .searchExercises, .getExercise:
             return true
         default:
             return false

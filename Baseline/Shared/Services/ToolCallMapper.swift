@@ -93,9 +93,10 @@ enum ToolCallMapper {
                                     pattern: trimmedOrNil(input["pattern"]), tag: trimmedOrNil(input["tag"]),
                                     level: trimmedOrNil(input["level"]))
         case "get_exercise":
-            let name = trimmedOrNil(input["name"]), id = trimmedOrNil(input["id"])
-            guard name != nil || id != nil else { return nil }      // needs something to look up
-            return .getExercise(name: name, id: id)
+            // Needing a name or an id isn't checked here: a bare nil would reach the model as the
+            // generic "that tool call wasn't valid". AgentTools names the two parameters instead, so
+            // the model can retry - the same reason search_exercises leaves filter values to it.
+            return .getExercise(name: trimmedOrNil(input["name"]), id: trimmedOrNil(input["id"]))
         case "get_current_workout":
             return .getCurrentWorkout
         case "start_workout":
