@@ -17,6 +17,14 @@ struct PlanView: View {
     /// A scheduled workout the user chose to remove from inside its editor. The deletion runs on sheet
     /// dismissal (in `flushExecution`) so the alert/undo never races the dismissing execution sheet.
     @State private var queuedDeletionID: UUID?
+    /// Unfinished image imports, so a day whose import is still being reviewed shows a resume affordance
+    /// instead of silently losing the draft off-screen.
+    @State private var pendingImports: [WorkoutImportPendingSummary] = []
+    /// The day whose "Add to <day>" sheet is open, if any.
+    @State private var addContext: AddContext?
+    /// The option chosen inside the add sheet, run on its dismissal so the follow-on presentation (chat,
+    /// editor, import) never races the dismissing sheet.
+    @State private var pendingAdd: (date: Date, option: AddToDayOption)?
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -29,6 +37,7 @@ struct PlanView: View {
     struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
     struct DeleteTarget: Identifiable { let id = UUID(); let sw: ScheduledWorkout; let proposalID: UUID }
     struct ImportContext: Identifiable { let id = UUID(); let date: Date }
+    struct AddContext: Identifiable { let id = UUID(); let date: Date }
 
     private let cal = Calendar.planWeek
     private var today: Date { cal.startOfDay(for: Date()) }
@@ -58,7 +67,13 @@ struct PlanView: View {
             WorkoutView(onRequestDelete: { queuedDeletionID = ctx.id }).environment(ctx.store)
         }
         .sheet(isPresented: $showChat) { AskBaselineSheet() }
-        .fullScreenCover(item: $importContext) { context in
+        .sheet(item: $addContext, onDismiss: runPendingAdd) { context in
+            AddToDaySheet(title: addSheetTitle(for: context.date), templates: plan.templates()) { option in
+                pendingAdd = (context.date, option)
+                addContext = nil
+            }
+        }
+        .fullScreenCover(item: $importContext, onDismiss: { Task { await loadPendingImports() } }) { context in
             WorkoutImportView(suggestedDate: context.date) { scheduled in openExecution(scheduled) }
         }
         .alert("Delete workout?", isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), presenting: deleteTarget) { t in
@@ -76,6 +91,42 @@ struct PlanView: View {
             guard undoMessage != nil else { return }
             try? await Task.sleep(for: .seconds(4))
             undoMessage = nil
+        }
+        .task { await loadPendingImports() }
+    }
+
+    /// Refresh the unfinished-import snapshots that drive the per-day resume affordance. Delegates to the
+    /// coordinator so "what counts as reviewable" stays defined in exactly one place.
+    private func loadPendingImports() async {
+        pendingImports = await WorkoutImportCoordinator().pendingImports()
+    }
+
+    /// Human-friendly sheet title for the day being added to — "Today"/"Tomorrow" when close, else the weekday.
+    private func addSheetTitle(for date: Date) -> String {
+        if cal.isDateInToday(date) { return "Add to Today" }
+        if cal.isDateInTomorrow(date) { return "Add to Tomorrow" }
+        return "Add to \(date.formatted(.dateTime.weekday(.wide)))"
+    }
+
+    /// Runs the add-sheet choice after the sheet has finished dismissing, so the follow-on presentation
+    /// isn't dropped by SwiftUI for racing the outgoing sheet.
+    private func runPendingAdd() {
+        guard let pending = pendingAdd else { return }
+        pendingAdd = nil
+        switch pending.option {
+        case .buildWithBaseline: showChat = true
+        case .emptySession: addWorkout(on: pending.date)
+        case .template(let id): addFromTemplate(id, on: pending.date)
+        case .importImage: importContext = ImportContext(date: pending.date)
+        }
+    }
+
+    /// A parsed-and-waiting import scheduled for `date`, if any — matched on the draft's target day. Only
+    /// reviewable drafts surface on the Plan; an import still processing stays silent until it has content.
+    private func reviewableImport(for date: Date) -> WorkoutImportPendingSummary? {
+        pendingImports.first { summary in
+            guard summary.isReviewable, let scheduled = summary.scheduleDate else { return false }
+            return cal.isDate(scheduled, inSameDayAs: date)
         }
     }
 
@@ -182,9 +233,11 @@ struct PlanView: View {
                 HStack(alignment: .top, spacing: 10) {
                     dayDate(day.date)
                     VStack(alignment: .leading, spacing: 6) {
-                        if day.sessions.isEmpty {
-                            addWorkoutRow(on: day.date)
-                        } else {
+                        let pendingReview = reviewableImport(for: day.date)
+                        if let pendingReview {
+                            importIndicatorRow(pendingReview, on: day.date)
+                        }
+                        if !day.sessions.isEmpty {
                             ForEach(day.sessions) { sw in
                                 WorkoutSwipeActionRow(actionTitle: "Delete", systemImage: "trash", action: { handle(.delete, sw) }) {
                                     ScheduledWorkoutCard(
@@ -196,6 +249,8 @@ struct PlanView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .draggable(sw.id.uuidString)
                             }
+                        } else if pendingReview == nil {
+                            addWorkoutRow(on: day.date)
                         }
                     }
                 }
@@ -213,18 +268,44 @@ struct PlanView: View {
     }
 
     /// Empty-day affordance: a lightweight "+ Add workout" row (rest until you add). The enclosing day is
-    /// still a drop target, so a dragged workout can also land here. When templates exist, offer them.
-    @ViewBuilder private func addWorkoutRow(on date: Date) -> some View {
-        let templates = plan.templates()
-        Menu {
-            Button("Import from image", systemImage: "doc.viewfinder") { importContext = ImportContext(date: date) }
-            Button("Blank workout", systemImage: "plus.rectangle") { addWorkout(on: date) }
-            if !templates.isEmpty {
-                Menu("From template") {
-                    ForEach(templates) { t in Button(t.name) { addFromTemplate(t.id, on: date) } }
+    /// still a drop target, so a dragged workout can also land here. Tapping opens the per-day "Add to <day>"
+    /// sheet rather than an inline menu.
+    private func addWorkoutRow(on date: Date) -> some View {
+        Button { addContext = AddContext(date: date) } label: { addWorkoutLabel }.buttonStyle(.plain)
+    }
+
+    /// Surfaces a parsed-and-waiting image import on the day it targets, so a draft the user closed
+    /// mid-review is visible and resumable from the Plan rather than lost off-screen. Tapping reopens
+    /// import for the day, which resumes the same-day draft straight into review.
+    private func importIndicatorRow(_ summary: WorkoutImportPendingSummary, on date: Date) -> some View {
+        Button { importContext = ImportContext(date: date) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BaselineColor.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Import ready to review")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BaselineColor.textHi)
+                    Text("Tap to review and save")
+                        .font(.caption)
+                        .foregroundStyle(BaselineColor.textFaint)
                 }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textFaint)
             }
-        } label: { addWorkoutLabel }.buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(BaselineColor.accent.opacity(0.10))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BaselineColor.accent.opacity(0.35), lineWidth: 1))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the imported workout to review and save")
     }
 
     private var addWorkoutLabel: some View {
