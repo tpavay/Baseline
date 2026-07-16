@@ -84,6 +84,18 @@ enum ToolCallMapper {
                               reps: intOrNil(input["reps"]), load: doubleOrNil(input["load"]),
                               durationSeconds: intOrNil(input["duration_seconds"]),
                               distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]))
+        case "search_exercises":
+            // Every field is optional - an all-empty search is a valid "what do you have?" browse.
+            // Filter *values* aren't validated here: the taxonomy knows them, so ExerciseSearch parses
+            // them and an unknown one comes back as a correctable message instead of a bare rejection.
+            return .searchExercises(query: trimmedOrNil(input["query"]), muscle: trimmedOrNil(input["muscle"]),
+                                    equipment: trimmedOrNil(input["equipment"]), modality: trimmedOrNil(input["modality"]),
+                                    pattern: trimmedOrNil(input["pattern"]), tag: trimmedOrNil(input["tag"]),
+                                    level: trimmedOrNil(input["level"]))
+        case "get_exercise":
+            let name = trimmedOrNil(input["name"]), id = trimmedOrNil(input["id"])
+            guard name != nil || id != nil else { return nil }      // needs something to look up
+            return .getExercise(name: name, id: id)
         case "get_current_workout":
             return .getCurrentWorkout
         case "start_workout":
@@ -204,5 +216,11 @@ enum ToolCallMapper {
     private static func stringArrayOrNil(_ v: Any?) -> [String]? {
         if v == nil || v is NSNull { return nil }
         return v as? [String]
+    }
+    /// A non-blank string, or nil - models routinely send "" for an optional they meant to omit.
+    private static func trimmedOrNil(_ v: Any?) -> String? {
+        guard let s = v as? String else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 }

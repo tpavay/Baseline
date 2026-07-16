@@ -14,6 +14,103 @@ struct AgentToolsTests {
         DecisionEngine.Inputs(lnRMSSD: 5.0, sleepScore: 100, energy: 5, mood: 5, stress: 5, soreness: 5)
     }
 
+    // MARK: - Exercise catalog tools
+
+    private func catalogTools() -> AgentTools {
+        // The catalog is a global façade, so these need no workout/plan/health wiring.
+        AgentTools(store: TrainingContextStore(defaults: UserDefaults(suiteName: "cat-\(UUID().uuidString)")!),
+                   base: DecisionEngine.Inputs())
+    }
+
+    @Test func searchExercisesReturnsCompactRankedMatchesWithAnHonestTotal() {
+        let text = catalogTools().dispatch(.searchExercises(query: "bench", muscle: nil, equipment: nil,
+                                                            modality: nil, pattern: nil, tag: nil, level: nil)).text
+        #expect(text.localizedCaseInsensitiveContains("Bench Press"))
+        #expect(text.contains("bench_press"))          // the id the model needs for get_exercise
+        #expect(text.localizedCaseInsensitiveContains("match"))
+        // Compact rows carry the axes that let the model choose, and nothing more.
+        #expect(text.contains("- bench_press · Bench Press"))
+        #expect(text.localizedCaseInsensitiveContains("Barbell"))
+        #expect(text.localizedCaseInsensitiveContains("Resistance"))
+    }
+
+    @Test func searchExercisesWithNoParamsBrowsesTheLibraryAndStatesItsSize() {
+        let text = catalogTools().dispatch(.searchExercises(query: nil, muscle: nil, equipment: nil,
+                                                            modality: nil, pattern: nil, tag: nil, level: nil)).text
+        // The answer to "what exercises do you have?" must be a concrete number, never "no library".
+        #expect(text.contains("\(ExerciseCatalog.definitions.count)"))
+        #expect(text.localizedCaseInsensitiveContains("catalog"))
+        #expect(text.split(separator: "\n").count == ExerciseSearch.resultLimit + 1)   // header + rows
+    }
+
+    @Test func searchExercisesFiltersByMuscle() {
+        let text = catalogTools().dispatch(.searchExercises(query: nil, muscle: "quads", equipment: nil,
+                                                            modality: nil, pattern: nil, tag: nil, level: nil)).text
+        #expect(text.localizedCaseInsensitiveContains("Quadriceps"))   // echoes what it searched
+        #expect(text.contains("·"))
+    }
+
+    @Test func searchExercisesRejectsAnUnknownFilterWithTheValidValues() {
+        let text = catalogTools().dispatch(.searchExercises(query: nil, muscle: "banana", equipment: nil,
+                                                            modality: nil, pattern: nil, tag: nil, level: nil)).text
+        #expect(text.contains("banana"))
+        #expect(text.contains("quadriceps"))           // lists what it will accept, so the model recovers
+        #expect(!text.contains("·"))                   // and returns no matches
+    }
+
+    @Test func searchExercisesReportsAnEmptyResultHonestly() {
+        let text = catalogTools().dispatch(.searchExercises(query: "zzzznotamovement", muscle: nil, equipment: nil,
+                                                            modality: nil, pattern: nil, tag: nil, level: nil)).text
+        #expect(text.localizedCaseInsensitiveContains("no exercises"))
+        #expect(!text.contains("·"))
+    }
+
+    @Test func getExerciseReturnsFullDetailIncludingMusclesAndMetrics() {
+        let text = catalogTools().dispatch(.getExercise(name: "deadlift", id: nil)).text
+        #expect(text.hasPrefix("Deadlift (id deadlift)"))
+        #expect(text.localizedCaseInsensitiveContains("Primary muscles: Glutes"))
+        #expect(text.localizedCaseInsensitiveContains("Hamstrings"))
+        #expect(text.localizedCaseInsensitiveContains("Equipment: Barbell"))
+        #expect(text.localizedCaseInsensitiveContains("Movement pattern: Hinge"))
+        #expect(text.localizedCaseInsensitiveContains("Modality: Resistance"))
+        #expect(text.localizedCaseInsensitiveContains("Compound"))
+        #expect(text.localizedCaseInsensitiveContains("Powerlifting"))
+        // Metrics use the raw values the metric tools take, plus the defaults.
+        #expect(text.contains("Logs: reps, load, rpe"))
+        #expect(text.contains("defaults: reps, load, rpe"))
+    }
+
+    @Test func getExerciseResolvesByIDAndAlias() {
+        #expect(catalogTools().dispatch(.getExercise(name: nil, id: "bench_press")).text.hasPrefix("Bench Press"))
+        #expect(catalogTools().dispatch(.getExercise(name: "air squat", id: nil)).text.hasPrefix("Bodyweight Squat"))
+    }
+
+    @Test func getExerciseMissTellsTheModelToSearchRatherThanInvent() {
+        let text = catalogTools().dispatch(.getExercise(name: "zzzznotamovement", id: nil)).text
+        #expect(text.localizedCaseInsensitiveContains("isn't in Baseline's exercise catalog"))
+        #expect(text.contains("search_exercises"))
+        #expect(!text.contains("(id generic)"))        // never pass the generic fallback off as a real hit
+    }
+
+    @Test func catalogToolsAreReadOnly() {
+        let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
+        _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.searchExercises(query: "bench", muscle: nil, equipment: nil, modality: nil,
+                                        pattern: nil, tag: nil, level: nil))
+        _ = t.dispatch(.getExercise(name: "deadlift", id: nil))
+        #expect(wk.current?.title == "Push")
+        #expect(wk.current?.allExercises.isEmpty == true)   // searching never adds anything
+    }
+
+    @Test func theModelIsToldTheCatalogIsRetrievable() {
+        // The "look these up - nothing else" line is exhaustive; omitting the catalog would suppress it.
+        let summary = catalogTools().contextSummary()
+        #expect(summary.contains("search_exercises"))
+        #expect(summary.contains("\(ExerciseCatalog.definitions.count)-exercise catalog"))
+    }
+
     // MARK: - Workout editing tools
 
     @Test func workoutToolsEditThroughTheStore() {
