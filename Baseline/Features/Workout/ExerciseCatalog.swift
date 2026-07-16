@@ -138,14 +138,20 @@ struct ExerciseCatalogSnapshot: Sendable {
 
     /// Resolve casual language → a definition: exact name, then exact alias, then substring, else `generic`.
     func resolve(_ name: String, generic: ExerciseDefinition) -> ExerciseDefinition {
+        find(name) ?? generic
+    }
+
+    /// The same casual-language lookup as `resolve`, but nil when the catalog genuinely has no match.
+    /// Retrieval (`get_exercise`) needs to report a miss honestly; `resolve` must always yield something
+    /// to log against, so it layers the generic fallback on top of this.
+    func find(_ name: String) -> ExerciseDefinition? {
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !key.isEmpty else { return generic }
+        guard !key.isEmpty else { return nil }
         if let exact = byName[key] { return exact }
         if let alias = byAlias[key] { return alias }
-        if let fuzzy = definitions.first(where: { def in
+        return definitions.first { def in
             def.aliases.contains(where: { key.contains($0) || $0.contains(key) })
-        }) { return fuzzy }
-        return generic
+        }
     }
 }
 
@@ -174,6 +180,18 @@ enum ExerciseCatalog {
     /// Replace the live catalog with a fetched set. Thread-safe; the seed remains the compiled fallback.
     static func install(_ definitions: [ExerciseDefinition]) {
         live.withLock { $0 = ExerciseCatalogSnapshot(definitions) }
+    }
+
+    /// Search the live catalog (the assistant's `search_exercises`). Runs inside the lock against the
+    /// snapshot rather than over a copy of `definitions` - the catalog is ~900 entries and copying the
+    /// whole array per search would dwarf the search itself.
+    static func search(_ query: ExerciseSearch.Query) -> ExerciseSearch.Results {
+        live.withLock { ExerciseSearch.run(query, in: $0) }
+    }
+
+    /// One exercise by id or name (the assistant's `get_exercise`). Nil when the catalog has no match.
+    static func lookUp(name: String?, id: String?) -> ExerciseDefinition? {
+        live.withLock { ExerciseSearch.lookUp(name: name, id: id, in: $0) }
     }
 
     /// The bundled seed — the curated built-ins overlaid with their classifications, plus the imported Free
