@@ -26,10 +26,9 @@ struct TodayView: View {
     /// so no sleep row renders and nothing navigates to `SleepDetailView`.
     @State private var todaySleep: SleepDetailContext?
 
-    /// Apple Health evidence tiles: last night's asleep hours and yesterday's activity. Each is nil
-    /// (its tile hidden) until Health is connected and the day actually recorded data — never a
-    /// misleading zero. Loaded in `reassemble`.
-    @State private var sleepHours: Double?
+    /// Yesterday's Apple Health activity for the evidence tile — nil (tile hidden) until Health is
+    /// connected and the day recorded data, never a misleading zero. Loaded in `reassemble`. Sleep
+    /// and HRV tiles read their scores from `todaySleep` / the decision, not a separate load.
     @State private var yesterdayActivity: DayActivity?
 
     /// Live readiness formula, edited in Profile → sourced from the shared profile store.
@@ -138,18 +137,12 @@ struct TodayView: View {
 
     // MARK: - State 2/3 · plan first
 
+    /// Plan-first home. The evidence tiles (above) now carry sleep / HRV / activity and tap through to
+    /// their detail screens, so this stays lean: the plan, anything to avoid, and Ask Baseline.
     @ViewBuilder private func planFirst(_ live: LiveToday, showNumber: Bool) -> some View {
-        let d = live.decision
         planCard(live, showNumber: showNumber)
-        if !live.plan.why.isEmpty { whyCard(live.plan.why) }
         if !live.plan.avoid.isEmpty { avoidCard(live.plan.avoid) }
-        // Sleep row — present only when a canonical night exists for today (dormant → nil → no row).
-        TodaySleepRow(context: todaySleep)
-        if !showNumber { improveCertaintyCard(present: d.domains.map(\.domain)) }
         askBaselineBar
-        if readings.first != nil { lastReadingCard }
-        startButtons
-        if !readings.isEmpty { historyLink }
     }
 
     private func planCard(_ live: LiveToday, showNumber: Bool) -> some View {
@@ -178,18 +171,6 @@ struct TodayView: View {
         }
     }
 
-    private func whyCard(_ reasons: [String]) -> some View {
-        card {
-            Text("WHY").font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.textFaint)
-            ForEach(reasons, id: \.self) { r in
-                HStack(alignment: .top, spacing: 8) {
-                    Circle().fill(BaselineColor.textFaint).frame(width: 4, height: 4).padding(.top, 7)
-                    Text(r).font(.system(size: 14)).foregroundStyle(BaselineColor.textMid).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
     private func avoidCard(_ items: [String]) -> some View {
         card {
             Text("AVOID").font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.zoneAmber)
@@ -198,22 +179,6 @@ struct TodayView: View {
                     Circle().fill(BaselineColor.zoneAmber).frame(width: 4, height: 4).padding(.top, 7)
                     Text(r).font(.system(size: 14)).foregroundStyle(BaselineColor.textMid).fixedSize(horizontal: false, vertical: true)
                 }
-            }
-        }
-    }
-
-    /// The "HRV / Health are upgrades, not requirements" affordance — only shown until the evidence
-    /// base earns the number.
-    private func improveCertaintyCard(present: [DecisionEngine.Domain]) -> some View {
-        card {
-            Text("IMPROVE CERTAINTY").font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.textFaint)
-            Text("Add evidence and today's plan sharpens — with a number.")
-                .font(.system(size: 13)).foregroundStyle(BaselineColor.textMid).fixedSize(horizontal: false, vertical: true)
-            if !present.contains(.autonomic) {
-                evidenceRow(icon: "waveform.path.ecg", title: "Morning HRV scan", subtitle: "2:30 reading") { start(.morning) }
-            }
-            if !present.contains(.sleep) && !health.requested {
-                evidenceRow(icon: "heart.fill", title: "Connect Apple Health", subtitle: "Sleep & resting HR") { connectHealth() }
             }
         }
     }
@@ -227,27 +192,6 @@ struct TodayView: View {
                 .font(.system(size: 15, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder private var lastReadingCard: some View {
-        if let last = readings.first {
-            card {
-                Text("LAST READING").font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.accent)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(Int(last.rmssd.rounded()))").font(.system(size: 40, weight: .bold, design: .rounded)).foregroundStyle(BaselineColor.textHi)
-                    Text("ms HRV").font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
-                    Spacer()
-                }
-                HStack(spacing: 12) {
-                    Text("\(Int(last.meanHR.rounded())) bpm")
-                    Text("·")
-                    Text(last.kind.title)
-                    Text("·")
-                    Text(last.date, format: .relative(presentation: .named))
-                }
-                .font(.system(size: 13, weight: .medium)).foregroundStyle(BaselineColor.textMid)
-            }
-        }
     }
 
     private var askBaselineBar: some View {
@@ -307,45 +251,6 @@ struct TodayView: View {
         }
     }
 
-    private var startButtons: some View {
-        VStack(spacing: 12) {
-            startButton(.morning, filled: false)
-            startButton(.snapshot, filled: false)
-        }
-    }
-
-    private func startButton(_ type: ReadingType, filled: Bool) -> some View {
-        Button { start(type) } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(type.title).font(.system(size: 16, weight: .semibold))
-                    Text(type.blurb).font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(filled ? .black.opacity(0.6) : BaselineColor.textFaint)
-                }
-                Spacer()
-                Text(lengthLabel(for: type)).font(.system(size: 15, weight: .bold, design: .rounded))
-            }
-            .foregroundStyle(filled ? .black : BaselineColor.textHi)
-            .padding(.horizontal, 18).frame(height: 64).frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(filled ? BaselineColor.accent : BaselineColor.surface))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var historyLink: some View {
-        NavigationLink { ReadingHistoryView() } label: {
-            HStack {
-                Text("History").font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-                Spacer()
-                Text("\(readings.count)").font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
-                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(BaselineColor.textFaint)
-            }
-            .padding(.horizontal, 18).frame(height: 52).frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
-        }
-        .buttonStyle(.plain)
-    }
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10, content: content)
@@ -391,9 +296,8 @@ struct TodayView: View {
             todaySleep = nil
         }
 
-        // Apple Health evidence tiles — hours asleep last night + yesterday's activity. Both stay nil
-        // (tiles hidden) when Health is unavailable/unconnected or the day had no data.
-        sleepHours = await health.lastNightSleep()?.hours
+        // Yesterday's activity for the evidence tile — nil (tile hidden) when Health is
+        // unavailable/unconnected or the day had no recorded activity.
         if let a = await health.activitySummary(daysAgo: 1) {
             yesterdayActivity = DayActivity(kcal: a.activeEnergyKcal, minutes: a.exerciseMinutes)
         } else {
@@ -408,21 +312,40 @@ struct TodayView: View {
         readings.first.flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
     }
 
-    private var hasAnyTile: Bool { sleepHours != nil || todayReading != nil || yesterdayActivity != nil }
+    /// Sleep score (0–100) from today's canonical night, or nil when the Sleep Engine has none.
+    private var sleepScore: Int? { todaySleep?.analysis.score }
 
-    /// A compact, glanceable evidence row: Sleep · HRV · Activity. Each tile appears only when its
-    /// data exists, so the row is never padded with empty placeholders.
+    /// HRV on the same 0–100 frame as readiness: the autonomic domain's subscore from today's
+    /// decision (HRV vs. the personal baseline). Present only when a reading exists today.
+    private var hrvScore: Int? {
+        guard todayReading != nil else { return nil }
+        return live?.decision.domains.first { $0.domain == .autonomic }?.subscore
+    }
+
+    private var hasAnyTile: Bool { sleepScore != nil || hrvScore != nil || yesterdayActivity != nil }
+
+    /// A compact, glanceable evidence row: Sleep · HRV · Activity, each a 0–100 score (activity in its
+    /// own units). Each tile appears only when its data exists, and Sleep/HRV tap through to their
+    /// detail screens — so the old Sleep card, Last Reading, and reading buttons are no longer needed.
     @ViewBuilder private var evidenceTiles: some View {
         if hasAnyTile {
             HStack(spacing: 10) {
-                if let sleepHours {
-                    statTile(value: String(format: "%.1fh", sleepHours), label: "SLEEP", tint: BaselineColor.sleepCore)
+                if let ctx = todaySleep, let score = ctx.analysis.score {
+                    NavigationLink {
+                        SleepDetailView(night: ctx.night, analysis: ctx.analysis, decision: ctx.decision)
+                    } label: {
+                        statTile(value: "\(score)", label: "SLEEP", tint: BaselineColor.sleepCore)
+                    }
+                    .buttonStyle(.plain)
                 }
-                if let r = todayReading {
-                    statTile(value: "\(Int(r.rmssd.rounded()))", unit: "ms", label: "HRV TODAY", tint: BaselineColor.accent)
+                if let hrv = hrvScore {
+                    NavigationLink { ReadingHistoryView() } label: {
+                        statTile(value: "\(hrv)", label: "HRV", tint: BaselineColor.accent)
+                    }
+                    .buttonStyle(.plain)
                 }
                 if let a = yesterdayActivity {
-                    statTile(value: activityValue(a), label: "ACTIVE · YEST", tint: BaselineColor.zoneGreen)
+                    statTile(value: activityValue(a), label: "ACTIVITY", tint: BaselineColor.zoneGreen)
                 }
             }
         }
@@ -489,9 +412,6 @@ struct TodayView: View {
         type == .morning ? TimeInterval(settings.morningReadingDurationSeconds) : type.duration
     }
 
-    private func lengthLabel(for type: ReadingType) -> String {
-        type == .morning ? ReadingLength.label(settings.morningReadingDurationSeconds) : type.lengthLabel
-    }
 }
 
 /// Today's live decision + plan, assembled from current evidence + context.
