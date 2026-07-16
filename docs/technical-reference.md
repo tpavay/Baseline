@@ -34,7 +34,9 @@ Current zone implementation notes:
 Current catalog direction:
 - Base dataset: `free-exercise-db`.
 - Curated Baseline extension: HYROX stations, common functional movements, cardio modalities, mobility, warm-up, and chassis work.
-- The alias map is critical for import quality, especially for variants like RDL vs deadlift.
+- The alias map is critical for import quality, especially for variants like RDL vs deadlift - and it is exactly where the catalog is thinnest.
+  Coverage is curated-only: only the hand-written built-ins carry aliases, and all 873 `free-exercise-db` imports carry none, so "RDL" resolves to nothing and an imported movement is reachable by name alone.
+  Backfilling import aliases is a known gap; `importedExercisesAreFoundByNameSinceTheyCarryNoAliases` in `BaselineTests/ExerciseSearchTests.swift` pins the current state, so closing the gap is a deliberate change rather than an accident.
 - Content should remain hosted/versioned so adding exercises or guidance does not require an app release.
 
 Current logging categories:

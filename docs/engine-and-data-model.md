@@ -184,7 +184,8 @@ getCategoryHistory(category: cycling, dateRange: thisWeek)
   → Stationary Bike 18.4 mi · Outdoor Bike 27.1 mi · BikeErg 12.6 mi · Total 58.1 mi
 ```
 
-*Status: design. Today the model stores raw per-set fields (reps/load/duration/distance) with no definition catalog, selectable metrics, display units, categories, or aliases yet — those are the build sequence in `docs/technical-reference.md`.*
+*Status: the three layers above are built. The definition catalog, selectable metrics, display units, categories, and aliases all exist in `Baseline/Features/Workout/ExerciseCatalog.swift`, and the agent retrieves from the catalog rather than guessing names.
+History is queryable per identity (`PlanRepository.history(exerciseDefinitionID:limit:)`), but the metric/unit-scoped and per-category rollups sketched above remain design: they are the tail of the build sequence in `docs/technical-reference.md`, which also records the alias coverage caveat.*
 
 ## Lifecycle
 
