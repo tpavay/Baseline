@@ -190,6 +190,9 @@ struct WorkoutImportView: View {
     @State private var showDiscardConfirmation = false
     @State private var showStartOverConfirmation = false
     @State private var showSources = false
+    /// An unfinished import that belongs to another day; presented as a Resume / Start-new choice instead
+    /// of silently reappearing on this day.
+    @State private var pendingOtherDayImport: WorkoutImportPendingSummary?
     @AccessibilityFocusState private var focusTarget: FocusTarget?
 
     private let restoresPersistedImport: Bool
@@ -335,8 +338,8 @@ struct WorkoutImportView: View {
             case .background:
                 model.suspendForBackground()
             case .active:
-                if restoresPersistedImport, model.currentJob != nil {
-                    model.restore(catalog: workouts.allDefinitions)
+                if restoresPersistedImport, let job = model.currentJob {
+                    model.restore(jobID: job.id, catalog: workouts.allDefinitions)
                 }
             case .inactive:
                 break
@@ -344,9 +347,30 @@ struct WorkoutImportView: View {
                 break
             }
         }
+        .confirmationDialog(
+            "Unfinished import",
+            isPresented: Binding(
+                get: { pendingOtherDayImport != nil },
+                set: { if !$0 { pendingOtherDayImport = nil } }
+            ),
+            presenting: pendingOtherDayImport
+        ) { summary in
+            Button(resumeLabel(for: summary)) {
+                let jobID = summary.jobID
+                pendingOtherDayImport = nil
+                Task { await model.restore(jobID: jobID, catalog: workouts.allDefinitions).value }
+            }
+            Button("Start a new import") { pendingOtherDayImport = nil }
+            Button("Cancel", role: .cancel) {
+                pendingOtherDayImport = nil
+                dismiss()
+            }
+        } message: { summary in
+            Text(pendingImportMessage(for: summary))
+        }
         .task {
             if restoresPersistedImport {
-                await model.restore(catalog: workouts.allDefinitions).value
+                await resolvePendingImport()
             }
             prepareReviewStore(for: model.session.status)
             moveAccessibilityFocus(for: model.session.status)
@@ -409,6 +433,41 @@ struct WorkoutImportView: View {
             model.cancel()
             dismiss()
         }
+    }
+
+    /// Decide, on appear, how a persisted unfinished import relates to the day this screen was opened for.
+    /// Same day → resume silently. No target day (e.g. a non-day entry) → resume the most recent. A draft
+    /// for a *different* day → offer Resume / Start-new instead of silently reappearing here.
+    private func resolvePendingImport() async {
+        guard model.currentJob == nil else { return }
+        let pendings = await model.pendingImports()
+        switch PendingImportResolution.decide(
+            pendings: pendings,
+            targetDay: model.scheduleDate,
+            calendar: .planWeek
+        ) {
+        case .resume(let jobID):
+            await model.restore(jobID: jobID, catalog: workouts.allDefinitions).value
+        case .promptOther(let summary):
+            pendingOtherDayImport = summary
+        case .fresh:
+            break
+        }
+    }
+
+    private func resumeLabel(for summary: WorkoutImportPendingSummary) -> String {
+        guard let day = summary.scheduleDate else { return "Resume unfinished import" }
+        return "Resume \(day.formatted(.dateTime.weekday(.wide)))'s import"
+    }
+
+    private func pendingImportMessage(for summary: WorkoutImportPendingSummary) -> String {
+        let lead: String
+        if let day = summary.scheduleDate {
+            lead = "You have an unfinished import for \(day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))."
+        } else {
+            lead = "You have an unfinished import in progress."
+        }
+        return lead + " Resume it, or start a new import for this day."
     }
 
     private func moveAccessibilityFocus(for status: WorkoutImportStatus) {

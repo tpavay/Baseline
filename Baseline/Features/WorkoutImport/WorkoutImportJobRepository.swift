@@ -21,6 +21,7 @@ protocol WorkoutImportJobStoring: Sendable {
     func create(_ job: WorkoutImportJob) async throws
     func load(_ id: UUID) async throws -> WorkoutImportJob?
     func mostRecentActiveJob(now: Date) async throws -> WorkoutImportJob?
+    func activeJobs(now: Date) async throws -> [WorkoutImportJob]
     func save(_ job: WorkoutImportJob) async throws
     func writeSource(_ data: Data, jobID: UUID, pageIndex: Int) async throws -> String
     func writeImage(_ image: ImportedWorkoutImage, jobID: UUID, pageIndex: Int) async throws -> String
@@ -129,6 +130,22 @@ actor FileWorkoutImportJobRepository: WorkoutImportJobStoring {
             throw error
         }
         return nil
+    }
+
+    /// Every non-expired, schema-compatible job, most recently updated first. Incompatible or unreadable
+    /// manifests are skipped (day-scoped resume treats them as absent rather than failing the query).
+    func activeJobs(now: Date = Date()) -> [WorkoutImportJob] {
+        guard let directories = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var jobs: [WorkoutImportJob] = []
+        for directory in directories {
+            guard let id = UUID(uuidString: directory.lastPathComponent) else { continue }
+            if let job = try? load(id), job.expiresAt > now { jobs.append(job) }
+        }
+        return jobs.sorted { $0.lastUpdated > $1.lastUpdated }
     }
 
     func save(_ job: WorkoutImportJob) throws {

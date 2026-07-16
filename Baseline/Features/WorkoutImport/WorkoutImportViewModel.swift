@@ -7,6 +7,32 @@ enum WorkoutImportSaveOutcome: Equatable {
     case failed
 }
 
+/// How opening the import screen for a given day should treat any unfinished import(s).
+enum PendingImportResolution: Equatable {
+    /// Silently resume this job — it belongs to the day being opened (or the screen has no target day).
+    case resume(UUID)
+    /// Offer to resume this other-day draft or start fresh, rather than silently reusing it here.
+    case promptOther(WorkoutImportPendingSummary)
+    /// No unfinished import — start a fresh selection.
+    case fresh
+
+    /// Pure decision used on appear. `pendings` are most-recent-first.
+    static func decide(
+        pendings: [WorkoutImportPendingSummary],
+        targetDay: Date?,
+        calendar: Calendar
+    ) -> PendingImportResolution {
+        guard let mostRecent = pendings.first else { return .fresh }
+        guard let day = targetDay else { return .resume(mostRecent.jobID) }
+        if let sameDay = pendings.first(where: { summary in
+            summary.scheduleDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
+        }) {
+            return .resume(sameDay.jobID)
+        }
+        return .promptOther(mostRecent)
+    }
+}
+
 @MainActor
 @Observable
 final class WorkoutImportViewModel {
@@ -161,6 +187,7 @@ final class WorkoutImportViewModel {
             let result = await coordinator.start(
                 jobID: sessionID,
                 imageCount: imageCount,
+                scheduleDate: scheduleDate,
                 sourceItemIdentifiers: sourceItemIdentifiers,
                 catalog: catalog,
                 loadImage: loadImage,
@@ -258,6 +285,31 @@ final class WorkoutImportViewModel {
                 await self?.apply(job, generation: generation)
             }
             guard !Task.isCancelled, let restored else { return }
+            apply(restored, generation: generation)
+        }
+        task = nextTask
+        return nextTask
+    }
+
+    /// Unfinished imports, most recent first. Lets the view decide whether opening import for a day should
+    /// silently resume that day's draft or offer to resume another day's.
+    func pendingImports() async -> [WorkoutImportPendingSummary] {
+        await coordinator.pendingImports()
+    }
+
+    /// Resume a specific persisted import (day-scoped). Adopts the resumed job's day so a later save
+    /// schedules it back onto the day it belongs to.
+    @discardableResult
+    func restore(jobID: UUID, catalog: [ExerciseDefinition]) -> Task<Void, Never> {
+        guard task == nil else { return task! }
+        let generation = beginOperation(sessionID: jobID)
+        let nextTask = Task { [weak self] in
+            guard let self else { return }
+            let restored = await coordinator.restore(jobID: jobID, catalog: catalog) { [weak self] job in
+                await self?.apply(job, generation: generation)
+            }
+            guard !Task.isCancelled, let restored else { return }
+            if let day = restored.scheduleDate { scheduleDate = day }
             apply(restored, generation: generation)
         }
         task = nextTask

@@ -42,6 +42,7 @@ actor WorkoutImportCoordinator {
     func start(
         jobID: UUID = UUID(),
         imageCount: Int,
+        scheduleDate: Date? = nil,
         sourceItemIdentifiers: [String?] = [],
         catalog: [ExerciseDefinition],
         loadImage: @escaping @Sendable (Int) async throws -> Data,
@@ -51,6 +52,7 @@ actor WorkoutImportCoordinator {
         var job = WorkoutImportJob(
             id: jobID,
             expectedPageCount: imageCount,
+            scheduleDate: scheduleDate,
             sourceItemIdentifiers: sourceItemIdentifiers.isEmpty ? nil : sourceItemIdentifiers,
             startedAt: now,
             lastUpdated: now
@@ -87,16 +89,64 @@ actor WorkoutImportCoordinator {
         }
     }
 
+    /// Lightweight, side-effect-free listing of unfinished imports, most recently updated first. Used to
+    /// decide whether opening import for a given day should silently resume that day's draft or offer to
+    /// resume another day's draft. Never triggers handoff, polling, or fallback.
+    func pendingImports(now: Date = Date()) async -> [WorkoutImportPendingSummary] {
+        await repository.removeExpired(now: now)
+        let jobs = (try? await repository.activeJobs(now: now)) ?? []
+        return jobs.map { job in
+            WorkoutImportPendingSummary(
+                jobID: job.id,
+                scheduleDate: job.scheduleDate,
+                stage: job.stage,
+                isReviewable: job.stage == .reviewing
+                    && job.draft?.workout.allExercises.isEmpty == false
+            )
+        }
+    }
+
+    /// Resume a specific persisted import (day-scoped resume). Returns nil when the job is gone, expired,
+    /// or on an incompatible schema — the caller then falls through to a fresh import.
+    func restore(jobID: UUID, catalog: [ExerciseDefinition], progress: @escaping ProgressHandler) async -> WorkoutImportJob? {
+        await retryPendingCancellations()
+        await repository.removeExpired(now: Date())
+        guard let job = try? await repository.load(jobID), job.expiresAt > Date() else { return nil }
+        return await resume(job, catalog: catalog, progress: progress)
+    }
+
     func restoreLatest(catalog: [ExerciseDefinition], progress: @escaping ProgressHandler) async -> WorkoutImportJob? {
         do {
             await retryPendingCancellations()
             await repository.removeExpired(now: Date())
-            guard var job = try await repository.mostRecentActiveJob(now: Date()) else { return nil }
-            let hasInvalidReviewDraft = job.stage == .reviewing
-                && job.draft?.workout.allExercises.isEmpty != false
-            if !hasInvalidReviewDraft { await progress(job) }
-            switch job.stage {
-            case .waitingForHandoff, .processingSections:
+            guard let job = try await repository.mostRecentActiveJob(now: Date()) else { return nil }
+            return await resume(job, catalog: catalog, progress: progress)
+        } catch WorkoutImportJobRepositoryError.unsupportedSchema(let version, let jobID, _, _) {
+            Self.logger.error("Cannot restore workout import manifest schema \(version)")
+            var incompatible = WorkoutImportJob(id: jobID, stage: .failed)
+            incompatible.failure = .init(
+                stage: "local_restore",
+                reasonCode: "manifest_schema_incompatible",
+                isRetryable: false
+            )
+            await progress(incompatible)
+            return incompatible
+        } catch {
+            return nil
+        }
+    }
+
+    private func resume(
+        _ initialJob: WorkoutImportJob,
+        catalog: [ExerciseDefinition],
+        progress: @escaping ProgressHandler
+    ) async -> WorkoutImportJob {
+        var job = initialJob
+        let hasInvalidReviewDraft = job.stage == .reviewing
+            && job.draft?.workout.allExercises.isEmpty != false
+        if !hasInvalidReviewDraft { await progress(job) }
+        switch job.stage {
+        case .waitingForHandoff, .processingSections:
                 job = await handOffAndWait(job, catalog: catalog, progress: progress)
             case .reviewing:
                 if hasInvalidReviewDraft {
@@ -162,21 +212,8 @@ actor WorkoutImportCoordinator {
                         progress: progress
                     )
                 }
-            }
-            return job
-        } catch WorkoutImportJobRepositoryError.unsupportedSchema(let version, let jobID, _, _) {
-            Self.logger.error("Cannot restore workout import manifest schema \(version)")
-            var incompatible = WorkoutImportJob(id: jobID, stage: .failed)
-            incompatible.failure = .init(
-                stage: "local_restore",
-                reasonCode: "manifest_schema_incompatible",
-                isRetryable: false
-            )
-            await progress(incompatible)
-            return incompatible
-        } catch {
-            return nil
         }
+        return job
     }
 
     func reconcileMissingSources(

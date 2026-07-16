@@ -108,6 +108,40 @@ private final class RecordingWorkoutImportRemoteCallable: WorkoutImportRemoteCal
 
 @Suite("Workout import domain")
 struct WorkoutImportTests {
+    @Test func pendingImportResolutionScopesResumeToTheOpenedDay() {
+        let calendar = Calendar.planWeek
+        let tuesday = Date(timeIntervalSince1970: 1_700_000_000)
+        let wednesday = tuesday.addingTimeInterval(24 * 60 * 60)
+        let tuesdayDraft = WorkoutImportPendingSummary(
+            jobID: UUID(), scheduleDate: tuesday, stage: .reviewing, isReviewable: true
+        )
+        let wednesdayDraft = WorkoutImportPendingSummary(
+            jobID: UUID(), scheduleDate: wednesday, stage: .reviewing, isReviewable: true
+        )
+
+        // No unfinished import → fresh selection.
+        #expect(PendingImportResolution.decide(pendings: [], targetDay: wednesday, calendar: calendar) == .fresh)
+
+        // No target day (non-day entry) → resume the most recent.
+        #expect(
+            PendingImportResolution.decide(pendings: [tuesdayDraft], targetDay: nil, calendar: calendar)
+                == .resume(tuesdayDraft.jobID)
+        )
+
+        // A draft for the opened day → silently resume that one, not the newer other-day draft.
+        #expect(
+            PendingImportResolution.decide(
+                pendings: [wednesdayDraft, tuesdayDraft], targetDay: wednesday, calendar: calendar
+            ) == .resume(wednesdayDraft.jobID)
+        )
+
+        // Only another day's draft exists → prompt instead of silently reappearing here.
+        #expect(
+            PendingImportResolution.decide(pendings: [tuesdayDraft], targetDay: wednesday, calendar: calendar)
+                == .promptOther(tuesdayDraft)
+        )
+    }
+
     @Test func providerCatalogHintsKeepCanonicalIdentityAndBoundedAliases() {
         let catalog = ExerciseCatalog.definitions.filter { ["bike_erg", "echo_bike"].contains($0.id) }
 
@@ -1881,6 +1915,100 @@ struct WorkoutImportSourcePipelineTests {
 
 @Suite("Resumable workout import jobs")
 struct ResumableWorkoutImportJobTests {
+    @Test func scheduleDateRoundTripsThroughThePersistedManifest() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportScheduleDateTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileWorkoutImportJobRepository(root: root)
+        let day = Date(timeIntervalSince1970: 1_700_000_000)
+        let job = WorkoutImportJob(stage: .recognizingText, scheduleDate: day)
+        try await repository.create(job)
+
+        let reloaded = try #require(try await repository.load(job.id))
+        let restoredDay = try #require(reloaded.scheduleDate)
+        #expect(abs(restoredDay.timeIntervalSince1970 - day.timeIntervalSince1970) < 0.001)
+    }
+
+    @Test func activeJobsReturnsEveryUnexpiredJobMostRecentFirst() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportActiveJobsTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileWorkoutImportJobRepository(root: root)
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let older = WorkoutImportJob(
+            stage: .recognizingText,
+            startedAt: now.addingTimeInterval(-100), lastUpdated: now.addingTimeInterval(-100),
+            expiresAt: now.addingTimeInterval(1_000)
+        )
+        let newer = WorkoutImportJob(
+            stage: .recognizingText,
+            startedAt: now.addingTimeInterval(-10), lastUpdated: now.addingTimeInterval(-10),
+            expiresAt: now.addingTimeInterval(1_000)
+        )
+        let expired = WorkoutImportJob(
+            stage: .recognizingText,
+            startedAt: now.addingTimeInterval(-200), lastUpdated: now.addingTimeInterval(-200),
+            expiresAt: now.addingTimeInterval(-1)
+        )
+        try await repository.create(older)
+        try await repository.create(newer)
+        try await repository.create(expired)
+
+        let active = await repository.activeJobs(now: now)
+        #expect(active.map(\.id) == [newer.id, older.id])
+    }
+
+    @Test func pendingImportsSurfaceScheduleDateAndReviewability() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportPendingSummaryTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileWorkoutImportJobRepository(root: root)
+        let coordinator = WorkoutImportCoordinator(repository: repository)
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let day = Date(timeIntervalSince1970: 1_700_000_000)
+        let reviewable = WorkoutImportJob(
+            stage: .reviewing,
+            scheduleDate: day,
+            draft: WorkoutTemplateDraft(workout: Workout(
+                title: "Imported",
+                blocks: [WorkoutBlock(name: "Workout", exercises: [PlannedExercise(exerciseName: "Run", definitionId: "run")])]
+            )),
+            startedAt: now, lastUpdated: now,
+            expiresAt: now.addingTimeInterval(1_000)
+        )
+        try await repository.create(reviewable)
+
+        let summaries = await coordinator.pendingImports(now: now)
+        let summary = try #require(summaries.first)
+        #expect(summaries.count == 1)
+        #expect(summary.jobID == reviewable.id)
+        #expect(summary.isReviewable)
+        let scheduled = try #require(summary.scheduleDate)
+        #expect(abs(scheduled.timeIntervalSince1970 - day.timeIntervalSince1970) < 0.001)
+    }
+
+    @Test @MainActor func startingAnImportPersistsItsTargetDayOntoTheJob() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportStartScheduleDateTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileWorkoutImportJobRepository(root: root)
+        let day = Date(timeIntervalSince1970: 1_700_000_000)
+        let model = WorkoutImportViewModel(
+            scheduleDate: day,
+            normalizer: PassthroughWorkoutImageNormalizer(),
+            recognizer: IndexedWorkoutTextRecognizer(),
+            parser: RecordingWorkoutParser(),
+            repository: repository
+        )
+
+        await model.importImages([Data([1])], catalog: ExerciseCatalog.definitions).value
+        let jobID = model.session.id
+        let persisted = try #require(try await repository.load(jobID))
+        let scheduled = try #require(persisted.scheduleDate)
+        #expect(abs(scheduled.timeIntervalSince1970 - day.timeIntervalSince1970) < 0.001)
+        model.cancel()
+    }
+
     @Test func deterministicRecoveryBuildsAUsableDraftFromTheSharedFivePhotoFixture() throws {
         let bundle = Bundle(for: WorkoutImportTestsBundleMarker.self)
         let fixtureURL = try #require(bundle.url(
@@ -4360,6 +4488,9 @@ private actor GatedCreateWorkoutImportRepository: WorkoutImportJobStoring {
     func mostRecentActiveJob(now: Date) async throws -> WorkoutImportJob? {
         try await base.mostRecentActiveJob(now: now)
     }
+    func activeJobs(now: Date) async throws -> [WorkoutImportJob] {
+        try await base.activeJobs(now: now)
+    }
     func save(_ job: WorkoutImportJob) async throws { try await base.save(job) }
     func writeSource(_ data: Data, jobID: UUID, pageIndex: Int) async throws -> String {
         try await base.writeSource(data, jobID: jobID, pageIndex: pageIndex)
@@ -4392,6 +4523,9 @@ private actor FailingCancellationSaveWorkoutImportRepository: WorkoutImportJobSt
     func load(_ id: UUID) async throws -> WorkoutImportJob? { try await base.load(id) }
     func mostRecentActiveJob(now: Date) async throws -> WorkoutImportJob? {
         try await base.mostRecentActiveJob(now: now)
+    }
+    func activeJobs(now: Date) async throws -> [WorkoutImportJob] {
+        try await base.activeJobs(now: now)
     }
     func save(_ job: WorkoutImportJob) async throws { try await base.save(job) }
     func writeSource(_ data: Data, jobID: UUID, pageIndex: Int) async throws -> String {
@@ -4430,6 +4564,9 @@ private actor FailingReviewSaveWorkoutImportRepository: WorkoutImportJobStoring 
     func load(_ id: UUID) async throws -> WorkoutImportJob? { try await base.load(id) }
     func mostRecentActiveJob(now: Date) async throws -> WorkoutImportJob? {
         try await base.mostRecentActiveJob(now: now)
+    }
+    func activeJobs(now: Date) async throws -> [WorkoutImportJob] {
+        try await base.activeJobs(now: now)
     }
     func save(_ job: WorkoutImportJob) async throws {
         guard savesAreAllowed else { throw CocoaError(.fileWriteNoPermission) }

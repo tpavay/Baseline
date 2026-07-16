@@ -77,6 +77,15 @@ struct WorkoutImportSourceSection: Identifiable, Codable, Equatable, Sendable {
     var stage: WorkoutImportSectionStage = .pending
 }
 
+/// A side-effect-free snapshot of an unfinished import, used to decide day-scoped resume without
+/// loading the full job or triggering any pipeline work.
+struct WorkoutImportPendingSummary: Equatable, Sendable {
+    var jobID: UUID
+    var scheduleDate: Date?
+    var stage: WorkoutImportJobStage
+    var isReviewable: Bool
+}
+
 struct WorkoutImportServerProgress: Codable, Equatable, Sendable {
     var serverJobID: String
     var status: String
@@ -86,7 +95,7 @@ struct WorkoutImportServerProgress: Codable, Equatable, Sendable {
 }
 
 struct WorkoutImportJob: Identifiable, Codable, Equatable, Sendable {
-    static let schemaVersion = 3
+    static let schemaVersion = 4
     static let retentionInterval: TimeInterval = 24 * 60 * 60
 
     var schemaVersion: Int = Self.schemaVersion
@@ -95,6 +104,9 @@ struct WorkoutImportJob: Identifiable, Codable, Equatable, Sendable {
     var jobHash: String
     var stage: WorkoutImportJobStage
     var expectedPageCount: Int
+    /// The plan day this import was started for, so an unfinished draft only resumes on its own day and
+    /// never silently reappears when the user opens import for a different day. Nil for a non-day entry.
+    var scheduleDate: Date?
     /// Photos identifiers are best-effort reconciliation hints only. Import recovery never assumes
     /// PhotosPicker handles survive process loss.
     var sourceItemIdentifiers: [String?]?
@@ -117,6 +129,7 @@ struct WorkoutImportJob: Identifiable, Codable, Equatable, Sendable {
         jobHash: String = "",
         stage: WorkoutImportJobStage = .loadingImages,
         expectedPageCount: Int = 0,
+        scheduleDate: Date? = nil,
         sourceItemIdentifiers: [String?]? = nil,
         pages: [WorkoutImportSourcePage] = [],
         sections: [WorkoutImportSourceSection] = [],
@@ -136,6 +149,7 @@ struct WorkoutImportJob: Identifiable, Codable, Equatable, Sendable {
         self.jobHash = jobHash
         self.stage = stage
         self.expectedPageCount = expectedPageCount
+        self.scheduleDate = scheduleDate
         self.sourceItemIdentifiers = sourceItemIdentifiers
         self.pages = pages
         self.sections = sections
