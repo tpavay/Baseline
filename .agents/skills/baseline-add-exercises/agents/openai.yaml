@@ -1,4 +1,4 @@
 interface:
-  display_name: "Baseline Add Exercises"
-  short_description: "Add and publish Baseline exercise media"
-  default_prompt: "Use $baseline-add-exercises to add these exercise images to the Baseline catalog and publish them safely."
+  display_name: "Baseline Exercise Artwork & Catalog"
+  short_description: "Create, validate, and publish exercise artwork"
+  default_prompt: "Use $baseline-add-exercises to create extraction-safe exercise artwork prompts or add and publish supplied exercise media."
