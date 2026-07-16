@@ -2069,6 +2069,23 @@ test("raw reconciliation rejects laundering a standalone custom movement through
   }
 });
 
+test("raw reconciliation keeps a flagged movement line the provider kept as a note (not an exercise)", () => {
+  // Regression for docs/quality/evidence/workout-import-diagnosis-2026-07-15.md: a line the
+  // standalone-movement heuristic flags, but which the provider legitimately preserved as a note /
+  // group rather than an exercise (observedCount 0), must NOT hard-fail the section. Forcing an
+  // exercise here was the false positive that pushed every real, narrative-heavy import to the
+  // OCR-dump fallback. Over-splitting and wrong-named single exercises are still rejected (above).
+  const march = observation("march", "Zercher Sandbag March");
+  const assembled = assembleWorkoutImportIR(validIR([
+    record("block", "block", "", 0, { name: "Main" }, [march.id]),
+    record("notes", "group", "block", 0, { label: "Coach notes" }, [march.id]),
+  ]), new Set([march.id]), {
+    allowEmptyExercises: true,
+    fallbackObservations: [march],
+  });
+  assert.ok(assembled.blocks.length >= 1, "assembles the section instead of hard-failing");
+});
+
 test("raw reconciliation requires repeat groups and structured timed work prescriptions", () => {
   const repeat = observation("intervals", "6 Sets - Aerobic Intervals");
   assertValidation(() => assembleWorkoutImportIR(validIR([

@@ -3421,7 +3421,14 @@ function reconcileCatalogExerciseIdentities(
     const standaloneTokens = standaloneRequiredMovementTokens(observation.text, hints);
     const alternativeTokens = standaloneAlternativeMovementTokens(observation.text, hints);
     const observationIsCited = records.some((record) => sourceIDs(record).has(observation.id));
+    // Only enforce the standalone-movement shape when the provider actually built an exercise from
+    // this line. When it produced none (observedCount 0) the provider treated the line as a note /
+    // group / heading — the correct call for narrative and endurance content, and the false positive
+    // that was forcing every real import to the OCR-dump fallback (see
+    // docs/quality/evidence/workout-import-diagnosis-2026-07-15.md). Over-splitting (2+) and a single
+    // wrong-named exercise are still caught.
     const invalidStandalone = standaloneTokens !== undefined && observationIsCited &&
+      sourcedExercises.length >= 1 &&
       (sourcedExercises.length !== 1 ||
        !exerciseNameMatchesCustomMovement(sourcedNames[0] ?? "", standaloneTokens));
     const sharedChoice = sourcedExercises.length > 0
