@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Baseline — Exercise Taxonomy (reworked)</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --base: #0c0a10; --surface: #1c1822; --amethyst: #33203e; --accent: #9b6dff;
+      --hi: #f3f0f8; --mid: #9b94a8; --faint: #6a6478; --line: #272231;
+      --green: #34d27b; --amber: #f5a623; --red: #ff5247; --blue: #5b9dff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #08070b; color: var(--hi); font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.5; }
+    .mono { font-family: "SFMono-Regular", "Roboto Mono", ui-monospace, monospace; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 34px 26px 90px; }
+    header.top { border-bottom: 1px solid var(--line); padding-bottom: 22px; }
+    .eyebrow { color: var(--accent); font: 600 11px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .13em; text-transform: uppercase; margin: 0 0 9px; }
+    h1 { font-size: clamp(24px, 3.3vw, 36px); line-height: 1.1; margin: 0; }
+    header.top p { color: var(--mid); margin: 12px 0 0; max-width: 720px; }
+    .pill { display: inline-block; border: 1px solid rgba(245,166,35,.4); color: var(--amber); background: rgba(245,166,35,.08); border-radius: 999px; padding: 7px 12px; font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; margin-top: 16px; }
+    section { margin-top: 42px; }
+    h2 { font-size: 21px; margin: 0 0 5px; display: flex; align-items: baseline; gap: 11px; }
+    h2 .n { color: var(--accent); font: 700 13px "SFMono-Regular", ui-monospace, monospace; }
+    h2 + .lede { color: var(--mid); margin: 0 0 18px; max-width: 740px; }
+    h3 { font-size: 15px; margin: 22px 0 10px; }
+    p { margin: 0 0 12px; }
+    a { color: var(--accent); }
+    b.hi { color: var(--hi); }
+    .callout { border-left: 2px solid var(--accent); padding: 6px 0 6px 15px; margin: 16px 0; color: var(--mid); }
+    .callout b { color: var(--hi); }
+    .callout.warn { border-color: var(--amber); }
+    .flags { display: grid; gap: 9px; }
+    .flag { border: 1px solid var(--line); border-radius: 11px; background: rgba(28,24,34,.5); padding: 12px 14px; display: grid; grid-template-columns: 22px 1fr; gap: 11px; }
+    .flag .x { color: var(--red); font-weight: 700; }
+    .flag b { color: var(--hi); } .flag span { color: var(--mid); font-size: 13px; }
+    .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; }
+    table { border-collapse: collapse; width: 100%; min-width: 660px; font-size: 13px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .07em; text-transform: uppercase; background: rgba(28,24,34,.6); }
+    td b { color: var(--hi); } td .m { color: var(--mid); } td .none { color: var(--faint); font-style: italic; }
+    tr:last-child td { border-bottom: 0; }
+    .chip { display: inline-block; border-radius: 6px; padding: 2px 7px; font-size: 11px; margin: 2px 3px 2px 0; white-space: nowrap; }
+    .chip.eq { background: rgba(91,157,255,.12); color: var(--blue); }
+    .chip.pat { background: rgba(52,210,123,.12); color: var(--green); }
+    .chip.tag { background: rgba(245,166,35,.12); color: var(--amber); }
+    .chip.mus { background: rgba(155,109,255,.12); color: var(--accent); }
+    .chip.mech { background: rgba(255,255,255,.06); color: var(--mid); }
+    .axes { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 11px; }
+    .axis { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: rgba(28,24,34,.5); }
+    .axis.intent { border-color: rgba(245,166,35,.4); background: rgba(245,166,35,.05); }
+    .axis .t { font: 700 9px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .09em; padding: 2px 6px; border-radius: 5px; }
+    .t.have { color: var(--blue); border: 1px solid rgba(91,157,255,.4); }
+    .t.new { color: var(--accent); border: 1px solid rgba(155,109,255,.4); }
+    .t.not { color: var(--amber); border: 1px solid rgba(245,166,35,.4); }
+    .axis h4 { margin: 9px 0 5px; font-size: 15px; }
+    .axis p { color: var(--mid); font-size: 12.5px; margin: 0; }
+    .axis .ex { color: var(--faint); font-size: 11.5px; margin-top: 8px; }
+    .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .vs .col { border: 1px solid var(--line); border-radius: 12px; padding: 14px 15px; background: rgba(28,24,34,.5); }
+    .vs h4 { margin: 0 0 8px; font-size: 14px; } .vs .col p { color: var(--mid); font-size: 13px; margin: 0 0 8px; }
+    .vs ul { margin: 4px 0 0; padding-left: 17px; } .vs li { font-size: 12.5px; margin-bottom: 5px; }
+    .mlist { display: flex; flex-wrap: wrap; gap: 6px; }
+    .muscle { border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; font-size: 12px; color: var(--mid); background: rgba(28,24,34,.5); }
+    .muscle.changed { border-color: rgba(52,210,123,.45); color: var(--green); background: rgba(52,210,123,.07); }
+    .muscle.watch { border-color: rgba(245,166,35,.4); color: var(--amber); background: rgba(245,166,35,.06); }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0 0; font-size: 11px; color: var(--faint); }
+    .legend b { color: var(--green); } .legend .w b { color: var(--amber); }
+    .setlist { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; }
+    .setlist .v { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12px; color: var(--mid); background: rgba(28,24,34,.5); }
+    .setlist .v.new { border-color: rgba(155,109,255,.4); color: var(--accent); }
+    .phase { border: 1px solid var(--line); border-radius: 12px; background: rgba(28,24,34,.5); padding: 14px 16px; margin-bottom: 10px; display: grid; grid-template-columns: 30px 1fr; gap: 12px; }
+    .phase .num { width: 30px; height: 30px; border-radius: 8px; background: rgba(155,109,255,.14); color: var(--accent); display: grid; place-items: center; font: 700 13px "SFMono-Regular", ui-monospace, monospace; }
+    .phase h4 { margin: 3px 0 5px; font-size: 15px; } .phase p { margin: 0; color: var(--mid); font-size: 13px; }
+    .phase .files { margin-top: 7px; font: 500 11px "SFMono-Regular", ui-monospace, monospace; color: var(--faint); }
+    .risk { border: 1px solid rgba(245,166,35,.3); border-radius: 11px; background: rgba(245,166,35,.05); padding: 13px 15px; margin-bottom: 10px; }
+    .risk b { color: var(--amber); }
+    .q { border: 1px solid rgba(155,109,255,.3); border-radius: 11px; background: rgba(51,32,62,.3); padding: 13px 15px; margin-bottom: 10px; }
+    .q b { color: var(--hi); } .q p { color: var(--mid); font-size: 13px; margin: 5px 0 0; }
+    .src { color: var(--faint); font-size: 12px; margin-top: 14px; }
+    .src a { color: var(--mid); }
+    @media (max-width: 680px) { .axes, .vs { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <p class="eyebrow">Baseline · exercise taxonomy — v2 (reworked)</p>
+      <h1>Rethinking the model so it works in every case.</h1>
+      <p>You were right to push back. This version fixes the category muddle, separates <b class="hi">intent</b> from the exercise entirely, adds the axis every real database has and we were missing (<b class="hi">equipment</b>), and is grounded in how the open exercise databases actually model this.</p>
+      <span class="pill">PLAN v2 · NOT CODE</span>
+    </header>
+
+    <!-- 01 WHAT YOU FLAGGED -->
+    <section>
+      <h2><span class="n">01</span> What you flagged — and the principle behind it</h2>
+      <p class="lede">Three problems, one root cause: my first cut mixed together things that are actually independent.</p>
+      <div class="flags">
+        <div class="flag"><span class="x">✕</span><div><b>"Category vs tags — what's the difference?"</b><br><span>Fair — my "Category" (cycling/running/erg/strength/carry…) was secretly doing three jobs at once: equipment, movement, and how-you-log. That's why it blurred into "tags."</span></div></div>
+        <div class="flag"><span class="x">✕</span><div><b>"What if they squat for hypertrophy, not strength?"</b><br><span>This is the big one. <b class="hi">Strength vs hypertrophy is not a property of the exercise</b> — it's how you program it (sets × reps × load × RPE), which Baseline already stores on the prescription. So "strength" never belonged on the exercise.</span></div></div>
+        <div class="flag"><span class="x">✕</span><div><b>"Sled push is not a carry."</b><br><span>Correct. It got mis-slotted because the old category forced one bucket. Under clean axes: equipment = sled, pattern = push/drive, muscles = quads/glutes. No "carry."</span></div></div>
+      </div>
+      <div class="callout warn">
+        <b>The principle:</b> an exercise definition describes only what is <i>intrinsic and permanent</i> about the movement — what it works, how the body does it, what gear it needs. Everything about <i>why</i> or <i>how hard</i> (strength, hypertrophy, endurance, a specific session) is <b>programming</b>, and lives on the prescription, not the exercise. Keep those two worlds apart and the whole thing works in every case.
+      </div>
+    </section>
+
+    <!-- 02 RESEARCH -->
+    <section>
+      <h2><span class="n">02</span> How the established databases model it</h2>
+      <p class="lede">You asked me to look it up. Here's the consensus across the open datasets and ExRx — they're remarkably aligned, and two findings directly shape our design.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Source</th><th>Axes they store</th></tr></thead>
+          <tbody>
+            <tr><td><b>Free Exercise DB</b><br><span class="m" style="font-size:11px;">800+ exercises, the open standard</span></td>
+              <td class="m"><b>muscles</b> (primary/secondary) · <b>equipment</b> · <b>force</b> (push/pull/static) · <b>mechanic</b> (compound/isolation) · <b>level</b> (beginner→expert) · <b>category</b> (strength/cardio/stretching/plyometrics/powerlifting/strongman/olympic)</td></tr>
+            <tr><td><b>wger</b><br><span class="m" style="font-size:11px;">open-source, popular</span></td>
+              <td class="m"><b>muscles</b> (primary/secondary) · <b>equipment</b> · <b>category</b> (a muscle-region / discipline mix)</td></tr>
+            <tr><td><b>ExRx.net</b><br><span class="m" style="font-size:11px;">the reference for classification</span></td>
+              <td class="m"><b>muscles</b> · <b>utility</b> (basic/auxiliary) · <b>mechanic</b> (compound/isolation) · <b>force</b> (push/pull/static)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Two findings that shape our model</h3>
+      <p>1. <b class="hi">Not one of them stores training intent.</b> There is no "hypertrophy vs strength" field anywhere — because it's programming, not classification. (When the Free DB says <span class="mono">category: "strength"</span> it means "resistance training," as opposed to cardio/stretching — not "training for strength.") This is your hypertrophy point, confirmed by every source.</p>
+      <p>2. <b class="hi">Their single "category" field is itself a muddle</b> — it crams modality (cardio, stretching), discipline (powerlifting, strongman, olympic), and method (plyometrics) into one enum. Baseline can be <i>cleaner than the standard</i> by splitting those into separate, honest axes.</p>
+      <div class="callout"><b>Bottom line:</b> the durable, universal axes are <b>muscles + equipment + force + mechanic</b>. We adopt those, upgrade "force" to a richer movement-pattern axis, and replace the muddled "category" with a clean split of <b>how-you-log</b> (already have) and <b>discipline tags</b>.</div>
+      <p class="src">Sources:
+        <a href="https://github.com/yuhonas/free-exercise-db">Free Exercise DB (schema)</a> ·
+        <a href="https://wger.de/en/software/api">wger REST API</a> ·
+        <a href="https://exrx.net/WeightTraining/Glossary">ExRx classification glossary</a>
+      </p>
+    </section>
+
+    <!-- 02a STRAVA -->
+    <section>
+      <h2><span class="n">★</span> How Strava does it — and they just shipped muscle maps</h2>
+      <p class="lede">Good call. Two things stand out, both backing this direction — and one is brand new (Strava's May 2026 strength overhaul).</p>
+      <div class="vs">
+        <div class="col">
+          <h4>Activity-level "sport types" (~50)</h4>
+          <p>Strava labels a whole activity with one sport type — Run, Ride, Swim, WeightTraining, Crossfit, HIIT… and notably <b class="hi">Elliptical, StairStepper, Rowing are first-class</b> (with Ride / EBikeRide / VirtualRide as a cycling family). That's the coarse cousin of our <b>modality</b> + specific cardio equipment — and it confirms naming cardio machines specifically instead of "machine."</p>
+        </div>
+        <div class="col">
+          <h4>Muscle maps (new, May 2026)</h4>
+          <p>Every strength activity now <b class="hi">auto-generates a front + back muscle map</b> from the exercises performed, shown <i>in place of the route map</i>, alongside a sets/reps/weight log. That's exactly our §09 payoff — and a strong hint for <b>where it lives</b>.</p>
+        </div>
+      </div>
+      <div class="callout"><b>Where we differ (in our favor):</b> Strava tags cardio at the <i>activity</i> level (one sport type per session) and only drills into exercises for strength. Baseline is exercise-level throughout, with muscles + <b>pattern + equipment</b> per movement — a superset that produces Strava's muscle map <i>and</i> the push/pull balance and "biked this week" analytics Strava can't.</div>
+      <p class="src">Sources:
+        <a href="https://press.strava.com/articles/strava-overhauls-strength-experience-with-expanded-partner-ecosystem-new-workout-log-and-muscle-maps">Strava strength overhaul + muscle maps</a> ·
+        <a href="https://support.strava.com/hc/en-us/articles/216919407-Supported-Sport-Types-on-Strava">Strava supported sport types</a>
+      </p>
+    </section>
+
+    <!-- 02b SEEDING QUESTION -->
+    <section>
+      <h2><span class="n">★</span> Your question — seed the catalog from the Free Exercise DB, with our own images?</h2>
+      <p class="lede">Short answer: <b class="hi">yes, and it's a good idea.</b> You get 800+ exercises and a consistent taxonomy for free, and the branding stays yours because the images are yours.</p>
+      <div class="vs">
+        <div class="col">
+          <h4 style="color:var(--green);">✓ The data is genuinely free</h4>
+          <p>Released under <b class="hi">The Unlicense</b> — public domain. Use, modify, rebrand, ship commercially, <i>no attribution required</i>. We'd remap it into Baseline's richer model, not copy it verbatim.</p>
+        </div>
+        <div class="col">
+          <h4 style="color:var(--amber);">⚠ Don't ship their images — you weren't going to</h4>
+          <p>The dataset's <i>image</i> licensing is undocumented, so their images are off-limits. But your plan is <b class="hi">Baseline's own branded artwork</b> — which sidesteps that entirely and keeps every screen on-brand.</p>
+        </div>
+      </div>
+      <h3>How it'd work</h3>
+      <ol style="margin:0;padding-left:20px;color:var(--mid);font-size:13.5px;">
+        <li style="margin-bottom:7px;"><b class="hi">Ingest</b> the public-domain JSON as a seed corpus.</li>
+        <li style="margin-bottom:7px;"><b class="hi">Map</b> their fields into our model — a one-time mapping layer: their 17 muscles → our 22 (we <i>add</i> obliques / hip flexors / split delts), their coarse push/pull "force" → our patterns, their muddled "category" → our modality + tags. Lossy in our favor (we're richer), so expect an enrichment pass.</li>
+        <li style="margin-bottom:7px;"><b class="hi">Attach Baseline media</b> where it exists; fall back to text/glyph where it doesn't — the catalog is already media-optional, and the <span class="mono">baseline-add-exercises</span> pipeline (normalize → thumbnails → Storage → manifest) already handles branded art.</li>
+      </ol>
+      <div class="callout warn"><b>The honest catch:</b> two real efforts, both incremental — (1) <b>curate, don't dump</b> all 800 (many are niche/duplicative; bloat hurts search &amp; import matching), and (2) <b>branded artwork for hundreds of exercises is a big art lift</b>, so ship media progressively behind the text/glyph fallback rather than gating the catalog on it. The taxonomy work in this plan is exactly what makes a clean import possible.</div>
+    </section>
+
+    <!-- 03 THE REWORKED MODEL -->
+    <section>
+      <h2><span class="n">03</span> The reworked Baseline model</h2>
+      <p class="lede">A handful of independent axes describe the exercise. Intent is deliberately <i>not</i> among them.</p>
+      <div class="axes">
+        <div class="axis"><span class="t new">NEW</span><h4>Muscles — primary / secondary</h4><p>What it works. Powers the body heatmap. Optional (cardio has none).</p><p class="ex mono">Quadriceps, Glutes … (22 values)</p></div>
+        <div class="axis"><span class="t new">NEW</span><h4>Equipment</h4><p>What gear it needs. The axis every DB has and we lacked — drives "what can I do with a kettlebell," substitutions, and import matching.</p><p class="ex mono">barbell · dumbbell · kettlebell · machine · sled · erg …</p></div>
+        <div class="axis"><span class="t new">NEW</span><h4>Movement pattern</h4><p>How the body organizes the effort — a richer replacement for the DBs' push/pull "force." <b class="hi">1–2 per exercise</b> (a thruster is squat + push).</p><p class="ex mono">squat · hinge · lunge · push · pull · carry · rotation · gait · hold</p></div>
+        <div class="axis"><span class="t new">NEW</span><h4>Mechanic — compound / isolation</h4><p>Standard, cheap, useful ("enough compound work?"). Straight from ExRx / Free DB.</p><p class="ex mono">compound · isolation</p></div>
+        <div class="axis"><span class="t new">NEW</span><h4>Level</h4><p>Beginner / intermediate / expert — <b class="hi">inherited from the seed DB</b>, not hand-graded. Fuels "suggest me something easier" later.</p><p class="ex mono">beginner · intermediate · expert</p></div>
+        <div class="axis"><span class="t new">NEW</span><h4>Modality</h4><p>What <i>kind</i> of training it is — one small explicit field so <b class="hi">cardio is first-class and totalable</b>, not guessed.</p><p class="ex mono">resistance · cardio · hold · mobility</p></div>
+        <div class="axis"><span class="t have">HAVE</span><h4>Logging metrics (what you record)</h4><p>Already modeled as <span class="mono">supported</span> / <span class="mono">defaults</span> metrics. Says <i>what</i> you log; modality says what kind it is.</p><p class="ex mono">reps, load · duration, distance, pace, power</p></div>
+        <div class="axis"><span class="t new">NEW</span><h4>Discipline tags</h4><p>Cross-cutting, non-exclusive labels. What the muddled "category" was reaching for. <b>HYROX lives here.</b></p><p class="ex mono">HYROX · Olympic · Calisthenics · Mobility · Plyometric</p></div>
+      </div>
+      <div class="axis intent" style="margin-top:11px;"><span class="t not">NOT ON THE EXERCISE</span><h4>Intent — strength / hypertrophy / endurance / power</h4><p style="color:var(--mid);font-size:13px;">Expressed by the <b class="hi">prescription</b> (sets × reps × load × RPE × tempo × rest), which Baseline already stores on the workout. A back squat at 5×3 @ 90% is strength; 4×12 @ 65% is hypertrophy — <i>same exercise, same muscles, same everything above.</i></p></div>
+    </section>
+
+    <!-- 04 CATEGORY VS TAGS -->
+    <section>
+      <h2><span class="n">04</span> "Category vs tags," resolved</h2>
+      <p class="lede">The honest answer to your confusion: <b>we delete the vague "category."</b> What it was trying to say splits cleanly, and only one piece is "tags."</p>
+      <div class="vs">
+        <div class="col">
+          <h4>Modality — <span class="mono" style="color:var(--blue);">one small explicit field</span></h4>
+          <p>What <i>kind</i> of training it is. Set on each exercise (mapped from the DB's category on import), so cardio is first-class and <b>totalable</b> — not guessed.</p>
+          <ul>
+            <li><b>Resistance</b> — reps/load work</li>
+            <li><b>Cardio</b> — bike, run, row, swim, elliptical, stairs…</li>
+            <li><b>Hold / isometric</b> · <b>Mobility</b></li>
+          </ul>
+        </div>
+        <div class="col">
+          <h4>Tags — <span class="mono" style="color:var(--amber);">cross-cutting, chosen</span></h4>
+          <p>What discipline or community an exercise belongs to. <b>Non-exclusive</b> (an exercise can be several), and never about mechanics or measurement.</p>
+          <ul>
+            <li><b>HYROX</b> — spans running, erg, sled, wall balls…</li>
+            <li>Olympic weightlifting, Calisthenics, Mobility…</li>
+            <li>You filter/collect by these; they don't change the metrics.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout"><b>Rule of thumb:</b> if it changes <i>what you log or how the body moves</i>, it's an intrinsic axis (equipment / pattern / metrics). If it's a <i>label for grouping</i> that a marketer or coach would use, it's a tag.</div>
+    </section>
+
+    <!-- 05 FULL CATALOG -->
+    <section>
+      <h2><span class="n">05</span> The full catalog — all 51, classified</h2>
+      <p class="lede">You have <b class="hi">51 exercises</b> today (+ a generic fallback for anything unmatched). Here's every one under the new model — <b>11 cardio · 38 resistance · 2 hold</b>. This <i>is</i> the backfill draft: annotate any row that looks off (secondary muscles omitted here for scan; they'd be filled in code).</p>
+      <div class="scroll">
+        <table style="min-width:840px;font-size:12px;">
+          <thead><tr><th>Exercise</th><th>Equipment</th><th>Pattern</th><th>Mech</th><th>Primary muscles</th><th>Tags</th><th>Level</th></tr></thead>
+          <tbody>
+            <tr><td colspan="7" style="background:rgba(91,157,255,.1);color:var(--blue);font:700 10px 'SFMono-Regular',ui-monospace,monospace;letter-spacing:.1em;">CARDIO · 11 · logs duration/distance/pace → feeds "cardio minutes/week"</td></tr>
+            <tr><td><b>Stationary Bike</b></td><td class="m">bike</td><td class="none">—</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Outdoor Bike</b></td><td class="m">bike</td><td class="none">—</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>BikeErg</b></td><td class="m">bike</td><td class="none">—</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Echo Bike</b></td><td class="m">bike</td><td class="none">—</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Elliptical</b></td><td class="m">elliptical</td><td class="m">gait</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Run</b></td><td class="m">none</td><td class="m">gait</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Treadmill Run</b></td><td class="m">treadmill</td><td class="m">gait</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Swim</b></td><td class="m">none</td><td class="none">—</td><td class="none">—</td><td class="none">— systemic</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>SkiErg</b></td><td class="m">ski erg</td><td class="m">pull · hinge</td><td class="none">—</td><td class="m">Lats, Upper back</td><td class="m">HYROX</td><td class="m">beginner</td></tr>
+            <tr><td><b>Row</b></td><td class="m">rower</td><td class="m">hinge · pull</td><td class="none">—</td><td class="m">Lats, Upper back, Hamstrings</td><td class="m">HYROX</td><td class="m">beginner</td></tr>
+            <tr><td><b>Stair Stepper</b></td><td class="m">stair stepper</td><td class="m">gait</td><td class="none">—</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">beginner</td></tr>
+
+            <tr><td colspan="7" style="background:rgba(155,109,255,.1);color:var(--accent);font:700 10px 'SFMono-Regular',ui-monospace,monospace;letter-spacing:.1em;">RESISTANCE · 38 · logs reps/load → feeds muscle heatmap + pattern balance</td></tr>
+            <tr><td><b>Deadlift</b></td><td class="m">barbell</td><td class="m">hinge</td><td class="m">compound</td><td class="m">Glutes, Hamstrings, Lower back</td><td class="m">Powerlifting</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Barbell Back Squat</b></td><td class="m">barbell</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="m">Powerlifting</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Barbell Front Squat</b></td><td class="m">barbell</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Barbell Box Squat</b></td><td class="m">barbell</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="m">Powerlifting</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Bench Press</b></td><td class="m">barbell</td><td class="m">push</td><td class="m">compound</td><td class="m">Chest, Triceps, Front delts</td><td class="m">Powerlifting</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Dumbbell Bench Press</b></td><td class="m">dumbbell</td><td class="m">push</td><td class="m">compound</td><td class="m">Chest, Triceps, Front delts</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Dual Dumbbell Push Press</b></td><td class="m">dumbbell</td><td class="m">push</td><td class="m">compound</td><td class="m">Front delts, Triceps</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Barbell Overhead Press</b></td><td class="m">barbell</td><td class="m">push</td><td class="m">compound</td><td class="m">Front delts, Triceps</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Bodyweight Squat</b></td><td class="m">bodyweight</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="m">Calisthenics</td><td class="m">beginner</td></tr>
+            <tr><td><b>Jump Squat</b></td><td class="m">bodyweight</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes, Calves</td><td class="m">Plyometric</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Push-Up</b></td><td class="m">bodyweight</td><td class="m">push</td><td class="m">compound</td><td class="m">Chest, Triceps, Front delts</td><td class="m">Calisthenics</td><td class="m">beginner</td></tr>
+            <tr><td><b>Dual Dumbbell Thruster</b></td><td class="m">dumbbell</td><td class="m">squat · push</td><td class="m">compound</td><td class="m">Quads, Glutes, Front delts</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Box Jump</b></td><td class="m">box</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes, Calves</td><td class="m">Plyometric</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Box Step-Over</b></td><td class="m">box</td><td class="m">lunge</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Burpee to Plate</b></td><td class="m">bodyweight</td><td class="m">squat · push</td><td class="m">compound</td><td class="m">Full body</td><td class="m">Calisthenics</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Hand-Release Push-Up</b></td><td class="m">bodyweight</td><td class="m">push</td><td class="m">compound</td><td class="m">Chest, Triceps, Front delts</td><td class="m">Calisthenics</td><td class="m">beginner</td></tr>
+            <tr><td><b>Pull-Up</b></td><td class="m">pull-up bar</td><td class="m">pull</td><td class="m">compound</td><td class="m">Lats, Upper back, Biceps</td><td class="m">Calisthenics</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Single-Arm Dumbbell Row</b></td><td class="m">dumbbell</td><td class="m">pull</td><td class="m">compound</td><td class="m">Lats, Upper back, Biceps</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Sled Push</b></td><td class="m">sled</td><td class="m">push · gait</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="m">HYROX</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Sled Pull</b></td><td class="m">sled</td><td class="m">pull</td><td class="m">compound</td><td class="m">Lats, Upper back, Hamstrings</td><td class="m">HYROX</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Burpee Broad Jump</b></td><td class="m">bodyweight</td><td class="m">squat · gait</td><td class="m">compound</td><td class="m">Full body</td><td class="m">HYROX · Plyometric</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Lateral Burpee Over Barbell</b></td><td class="m">bodyweight</td><td class="m">squat · push</td><td class="m">compound</td><td class="m">Full body</td><td class="m">Plyometric</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Sandbag Lunge</b></td><td class="m">sandbag</td><td class="m">lunge</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="m">HYROX</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Bodyweight Walking Lunge</b></td><td class="m">bodyweight</td><td class="m">lunge</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Dumbbell Walking Lunge</b></td><td class="m">dumbbell</td><td class="m">lunge</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Barbell Walking Lunge</b></td><td class="m">barbell</td><td class="m">lunge</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Wall Balls</b></td><td class="m">med ball</td><td class="m">squat · push</td><td class="m">compound</td><td class="m">Quads, Glutes, Front delts</td><td class="m">HYROX</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Farmers Carry</b></td><td class="m">dumbbell</td><td class="m">carry</td><td class="m">compound</td><td class="m">Forearms, Traps</td><td class="m">HYROX</td><td class="m">beginner</td></tr>
+            <tr><td><b>Loaded Carry</b></td><td class="m">dumbbell</td><td class="m">carry</td><td class="m">compound</td><td class="m">Forearms, Traps</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Leg Press</b></td><td class="m">machine</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Standing Calf Raise</b></td><td class="m">machine</td><td class="none">—</td><td class="m">isolation</td><td class="m">Calves</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Goblet Squat</b></td><td class="m">kettlebell</td><td class="m">squat</td><td class="m">compound</td><td class="m">Quads, Glutes</td><td class="m">Kettlebell</td><td class="m">beginner</td></tr>
+            <tr><td><b>Kettlebell Swing</b></td><td class="m">kettlebell</td><td class="m">hinge</td><td class="m">compound</td><td class="m">Glutes, Hamstrings</td><td class="m">Kettlebell</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Medicine Ball Slam</b></td><td class="m">med ball</td><td class="m">rotation · hinge</td><td class="m">compound</td><td class="m">Lats, Abdominals</td><td class="m">Plyometric</td><td class="m">beginner</td></tr>
+            <tr><td><b>Barbell Hip Thrust</b></td><td class="m">barbell</td><td class="m">hinge</td><td class="m">compound</td><td class="m">Glutes, Hamstrings</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Bodyweight Hip Thrust</b></td><td class="m">bodyweight</td><td class="m">hinge</td><td class="m">compound</td><td class="m">Glutes</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Single-Leg Hip Thrust</b></td><td class="m">bodyweight</td><td class="m">hinge</td><td class="m">compound</td><td class="m">Glutes</td><td class="none">—</td><td class="m">intermediate</td></tr>
+            <tr><td><b>Hanging Leg Raise</b></td><td class="m">pull-up bar</td><td class="m">— (core flexion)</td><td class="m">isolation</td><td class="m">Abdominals, Hip flexors</td><td class="m">Calisthenics</td><td class="m">intermediate</td></tr>
+
+            <tr><td colspan="7" style="background:rgba(245,166,35,.1);color:var(--amber);font:700 10px 'SFMono-Regular',ui-monospace,monospace;letter-spacing:.1em;">HOLD · 2 · logs a held duration</td></tr>
+            <tr><td><b>Forearm Plank</b></td><td class="m">bodyweight</td><td class="m">hold</td><td class="m">isolation</td><td class="m">Abdominals</td><td class="none">—</td><td class="m">beginner</td></tr>
+            <tr><td><b>Isometric Hold</b></td><td class="m">bodyweight</td><td class="m">hold</td><td class="none">—</td><td class="none">varies</td><td class="none">—</td><td class="m">beginner</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout"><b>The hand-classified set (not in the strength-only DB — review these):</b> all <b class="hi">11 cardio</b> rows, plus these <b class="hi">8 functional / HYROX</b> — Sled Push, Sled Pull, Wall Balls, Burpee to Plate, Burpee Broad Jump, Lateral Burpee Over Barbell, Box Step-Over, Sandbag Lunge. I authored these by hand (values above). Everything else — barbell/dumbbell/bodyweight lifts, KB swing, hip thrusts, carries, plank — <b>maps to the Free DB and inherits its data</b>, so those I pull rather than guess. (A few like thruster / box jump / med-ball slam / push press / farmer's walk are borderline — inherit if the DB has them, else use the §05 values.)</div>
+      <div class="callout"><b>Judgment calls worth your eye:</b> which movements deserve the <b>HYROX</b> tag (I tagged the 8 stations + row/ski); whether carries are <b>resistance</b> vs a hold (I put them resistance — loaded travel); and whether "Full body" (burpees) should instead itemize primaries. The <b>hypertrophy point still holds</b>: every row here is intent-free — a squat is a squat whether you program it heavy or high-rep.</div>
+
+      <h3 style="margin-top:24px;">Levels you'd actually own — the 19 not in the DB</h3>
+      <p style="color:var(--mid);font-size:13px;margin-bottom:10px;">Everything that exists in the Free DB (the ~32 barbell/dumbbell/bodyweight lifts) gets its beginner/intermediate/expert grade <b class="hi">straight from the DB on import</b> — no action from you. Only these 19 aren't in it, so their level is our call. My proposed defaults below — <b>change any that feel wrong</b> and I'll use yours:</p>
+      <div class="scroll"><table style="min-width:520px;font-size:12px;">
+        <thead><tr><th>Exercise</th><th>Group</th><th>Proposed level</th></tr></thead>
+        <tbody>
+          <tr><td><b>Stationary Bike</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Outdoor Bike</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>BikeErg</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Echo Bike</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Elliptical</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Run</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Treadmill Run</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Swim</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>SkiErg</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Row</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Stair Stepper</b></td><td class="m">cardio</td><td class="m">beginner</td></tr>
+          <tr><td><b>Sled Push</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Sled Pull</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Wall Balls</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Burpee to Plate</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Burpee Broad Jump</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Lateral Burpee Over Barbell</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Box Step-Over</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+          <tr><td><b>Sandbag Lunge</b></td><td class="m">HYROX / functional</td><td class="m">intermediate</td></tr>
+        </tbody>
+      </table></div>
+      <p style="color:var(--faint);font-size:12px;margin-top:10px;">(The "borderline" few — thruster, box jump, med-ball slam, push press, farmer's walk — will take the DB's grade if the DB has them; otherwise they use the §05 values.)</p>
+    </section>
+
+    <!-- 06 MUSCLE LIST -->
+    <section>
+      <h2><span class="n">06</span> The muscle list — 22 (still your call)</h2>
+      <p class="lede">Unchanged from what you approved. Worth noting: the open standard ships <b>17</b> muscles with no obliques, no hip flexors, and shoulders unsplit — so our list is genuinely a step past the databases, which is the "even better" you asked for.</p>
+      <div class="mlist">
+        <span class="muscle">Abdominals</span><span class="muscle">Abductors</span><span class="muscle">Adductors</span><span class="muscle">Biceps</span><span class="muscle">Calves</span><span class="muscle">Chest</span><span class="muscle">Forearms</span><span class="muscle changed">Front delts</span><span class="muscle watch">Full body</span><span class="muscle">Glutes</span><span class="muscle">Hamstrings</span><span class="muscle changed">Hip flexors</span><span class="muscle">Lats</span><span class="muscle">Lower back</span><span class="muscle">Neck</span><span class="muscle changed">Obliques</span><span class="muscle">Quadriceps</span><span class="muscle changed">Rear delts</span><span class="muscle changed">Side delts</span><span class="muscle">Traps</span><span class="muscle">Triceps</span><span class="muscle">Upper back</span>
+      </div>
+      <div class="legend"><span><b>■</b> added / split beyond the DB standard</span><span class="w"><b>■</b> kept, special handling (light wash in the heatmap)</span></div>
+    </section>
+
+    <!-- 07 EQUIPMENT + PATTERN + TAGS SETS -->
+    <section>
+      <h2><span class="n">07</span> The new value sets</h2>
+      <h3>Equipment <span class="mono" style="color:var(--faint);font-size:12px;font-weight:400;">— DB gear + functional/HYROX + specific cardio machines</span></h3>
+      <div class="setlist">
+        <span class="v">Barbell</span><span class="v">Dumbbell</span><span class="v">Kettlebell</span><span class="v">Cable</span><span class="v">Machine</span><span class="v">Bodyweight</span><span class="v">Band</span><span class="v">Medicine ball</span><span class="v">EZ-bar</span><span class="v">Bench</span>
+        <span class="v new">Sled</span><span class="v new">Sandbag</span><span class="v new">Box</span><span class="v new">Jump rope</span><span class="v new">Trap bar</span><span class="v new">Pull-up bar</span>
+        <span class="v new">Bike</span><span class="v new">Rower</span><span class="v new">Ski erg</span><span class="v new">Treadmill</span><span class="v new">Stair stepper</span><span class="v new">Elliptical</span>
+        <span class="v">Other</span>
+      </div>
+      <p style="color:var(--faint);font-size:12px;margin-top:10px;"><b style="color:var(--mid);">On your bike question — good one.</b> The databases are strength-first: the Free DB has <i>no</i> cardio equipment at all, so a bike/treadmill is just "machine." We go <b class="hi">more specific on purpose</b> — naming <b class="hi">Bike, Rower, Treadmill, Stair stepper</b>, etc. — so <i>"how much did I bike this week"</i> is a one-line filter (sum duration where equipment = Bike). One deliberate simplification: <b>Bike</b> covers stationary / outdoor / echo / Concept2 bike-erg — they're all "a bike" for time totals; the finer differences (erg power, etc.) live on the exercise's identity + metrics, not on equipment. Same for the rest.</p>
+      <h3>Movement pattern <span class="mono" style="color:var(--faint);font-size:12px;font-weight:400;">— subsumes the DBs' push/pull/static "force"</span></h3>
+      <div class="setlist">
+        <span class="v">Squat</span><span class="v">Hinge</span><span class="v">Lunge</span><span class="v">Push</span><span class="v">Pull</span><span class="v">Carry</span><span class="v">Rotation</span><span class="v">Gait</span><span class="v">Hold / isometric</span>
+      </div>
+      <p style="color:var(--faint);font-size:12px;margin-top:10px;"><b style="color:var(--mid);">Good catch on "gait."</b> Gait = <b class="hi">bipedal locomotion</b> — running, walking, treadmill. <i>Not</i> cycling. And pattern is <b class="hi">optional, exactly like muscles</b>: a bike is cyclic leg cardio with no discrete strength pattern, so it simply gets none. Ergs that genuinely have a pattern keep it — a <b class="hi">rower is a hinge + pull</b>, a <b class="hi">ski erg is a pull</b>. Forcing "gait" onto a bike was the same error as tagging a run's "quads," and this plan now avoids it.</p>
+      <h3>Discipline tags <span class="mono" style="color:var(--faint);font-size:12px;font-weight:400;">— HYROX + a small extensible set</span></h3>
+      <div class="setlist">
+        <span class="v new">HYROX</span><span class="v">Olympic weightlifting</span><span class="v">Powerlifting</span><span class="v">Calisthenics</span><span class="v">Plyometric</span><span class="v">Mobility</span><span class="v">Strongman</span>
+      </div>
+      <p style="color:var(--faint);font-size:12px;margin-top:12px;">Note: <b>kettlebell is equipment, not a tag</b> — a common conflation the databases make. "Kettlebell sport" would be a tag; the bell itself is gear.</p>
+      <h3>Level <span class="mono" style="color:var(--faint);font-size:12px;font-weight:400;">— inherited from the seed DB, not hand-graded</span></h3>
+      <div class="setlist"><span class="v new">Beginner</span><span class="v new">Intermediate</span><span class="v new">Expert</span></div>
+      <p style="color:var(--faint);font-size:12px;margin-top:10px;"><b style="color:var(--mid);">You asked how we'd grade this — the honest answer is we mostly don't grade it ourselves.</b> "Inherited" just means: that public database already has a beginner / intermediate / expert label on each of its 800+ exercises (its authors set them), so when we import an exercise it <b class="hi">brings its level along</b> — we don't invent a rulebook. Your instincts match their conventions anyway: a <b>bodyweight squat</b> or <b>bike</b> is beginner, a <b>barbell back squat</b> or <b>thruster</b> is intermediate, an <b>Olympic clean</b> is expert. For our current 51 (which aren't from that DB) and any custom exercise, I'll just pick a sensible default from equipment + mechanic — bodyweight/machine → easier, barbell/olympic → harder — and you can change any of them.</p>
+    </section>
+
+    <!-- 08 WHAT HAPPENS TO ActivityCategory -->
+    <section>
+      <h2><span class="n">08</span> What happens to today's <span class="mono" style="font-size:.8em;">ActivityCategory</span></h2>
+      <p class="lede">The existing enum (<span class="mono">cycling · running · erg · strength · carry · isometric · other</span>) is exactly the muddle we're dissolving — it mixes equipment, pattern, and modality. Here's the migration:</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Old category</th><th>Decomposes into</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">cycling</td><td class="m">equipment: bike/echo bike · pattern: <b class="hi">none</b> (cyclic cardio) · modality: cardio (derived)</td></tr>
+            <tr><td class="mono">running</td><td class="m">equipment: none/treadmill · pattern: gait ✓ · modality: cardio</td></tr>
+            <tr><td class="mono">erg</td><td class="m">rower → hinge + pull · ski erg → pull · bike erg → none · modality: cardio</td></tr>
+            <tr><td class="mono">strength</td><td class="m">→ modality: resistance (that's all it ever meant)</td></tr>
+            <tr><td class="mono">carry</td><td class="m">pattern: carry</td></tr>
+            <tr><td class="mono">isometric</td><td class="m">pattern: hold</td></tr>
+            <tr><td class="mono">other</td><td class="m">→ dropped; every exercise now has real axes</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="color:var(--mid);font-size:13px;">It currently drives a placeholder glyph and some filtering. Post-rework the glyph comes from equipment/pattern, and filtering gets <i>better</i> (by equipment, muscle, pattern, or tag). This is the one part with real migration cost — flagged in the build.</p>
+    </section>
+
+    <!-- 09 PAYOFF -->
+    <section>
+      <h2><span class="n">09</span> The payoff — and where it lives</h2>
+      <p class="lede">Muscles → a body heatmap. Patterns → a push/pull/hinge balance read. Modality → cardio-minutes. Equipment → "what can I train with what I have" + smarter import matching. Here's where you said it should surface:</p>
+      <div class="vs">
+        <div class="col"><h4>Home — your week at a glance</h4><p>A weekly distribution summary on the home screen: muscle balance + cardio-minutes for the current week, so you see coverage without digging.</p></div>
+        <div class="col"><h4>Profile — you + your workouts</h4><p>Profile holds <b class="hi">your info / preferences</b>, with <b class="hi">Settings behind a gear icon</b> (its own view, not a tab). A <b class="hi">Workouts</b> section/toggle lists every workout (title + actual amounts); open one and it shows the <b class="hi">front/back muscle map</b> when it has strength exercises — like Strava's per-workout map.</p></div>
+      </div>
+      <div class="callout"><b>Cardio, made concrete:</b> cardio is first-class via the modality field, so <b class="hi">"142 min of cardio this week"</b> falls right out — the sum of logged duration where <span class="mono">modality == cardio</span> (bike, treadmill, elliptical, stairs, walk, run, row, <b class="hi">swim</b>), none hard-coded. Same trick gives resistance volume, mobility minutes, etc.</div>
+      <p style="color:var(--faint);font-size:12px;margin-top:12px;">These two surfaces are real navigation work (Profile is currently a settings stub). I'd prototype them in Lavish against the design system before building — separate from, and enabled by, the taxonomy in this plan.</p>
+    </section>
+
+    <!-- 10 BUILD -->
+    <section>
+      <h2><span class="n">10</span> Phased build</h2>
+      <div class="phase"><div class="num">1</div><div><h4>Model — pure enums</h4><p><span class="mono">Muscle</span> (22, region+side), <span class="mono">MovementPattern</span> (9, 1–2 per exercise), <span class="mono">Equipment</span>, <span class="mono">Modality</span> (resistance/cardio/hold/mobility), <span class="mono">ExerciseTag</span>, <span class="mono">Mechanic</span>, <span class="mono">Level</span>. Add fields to <span class="mono">ExerciseDefinition</span> — <b>wiping existing custom exercises is fine (app isn't live), so no migration.</b> <b class="hi">ActivityCategory stays untouched.</b></p><p class="files">new ExerciseTaxonomy.swift · ExerciseCatalog.swift</p></div></div>
+      <div class="phase"><div class="num">2</div><div><h4>Backfill all 51 exercises</h4><p><b class="hi">Match each to its Free DB entry where it exists</b> → inherit muscles / mechanic / force / level. Hand-classify the cardio machines + HYROX moves that aren't in the strength-only DB (the §05 draft). You review.</p><p class="files">ExerciseCatalog.swift</p></div></div>
+      <div class="phase"><div class="num">3</div><div><h4>Custom-exercise form</h4><p>Muscle multi-select, pattern, equipment, tags, level in the create screen — design-system styled.</p><p class="files">WorkoutAddFlow.swift (CustomExerciseForm)</p></div></div>
+      <div class="phase"><div class="num">4</div><div><h4>Distribution surfaces <span style="color:var(--faint);font-size:.85em;font-weight:400;">(prototype first)</span></h4><p>Pure aggregation (weighted muscles → per-region; pattern balance; cardio-minutes). Then the <b>Home weekly summary</b> + <b>Profile tabs</b> (Settings/Activity/Workouts) with the per-workout muscle map. Prototype in Lavish before wiring.</p><p class="files">new MuscleDistribution.swift + views · Home · Profile</p></div></div>
+      <div class="phase"><div class="num">5</div><div><h4>Tests</h4><p>Enum/region integrity, aggregation math (cardio-minutes, per-region weighting), and a sample of catalog backfills + DB mappings.</p><p class="files">BaselineTests/</p></div></div>
+      <div class="phase" style="opacity:.82;"><div class="num">6</div><div><h4>Later · retire <span class="mono" style="font-size:.85em;">ActivityCategory</span></h4><p>Once the new axes are proven, decompose per §08 and migrate glyph + filtering off the old enum. Deferred on purpose (your call) to de-risk.</p><p class="files">Metrics.swift · ExerciseThumbnail* · filters</p></div></div>
+    </section>
+
+    <!-- 11 RISKS + Q -->
+    <section>
+      <h2><span class="n">11</span> Decisions locked &amp; remaining risks</h2>
+      <div class="vs">
+        <div class="col"><h4 style="color:var(--green);">✓ Decided</h4>
+          <ul style="margin:0;padding-left:17px;font-size:12.5px;">
+            <li><b>Movement pattern:</b> allow <b class="hi">1–2</b> per exercise (thruster = squat + push).</li>
+            <li><b>Level:</b> include beginner / intermediate / expert — <b class="hi">inherited from the seed DB</b>, not hand-graded (§07).</li>
+            <li><b>ActivityCategory:</b> <b class="hi">keep it for now</b>, add the new axes alongside, retire it in a later pass.</li>
+            <li><b>Distribution view:</b> a weekly summary on <b class="hi">Home</b>; on <b class="hi">Profile</b> — your info + a gear-icon Settings + a Workouts list, each workout showing a muscle map when strength is present (§09).</li>
+            <li><b>Existing custom exercises:</b> fine to <b class="hi">wipe</b> (app isn't live) — so no migration work, and new fields can just be required.</li>
+          </ul>
+        </div>
+        <div class="col"><h4 style="color:var(--amber);">⚠ Risks / notes for the build</h4>
+          <ul style="margin:0;padding-left:17px;font-size:12.5px;">
+            <li><b>Backfill is mostly inherited, partly by hand</b> — most of the 51 exist in the Free DB, so they pull muscles / mechanic / level directly. The cardio machines + HYROX-specific moves (sleds, wall balls, ergs, burpees) aren't in it (it's strength-only), so we classify those ourselves.</li>
+            <li><b>Level for the hand-classified few</b> — a sensible default (equipment/mechanic); not perfectly consistent day one.</li>
+            <li><b>The new views are their own build</b> — Home weekly + Profile is real navigation work; prototype it (Lavish → design system) before wiring, separate from the taxonomy.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
