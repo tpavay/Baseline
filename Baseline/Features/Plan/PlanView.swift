@@ -186,11 +186,14 @@ struct PlanView: View {
                             addWorkoutRow(on: day.date)
                         } else {
                             ForEach(day.sessions) { sw in
-                                ScheduledWorkoutCard(
-                                    scheduled: sw,
-                                    status: plan.status(for: sw, today: Date()),
-                                    weekDays: plan.week.days.map(\.date),
-                                    onAction: { handle($0, sw) })
+                                WorkoutSwipeActionRow(actionTitle: "Delete", systemImage: "trash", action: { handle(.delete, sw) }) {
+                                    ScheduledWorkoutCard(
+                                        scheduled: sw,
+                                        status: plan.status(for: sw, today: Date()),
+                                        weekDays: plan.week.days.map(\.date),
+                                        onAction: { handle($0, sw) })
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .draggable(sw.id.uuidString)
                             }
                         }

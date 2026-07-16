@@ -19,7 +19,6 @@ struct WorkoutView: View {
     @State private var showChat = false
     @State private var showFinishConfirmation = false
     @State private var showDiscardConfirmation = false
-    @State private var showRemoveConfirmation = false
     @State private var showSaveTemplate = false
     @State private var templateName = ""
     @State private var templateConflict: WorkoutTemplate?
@@ -69,15 +68,6 @@ struct WorkoutView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The workout template will remain, but all actual values in this log will be removed.")
-        }
-        .alert("Remove this workout?", isPresented: $showRemoveConfirmation) {
-            Button("Remove Workout", role: .destructive) {
-                onRequestDelete?()
-                dismiss()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes the workout from your plan. You can undo it.")
         }
         .confirmationDialog(
             "A template named \"\(templateName)\" already exists",
@@ -136,8 +126,8 @@ struct WorkoutView: View {
                             Label("Save as Template", systemImage: "square.and.arrow.down")
                         }
                     }
-                    if mode == .view, onRequestDelete != nil {
-                        Button(role: .destructive) { showRemoveConfirmation = true } label: {
+                    if mode == .view, let onRequestDelete {
+                        Button(role: .destructive) { onRequestDelete(); dismiss() } label: {
                             Label("Remove Workout", systemImage: "trash")
                         }
                     }
