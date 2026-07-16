@@ -24,6 +24,10 @@ final class HeartRateMonitor {
     /// Seconds-in-zone accumulated over the current monitoring run.
     private(set) var zoneTime = ZoneTimeAccumulator()
 
+    /// Average / max / elapsed for the current run. Aggregates of recorded samples, so they persist
+    /// through a dropout and feed the HUD's AVG · TIME · MAX row while the live BPM blanks.
+    private(set) var stats = SessionHeartRateStats()
+
     /// Whether `startMonitoring()` is currently active.
     private(set) var isMonitoring = false
 
@@ -66,6 +70,16 @@ final class HeartRateMonitor {
     /// Sensor-contact state of the fresh sample, else nil.
     var sensorContact: HeartRateSample.SensorContact? { freshSample?.sensorContact }
 
+    /// Session average BPM, or nil before the first sample. A recorded aggregate, so it survives a
+    /// dropout (unlike `currentBPM`, which honestly blanks when stale).
+    var averageBPM: Int? { stats.averageBPM }
+
+    /// Session max BPM, or nil before the first sample.
+    var maxBPM: Int? { stats.maxBPM }
+
+    /// Session elapsed seconds (first to most-recent recorded sample).
+    var sessionElapsed: TimeInterval { stats.elapsed }
+
     /// Passthrough of the underlying connection status.
     var connectionStatus: BluetoothManager.Status { source.connectionStatus }
 
@@ -79,6 +93,7 @@ final class HeartRateMonitor {
         latestSample = nil
         latestSampleAt = nil
         zoneTime = ZoneTimeAccumulator()
+        stats = SessionHeartRateStats()
 
         // `onLiveSample` fires on the main queue (see `LiveHeartRateSource`); `assumeIsolated`
         // bridges that main-confined callback into this main-actor instance without a hop.
@@ -116,5 +131,6 @@ final class HeartRateMonitor {
         }
         latestSample = sample
         latestSampleAt = t
+        stats.record(bpm: sample.bpm, at: t)
     }
 }

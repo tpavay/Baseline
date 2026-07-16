@@ -150,6 +150,54 @@ struct HeartRateMonitorTests {
         #expect(monitor.zoneTime.total == 0)
     }
 
+    // MARK: - Session aggregates (AVG · TIME · MAX)
+
+    @Test func sessionStatsAccumulateAverageMaxAndElapsed() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+        #expect(monitor.averageBPM == nil)     // no samples yet
+        #expect(monitor.maxBPM == nil)
+        #expect(monitor.sessionElapsed == 0)
+
+        source.emit(bpm: 130)                   // t0
+        clock.advance(by: 3); source.emit(bpm: 150)   // t0+3
+        clock.advance(by: 2); source.emit(bpm: 190)   // t0+5
+
+        #expect(monitor.averageBPM == 157)      // round((130+150+190)/3) = 156.67 → 157
+        #expect(monitor.maxBPM == 190)
+        #expect(monitor.sessionElapsed == 5)    // first → most-recent sample
+    }
+
+    @Test func sessionStatsPersistThroughAStaleSignal() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+        source.emit(bpm: 140)                   // t0
+        clock.advance(by: 2); source.emit(bpm: 160)   // t0+2
+        clock.advance(by: 6)                    // stale: current blanks, aggregates must not
+
+        #expect(monitor.currentBPM == nil)      // honest: no live number
+        #expect(monitor.averageBPM == 150)      // but the recorded aggregates persist
+        #expect(monitor.maxBPM == 160)
+        #expect(monitor.sessionElapsed == 2)
+    }
+
+    @Test func startMonitoringResetsSessionStats() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+        clock.advance(by: 2); source.emit(bpm: 170)
+        #expect(monitor.averageBPM == 160)
+
+        monitor.stopMonitoring()
+        monitor.startMonitoring()               // fresh run wipes the aggregates
+        #expect(monitor.averageBPM == nil)
+        #expect(monitor.maxBPM == nil)
+        #expect(monitor.sessionElapsed == 0)
+    }
+
     // MARK: - Lifecycle
 
     @Test func stopMonitoringDetachesAndClearsLiveState() {
