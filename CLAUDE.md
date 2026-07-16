@@ -122,6 +122,10 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - `Baseline.xcodeproj` and `Baseline/Info.plist` are generated and ignored. Never edit or commit them directly.
 - Run `xcodegen generate` after pulling changes or modifying project configuration, dependencies, resources, or source membership.
 - Application source lives under `Baseline/`, organized primarily by feature. Tests live under `BaselineTests/`.
+- A fresh clone or worktree cannot build until `Baseline/App/Firebase/GoogleService-Info-Dev.plist` (Debug) and `-Production.plist` (Release) are present.
+  They are gitignored secrets, so copy them from an existing checkout or re-download them from the Firebase console; the whole `Firebase/` directory is absent until you do.
+- The Cloud Functions in `functions/` need `npm ci` before `npm run build` (tsc) or `npm test`.
+  Without it, tsc reports dozens of missing-type errors in files you did not touch. There is no lint script; `npm run build` is the type gate.
 
 ---
 
@@ -192,6 +196,15 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 # Privacy & Compliance
 - Keep `PrivacyInfo.xcprivacy`, the privacy policy, the App Store privacy questionnaire, and `NS*UsageDescription` strings in sync.
 - Because Baseline prescribes training **intensity**: keep risk language lightweight but present — an assumption-of-risk / not-medical-advice clause lives in the ToS, accepted via a one-line footnote at the onboarding commitment step, plus a contextual "training guidance, not medical advice — stop if you feel unwell" line on prescription surfaces. **No standalone disclaimer screen and no PAR-Q** (decided 2026-07: cut for onboarding friction). Keep the **HYROX® trademark disclaimer** ("registered trademark of its owner; not affiliated with / endorsed by HYROX"). Get a lawyer to review the ToS.
+
+---
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
 
 ---
 
