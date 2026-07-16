@@ -64,7 +64,7 @@ struct ExerciseSearchTests {
 
     @Test func wordBoundaryMatchesOutrankIncidentalMidWordOnes() throws {
         // "Prowler", "Narrow", and "Throw" all contain r-o-w, so they do match "row" - mid-word hits are
-        // deliberate, and the total counts them. But every exercise with "row" as an actual word ranks
+        // deliberate, and the total counts them. But an exercise carrying "row" as an actual word ranks
         // above them, and there are enough of those to fill the page, so none of them reach it.
         let incidental = ["Prowler Sprint", "Narrow Stance Squats", "Backward Medicine Ball Throw"]
         // Without this the test would pass vacuously if the catalog ever stopped carrying them.
@@ -75,6 +75,15 @@ struct ExerciseSearchTests {
         #expect(r.matches.count == ExerciseSearch.resultLimit)
         #expect(r.matches.allSatisfy { !incidental.contains($0.name) })
         #expect(r.total > r.matches.count)                           // and the mid-word hits are in the total
+    }
+
+    @Test func aPluralNameIsTheSameWordNotAnIncidentalMatch() throws {
+        // The catalog names one movement both ways, so "row" has to reach "Seated Cable Rows" on the
+        // word. Matching " row " alone drops it to the substring tier, where 35 singular rows take every
+        // page slot ahead of it and a real row goes missing behind hits like "Prowler Sprint".
+        let plural = "Seated Cable Rows"
+        #expect(ExerciseCatalog.seedDefinitions.contains { $0.name == plural })
+        #expect(try search(text: "row").matches.map(\.name).contains(plural))
     }
 
     @Test func nonsenseQueryReturnsNothingRatherThanTheWholeCatalog() throws {

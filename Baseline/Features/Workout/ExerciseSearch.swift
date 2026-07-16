@@ -200,13 +200,20 @@ enum ExerciseSearch {
         return base
     }
 
-    /// True when `needle` appears in `haystack` on a word boundary - so "row" hits "Barbell Row" but not
-    /// "Eyebrow". Compared on a form where punctuation reads as a separator ("Push-Up" → "push up").
+    /// True when `needle` appears in `haystack` on a word boundary - so "row" hits "Barbell Row" and
+    /// "Seated Cable Rows" but not "Eyebrow". Compared on a form where punctuation reads as a separator
+    /// ("Push-Up" → "push up"), with both sides already padded by `separated`.
+    ///
+    /// A trailing "s" on the matched word counts as the same word: the catalog names one movement both
+    /// ways ("Bent Over Barbell Row", "Seated Cable Rows"), and a plural is not a weaker match than a
+    /// singular. Without this, plural names fall to the substring tier and rank among incidental hits
+    /// like "Prowler Sprint". This only ever promotes a name that already matched there - a haystack
+    /// holding "rows" holds "row" too - so it reorders the page without changing what is on it.
     private static func containsWord(_ needle: String, in haystack: String) -> Bool {
         let words = separated(haystack)
         let target = separated(needle)
         guard !target.isEmpty else { return false }
-        return words.contains(target)   // both sides are already padded by `separated`
+        return words.contains(target) || words.contains(String(target.dropLast()) + "s ")
     }
 
     /// Lowercased, punctuation-to-space, single-spaced, and padded - so a boundary test is a substring test.
