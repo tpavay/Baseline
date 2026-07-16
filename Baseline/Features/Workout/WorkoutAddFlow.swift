@@ -40,7 +40,6 @@ struct AddExerciseFlow: View {
                         VStack(alignment: .leading, spacing: 8) {
                             if query.isEmpty && category == nil && !recents.isEmpty { list("RECENT", recents) }
                             list(query.isEmpty && category == nil ? "ALL EXERCISES" : "RESULTS", all)
-                            customRow
                         }
                         .padding(16)
                     }
@@ -50,7 +49,13 @@ struct AddExerciseFlow: View {
             .navigationTitle("Add exercises")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() }.foregroundStyle(BaselineColor.textMid) } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() }.foregroundStyle(BaselineColor.textMid) }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Create") { showCustom = true }.foregroundStyle(BaselineColor.accent).fontWeight(.semibold)
+                        .accessibilityHint("Create a custom exercise")
+                }
+            }
             .navigationDestination(isPresented: $showCustom) {
                 CustomExerciseForm(seedName: query) { def in add([def]) }
             }
@@ -127,21 +132,6 @@ struct AddExerciseFlow: View {
         .accessibilityValue(isSel ? "Selected" : "Not selected")
         .accessibilityHint(isSel ? "Removes this exercise from the list to add" : "Adds this exercise to the list to add")
         .accessibilityAddTraits(isSel ? .isSelected : [])
-    }
-
-    private var customRow: some View {
-        Button { showCustom = true } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "plus.circle").foregroundStyle(BaselineColor.accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Create custom exercise").font(.system(size: 15, weight: .semibold)).foregroundStyle(BaselineColor.accent)
-                    if !query.isEmpty { Text("“\(query)”").font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint) }
-                }
-                Spacer()
-            }
-            .padding(14).background(RoundedRectangle(cornerRadius: 14).strokeBorder(BaselineColor.accent.opacity(0.4), lineWidth: 1))
-            .padding(.top, 6)
-        }.buttonStyle(.plain)
     }
 
     private var addBar: some View {
