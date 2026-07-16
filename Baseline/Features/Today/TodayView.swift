@@ -315,11 +315,11 @@ struct TodayView: View {
     /// Sleep score (0–100) from today's canonical night, or nil when the Sleep Engine has none.
     private var sleepScore: Int? { todaySleep?.analysis.score }
 
-    /// HRV on the same 0–100 frame as readiness: the autonomic domain's subscore from today's
-    /// decision (HRV vs. the personal baseline). Present only when a reading exists today.
+    /// Today's HRV on the 0–100 readiness scale — the same `DecisionEngine.hrvScore` mapping the
+    /// history trend uses, so the tile and the history agree for the same reading. Present only when a
+    /// reading exists today.
     private var hrvScore: Int? {
-        guard todayReading != nil else { return nil }
-        return live?.decision.domains.first { $0.domain == .autonomic }?.subscore
+        todayReading.map { DecisionEngine.hrvScore(lnRMSSD: $0.lnRMSSD) }
     }
 
     private var hasAnyTile: Bool { sleepScore != nil || hrvScore != nil || yesterdayActivity != nil }

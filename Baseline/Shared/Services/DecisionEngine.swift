@@ -235,6 +235,20 @@ enum DecisionEngine {
         return subscore(fromZ: wz / wSum)
     }
 
+    /// A standalone 0–100 HRV score for one reading — the same HRV z → score mapping the autonomic
+    /// subscore uses (HRV only, no RHR), so surfaces that show HRV on the readiness scale (the Today
+    /// tile's frame, the history trend) stay consistent instead of showing raw milliseconds. Uses the
+    /// personal `baseline` once it is established, otherwise the population frame (lnRMSSD ≈ N(3.8, 0.6)).
+    static func hrvScore(lnRMSSD: Double, baseline: ReadinessScore.Baseline? = nil, calibrating: Bool = true) -> Int {
+        let z: Double
+        if let b = baseline, b.sd > 0.01, !calibrating {
+            z = clampZ((lnRMSSD - b.mean) / b.sd)
+        } else {
+            z = clampZ((lnRMSSD - 3.8) / 0.6)
+        }
+        return subscore(fromZ: z)
+    }
+
     private static func musculoskeletalSubscore(_ i: Inputs) -> Int? {
         let sorenessPresent = i.soreness != nil
         // Only constraints the athlete says affect training move the score (honors affectsTraining,

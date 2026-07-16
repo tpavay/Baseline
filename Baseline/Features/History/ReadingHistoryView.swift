@@ -42,16 +42,17 @@ struct ReadingHistoryView: View {
 
     private var trend: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("HRV TREND (ms)").font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.accent)
+            Text("HRV TREND").font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundStyle(BaselineColor.accent)
             Chart(readings.reversed()) { r in
-                LineMark(x: .value("Date", r.date), y: .value("HRV", r.rmssd))
+                LineMark(x: .value("Date", r.date), y: .value("HRV", DecisionEngine.hrvScore(lnRMSSD: r.lnRMSSD)))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(BaselineColor.accent)
-                PointMark(x: .value("Date", r.date), y: .value("HRV", r.rmssd))
+                PointMark(x: .value("Date", r.date), y: .value("HRV", DecisionEngine.hrvScore(lnRMSSD: r.lnRMSSD)))
                     .foregroundStyle(BaselineColor.accent)
                     .symbolSize(28)
             }
             .frame(height: 180)
+            .chartYScale(domain: 0...100)
             .chartYAxis {
                 AxisMarks(position: .leading) {
                     AxisGridLine().foregroundStyle(BaselineColor.line)
@@ -83,8 +84,9 @@ private struct ReadingRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text("\(Int(reading.rmssd.rounded()))").font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(BaselineColor.textHi)
-                    Text("ms").font(.system(size: 11, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
+                    Text("\(DecisionEngine.hrvScore(lnRMSSD: reading.lnRMSSD))")
+                        .font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(BaselineColor.textHi)
+                    Text("HRV").font(.system(size: 11, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
                 }
                 Text("\(Int(reading.meanHR.rounded())) bpm").font(.system(size: 12, weight: .medium)).foregroundStyle(BaselineColor.textMid)
             }
