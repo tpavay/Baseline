@@ -136,6 +136,33 @@ export const TOOLS = [
     },
   },
   {
+    name: "search_exercises",
+    description: "Search Baseline's exercise catalog (~900 movements, always available offline). Call this to answer ANY question about which exercises exist ('what exercises do you have', 'do you have any hamstring movements') - Baseline HAS a full library, so never say it doesn't. Also call it BEFORE naming an exercise in a workout you're building, so you use a real catalog exercise instead of guessing a name. All params are optional and combine (AND); with none, returns a representative sample across the catalog. Returns up to 25 compact matches plus the true total, so say how many exist rather than implying the page is everything.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Free text matched against exercise names and aliases, e.g. 'bench', 'romanian deadlift', 'sled'." },
+        muscle: { type: "string", description: "Muscle trained (primary or secondary), e.g. quadriceps, hamstrings, glutes, chest, lats, abdominals, biceps, triceps, calves, frontDelts." },
+        equipment: { type: "string", description: "Gear needed, e.g. barbell, dumbbell, kettlebell, cable, machine, bodyweight, band, sled, box, bike, rower, skiErg, treadmill." },
+        modality: { type: "string", description: "resistance | cardio | hold | mobility" },
+        pattern: { type: "string", description: "Movement pattern: squat | hinge | lunge | push | pull | carry | rotation | gait | hold" },
+        tag: { type: "string", description: "Discipline: hyrox | olympicWeightlifting | powerlifting | calisthenics | plyometric | mobility | strongman" },
+        level: { type: "string", description: "beginner | intermediate | expert" },
+      },
+    },
+  },
+  {
+    name: "get_exercise",
+    description: "Get one exercise's full detail from the catalog by name or id - the muscles it trains, equipment, movement pattern, modality, mechanic, level, tags, and which metrics it logs. Use it to answer 'what does X work?' and to check what an exercise logs before setting metrics on it. Pass either name or id (name is fine - casual names and aliases resolve).",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exercise name or alias, e.g. 'romanian deadlift', 'rdl'." },
+        id: { type: "string", description: "Catalog id from search_exercises, e.g. 'bench_press'." },
+      },
+    },
+  },
+  {
     name: "get_current_workout",
     description: "Read the current structured workout (blocks → exercises → sets). Call before editing when you're unsure of the structure, or to answer what today's workout is.",
     input_schema: { type: "object", properties: {} },

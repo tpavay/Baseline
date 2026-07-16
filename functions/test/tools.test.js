@@ -20,3 +20,35 @@ test("require_all_options preserves an imported choice's children", () => {
   assert.match(tool.description, /required ordered group/i);
   assert.match(tool.description, /preserves the child exercises/i);
 });
+
+test("search_exercises retrieves from the catalog with every filter optional", () => {
+  const tool = TOOLS.find((candidate) => candidate.name === "search_exercises");
+
+  assert.ok(tool);
+  // No required params: an empty call is a valid "what do you have?" browse.
+  assert.equal(tool.input_schema.required, undefined);
+  for (const param of ["query", "muscle", "equipment", "modality", "pattern", "tag", "level"]) {
+    assert.equal(tool.input_schema.properties[param].type, "string");
+  }
+  // The catalog must never be inlined into the prompt, so the tool itself has to tell the model
+  // the library exists and that a page is not the whole of it.
+  assert.match(tool.description, /never say it doesn't/i);
+  assert.match(tool.description, /total/i);
+});
+
+test("get_exercise looks one movement up by name or id", () => {
+  const tool = TOOLS.find((candidate) => candidate.name === "get_exercise");
+
+  assert.ok(tool);
+  assert.equal(tool.input_schema.required, undefined);   // either name or id; enforced on-device
+  assert.equal(tool.input_schema.properties.name.type, "string");
+  assert.equal(tool.input_schema.properties.id.type, "string");
+  assert.match(tool.description, /muscles/i);
+});
+
+test("tool names are unique and map to the on-device executor", () => {
+  const names = TOOLS.map((tool) => tool.name);
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(names.includes("search_exercises"));
+  assert.ok(names.includes("get_exercise"));
+});
