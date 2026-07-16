@@ -78,5 +78,12 @@ service cloud.firestore {
     match /workoutImportJobCancellations/{cancellationId} {
       allow read, write: if false;
     }
+
+    // The server-hosted exercise catalog pointer: which blob is current + its checksum. Read-only shared
+    // reference data for any authenticated client; only the server (build/publish pipeline) writes it.
+    match /catalog/{document} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
   }
 }

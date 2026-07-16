@@ -10,6 +10,14 @@ service firebase.storage {
       allow write: if false;
     }
 
+    match /exercise-catalog/{version}/{fileName} {
+      allow read: if request.auth != null
+        && version.matches('v[1-9][0-9]*')
+        && fileName == 'catalog.json'
+        && resource.size < 5 * 1024 * 1024;
+      allow write: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

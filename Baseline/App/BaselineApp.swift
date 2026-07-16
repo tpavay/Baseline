@@ -40,6 +40,13 @@ struct BaselineApp: App {
                     await workoutImportCoordinator.cleanup()
                 }
                 .task {
+                    // Server-hosted exercise catalog: install the newest cached set, then refresh from the
+                    // pointer. Best-effort — the compiled seed already backs rendering, so a failed or absent
+                    // fetch just leaves the seed (or last cache) in place.
+                    await ExerciseCatalogSync.live.loadCache()
+                    await ExerciseCatalogSync.live.refresh()
+                }
+                .task {
                     // Sleep Engine go-live: hydrate the canonical night store from HealthKit once at
                     // launch. Safe pre-authorization — HealthService.sleepSamples returns empty without
                     // auth, so no nights are written and the decision seam falls back honestly.

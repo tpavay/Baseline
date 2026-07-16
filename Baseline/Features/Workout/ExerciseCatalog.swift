@@ -150,6 +150,10 @@ struct ExerciseCatalogSnapshot: Sendable {
 }
 
 enum ExerciseCatalog {
+    /// The catalog blob schema this build understands. A fetched catalog whose `schemaVersion` differs is
+    /// rejected (the app keeps its current catalog) rather than decoded into a shape the code can't trust.
+    static let supportedSchemaVersion = 1
+
     /// The live catalog, swappable behind a lock. Defaults to the bundled seed; a fetched catalog is
     /// installed at startup/refresh via `install(_:)` (Slice 2). An unfair lock is right here: reads are
     /// frequent and cheap, writes are rare (app launch and occasional refresh). Readers see a new snapshot
