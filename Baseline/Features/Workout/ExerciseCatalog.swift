@@ -12,6 +12,18 @@ struct ExerciseDefinition: Identifiable, Codable, Equatable, Sendable {
     let aliases: [String]
     let media: ExerciseMedia?
 
+    // Intent-free classification axes (see ExerciseTaxonomy.swift). Optional/empty by default; the built-in
+    // catalog is backfilled below and custom exercises set them at creation. `category` is retained for now
+    // and retired in a later pass once these axes are proven.
+    let primaryMuscles: [Muscle]
+    let secondaryMuscles: [Muscle]
+    let patterns: [MovementPattern]     // 1–2 for compounds; empty for pure cyclic cardio
+    let equipment: [Equipment]
+    let mechanic: Mechanic?
+    let modality: Modality?
+    let level: ExerciseLevel?
+    let tags: [ExerciseTag]
+
     init(
         id: String,
         name: String,
@@ -19,7 +31,15 @@ struct ExerciseDefinition: Identifiable, Codable, Equatable, Sendable {
         supported: [MetricType],
         defaults: [MetricType],
         aliases: [String],
-        media: ExerciseMedia? = nil
+        media: ExerciseMedia? = nil,
+        primaryMuscles: [Muscle] = [],
+        secondaryMuscles: [Muscle] = [],
+        patterns: [MovementPattern] = [],
+        equipment: [Equipment] = [],
+        mechanic: Mechanic? = nil,
+        modality: Modality? = nil,
+        level: ExerciseLevel? = nil,
+        tags: [ExerciseTag] = []
     ) {
         self.id = id
         self.name = name
@@ -28,13 +48,71 @@ struct ExerciseDefinition: Identifiable, Codable, Equatable, Sendable {
         self.defaults = defaults
         self.aliases = aliases
         self.media = media
+        self.primaryMuscles = primaryMuscles
+        self.secondaryMuscles = secondaryMuscles
+        self.patterns = patterns
+        self.equipment = equipment
+        self.mechanic = mechanic
+        self.modality = modality
+        self.level = level
+        self.tags = tags
+    }
+
+    // Decode tolerantly: the new axes default when absent so older catalogs/fixtures still decode. (Stored
+    // custom definitions predating these fields are allowed to reset — the app is pre-release.)
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        category = try c.decode(ActivityCategory.self, forKey: .category)
+        supported = try c.decode([MetricType].self, forKey: .supported)
+        defaults = try c.decode([MetricType].self, forKey: .defaults)
+        aliases = try c.decode([String].self, forKey: .aliases)
+        media = try c.decodeIfPresent(ExerciseMedia.self, forKey: .media)
+        primaryMuscles = try c.decodeIfPresent([Muscle].self, forKey: .primaryMuscles) ?? []
+        secondaryMuscles = try c.decodeIfPresent([Muscle].self, forKey: .secondaryMuscles) ?? []
+        patterns = try c.decodeIfPresent([MovementPattern].self, forKey: .patterns) ?? []
+        equipment = try c.decodeIfPresent([Equipment].self, forKey: .equipment) ?? []
+        mechanic = try c.decodeIfPresent(Mechanic.self, forKey: .mechanic)
+        modality = try c.decodeIfPresent(Modality.self, forKey: .modality)
+        level = try c.decodeIfPresent(ExerciseLevel.self, forKey: .level)
+        tags = try c.decodeIfPresent([ExerciseTag].self, forKey: .tags) ?? []
     }
 }
 
 /// A small curated catalog — enough to prove the metric model across real workouts before designing
 /// every modality. Unknown movements resolve to a generic definition rather than failing.
+/// The classification of a built-in exercise, kept as a separate id-keyed table so the definition list
+/// stays focused on identity + logging and the taxonomy (the reviewed backfill) reads as one block.
+struct ExerciseClassification {
+    var primary: [Muscle] = []
+    var secondary: [Muscle] = []
+    var patterns: [MovementPattern] = []
+    var equipment: [Equipment] = []
+    var mechanic: Mechanic?
+    var modality: Modality?
+    var level: ExerciseLevel?
+    var tags: [ExerciseTag] = []
+}
+
+extension ExerciseDefinition {
+    func applying(_ c: ExerciseClassification) -> ExerciseDefinition {
+        ExerciseDefinition(
+            id: id, name: name, category: category, supported: supported, defaults: defaults,
+            aliases: aliases, media: media,
+            primaryMuscles: c.primary, secondaryMuscles: c.secondary, patterns: c.patterns,
+            equipment: c.equipment, mechanic: c.mechanic, modality: c.modality, level: c.level, tags: c.tags
+        )
+    }
+}
+
 enum ExerciseCatalog {
-    static let definitions: [ExerciseDefinition] = [
+    /// The public catalog — each base definition overlaid with its classification (see `classifications`).
+    static let definitions: [ExerciseDefinition] = baseDefinitions.map { def in
+        classifications[def.id].map { def.applying($0) } ?? def
+    }
+
+    private static let baseDefinitions: [ExerciseDefinition] = [
         .init(id: "stationary_bike", name: "Stationary Bike", category: .cycling,
               supported: [.duration, .distance, .calories, .heartRate, .cadence, .power],
               defaults: [.duration, .distance],
@@ -261,6 +339,140 @@ enum ExerciseCatalog {
               supported: [.duration, .load, .rpe],
               defaults: [.duration, .load, .rpe],
               aliases: ["isometric hold", "isometric", "hold", "copenhagen"]),
+    ]
+
+    /// Reviewed classification for every built-in (the taxonomy backfill). Cardio movements carry no
+    /// muscles and usually no strength pattern; carries are resistance; genuinely systemic movements use
+    /// `.fullBody`. Levels are sensible defaults (a later Free-DB import inherits the DB's grade instead).
+    private static let classifications: [String: ExerciseClassification] = [
+        // Cardio
+        "stationary_bike": .init(equipment: [.bike], modality: .cardio, level: .beginner),
+        "outdoor_bike": .init(equipment: [.bike], modality: .cardio, level: .beginner),
+        "bike_erg": .init(equipment: [.bike], modality: .cardio, level: .beginner),
+        "echo_bike": .init(equipment: [.bike], modality: .cardio, level: .beginner),
+        "elliptical": .init(patterns: [.gait], equipment: [.elliptical], modality: .cardio, level: .beginner),
+        "run": .init(patterns: [.gait], modality: .cardio, level: .beginner),
+        "treadmill_run": .init(patterns: [.gait], equipment: [.treadmill], modality: .cardio, level: .beginner),
+        "swim": .init(modality: .cardio, level: .beginner),
+        "ski_erg": .init(primary: [.lats, .upperBack], patterns: [.pull, .hinge], equipment: [.skiErg],
+                         modality: .cardio, level: .beginner, tags: [.hyrox]),
+        "row": .init(primary: [.lats, .upperBack, .hamstrings], patterns: [.hinge, .pull], equipment: [.rower],
+                     modality: .cardio, level: .beginner, tags: [.hyrox]),
+        "stair_stepper": .init(primary: [.quadriceps, .glutes], patterns: [.gait], equipment: [.stairStepper],
+                               modality: .cardio, level: .beginner),
+        // Resistance
+        "deadlift": .init(primary: [.glutes, .hamstrings, .lowerBack], secondary: [.quadriceps, .traps, .forearms],
+                          patterns: [.hinge], equipment: [.barbell], mechanic: .compound, modality: .resistance,
+                          level: .intermediate, tags: [.powerlifting]),
+        "back_squat": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings, .lowerBack, .abdominals],
+                            patterns: [.squat], equipment: [.barbell], mechanic: .compound, modality: .resistance,
+                            level: .intermediate, tags: [.powerlifting]),
+        "front_squat": .init(primary: [.quadriceps, .glutes], secondary: [.upperBack, .abdominals],
+                             patterns: [.squat], equipment: [.barbell], mechanic: .compound, modality: .resistance,
+                             level: .intermediate),
+        "barbell_box_squat": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings, .lowerBack],
+                                   patterns: [.squat], equipment: [.barbell], mechanic: .compound, modality: .resistance,
+                                   level: .intermediate, tags: [.powerlifting]),
+        "bench_press": .init(primary: [.chest, .triceps, .frontDelts], secondary: [.sideDelts],
+                             patterns: [.push], equipment: [.barbell, .bench], mechanic: .compound, modality: .resistance,
+                             level: .intermediate, tags: [.powerlifting]),
+        "dumbbell_bench_press": .init(primary: [.chest, .triceps, .frontDelts], patterns: [.push],
+                                      equipment: [.dumbbell, .bench], mechanic: .compound, modality: .resistance,
+                                      level: .beginner),
+        "dual_dumbbell_push_press": .init(primary: [.frontDelts, .triceps], secondary: [.quadriceps, .glutes],
+                                          patterns: [.push], equipment: [.dumbbell], mechanic: .compound,
+                                          modality: .resistance, level: .intermediate),
+        "barbell_overhead_press": .init(primary: [.frontDelts, .triceps], secondary: [.sideDelts, .traps, .abdominals],
+                                        patterns: [.push], equipment: [.barbell], mechanic: .compound,
+                                        modality: .resistance, level: .intermediate),
+        "bodyweight_squat": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings], patterns: [.squat],
+                                  equipment: [.bodyweight], mechanic: .compound, modality: .resistance,
+                                  level: .beginner, tags: [.calisthenics]),
+        "jump_squat": .init(primary: [.quadriceps, .glutes, .calves], secondary: [.hamstrings], patterns: [.squat],
+                            equipment: [.bodyweight], mechanic: .compound, modality: .resistance,
+                            level: .intermediate, tags: [.plyometric]),
+        "push_up": .init(primary: [.chest, .triceps, .frontDelts], secondary: [.abdominals], patterns: [.push],
+                         equipment: [.bodyweight], mechanic: .compound, modality: .resistance,
+                         level: .beginner, tags: [.calisthenics]),
+        "dual_db_thruster": .init(primary: [.quadriceps, .glutes, .frontDelts], secondary: [.triceps, .upperBack],
+                                  patterns: [.squat, .push], equipment: [.dumbbell], mechanic: .compound,
+                                  modality: .resistance, level: .intermediate),
+        "box_jump": .init(primary: [.quadriceps, .glutes, .calves], secondary: [.hamstrings], patterns: [.squat],
+                          equipment: [.box], mechanic: .compound, modality: .resistance,
+                          level: .intermediate, tags: [.plyometric]),
+        "box_step_over": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings, .calves], patterns: [.lunge],
+                               equipment: [.box], mechanic: .compound, modality: .resistance, level: .intermediate),
+        "burpee_to_plate": .init(primary: [.fullBody], patterns: [.squat, .push], equipment: [.bodyweight],
+                                 mechanic: .compound, modality: .resistance, level: .intermediate, tags: [.calisthenics]),
+        "hand_release_push_up": .init(primary: [.chest, .triceps, .frontDelts], secondary: [.abdominals],
+                                      patterns: [.push], equipment: [.bodyweight], mechanic: .compound,
+                                      modality: .resistance, level: .beginner, tags: [.calisthenics]),
+        "pull_up": .init(primary: [.lats, .upperBack, .biceps], secondary: [.forearms], patterns: [.pull],
+                         equipment: [.pullUpBar], mechanic: .compound, modality: .resistance,
+                         level: .intermediate, tags: [.calisthenics]),
+        "single_arm_dumbbell_row": .init(primary: [.lats, .upperBack, .biceps], secondary: [.forearms, .rearDelts],
+                                         patterns: [.pull], equipment: [.dumbbell], mechanic: .compound,
+                                         modality: .resistance, level: .beginner),
+        "sled_push": .init(primary: [.quadriceps, .glutes], secondary: [.calves, .hamstrings, .chest],
+                           patterns: [.push, .gait], equipment: [.sled], mechanic: .compound, modality: .resistance,
+                           level: .intermediate, tags: [.hyrox]),
+        "sled_pull": .init(primary: [.lats, .upperBack, .hamstrings], secondary: [.biceps, .glutes],
+                           patterns: [.pull], equipment: [.sled], mechanic: .compound, modality: .resistance,
+                           level: .intermediate, tags: [.hyrox]),
+        "burpee_broad_jump": .init(primary: [.fullBody], patterns: [.squat, .gait], equipment: [.bodyweight],
+                                   mechanic: .compound, modality: .resistance, level: .intermediate,
+                                   tags: [.hyrox, .plyometric]),
+        "lateral_burpee_over_barbell": .init(primary: [.fullBody], patterns: [.squat, .push], equipment: [.bodyweight],
+                                             mechanic: .compound, modality: .resistance, level: .intermediate,
+                                             tags: [.plyometric]),
+        "sandbag_lunge": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings, .abdominals],
+                               patterns: [.lunge], equipment: [.sandbag], mechanic: .compound, modality: .resistance,
+                               level: .intermediate, tags: [.hyrox]),
+        "bodyweight_walking_lunge": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings], patterns: [.lunge],
+                                          equipment: [.bodyweight], mechanic: .compound, modality: .resistance,
+                                          level: .beginner),
+        "dumbbell_walking_lunge": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings], patterns: [.lunge],
+                                        equipment: [.dumbbell], mechanic: .compound, modality: .resistance,
+                                        level: .intermediate),
+        "barbell_walking_lunge": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings], patterns: [.lunge],
+                                       equipment: [.barbell], mechanic: .compound, modality: .resistance,
+                                       level: .intermediate),
+        "wall_balls": .init(primary: [.quadriceps, .glutes, .frontDelts], secondary: [.obliques, .triceps],
+                            patterns: [.squat, .push], equipment: [.medicineBall], mechanic: .compound,
+                            modality: .resistance, level: .intermediate, tags: [.hyrox]),
+        "farmers_carry": .init(primary: [.forearms, .traps], secondary: [.glutes, .abdominals, .obliques],
+                               patterns: [.carry], equipment: [.dumbbell], mechanic: .compound, modality: .resistance,
+                               level: .beginner, tags: [.hyrox]),
+        "loaded_carry": .init(primary: [.forearms, .traps], secondary: [.abdominals, .glutes], patterns: [.carry],
+                              equipment: [.dumbbell], mechanic: .compound, modality: .resistance, level: .beginner),
+        "leg_press": .init(primary: [.quadriceps, .glutes], secondary: [.hamstrings], patterns: [.squat],
+                           equipment: [.machine], mechanic: .compound, modality: .resistance, level: .beginner),
+        "calf_raise": .init(primary: [.calves], equipment: [.machine], mechanic: .isolation, modality: .resistance,
+                            level: .beginner),
+        "goblet_squat": .init(primary: [.quadriceps, .glutes], secondary: [.abdominals], patterns: [.squat],
+                              equipment: [.kettlebell], mechanic: .compound, modality: .resistance, level: .beginner),
+        "kettlebell_swing": .init(primary: [.glutes, .hamstrings], secondary: [.lowerBack, .forearms],
+                                  patterns: [.hinge], equipment: [.kettlebell], mechanic: .compound,
+                                  modality: .resistance, level: .intermediate),
+        "medicine_ball_slam": .init(primary: [.lats, .abdominals], secondary: [.obliques, .frontDelts],
+                                    patterns: [.rotation, .hinge], equipment: [.medicineBall], mechanic: .compound,
+                                    modality: .resistance, level: .beginner, tags: [.plyometric]),
+        "barbell_hip_thrust": .init(primary: [.glutes, .hamstrings], secondary: [.quadriceps], patterns: [.hinge],
+                                    equipment: [.barbell], mechanic: .compound, modality: .resistance,
+                                    level: .intermediate),
+        "bodyweight_hip_thrust": .init(primary: [.glutes], secondary: [.hamstrings], patterns: [.hinge],
+                                       equipment: [.bodyweight], mechanic: .compound, modality: .resistance,
+                                       level: .beginner),
+        "single_leg_hip_thrust": .init(primary: [.glutes], secondary: [.hamstrings], patterns: [.hinge],
+                                       equipment: [.bodyweight], mechanic: .compound, modality: .resistance,
+                                       level: .intermediate),
+        "hanging_leg_raise": .init(primary: [.abdominals, .hipFlexors], secondary: [.forearms],
+                                   equipment: [.pullUpBar], mechanic: .isolation, modality: .resistance,
+                                   level: .intermediate, tags: [.calisthenics]),
+        // Hold
+        "plank": .init(primary: [.abdominals], secondary: [.obliques], patterns: [.hold], equipment: [.bodyweight],
+                       mechanic: .isolation, modality: .hold, level: .beginner),
+        "isometric_hold": .init(patterns: [.hold], equipment: [.bodyweight], modality: .hold, level: .beginner),
     ]
 
     /// The fallback for movements not in the catalog — supports the common fields, defaults to none
