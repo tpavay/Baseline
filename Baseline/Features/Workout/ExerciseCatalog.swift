@@ -176,10 +176,34 @@ enum ExerciseCatalog {
         live.withLock { $0 = ExerciseCatalogSnapshot(definitions) }
     }
 
-    /// The bundled seed — each base definition overlaid with its classification (see `classifications`).
-    /// Shipped in the binary so search, planning, logging, and import matching work offline before any fetch.
-    static let seedDefinitions: [ExerciseDefinition] = baseDefinitions.map { def in
-        classifications[def.id].map { def.applying($0) } ?? def
+    /// The bundled seed — the curated built-ins overlaid with their classifications, plus the imported Free
+    /// Exercise DB catalog minus any import that duplicates a curated built-in (curated wins on id and on
+    /// name/alias). Shipped in the binary so the full library works offline before any fetch. Built once; a
+    /// missing or corrupt resource degrades to just the curated built-ins rather than failing.
+    static let seedDefinitions: [ExerciseDefinition] = {
+        let curated = baseDefinitions.map { def in
+            classifications[def.id].map { def.applying($0) } ?? def
+        }
+        return curated + importedAdditions(excluding: curated)
+    }()
+
+    private final class BundleToken {}
+
+    private static func importedAdditions(excluding curated: [ExerciseDefinition]) -> [ExerciseDefinition] {
+        func normalized(_ text: String) -> String {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        let curatedIDs = Set(curated.map(\.id))
+        let curatedTerms = Set(curated.flatMap { [normalized($0.name)] + $0.aliases.map(normalized) })
+
+        for bundle in [Bundle.main, Bundle(for: BundleToken.self)] {
+            guard let url = bundle.url(forResource: "fedb-catalog", withExtension: "json"),
+                  let data = try? Data(contentsOf: url),
+                  let imported = try? JSONDecoder().decode([ExerciseDefinition].self, from: data)
+            else { continue }
+            return imported.filter { !curatedIDs.contains($0.id) && !curatedTerms.contains(normalized($0.name)) }
+        }
+        return []
     }
 
     private static let baseDefinitions: [ExerciseDefinition] = [
