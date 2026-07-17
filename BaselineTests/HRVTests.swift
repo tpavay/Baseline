@@ -4,6 +4,32 @@ import Testing
 
 struct HRVTests {
 
+    @Test func artifactCorrectionInterpolatesEctopicWithoutBiasing() {
+        // Steady ~1000ms rhythm with one ectopic pair (short 500 then long 1500) — an artifact.
+        let rr = [1000.0, 1010, 990, 1000, 500, 1500, 1000, 990, 1010, 1000]
+        let (corrected, artifacts, quality) = HRV.corrected(rr)
+        #expect(artifacts >= 1)
+        // Correction pulls the huge inflated RMSSD back down toward the real ~10ms.
+        #expect(HRV.rmssd(corrected)! < HRV.rmssd(rr)!)
+        #expect(corrected.count == rr.count)         // beats preserved, not dropped
+        _ = quality
+    }
+
+    @Test func cleanSeriesHasNoArtifactsAndGoodQuality() {
+        let rr = [1000.0, 1010, 990, 1005, 995, 1000, 1008, 992]
+        let (_, artifacts, quality) = HRV.corrected(rr)
+        #expect(artifacts == 0)
+        #expect(quality == .good)
+    }
+
+    @Test func manyArtifactsRatePoor() {
+        // Alternating clean / wild → a large fraction flagged → Poor.
+        let rr = (0..<20).map { $0 % 2 == 0 ? 1000.0 : 2200.0 }
+        let (_, artifacts, quality) = HRV.corrected(rr)
+        #expect(artifacts > 0)
+        #expect(quality == .poor)
+    }
+
     @Test func parsesUInt8HRWithOneRRInterval() {
         // flags 0x10 (R-R present, HR uint8), HR 60, R-R = 1024 (1/1024 s) → 1000 ms
         let data = Data([0x10, 60, 0x00, 0x04])
@@ -47,5 +73,38 @@ struct HRVTests {
     @Test func cleanedDropsImplausibleIntervals() {
         let rr = [100.0, 800.0, 850.0, 3000.0]   // 100 and 3000 are out of [300, 2000]
         #expect(HRV.cleaned(rr) == [800.0, 850.0])
+    }
+
+    // MARK: - Mean RR / SDNN / pNN50
+
+    @Test func meanRR() {
+        #expect(HRV.meanRR([]) == nil)
+        #expect(abs((HRV.meanRR([900, 1100]) ?? 0) - 1000) < 0.0001)
+    }
+
+    @Test func sdnnOfTwoBeats() {
+        // mean 1000, variance = (200^2 + 200^2)/(2-1) = 80000 → sd ≈ 282.84
+        let s = try! #require(HRV.sdnn([800, 1200]))
+        #expect(abs(s - 282.842712) < 0.001)
+        #expect(HRV.sdnn([1000]) == nil)
+    }
+
+    @Test func pnn50CountsLargeDifferences() {
+        #expect(abs((HRV.pnn50([800, 1200]) ?? -1) - 100) < 0.0001)      // one diff > 50ms
+        #expect(abs((HRV.pnn50([1000, 1000, 1000]) ?? -1) - 0) < 0.0001) // none > 50ms
+        #expect(HRV.pnn50([1000]) == nil)
+    }
+
+    // MARK: - Readiness score (0–100 normalization of lnRMSSD)
+
+    @Test func readinessScoreNormalizes() {
+        #expect(HRV.readinessScore(lnRMSSD: 6.5) == 100)
+        #expect(HRV.readinessScore(lnRMSSD: 3.25) == 50)
+        #expect(HRV.readinessScore(lnRMSSD: 0) == 0)
+    }
+
+    @Test func readinessScoreClamps() {
+        #expect(HRV.readinessScore(lnRMSSD: 10) == 100)   // above range → clamp 100
+        #expect(HRV.readinessScore(lnRMSSD: -2) == 0)      // below range → clamp 0
     }
 }

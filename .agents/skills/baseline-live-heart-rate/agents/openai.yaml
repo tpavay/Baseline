@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Live Heart Rate"
+  short_description: "Build live workout heart-rate tracking"
+  default_prompt: "Use $baseline-live-heart-rate to implement or review Baseline live workout heart-rate tracking."

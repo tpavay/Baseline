@@ -1,0 +1,39 @@
+SYNTHETIC fixture — mimics the *shape* of the real import that fails today
+(a HYROX-style tempo-running session: ~90% coaching prose, ~10% prescription).
+No third-party program text is reproduced here. Use this to reproduce the
+assembly-validation failure class described in
+docs/quality/evidence/workout-import-diagnosis-2026-07-15.md.
+
+--- page 1 ---
+MORNING SESSION
+July 2026
+Above 80% readiness:
+Run the session exactly as written.
+70-80% readiness:
+If you slept well and feel motivated, run as written but ease into it.
+Below 60% readiness:
+Swap this for an easy aerobic day instead.
+This session is not meant to be forced. Intensity only helps when you are
+recovered enough to absorb it.
+Tempo Running
+
+--- page 2 ---
+Warm-Up
+10 minutes easy jog
+then mobility of your choosing.
+Enter the first interval calm and settled.
+I always recommend negative-splitting your intervals; pacing matters.
+Tempo Block
+Main Set
+3 x 13:00 minutes at tempo pace
+1:30 standing rest between intervals
+Heart rate should stabilise early and stay controlled.
+Execution Notes
+Tempo pace must be repeatable. Breathing moderate but controlled.
+
+--- expected structured result (what a working importer should produce) ---
+Title: Tempo Running (or "Morning Session")
+Block "Warm-Up": 10 min easy jog (+ mobility note)
+Block "Tempo Block": 3 rounds x 13:00 at tempo pace, 1:30 rest between intervals
+Coaching prose (readiness guidance, execution notes) → workout/exercise notes or
+review issues — NOT the whole workout collapsed into a "recognized text" dump.

@@ -1,0 +1,129 @@
+{
+  "title": "Canonical import",
+  "goal": "Metric compatibility",
+  "notes": ["Workout note"],
+  "blocks": [
+    {
+      "name": "Main",
+      "intent": "strength",
+      "notes": ["Block note"],
+      "sourceObservationIDs": ["o-root"],
+      "nodes": [
+        {
+          "type": "group",
+          "group": {
+            "label": "Structured circuit",
+            "phase": "main",
+            "repeatCount": 2,
+            "cadenceSeconds": 60,
+            "cadenceScope": "cycle",
+            "scoring": "total",
+            "scoreMetric": "power",
+            "adjustments": [
+              { "metric": "duration", "step": 600, "minimum": 3600, "maximum": 4800 }
+            ],
+            "notes": ["Group note"],
+            "doseLayer": "med",
+            "isOptional": true,
+            "ambiguity": "Confirm the circuit order.",
+            "sourceObservationIDs": ["o-group"],
+            "children": [
+              {
+                "type": "exercise",
+                "exercise": {
+                  "name": "Run",
+                  "restSeconds": 90,
+                  "intent": "easy",
+                  "notes": ["Exercise note"],
+                  "intensityTargets": [
+                    { "type": "power", "lower": 200, "upper": 300, "unit": "watts" }
+                  ],
+                  "sourceObservationIDs": ["o-exercise"],
+                  "sets": [
+                    {
+                      "role": "working",
+                      "effort": { "type": "rpe", "value": 7 },
+                      "metrics": [
+                        {
+                          "type": "reps",
+                          "value": 12,
+                          "unit": "count",
+                          "upperValue": 15,
+                          "progressionDelta": 1,
+                          "progressionEvery": 2,
+                          "progressionUnit": "round"
+                        }
+                      ],
+                      "alternatives": [
+                        {
+                          "label": "Scaled",
+                          "metrics": [{ "type": "distance", "value": 50, "unit": "m" }]
+                        }
+                      ]
+                    },
+                    { "metrics": [{ "type": "load", "value": 20, "unit": "kg" }], "alternatives": [] },
+                    { "metrics": [{ "type": "load", "value": 10, "unit": "lb" }], "alternatives": [] },
+                    { "metrics": [{ "type": "duration", "value": 30, "unit": "seconds" }], "alternatives": [] },
+                    { "metrics": [{ "type": "duration", "value": 2, "unit": "minutes" }], "alternatives": [] },
+                    { "metrics": [{ "type": "distance", "value": 100, "unit": "m" }], "alternatives": [] },
+                    { "metrics": [{ "type": "distance", "value": 1, "unit": "km" }], "alternatives": [] },
+                    { "metrics": [{ "type": "distance", "value": 1, "unit": "mi" }], "alternatives": [] },
+                    { "metrics": [{ "type": "calories", "value": 15, "unit": "kcal" }], "alternatives": [] },
+                    { "metrics": [{ "type": "heartRate", "value": 150, "unit": "bpm" }], "alternatives": [] },
+                    { "metrics": [{ "type": "heartRateZoneTime", "value": 30, "unit": "seconds" }], "alternatives": [] },
+                    { "metrics": [{ "type": "heartRateZoneTime", "value": 2, "unit": "minutes" }], "alternatives": [] },
+                    { "metrics": [{ "type": "cadence", "value": 90, "unit": "rpm" }], "alternatives": [] },
+                    { "metrics": [{ "type": "power", "value": 250, "unit": "watts" }], "alternatives": [] },
+                    { "metrics": [{ "type": "pace", "value": 0.3, "unit": "secondsPerMeter" }], "alternatives": [] },
+                    { "metrics": [{ "type": "rpe", "value": 7, "unit": "rpe" }], "alternatives": [] }
+                  ]
+                }
+              },
+              {
+                "type": "choice",
+                "choice": {
+                  "label": "Choose modality",
+                  "selectionCount": 1,
+                  "ambiguity": "Choose one option.",
+                  "sourceObservationIDs": ["o-choice"],
+                  "options": [
+                    {
+                      "type": "exercise",
+                      "exercise": {
+                        "name": "Run",
+                        "sets": [],
+                        "notes": [],
+                        "intensityTargets": [],
+                        "sourceObservationIDs": ["o-choice"]
+                      }
+                    },
+                    {
+                      "type": "exercise",
+                      "exercise": {
+                        "name": "Run",
+                        "sets": [],
+                        "notes": [],
+                        "intensityTargets": [],
+                        "sourceObservationIDs": ["o-choice"]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "rest",
+                "rest": {
+                  "label": "Rest between rounds",
+                  "durationSeconds": 90,
+                  "placement": "betweenRepetitions",
+                  "guidance": "Recover fully.",
+                  "sourceObservationIDs": ["o-rest"]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,108 +1,281 @@
-# Baseline — Engine & Data Model
+# Baseline - Engine & Data Model
 
-> The detailed, evolving "how it works under the hood" reference. Durable rules + product summary live in `CLAUDE.md`; this doc holds the depth and **will change as we build**. Companions: `docs/v0-spec.md` (scope + build order), `docs/design.md` (screens + design system).
+> Durable product model: the core entities, lifecycle, responsibilities, and boundaries. This doc describes **what the system is** and **why the concepts exist**. Implementation details that will age, such as device APIs, formulas, model providers, dataset choices, and storage rules, live in `docs/technical-reference.md` or the per-engine implementation docs.
 
-## Vocabulary (use consistently)
-- **Reading** — a morning HRV capture + the subjective check.
-- **Exercise** — a catalog entry (a movement) with a logging type + tags + aliases.
-- **Routine** — a reusable, editable *template* (ordered exercises with targets). Created in-app or produced by import.
-- **Session** — a dated *instance* the athlete actually performs and logs (usually started from a Routine; can be ad-hoc). Source of truth for what was done.
-- **Plan / Week** — Routines assigned to calendar days. This is what the engine reshuffles.
+## Core Flow
+```
+Reading -> Decision -> Plan -> Workout -> Learning
+```
 
-## The daily loop
-morning **Reading** → **readiness score** → **today's recommendation** (a Routine, proposed + editable) → **Session** (do it, live HR zones, log actuals) → **complete** (calendar + streak) → the log feeds tomorrow's readiness/recommendation.
+Baseline's durable loop is:
+1. Observe or collect today's evidence.
+2. Make a recovery-aware decision.
+3. Produce or adapt a plan.
+4. Execute and log the workout.
+5. Learn from the difference between intended and performed work.
 
-## The recovery engine (applies in layers)
-Job: answer "what should I train today, given my recovery?" — automating the week-reordering a coach otherwise hands back. It works at three levels depending on how much structure the content carries:
+The key product idea is that Baseline is not just a readiness score. It is the system that connects planning, execution, logging, adaptation, and learning.
 
-- **Layer A — dose-structured import (richest).** Some sources (e.g. a coach programming the Bayens method) bake **MED / HPL / MDV** into each day. If import captures that, the morning score **picks the dose**: `<60%` → MED, `60–79%` → MED-leaning aerobic, `≥80%` → +HPL / +MDV scaled to recent volume.
-- **Layer B — classified import.** Most imports carry no dose layers, but the importer assigns a **day-type** (active-recovery / aerobic-capacity / intensity / strength — the taxonomy seen in real HYROX programming). The score decides **do it / sub a lighter routine from your pool / drop to recovery**.
-- **Layer C — no plan.** Nothing planned → recommend from Baseline's **built-in chassis/recovery/aerobic library** (which also makes the recommendation real on day one, before any import exists).
+## Core Entities
 
-**Incremental, not macrocycle.** Athletes receive programming a day or week at a time, so Baseline reasons over a **rolling window of what's been imported**, not a full periodized block.
+### Reading
+A daily recovery input. A Reading may include physiology, sleep, subjective check-in, soreness, stress, mood, or any future evidence source. The important durable concept is not the capture method; it is that a Reading becomes structured evidence for a Decision.
 
-**Recovery bands:** `≥80%` intensity OK · `60–79%` aerobic / sub-threshold only (defer scheduled intensity later in the week) · `<60%` active recovery / chassis.
-**Hard constraints:** never two hard days in a row; a hard day is followed by aerobic or active recovery; batch intensity.
-**Subjective overrides:** high stress or soreness can outrank a good HRV (recovered HRV + heavy DOMS → chassis/low-impact, not quality).
-**Auto-reorder:** when it reshuffles a *loaded* week it **just does it** (not a suggestion) and shows the why — but it's a later feature (needs a populated week). For the incremental/coach-fed case the mechanism is dose-pick (A) + subbing recovery, not rescheduling days not yet received.
+### Decision
+The deterministic recovery-aware output for a day. It interprets evidence, constraints, training state, and certainty, then decides what training dose or training direction is appropriate. The Decision Engine owns scores, caps, constraints, and uncertainty.
 
-## Readiness score
-- **Inputs:** lnRMSSD vs. personal rolling baseline (primary) · resting HR · 7-day trend · **sleep (Apple Health)** · **prior-day training load** · subjective check (mood / energy / stress / soreness, soreness optionally by body region to target the chassis pivot).
-- **Cold-start ramp:** first ~10–14 readings have no reliable baseline → be conservative, lean on absolute values + age-population norms + the subjective check, show "calibrating." Never be absolute against a baseline that doesn't exist yet.
-- **Output:** a **0–100 score mapped to a recovery band** (green ≥80 / amber 60–79 / red <60), surfaced as "how recovered you are + what to do today."
+### Plan
+The intended training over time. A Plan assigns planned sessions to dates and can be adapted when readiness, constraints, travel, availability, or performed work changes.
 
-## Recovery capture (HRV)
-- **Chest-strap-first.** BLE Heart Rate Service `0x180D`, Heart Rate Measurement characteristic `0x2A37`; R-R intervals (units 1/1024 s → ms = raw×1000/1024) → artifact-correct → **RMSSD / lnRMSSD**. **Validated on a Polar H10.**
-- HRV math is a **pure function** (unit-tested without hardware). Sensor callbacks off-main; marshal to main for UI.
-- **Don't mix sources in a baseline** — one source per baseline; switching sources re-enters cold-start.
+Plans are versioned. Meaningful changes create history so the athlete can understand, undo, compare, and trust adaptations.
 
-## HR zones
-Needed for the live in-session zone display (the "no more Polar Flow" feature) and for tagging cardio intent.
-- **Derivation — computed by Baseline from raw Health data** (mirrors how Apple/Strava/Garmin do it): Heart-Rate-Reserve / **Karvonen** — `target = (maxHR − restingHR) × intensity% + restingHR`.
-  - **Health connected:** age + resting HR + **observed max from workout HR history** → 5 zones. Personalized from day one; no "enter your max HR" wall.
-  - **No Health:** Tanaka estimate (`208 − 0.7×age`) + entered/default resting HR → conservative zones.
-  - **Refine** max/resting over time as strap + Health data accumulate.
-  - **Override:** tested max HR, or **LTHR-based zones (Friel)** — gold standard for the threshold run work.
-- There's no clean public API to read Apple's computed zone boundaries, so we read the raw inputs and compute — which also lets us offer LTHR zones Apple doesn't.
-- **Live + history:** live zone shown per segment during a Session; per-segment HR + time-in-zone stored for trends.
+### Program
+A longer training structure, such as a multi-week HYROX block. A Program may contain blocks, weeks, days, planned sessions, and planned exercises.
 
-## Exercise catalog
-- **Base:** [free-exercise-db](https://github.com/yuhonas/free-exercise-db) — ~800 exercises, **public domain**, JSON + images. (Chosen over ExerciseDB's 11k [commercial + variation-bloat] and wger [CC-BY-SA share-alike].)
-- **Curated Baseline extension** (the differentiator — general DBs lack these):
-  - the **8 HYROX stations** (table below),
-  - common **CrossFit / functional** movements used in HYROX training (thrusters, box jumps, KB swings, double-unders, burpees…),
-  - **cardio modalities** (Run, Row, SkiErg, BikeErg),
-  - the **mobility / chassis / warm-up library**: ankle inversion/eversion w/ bands, couch stretch, pigeon + incline-bench pigeon, banded hamstring, dead hangs (+ single-arm), single-leg RDL, toe/heel walks, A/B/C skips, front-back + lateral (Frankenstein) leg swings, Cossack (Kozak) squats, lateral band walks, multi-plane core, glute activation…
-  - ~100–150 items to start; **content-driven** (grows without app releases). Create-custom supported.
-- **Unified schema (both sources):** `{ id, name, source, loggingType, tags[], aliases[], muscles[], equipment[], media? }`.
-- **Logging types:** `repsLoad` · `reps` · `timeHold` · `distance` · `distanceLoad` · `calories` · `timeZone`. (HYROX needs distance/load/calories, not just reps/load/time/holds.)
-- **Aliases are the import-matching key** — e.g. RDL → "Romanian Deadlift" (+ variants/misspellings). This, not dataset size, is what makes "RDL ≠ generic deadlift" work.
-- **Cardio = one modality + a structured `intent`** (`easy/Z2` · `tempo/threshold` · `intervals/VO2` · `long` · `race`) + environment (treadmill/outdoor). Trends slice by intent — no separate "easy run"/"threshold run" entries. SkiErg/Row double as both stations and training modalities (context is intent, not a different exercise).
-- **Images:** free-exercise-db ships them; curated items use a placeholder for v0 (no custom illustrations yet — mirrors Ascend's missing-art handling).
+Baseline does not require a full Program to work. It can reason over a single imported day, a rolling week, or a larger plan.
 
-### HYROX stations (fixed set)
-| Station | Logs as |
-|---|---|
-| SkiErg 1000m | distance / time / calories |
-| Sled Push 50m | distance + load |
-| Sled Pull 50m | distance + load |
-| Burpee Broad Jumps 80m | distance / reps |
-| Row 1000m | distance / time / calories |
-| Farmers Carry 200m | distance + load |
-| Sandbag Lunges 100m | distance + load |
-| Wall Balls 100 | reps + load |
-| (8× 1km Run between each) | Run modality + intent |
+### Workout Template
+A reusable source for training content. A Workout Template can be imported, created manually, copied from past work, or shipped as Baseline content. Scheduling a Workout Template creates an independent planned session instance.
 
-A prebuilt **"HYROX Simulation"** Routine (the full fixed sequence) ships as content — one tap to log a race sim.
+### Planned Session
+A dated intended workout (the athlete-facing "Workout"). This is what Baseline or the athlete meant to do on a given day.
 
-## Import pipeline (text / photo → Routine)
-- **Text → Routine:** on-device **Apple Foundation Models** (`@Generable` guided generation → typed `Routine`/`Exercise` structs). Free, on-device, private (iOS 26+).
-- **Photo → Routine:** **Vision** OCR (on-device, free) → Foundation Models structuring today; **native multimodal image input** when iOS 27 ships (fall 2026, announced WWDC26).
-- **Cloud fallback:** Claude API (via Cloud Function) only for long / messy / handwritten inputs the on-device model can't handle reliably.
-- **Import extracts more than the exercise list:** day-type / intensity classification, target zones, duration, and **dose layers (MED/HPL/MDV) when present** — that's what lets the engine reason. Low-confidence guesses get a one-tap **confirm / "did you mean?"**; the athlete owns the result.
-- **Gating:** on-device parsing needs an Apple-Intelligence-capable device; image input needs iOS 27. Build-for-self runs on-device today; the broad-launch floor (and how much cloud fallback to ship) is a later decision.
-- **Cost:** because the core path is on-device, import is **free** — monetization is not forced by AI costs.
+A Planned Session is organized into Workout Blocks. Each block holds ordered workout nodes: exercises, nested groups, explicit rest, or choices. A simple workout still contains only exercise nodes and reads as a flat list. It may come from a Workout Template, an imported coach plan, a generated recommendation, a previous workout, or a manual entry.
 
-## Demographics & comparison
-- Collect **age + gender** (minimum) on the Firebase-backed profile; weight/height optional.
-- Drives **population bell-curve positioning** (e.g. "among 25–29, here's where your HRV/readiness sits"). Privacy-safe, bucketed.
+### Workout Block
+A semantic group of exercises inside a workout — warm-up, strength, conditioning/metcon, HYROX station work, cooldown. It captures **purpose**: why those exercises sit together, and how they should adapt.
 
-## Engagement
-- **Streaks** (reading streak) + **reading-count** tracking + a **calendar** (completed sessions + what was done each day).
-- **Notifications:** a user-set **morning reading reminder** + a soft missed-reading nudge. No punishing streak mechanics — a recovery app shouldn't guilt rest.
+A Workout Block is a **semantic container, not an atomic unit**. It helps Baseline reason about intent and adaptation, but it never locks its contents: exercises can be added, removed, reordered, or moved between blocks, and blocks themselves can be added, removed, reordered, or re-scoped.
 
-## Data entities (sketch — SwiftData on device, mirrored to Firestore; will evolve)
-- **Profile** — uid, age, gender, (weight/height), HR-zone config, baseline state, settings.
-- **Reading** — date, lnRMSSD, RMSSD, resting HR, R-R series ref, subjective check, sleep snapshot, readiness score + band, source.
-- **Exercise** — catalog entry (schema above).
-- **Routine** — title, tags, source (created/import), ordered `RoutineItem`s; day-type / dose metadata when known.
-- **RoutineItem** — exercise ref, targets (sets/reps/load/time/distance/zone/intent), notes.
-- **Session** — date, source Routine ref, status, ordered `SessionItem`s, HR series + per-segment zone summary, completion.
-- **SessionItem / SetLog** — actuals per the exercise's logging type.
-- **Plan** — date → Routine assignments (the reshuffle surface).
-- **HRZoneConfig** — method (HRR / LTHR), max HR, resting HR, zone bounds, source (estimated/observed/tested).
+### Workout Group
+A composable prescription node for work that repeats or has shared timing: fixed rounds, intervals, circuits, AMRAPs, EMOM/E2MOM cadence, and similar structures. A group owns its repetition rule, optional start cadence, scoring method, duration adjustments, ordered child nodes, guidance, dose layer, and optionality.
 
-## Architecture notes
-- Sensor capture behind a service layer; HRV + readiness + zone math are **pure functions** (unit-testable, no hardware/view tree).
-- Content-driven: catalog, curated extension, built-in library, and any authored programs are **hosted/versioned content** — adding content never requires an app release.
-- Firebase Auth + Firestore from day one (same setup as Ascend). Firestore schema changes follow the strict-rules update order (see `CLAUDE.md`).
+Ranges and formulas remain authored targets rather than expanded copies. For example, `10 calories + 1 each round` is stored as a 10-calorie base with a round progression. During execution, the log creates iteration-specific actuals only as the athlete performs them.
+
+### Fully editable hierarchy
+No layer of the plan is immutable. Baseline supports validated, reversible edits at **every level** — program, phase, week, day, workout, block, exercise, prescription, and individual set/interval. Structural edits (add/remove/reorder/move blocks and exercises, split/merge workouts) and fine-grained edits (one set's load, one exercise's tempo) are both first-class. Every future-facing change is versioned and explainable (see `docs/implementation/plan-engine.md`).
+
+### Planned Exercise
+An intended exercise inside a Planned Session. It connects an Exercise to a Prescription and Coach Guidance.
+
+Planned Exercises are editable: the athlete or Baseline can add, remove, reorder, substitute, or reschedule them through validated plan operations.
+
+### Exercise
+A movement or modality Baseline can prescribe, recognize, and log. Examples include deadlift, threshold run, SkiErg, wall balls, calf yielding isometric, and mobility drills.
+
+An Exercise is not the same thing as its prescription. "Deadlift" is the movement; "3 x 8 at moderate load" is a Prescription; "brace before pulling" is Coach Guidance; "left calf tightened" is an Athlete Note.
+
+### Prescription
+The structured target for a planned exercise. It describes what should be done: sets, reps, load, duration, distance, pace, intensity, zone, rest, tempo, or modality-specific targets.
+
+Prescription is intended work. It should remain separate from actual performance.
+
+### Coach Guidance
+Authored instructional metadata attached to a planned session or planned exercise. It explains how and why to perform the work.
+
+Coach Guidance can include:
+- Goal or intent.
+- Tempo.
+- Form cues.
+- Common mistakes.
+- Why the exercise exists.
+- Progression notes.
+- Video, attachments, and links.
+
+Coach Guidance is permanent authored content. It ships with a plan, comes from a coach, or is produced by Baseline as part of a recommendation. It is not an execution log.
+
+### Context-Aware Guidance
+Dynamic guidance created from Coach Guidance plus today's state. Baseline can adjust the coaching layer based on readiness, constraints, injury history, fatigue, available equipment, or prior execution.
+
+Example:
+- Coach Guidance: "Brace before pulling."
+- Current context: hamstring sensitivity and low readiness.
+- Context-Aware Guidance: "Be conservative off the floor today. Your hamstring has been sensitive this week."
+
+The base guidance remains unchanged. The contextual layer is generated for the current decision or workout.
+
+### Workout Log / Performed Session
+The actual work performed. It records what happened during training: completed work, skipped work, substitutions, added exercises, modified targets, pain events, performance metrics, and athlete notes.
+
+The Workout Log links back to the Planned Session when one exists. Set actuals also carry optional group and iteration identity, group logs store target versus performed duration and completed rounds, and choice logs store the option actually used. It never overwrites the plan.
+
+### Athlete Notes
+User-generated execution notes. Athlete Notes describe what happened or how it felt in a specific workout, exercise, set, interval, or day.
+
+Examples:
+- "Left calf tightened during rep 3."
+- "Grip was weak on the last deadlift set."
+- "Treadmill felt easier than track pace."
+
+Athlete Notes are not Coach Guidance. They are evidence for future decisions and learning.
+
+### Constraint
+A condition that gates or shapes training. Constraints can come from pain, injury, equipment, travel, time, recovery, or user preference.
+
+Constraints are structured and durable enough to affect future plans until resolved or updated. They are not just notes and not just lower readiness scores.
+
+### Learning Signal
+The structured evidence produced after execution. Learning Signals come from planned-vs-performed deltas, performance trends, constraints, athlete notes, and recovery response.
+
+These signals help Baseline personalize future readiness interpretation, guidance, prescriptions, and plan adaptations.
+
+## Planned vs Performed
+Baseline preserves two records:
+- **Planned work:** intended sessions, planned exercises, prescriptions, and coach guidance.
+- **Performed work:** workout logs, actual performance, athlete notes, skips, substitutions, modifications, and pain events.
+
+The performed log never mutates the plan in place. It links to the plan and records the delta.
+
+Examples:
+- Planned: `4 x 5 min threshold + 6 x 30 sec speed`.
+- Performed: threshold completed, speed skipped because calf pain appeared.
+- Plan adaptation: move or replace speed work later through an explicit plan revision.
+
+This separation is what lets Baseline learn from reality without losing intent.
+
+## Prescription vs Guidance vs Athlete Notes
+Every planned exercise should support three different kinds of information:
+
+```
+Exercise
+  -> Prescription
+  -> Coach Guidance
+  -> Athlete Notes (only after or during execution)
+```
+
+For a deadlift:
+- **Prescription:** `3 x 8`, load target, rest, tempo.
+- **Coach Guidance:** "Build posterior chain strength. Brace before pulling. Watch for hips shooting up."
+- **Athlete Notes:** "Grip was weak on the third set."
+
+For a threshold run:
+- **Prescription:** `4 x 5 min threshold`, recovery duration, surface or environment target.
+- **Coach Guidance:** "Raise lactate threshold. Controlled discomfort. Do not sprint the first rep."
+- **Athlete Notes:** "Did threshold on treadmill; calf tightened before speed work."
+
+Mixing these together makes the product hard to trust. Authored guidance should not be polluted by one day's execution notes, and athlete notes should not disappear into generic coaching copy.
+
+## Exercise identity, metrics, and units
+Separate an exercise's **identity** from **how it's logged in a specific workout**. Three layers:
+
+```
+Exercise Definition   → stable identity + the metrics it *supports* + an activity category + aliases
+Planned Exercise      → which of those metrics are *selected* to log, and the preferred display units
+Performed Exercise    → the actual values, stored in canonical units
+```
+
+- **Exercise Definition** is global and stable — `Stationary Bike`, `Outdoor Bike`, `BikeErg`, `Elliptical` are distinct identities. It declares the metrics the modality *can* carry (e.g. duration · distance · calories · avg HR · HR-zone time · cadence · resistance) and belongs to an **activity category** (e.g. *cycling*). Changing how one workout logs it never edits this definition.
+- **Planned Exercise** picks the subset of metrics to show and log for *this instance*, plus display-unit preferences. A bike session might log **duration only**, or **duration + distance (km)**, or **duration + calories + avg HR**. **Unselected metrics must not appear as empty fields** — don't show a blank miles field just because the modality supports distance.
+- **Performed Exercise** stores actuals in **canonical units** (distance → meters, load → kilograms, time → seconds, energy → calories). Display units convert at read time, so `10 km` / `6.21 mi` / `10 000 m` are one underlying value and switching display never corrupts history.
+
+**Scope of a change — the agent must distinguish four scopes and ask when unclear:**
+- *this workout instance* → `updateLoggingConfig(plannedExerciseId, …)`
+- *future defaults for this exercise* → `updateExercisePreference(exerciseId, distanceUnit: km)` ("use km for Stationary Bike from now on")
+- *this exercise* vs *all cycling* → identity vs category.
+
+**Identity vs category — you need both.** Stable identities answer precise questions ("stationary-bike miles"); categories answer aggregate ones ("total cycling this week" → sum over Stationary Bike + Outdoor Bike + BikeErg). Without categories the broad question is hard; without identities the precise one is unreliable.
+
+**Aliases** map casual language to a stable id — "spin bike", "indoor bike", "exercise bike" → `Stationary Bike` — and the agent clarifies when the distinction matters ("a standard stationary bike or a BikeErg?").
+
+**History** is then queryable per identity, per metric, per unit, or per category:
+```
+getExerciseHistory(exerciseId: stationaryBike, metric: distance, unit: miles)
+getCategoryHistory(category: cycling, dateRange: thisWeek)
+  → Stationary Bike 18.4 mi · Outdoor Bike 27.1 mi · BikeErg 12.6 mi · Total 58.1 mi
+```
+
+*Status: the three layers above are built. The definition catalog, selectable metrics, display units, categories, and aliases all exist in `Baseline/Features/Workout/ExerciseCatalog.swift`, and the agent retrieves from the catalog rather than guessing names.
+History is queryable per identity (`PlanRepository.history(exerciseDefinitionID:limit:)`), but the metric/unit-scoped and per-category rollups sketched above remain design: they are the tail of the build sequence in `docs/technical-reference.md`, which also records the alias coverage caveat.*
+
+## Lifecycle
+
+### Morning Decision
+1. Baseline receives a Reading and current context.
+2. The Decision Engine computes readiness, certainty, limiters, and constraints.
+3. The Planning Engine proposes today's plan or adapts the scheduled plan.
+4. The athlete accepts, edits, or negotiates the plan.
+
+### Plan Editing
+1. A plan change is proposed by the athlete, Baseline, import, or conversation.
+2. The app validates the change.
+3. Meaningful future-facing changes create a new plan version.
+4. The current accepted plan remains explainable and reversible.
+
+### Workout Execution
+1. The athlete starts a planned or ad-hoc workout.
+2. Baseline shows the current prescription and relevant coach guidance.
+3. The athlete logs actual performance and athlete notes.
+4. The athlete can add, remove, reorder, substitute, skip, or extend work.
+5. Pain or context events update constraints and can trigger remaining-work adaptation.
+6. Completing the workout produces a Workout Log and Learning Signals.
+
+### Learning
+1. Baseline compares planned work to performed work.
+2. It interprets what changed and why.
+3. It connects performance and Athlete Notes to future readiness and planning.
+4. It gradually personalizes recommendations and guidance.
+
+## Engine Boundaries
+
+### Evidence Engine
+Owns observed inputs and daily evidence. It does not decide the plan.
+
+### Context Engine
+Turns conversation and user-provided information into structured context. It extracts and validates; it does not invent scores or silently rewrite plans.
+
+### Decision Engine
+Owns readiness, certainty, caps, limiters, and constraints. It is deterministic and auditable.
+
+### Planning Engine / Plan Engine
+Owns intended training: plan structure, planned sessions, prescriptions, substitutions, rescheduling, and version history.
+
+### Workout Execution Engine
+Owns performed training: active workout state, actual logs, athlete notes, modifications, skips, substitutions, pain events, and remaining-work recomputation.
+
+### Learning Engine
+Owns personalization from evidence over time, especially the deltas between proposed, accepted, and performed work.
+
+## Durable Relationships
+```
+Program
+  -> Training Phase              (multi-week block / mesocycle)
+  -> Week
+  -> Day
+  -> Planned Session (Workout)
+  -> Workout Block               (semantic group inside a workout — not an atomic unit)
+  -> Planned Exercise
+      -> Exercise
+      -> Prescription
+          -> Set / Interval      (addressable individually)
+      -> Coach Guidance
+
+Workout Log
+  -> Performed Exercise
+      -> Actual Performance
+      -> Athlete Notes
+      -> Workout Events
+
+Constraint
+  -> affects Decision
+  -> affects Plan
+  -> may be created or updated during Workout Execution
+
+Learning Signal
+  -> compares Plan to Workout Log
+  -> informs future Decisions, Plans, and Guidance
+```
+
+## What Belongs Elsewhere
+This doc should not carry implementation-specific details that will age quickly.
+
+Use `docs/technical-reference.md` for:
+- Sensor APIs and UUIDs.
+- HealthKit details.
+- Scoring formulas and HR-zone equations.
+- Model providers and import implementation.
+- Firebase and persistence rules.
+- Exercise dataset choices.
+- Concrete logging enum names.
+- Platform timelines and OS availability.
+
+Use per-engine implementation docs for build plans, tool APIs, validation rules, storage schemas, and UI-specific execution details.

@@ -22,6 +22,9 @@ open Baseline.xcodeproj
 ```
 Add Swift files anywhere under `Baseline/` and re-run `xcodegen generate` (no `.pbxproj` merge conflicts).
 
+Generating the project is not enough to build it: the Firebase `GoogleService-Info` plists are gitignored secrets, so a fresh clone needs them copied in first.
+See **Project Tooling** in [`CLAUDE.md`](CLAUDE.md) for the full prerequisites, including the Cloud Functions in `functions/`.
+
 ## Stack
 iOS 17+ · Swift 6 · SwiftUI (`@Observable`) · SwiftData · Firebase · HealthKit · CoreBluetooth (chest strap) · RevenueCat + SuperWall.
 

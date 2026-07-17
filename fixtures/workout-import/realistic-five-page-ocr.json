@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "pages": [
+    {
+      "index": 0,
+      "sourceRelativeFilename": "sources/0.source",
+      "relativeFilename": "pages/0.jpg",
+      "digest": "page-0",
+      "pixelWidth": 944,
+      "pixelHeight": 2048,
+      "stage": "recognized",
+      "observations": [
+        {"id":"p0-title","text":"Aerobic Capacity (Low Impact) Block 12 - Week 3","confidence":0.99,"boundingBox":{"x":0.08,"y":0.72,"width":0.84,"height":0.06},"sourceImageIndex":0},
+        {"id":"p0-summary","text":"Daily Summary","confidence":0.99,"boundingBox":{"x":0.08,"y":0.64,"width":0.50,"height":0.04},"sourceImageIndex":0},
+        {"id":"p0-note-1","text":"This session is a low-impact aerobic capacity and consolidation day, designed to support recovery from the week's intensity work while continuing to build the aerobic engine.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.46,"width":0.84,"height":0.15},"sourceImageIndex":0},
+        {"id":"p0-note-2","text":"When this day sits between two intensity sessions, it should be treated conservatively.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.30,"width":0.84,"height":0.08},"sourceImageIndex":0},
+        {"id":"p0-recovery","text":"Recovery Guidelines","confidence":0.99,"boundingBox":{"x":0.08,"y":0.10,"width":0.55,"height":0.04},"sourceImageIndex":0}
+      ],
+      "failureCode": null
+    },
+    {
+      "index": 1,
+      "sourceRelativeFilename": "sources/1.source",
+      "relativeFilename": "pages/1.jpg",
+      "digest": "page-1",
+      "pixelWidth": 944,
+      "pixelHeight": 2048,
+      "stage": "recognized",
+      "observations": [
+        {"id":"p1-above","text":"Above 60% recovery: Perform the day as programmed based on your previous week's training volume.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.70,"width":0.84,"height":0.10},"sourceImageIndex":1},
+        {"id":"p1-below","text":"Below 60% recovery: Strongly consider swapping to an Active Recovery Day, or completing Minimum Effective Dose (MED) only.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.48,"width":0.84,"height":0.14},"sourceImageIndex":1},
+        {"id":"p1-med","text":"Minimum Effective Dose (MED)","confidence":0.99,"boundingBox":{"x":0.08,"y":0.10,"width":0.75,"height":0.05},"sourceImageIndex":1}
+      ],
+      "failureCode": null
+    },
+    {
+      "index": 2,
+      "sourceRelativeFilename": "sources/2.source",
+      "relativeFilename": "pages/2.jpg",
+      "digest": "page-2",
+      "pixelWidth": 944,
+      "pixelHeight": 2048,
+      "stage": "recognized",
+      "observations": [
+        {"id":"p2-amrap","text":"70 minute AMRAP +/- 10 minutes based on desired volume.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.76,"width":0.84,"height":0.07},"sourceImageIndex":2},
+        {"id":"p2-bike","text":"C2 Bike/ECHO Bike","confidence":0.99,"boundingBox":{"x":0.08,"y":0.66,"width":0.55,"height":0.04},"sourceImageIndex":2},
+        {"id":"p2-intervals","text":"6 Sets - Aerobic Intervals","confidence":0.98,"boundingBox":{"x":0.08,"y":0.56,"width":0.70,"height":0.04},"sourceImageIndex":2},
+        {"id":"p2-work","text":"50 seconds work at 6-8 RPE","confidence":0.99,"boundingBox":{"x":0.08,"y":0.50,"width":0.65,"height":0.04},"sourceImageIndex":2},
+        {"id":"p2-recovery","text":"20 seconds work at 3 RPE (if on ECHO bike use arms only for the 20 seconds)","confidence":0.98,"boundingBox":{"x":0.08,"y":0.41,"width":0.84,"height":0.07},"sourceImageIndex":2},
+        {"id":"p2-sled","text":"A. 25 m Sled Pull @ race weight - focus on technique and breathing.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.29,"width":0.84,"height":0.06},"sourceImageIndex":2},
+        {"id":"p2-deadlift","text":"B. 12 Deadlifts @ Bodyweight + 12 lateral burpees over barbell.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.19,"width":0.84,"height":0.06},"sourceImageIndex":2},
+        {"id":"p2-instruction","text":"Work through aerobic intervals then alternate A & B after the 6 sets for the duration of the AMRAP.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.07,"width":0.84,"height":0.08},"sourceImageIndex":2}
+      ],
+      "failureCode": null
+    },
+    {
+      "index": 3,
+      "sourceRelativeFilename": "sources/3.source",
+      "relativeFilename": "pages/3.jpg",
+      "digest": "page-3",
+      "pixelWidth": 944,
+      "pixelHeight": 2048,
+      "stage": "recognized",
+      "observations": [
+        {"id":"p3-performance","text":"Performance Layer","confidence":0.99,"boundingBox":{"x":0.08,"y":0.78,"width":0.55,"height":0.05},"sourceImageIndex":3},
+        {"id":"p3-stairs","text":"StairMaster - 70 minutes - ideally with a weight vest or ruck.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.68,"width":0.84,"height":0.06},"sourceImageIndex":3},
+        {"id":"p3-first","text":"First 35 minutes - ideally with weight vest. 6 minutes stairs.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.55,"width":0.84,"height":0.06},"sourceImageIndex":3},
+        {"id":"p3-stepovers","text":"20 box step overs + 10 hand release push-ups","confidence":0.99,"boundingBox":{"x":0.08,"y":0.47,"width":0.78,"height":0.05},"sourceImageIndex":3},
+        {"id":"p3-second","text":"Second 35 minutes - without vest. 6 minutes stairs.","confidence":0.98,"boundingBox":{"x":0.08,"y":0.34,"width":0.80,"height":0.06},"sourceImageIndex":3},
+        {"id":"p3-press","text":"12 Dual DB Push Press + 15 wall balls @ heavier than race weight.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.24,"width":0.84,"height":0.06},"sourceImageIndex":3},
+        {"id":"p3-mdv","text":"Maximum Daily Volume (MDV)","confidence":0.99,"boundingBox":{"x":0.08,"y":0.08,"width":0.70,"height":0.05},"sourceImageIndex":3}
+      ],
+      "failureCode": null
+    },
+    {
+      "index": 4,
+      "sourceRelativeFilename": "sources/4.source",
+      "relativeFilename": "pages/4.jpg",
+      "digest": "page-4",
+      "pixelWidth": 944,
+      "pixelHeight": 2048,
+      "stage": "recognized",
+      "observations": [
+        {"id":"p4-ski","text":"SKI + Core","confidence":0.99,"boundingBox":{"x":0.08,"y":0.76,"width":0.45,"height":0.05},"sourceImageIndex":4},
+        {"id":"p4-rounds","text":"4 Rounds","confidence":0.99,"boundingBox":{"x":0.08,"y":0.66,"width":0.35,"height":0.05},"sourceImageIndex":4},
+        {"id":"p4-ski-time","text":"4 minutes ski - mid blue","confidence":0.99,"boundingBox":{"x":0.08,"y":0.55,"width":0.60,"height":0.05},"sourceImageIndex":4},
+        {"id":"p4-toes","text":"14 toes to bar/hanging leg raise","confidence":0.99,"boundingBox":{"x":0.08,"y":0.47,"width":0.72,"height":0.05},"sourceImageIndex":4},
+        {"id":"p4-plank","text":"max plank hold.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.40,"width":0.45,"height":0.05},"sourceImageIndex":4},
+        {"id":"p4-rest","text":"90 seconds rest between rounds.","confidence":0.99,"boundingBox":{"x":0.08,"y":0.28,"width":0.68,"height":0.05},"sourceImageIndex":4},
+        {"id":"p4-coach","text":"Coach's Note","confidence":0.99,"boundingBox":{"x":0.08,"y":0.10,"width":0.45,"height":0.05},"sourceImageIndex":4}
+      ],
+      "failureCode": null
+    }
+  ],
+  "expectedTerms": ["ECHO Bike", "Sled Pull", "Deadlifts", "lateral burpees", "DB Push Press"]
+}

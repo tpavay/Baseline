@@ -1,0 +1,1626 @@
+[
+  {
+    "schemaVersion": 1,
+    "title": "Aerobic Capacity Week 3",
+    "goal": "",
+    "ignoredObservationIDs": [],
+    "records": [
+      {
+        "id": "workout-note-1",
+        "kind": "note",
+        "parentID": "",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "This session is a low-impact aerobic capacity and consolidation day, designed to support recovery from the week's intensity work while continuing to build the aerobic engine."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p0-note-1"
+        ]
+      },
+      {
+        "id": "workout-note-2",
+        "kind": "note",
+        "parentID": "",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "When this day sits between two intensity sessions, it should be treated conservatively."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p0-note-2"
+        ]
+      },
+      {
+        "id": "workout-note-long-page-1",
+        "kind": "note",
+        "parentID": "",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Fixture page 1 coaching context. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p0-long-context"
+        ]
+      },
+      {
+        "id": "workout-note-above",
+        "kind": "note",
+        "parentID": "",
+        "order": 3,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Above 60% recovery: Perform the day as programmed based on your previous week's training volume."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p1-above"
+        ]
+      },
+      {
+        "id": "workout-note-below",
+        "kind": "note",
+        "parentID": "",
+        "order": 4,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Below 60% recovery: Strongly consider swapping to an Active Recovery Day, or completing Minimum Effective Dose (MED) only."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p1-below"
+        ]
+      },
+      {
+        "id": "workout-note-long-page-2",
+        "kind": "note",
+        "parentID": "",
+        "order": 5,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Fixture page 2 coaching context. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p1-long-context"
+        ]
+      },
+      {
+        "id": "med-block",
+        "kind": "block",
+        "parentID": "",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Minimum Effective Dose (MED)"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p0-title",
+          "p0-summary",
+          "p0-note-1",
+          "p0-note-2",
+          "p0-long-context",
+          "p0-recovery",
+          "p1-above",
+          "p1-below",
+          "p1-long-context",
+          "p1-med"
+        ]
+      },
+      {
+        "id": "amrap",
+        "kind": "group",
+        "parentID": "med-block",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "70 minute AMRAP"
+          },
+          {
+            "key": "durationSeconds",
+            "value": "4200"
+          },
+          {
+            "key": "scoring",
+            "value": "roundsAndReps"
+          },
+          {
+            "key": "ambiguity",
+            "value": "The duration may be adjusted by 10 minutes based on desired volume."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-amrap",
+          "p2-intervals"
+        ]
+      },
+      {
+        "id": "amrap-adjustment",
+        "kind": "adjustment",
+        "parentID": "amrap",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "metric",
+            "value": "duration"
+          },
+          {
+            "key": "step",
+            "value": "600"
+          },
+          {
+            "key": "minimum",
+            "value": "3600"
+          },
+          {
+            "key": "maximum",
+            "value": "4800"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-amrap"
+        ]
+      },
+      {
+        "id": "aerobic-intervals",
+        "kind": "group",
+        "parentID": "amrap",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Aerobic Intervals"
+          },
+          {
+            "key": "repeatCount",
+            "value": "6"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-bike",
+          "p2-intervals"
+        ]
+      },
+      {
+        "id": "bike-modality-note",
+        "kind": "note",
+        "parentID": "aerobic-intervals",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "C2 Bike / Echo Bike"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-bike"
+        ]
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "title": "Aerobic Capacity Week 3",
+    "goal": "",
+    "ignoredObservationIDs": [],
+    "records": [
+      {
+        "id": "med-block-continued",
+        "kind": "block",
+        "parentID": "",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Minimum Effective Dose (MED)"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "amrap-continued",
+        "kind": "group",
+        "parentID": "med-block-continued",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "70-minute AMRAP"
+          },
+          {
+            "key": "durationSeconds",
+            "value": "4200"
+          },
+          {
+            "key": "scoring",
+            "value": "roundsAndReps"
+          },
+          {
+            "key": "ambiguity",
+            "value": "The duration may be adjusted by 10 minutes based on desired volume."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work",
+          "p2-recovery",
+          "p2-long-context",
+          "p2-instruction"
+        ]
+      },
+      {
+        "id": "aerobic-intervals-continued",
+        "kind": "group",
+        "parentID": "amrap-continued",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Aerobic Intervals"
+          },
+          {
+            "key": "repeatCount",
+            "value": "6"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work",
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "bike-interval-choice",
+        "kind": "choice",
+        "parentID": "aerobic-intervals-continued",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "C2 Bike or Echo Bike"
+          },
+          {
+            "key": "selectionCount",
+            "value": "1"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work",
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "bikeerg-interval-option",
+        "kind": "group",
+        "parentID": "bike-interval-choice",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "BikeErg"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work",
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "bikeerg-work",
+        "kind": "exercise",
+        "parentID": "bikeerg-interval-option",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "BikeErg"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "bikeerg-work-set",
+        "kind": "set",
+        "parentID": "bikeerg-work",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "bikeerg-work-duration",
+        "kind": "metric",
+        "parentID": "bikeerg-work-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "50"
+          },
+          {
+            "key": "unit",
+            "value": "seconds"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "bikeerg-work-rpe",
+        "kind": "intensity",
+        "parentID": "bikeerg-work",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "rpe"
+          },
+          {
+            "key": "lower",
+            "value": "6"
+          },
+          {
+            "key": "upper",
+            "value": "8"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "bikeerg-recovery",
+        "kind": "exercise",
+        "parentID": "bikeerg-interval-option",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "BikeErg"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "bikeerg-recovery-set",
+        "kind": "set",
+        "parentID": "bikeerg-recovery",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "bikeerg-recovery-duration",
+        "kind": "metric",
+        "parentID": "bikeerg-recovery-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "20"
+          },
+          {
+            "key": "unit",
+            "value": "seconds"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "bikeerg-recovery-rpe",
+        "kind": "intensity",
+        "parentID": "bikeerg-recovery",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "rpe"
+          },
+          {
+            "key": "lower",
+            "value": "3"
+          },
+          {
+            "key": "upper",
+            "value": "3"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "echo-interval-option",
+        "kind": "group",
+        "parentID": "bike-interval-choice",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Echo Bike"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work",
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "echo-work",
+        "kind": "exercise",
+        "parentID": "echo-interval-option",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Echo Bike"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "echo-work-set",
+        "kind": "set",
+        "parentID": "echo-work",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "echo-work-duration",
+        "kind": "metric",
+        "parentID": "echo-work-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "50"
+          },
+          {
+            "key": "unit",
+            "value": "seconds"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "echo-work-rpe",
+        "kind": "intensity",
+        "parentID": "echo-work",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "rpe"
+          },
+          {
+            "key": "lower",
+            "value": "6"
+          },
+          {
+            "key": "upper",
+            "value": "8"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-work"
+        ]
+      },
+      {
+        "id": "echo-recovery",
+        "kind": "exercise",
+        "parentID": "echo-interval-option",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Echo Bike"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "echo-recovery-set",
+        "kind": "set",
+        "parentID": "echo-recovery",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "echo-recovery-duration",
+        "kind": "metric",
+        "parentID": "echo-recovery-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "20"
+          },
+          {
+            "key": "unit",
+            "value": "seconds"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "echo-recovery-rpe",
+        "kind": "intensity",
+        "parentID": "echo-recovery",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "rpe"
+          },
+          {
+            "key": "lower",
+            "value": "3"
+          },
+          {
+            "key": "upper",
+            "value": "3"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "echo-recovery-note",
+        "kind": "note",
+        "parentID": "echo-recovery",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Use arms only during the 20-second recovery when using the Echo Bike."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-recovery"
+        ]
+      },
+      {
+        "id": "amrap-long-note",
+        "kind": "note",
+        "parentID": "amrap-continued",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Fixture page 3 coaching context. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-long-context"
+        ]
+      },
+      {
+        "id": "amrap-instruction-note",
+        "kind": "note",
+        "parentID": "amrap-continued",
+        "order": 3,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Work through aerobic intervals then alternate A & B after the 6 sets for the duration of the AMRAP."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-instruction"
+        ]
+      },
+      {
+        "id": "alternate-a-b",
+        "kind": "group",
+        "parentID": "amrap-continued",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Then alternate A and B"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-instruction"
+        ]
+      },
+      {
+        "id": "option-a",
+        "kind": "group",
+        "parentID": "alternate-a-b",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "A"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-sled"
+        ]
+      },
+      {
+        "id": "sled-pull",
+        "kind": "exercise",
+        "parentID": "option-a",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Sled Pull"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-sled"
+        ]
+      },
+      {
+        "id": "sled-set",
+        "kind": "set",
+        "parentID": "sled-pull",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-sled"
+        ]
+      },
+      {
+        "id": "sled-distance",
+        "kind": "metric",
+        "parentID": "sled-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "distance"
+          },
+          {
+            "key": "value",
+            "value": "25"
+          },
+          {
+            "key": "unit",
+            "value": "m"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-sled"
+        ]
+      },
+      {
+        "id": "sled-load",
+        "kind": "intensity",
+        "parentID": "sled-pull",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "descriptive"
+          },
+          {
+            "key": "value",
+            "value": "Load target: Race weight"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-sled"
+        ]
+      },
+      {
+        "id": "sled-note",
+        "kind": "note",
+        "parentID": "sled-pull",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Focus on technique and breathing."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-sled"
+        ]
+      },
+      {
+        "id": "option-b",
+        "kind": "group",
+        "parentID": "alternate-a-b",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "B"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "deadlift",
+        "kind": "exercise",
+        "parentID": "option-b",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Deadlift"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "deadlift-set",
+        "kind": "set",
+        "parentID": "deadlift",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "deadlift-reps",
+        "kind": "metric",
+        "parentID": "deadlift-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "12"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "deadlift-load",
+        "kind": "intensity",
+        "parentID": "deadlift",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "descriptive"
+          },
+          {
+            "key": "value",
+            "value": "Load target: Bodyweight"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "deadlift-note",
+        "kind": "note",
+        "parentID": "deadlift",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Use bodyweight as a descriptive barbell load target. The athlete must still be able to enter the actual bar weight."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "burpee",
+        "kind": "exercise",
+        "parentID": "option-b",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Lateral Burpee Over Barbell"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "burpee-set",
+        "kind": "set",
+        "parentID": "burpee",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "burpee-reps",
+        "kind": "metric",
+        "parentID": "burpee-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "12"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p2-deadlift"
+        ]
+      },
+      {
+        "id": "performance",
+        "kind": "block",
+        "parentID": "",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Performance Layer"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-performance",
+          "p3-stairs",
+          "p3-first",
+          "p3-second",
+          "p3-long-context"
+        ]
+      },
+      {
+        "id": "performance-first-phase",
+        "kind": "group",
+        "parentID": "performance",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "First 35 minutes - repeat circuit"
+          },
+          {
+            "key": "durationSeconds",
+            "value": "2100"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-first",
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "performance-first-phase-note",
+        "kind": "note",
+        "parentID": "performance-first-phase",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Ideally use a weight vest during this phase."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-first"
+        ]
+      },
+      {
+        "id": "performance-second-phase",
+        "kind": "group",
+        "parentID": "performance",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Second 35 minutes - repeat circuit"
+          },
+          {
+            "key": "durationSeconds",
+            "value": "2100"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-second",
+          "p3-press"
+        ]
+      },
+      {
+        "id": "performance-second-phase-note",
+        "kind": "note",
+        "parentID": "performance-second-phase",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Complete this phase without the weight vest."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-second"
+        ]
+      },
+      {
+        "id": "performance-long-note",
+        "kind": "note",
+        "parentID": "performance",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Fixture page 4 coaching context. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-long-context"
+        ]
+      },
+      {
+        "id": "first-stairs",
+        "kind": "exercise",
+        "parentID": "performance-first-phase",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "StairMaster"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stairs",
+          "p3-first"
+        ]
+      },
+      {
+        "id": "first-stairs-set",
+        "kind": "set",
+        "parentID": "first-stairs",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p3-stairs",
+          "p3-first"
+        ]
+      },
+      {
+        "id": "first-stairs-duration",
+        "kind": "metric",
+        "parentID": "first-stairs-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "6"
+          },
+          {
+            "key": "unit",
+            "value": "minutes"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stairs",
+          "p3-first"
+        ]
+      },
+      {
+        "id": "stairs-overview-note",
+        "kind": "note",
+        "parentID": "performance",
+        "order": 3,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "StairMaster - 70 minutes total - ideally with a weight vest or ruck."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stairs"
+        ]
+      },
+      {
+        "id": "step-over",
+        "kind": "exercise",
+        "parentID": "performance-first-phase",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Box Step Over"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "step-over-set",
+        "kind": "set",
+        "parentID": "step-over",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "step-over-reps",
+        "kind": "metric",
+        "parentID": "step-over-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "20"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "push-up",
+        "kind": "exercise",
+        "parentID": "performance-first-phase",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Hand Release Push-Up"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "push-up-set",
+        "kind": "set",
+        "parentID": "push-up",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "push-up-reps",
+        "kind": "metric",
+        "parentID": "push-up-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "10"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-stepovers"
+        ]
+      },
+      {
+        "id": "second-stairs",
+        "kind": "exercise",
+        "parentID": "performance-second-phase",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "StairMaster"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-second"
+        ]
+      },
+      {
+        "id": "second-stairs-set",
+        "kind": "set",
+        "parentID": "second-stairs",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p3-second"
+        ]
+      },
+      {
+        "id": "second-stairs-duration",
+        "kind": "metric",
+        "parentID": "second-stairs-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "6"
+          },
+          {
+            "key": "unit",
+            "value": "minutes"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-second"
+        ]
+      },
+      {
+        "id": "push-press",
+        "kind": "exercise",
+        "parentID": "performance-second-phase",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Dumbbell Push Press"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-press"
+        ]
+      },
+      {
+        "id": "push-press-set",
+        "kind": "set",
+        "parentID": "push-press",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p3-press"
+        ]
+      },
+      {
+        "id": "push-press-reps",
+        "kind": "metric",
+        "parentID": "push-press-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "12"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-press"
+        ]
+      },
+      {
+        "id": "wall-ball",
+        "kind": "exercise",
+        "parentID": "performance-second-phase",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Wall Ball"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-press"
+        ]
+      },
+      {
+        "id": "wall-ball-set",
+        "kind": "set",
+        "parentID": "wall-ball",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p3-press"
+        ]
+      },
+      {
+        "id": "wall-ball-reps",
+        "kind": "metric",
+        "parentID": "wall-ball-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "15"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-press"
+        ]
+      },
+      {
+        "id": "mdv",
+        "kind": "block",
+        "parentID": "",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Maximum Daily Volume (MDV)"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p3-mdv"
+        ]
+      },
+      {
+        "id": "ski-core",
+        "kind": "group",
+        "parentID": "mdv",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "SKI + Core"
+          },
+          {
+            "key": "repeatCount",
+            "value": "4"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-ski",
+          "p4-rounds"
+        ]
+      },
+      {
+        "id": "ski",
+        "kind": "exercise",
+        "parentID": "ski-core",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "SkiErg"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-ski-time"
+        ]
+      },
+      {
+        "id": "ski-set",
+        "kind": "set",
+        "parentID": "ski",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p4-ski-time"
+        ]
+      },
+      {
+        "id": "ski-duration",
+        "kind": "metric",
+        "parentID": "ski-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "duration"
+          },
+          {
+            "key": "value",
+            "value": "4"
+          },
+          {
+            "key": "unit",
+            "value": "minutes"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-ski-time"
+        ]
+      },
+      {
+        "id": "toes-or-leg-raise",
+        "kind": "choice",
+        "parentID": "ski-core",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Toes to Bar or Hanging Leg Raise"
+          },
+          {
+            "key": "selectionCount",
+            "value": "1"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "toes",
+        "kind": "exercise",
+        "parentID": "toes-or-leg-raise",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Toes to Bar"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "toes-set",
+        "kind": "set",
+        "parentID": "toes",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "toes-reps",
+        "kind": "metric",
+        "parentID": "toes-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "14"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "hanging-leg-raise",
+        "kind": "exercise",
+        "parentID": "toes-or-leg-raise",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Hanging Leg Raise"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "hanging-leg-raise-set",
+        "kind": "set",
+        "parentID": "hanging-leg-raise",
+        "order": 0,
+        "attributes": [],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "hanging-leg-raise-reps",
+        "kind": "metric",
+        "parentID": "hanging-leg-raise-set",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "type",
+            "value": "reps"
+          },
+          {
+            "key": "value",
+            "value": "14"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-toes"
+        ]
+      },
+      {
+        "id": "plank",
+        "kind": "exercise",
+        "parentID": "ski-core",
+        "order": 2,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Plank"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-plank"
+        ]
+      },
+      {
+        "id": "plank-note",
+        "kind": "note",
+        "parentID": "plank",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Hold for the maximum controlled duration."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-plank"
+        ]
+      },
+      {
+        "id": "round-rest",
+        "kind": "rest",
+        "parentID": "ski-core",
+        "order": 3,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Rest between rounds"
+          },
+          {
+            "key": "durationSeconds",
+            "value": "90"
+          },
+          {
+            "key": "placement",
+            "value": "betweenRepetitions"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-rest"
+        ]
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "title": "Aerobic Capacity Week 3",
+    "goal": "",
+    "ignoredObservationIDs": [],
+    "records": [
+      {
+        "id": "mdv-continued",
+        "kind": "block",
+        "parentID": "",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Maximum Daily Volume (MDV)"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-long-context"
+        ]
+      },
+      {
+        "id": "ski-core-continued",
+        "kind": "group",
+        "parentID": "mdv-continued",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "label",
+            "value": "Ski and Core - four rounds"
+          },
+          {
+            "key": "repeatCount",
+            "value": "4"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-long-context"
+        ]
+      },
+      {
+        "id": "ski-core-note",
+        "kind": "note",
+        "parentID": "ski-core-continued",
+        "order": 0,
+        "attributes": [
+          {
+            "key": "text",
+            "value": "Fixture page 5 coaching context. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail. Keep every instruction attached to its intended workout scope and preserve the athlete-facing detail."
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-long-context"
+        ]
+      },
+      {
+        "id": "coach",
+        "kind": "block",
+        "parentID": "",
+        "order": 1,
+        "attributes": [
+          {
+            "key": "name",
+            "value": "Coach's Note"
+          }
+        ],
+        "sourceObservationIDs": [
+          "p4-coach"
+        ]
+      }
+    ]
+  }
+]

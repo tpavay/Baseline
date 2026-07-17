@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline HRV Reading"
+  short_description: "Build Baseline optional HRV reading flows"
+  default_prompt: "Use $baseline-hrv-reading to implement or review Baseline optional HRV capture and processing."

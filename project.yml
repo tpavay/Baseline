@@ -18,7 +18,7 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    DEVELOPMENT_TEAM: ""          # set your team in Xcode (Signing & Capabilities) — required for Sign in with Apple on device
+    DEVELOPMENT_TEAM: QWGVB7TN4T
 targets:
   Baseline:
     type: application
@@ -34,17 +34,24 @@ targets:
         product: FirebaseAuth
       - package: Firebase
         product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseFunctions
+      - package: Firebase
+        product: FirebaseStorage
+      - package: Firebase
+        product: FirebaseAppCheck
       - package: GoogleSignIn
         product: GoogleSignIn
     info:
       path: Baseline/Info.plist
       properties:
-        UILaunchScreen: {}
+        UILaunchStoryboardName: LaunchScreen
         ITSAppUsesNonExemptEncryption: false
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSHealthShareUsageDescription: "Baseline reads your workouts, sleep, and heart data to understand your recovery and training context."
         NSBluetoothAlwaysUsageDescription: "Baseline connects to your heart-rate strap to take your morning HRV reading."
+        NSCameraUsageDescription: "Baseline uses the camera and flash to read your pulse from your fingertip for your morning HRV reading."
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
@@ -69,6 +76,14 @@ targets:
     platform: iOS
     sources:
       - path: BaselineTests
+      - path: fixtures/workout-import/canonical-assembled-document.json
+        buildPhase: resources
+      - path: fixtures/workout-import/realistic-five-page-ocr.json
+        buildPhase: resources
+      - path: fixtures/workout-import/realistic-five-page-request.json
+        buildPhase: resources
+      - path: fixtures/workout-import/realistic-five-page-response.json
+        buildPhase: resources
     dependencies:
       - target: Baseline
     settings:
