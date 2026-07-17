@@ -108,8 +108,18 @@ private struct ConversationView: View {
                 .onChange(of: service.log.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: service.isThinking) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
+            // Openers, offered on the same condition as the greeting so the two retire together the
+            // moment the athlete says anything.
+            if service.log.isEmpty {
+                ConversationSuggestionChips(suggestions: ConversationSuggestion.all(for: mode)) {
+                    draft = $0.prompt
+                    inputFocused = true
+                }
+                .transition(.opacity)
+            }
             composer
         }
+        .animation(.easeInOut(duration: 0.2), value: service.log.isEmpty)
     }
 
     private var greeting: some View {
@@ -123,12 +133,14 @@ private struct ConversationView: View {
         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
     }
 
+    /// Deliberately short: the suggestion chips above the composer now carry the concrete examples
+    /// this copy used to spell out, and tappably. Saying both would say it twice.
     private var greetingCopy: String {
         switch mode {
         case .general:
-            "Tell me what changed and I'll adjust today's plan — \u{201C}only 30 minutes\u{201D}, \u{201C}my Achilles hurts\u{201D}, \u{201C}I'm traveling\u{201D} — or ask why."
+            "Tell me what changed and I'll adjust today's plan, or ask why."
         case .workoutImport:
-            "Tell me what the photos meant — \u{201C}that's Echo Bike\u{201D}, \u{201C}add a load field to the sled pull\u{201D}, or \u{201C}replace bench with dumbbell push press\u{201D}."
+            "Tell me what the photos meant and I'll fix the draft."
         }
     }
 
