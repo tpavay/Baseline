@@ -108,9 +108,9 @@ private struct ConversationView: View {
                 .onChange(of: service.log.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: service.isThinking) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
-            // Openers, offered on the same condition as the greeting so the two retire together the
-            // moment the athlete says anything.
-            if service.log.isEmpty {
+            // Openers, offered while the greeting is, so the two retire together the moment the
+            // athlete says anything.
+            if showsSuggestions {
                 ConversationSuggestionChips(suggestions: ConversationSuggestion.all(for: mode)) {
                     draft = $0.prompt
                     inputFocused = true
@@ -120,6 +120,15 @@ private struct ConversationView: View {
             composer
         }
         .animation(.easeInOut(duration: 0.2), value: service.log.isEmpty)
+        .animation(.easeInOut(duration: 0.2), value: showsSuggestions)
+    }
+
+    /// A chip fills the composer, so the row has to leave once the box holds words of the athlete's
+    /// own: tapping one would silently throw them away, and a binding written in code is nothing the
+    /// undo manager can give back. Untouched chip text stays replaceable, which is what lets a second
+    /// chip swap out the first.
+    private var showsSuggestions: Bool {
+        service.log.isEmpty && ConversationSuggestion.isUnedited(draft: draft, for: mode)
     }
 
     private var greeting: some View {

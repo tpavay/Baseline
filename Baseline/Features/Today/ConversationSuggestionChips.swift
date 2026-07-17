@@ -28,12 +28,18 @@ struct ConversationSuggestionChips: View {
                             .padding(.vertical, 8)
                             .background(Capsule().fill(BaselineColor.surface))
                             .overlay(Capsule().strokeBorder(BaselineColor.line, lineWidth: 1))
+                            // The row's breathing room, taken inside the button and outside the
+                            // capsule: the chip draws 32pt as before, but answers to a 48pt touch,
+                            // clearing the 44pt floor. The minimum holds that floor at the smallest
+                            // text sizes, where the capsule itself shrinks.
+                            .padding(.vertical, 8)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityHint("Fills the message box with \u{201C}\(suggestion.prompt)\u{201D} to edit before sending")
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
         }
         .scrollBounceBehavior(.basedOnSize)   // a row that already fits shouldn't rubber-band
     }

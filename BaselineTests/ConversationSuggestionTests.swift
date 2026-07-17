@@ -34,14 +34,55 @@ struct ConversationSuggestionTests {
     /// name draft-editing work only. A chip that invites a plan or health change would answer
     /// "what can I say here?" with a refusal, the one outcome chips exist to prevent.
     @Test func importOpenersStayInsideTheDraftEditingAllowlist() {
-        let openers = ConversationSuggestion.all(for: .workoutImport)
-        let refused = ["week", "plan", "sleep", "readiness", "template", "start", "finish", "health"]
-        for s in openers {
-            let text = (s.label + " " + s.prompt).lowercased()
+        // A proxy for `permits()`: the vocabulary of the tools it shuts out, one group per denied
+        // category. It reads whole words, so "Add a plank" is not mistaken for "plan".
+        let refused = [
+            // upsertConstraint / resolveConstraint
+            "hurt", "hurts", "hurting", "pain", "painful", "sore", "soreness", "injury", "injured", "ache", "aches",
+            // setTimeAvailable
+            "minute", "minutes", "hour", "hours", "rushed",
+            // setTraveling
+            "travel", "traveling", "travelling", "hotel",
+            // setIllness
+            "sick", "ill", "illness", "unwell", "fever",
+            // setCheckIn / explain
+            "energy", "mood", "stress", "readiness", "recovery", "recovered",
+            // setSleep / getSleep
+            "sleep", "slept", "sleeping",
+            // getWeekPlan / moveWorkout / swapWorkouts / skipWorkout / duplicateWorkout / deleteWorkout
+            "plan", "plans", "week", "weeks", "schedule", "scheduled", "reschedule", "tomorrow", "skip", "skipped",
+            // saveAsTemplate / createFromTemplate / updateTemplate / updateExercisePreference
+            "template", "templates", "save", "saved", "preference", "preferences", "default", "defaults",
+            // startWorkout / completeWorkout
+            "start", "started", "begin", "finish", "finished", "complete", "completed", "done",
+            // openAppleHealthSetup / getHRVReadings / getRestingHeartRate
+            "health", "healthkit", "apple", "hrv",
+        ]
+        for s in ConversationSuggestion.all(for: .workoutImport) {
+            let words = Set(
+                (s.label + " " + s.prompt).lowercased()
+                    .split { !$0.isLetter && !$0.isNumber }
+                    .map(String.init)
+            )
             for word in refused {
-                #expect(!text.contains(word), "Import chip \"\(s.label)\" invites \"\(word)\", which permits() denies.")
+                #expect(!words.contains(word), "Import chip \"\(s.label)\" invites \"\(word)\", which permits() denies.")
             }
         }
+    }
+
+    /// A chip overwrites the composer, so the row may only be on screen while there is nothing there
+    /// worth keeping. Untouched chip text is fair game (that is how a second chip replaces a first);
+    /// anything the athlete shaped themselves is not.
+    @Test func onlyBlankOrUntouchedChipTextIsSafeToOverwrite() {
+        let opener = ConversationSuggestion.all(for: .general)[0]
+        #expect(ConversationSuggestion.isUnedited(draft: "", for: .general))
+        #expect(ConversationSuggestion.isUnedited(draft: " \n  ", for: .general))
+        #expect(ConversationSuggestion.isUnedited(draft: opener.prompt, for: .general))
+        #expect(!ConversationSuggestion.isUnedited(draft: opener.prompt + " and my hip", for: .general))
+        #expect(!ConversationSuggestion.isUnedited(draft: "Why is today so easy?", for: .general))
+        // A prompt belonging to the other scope is not this scope's chip text.
+        let imported = ConversationSuggestion.all(for: .workoutImport)[0]
+        #expect(!ConversationSuggestion.isUnedited(draft: imported.prompt, for: .general))
     }
 
     /// The two scopes reach different tools, so they must not open with the same menu.

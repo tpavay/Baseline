@@ -19,6 +19,15 @@ struct ConversationSuggestion: Identifiable, Sendable {
         }
     }
 
+    /// Whether refilling the composer with `draft` in it would destroy nothing the athlete wrote:
+    /// it is blank, or it still reads exactly as a chip left it. Once they have adapted the sentence
+    /// it is theirs, and a stray tap must not take it back. Read from the text itself rather than
+    /// tracked alongside it, so there is no flag to fall out of step with what is in the box.
+    static func isUnedited(draft: String, for mode: AskBaselineContext) -> Bool {
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return typed.isEmpty || all(for: mode).contains { $0.prompt == typed }
+    }
+
     /// Spans the general scope's real reach: today's plan (get_today / explain), building a workout
     /// (create_workout), the week (get_week_plan), and the context tools that change a plan (time
     /// available, constraints, sleep).
