@@ -49,7 +49,7 @@ struct WorkoutView: View {
             .toolbar { workoutToolbar }
         }
         .tint(BaselineColor.accent)
-        .sheet(isPresented: $showChat) { AskBaselineSheet() }
+        .sheet(isPresented: $showChat) { AskBaselineSheet(surface: .workout) }
         .alert("Save as template", isPresented: $showSaveTemplate) {
             TextField("Template name", text: $templateName)
             Button("Save") { saveTemplate() }

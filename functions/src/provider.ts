@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+import { withLLMGeneration } from "./llmObservability";
+
 /** A content block returned to the app: assistant text or a tool_use the app must execute. */
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -9,6 +11,7 @@ export interface CompleteRequest {
   system: string;
   tools: unknown[];
   messages: unknown[]; // Anthropic-format messages, passed through from the app
+  roundIndex?: number;
 }
 
 /**
@@ -21,7 +24,7 @@ export interface ConversationProvider {
 
 export class AnthropicProvider implements ConversationProvider {
   private client: Anthropic;
-  private model: string;
+  readonly model: string;
 
   constructor(apiKey: string, model?: string) {
     this.client = new Anthropic({ apiKey });
@@ -30,13 +33,24 @@ export class AnthropicProvider implements ConversationProvider {
   }
 
   async complete(req: CompleteRequest): Promise<ContentBlock[]> {
-    const msg = await this.client.messages.create({
+    const request = {
       model: this.model,
       max_tokens: 1024,
       system: req.system,
       tools: req.tools as Anthropic.Tool[],
       messages: req.messages as Anthropic.MessageParam[],
-    });
+    };
+    const msg = await withLLMGeneration({
+      name: "llm.generation",
+      model: this.model,
+      maxTokens: request.max_tokens,
+      toolChoice: "auto",
+      requestContent: JSON.stringify({ system: request.system, messages: request.messages }),
+      messageCount: request.messages.length,
+      toolSchemaBytes: Buffer.byteLength(JSON.stringify(request.tools), "utf8"),
+      callIndex: req.roundIndex,
+      roundIndex: req.roundIndex,
+    }, () => this.client.messages.create(request));
     return msg.content.map((b) => {
       if (b.type === "text") return { type: "text", text: b.text };
       if (b.type === "tool_use") {

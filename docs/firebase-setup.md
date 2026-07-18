@@ -53,6 +53,27 @@ firebase deploy --only firestore --project prod
 
 The plists are gitignored. To restore one: Firebase Console → Project settings → your iOS app → **GoogleService-Info.plist**, then save it as `Baseline/App/Firebase/GoogleService-Info-Dev.plist` (or `-Production.plist`).
 
+## Cloud Functions secrets (LLM observability)
+
+The chat and workout-import callables read Langfuse credentials only through Firebase `defineSecret` bindings; the keys never reach iOS.
+Until these three secrets exist, any deploy that includes those functions fails, so set them per environment before deploying.
+
+Set them with `firebase functions:secrets:set` (it prompts for the value interactively - never pass a key on the command line and never commit one):
+
+```sh
+# Dev project (baseline-app-dev)
+firebase functions:secrets:set LANGFUSE_SECRET_KEY --project dev   # paste the Langfuse secret key when prompted
+firebase functions:secrets:set LANGFUSE_PUBLIC_KEY --project dev   # paste the Langfuse public key when prompted
+firebase functions:secrets:set LANGFUSE_BASE_URL --project dev     # plain config, not sensitive: https://us.cloud.langfuse.com
+```
+
+Repeat each command with `--project prod` for `baseline-app-prod`.
+
+- `LANGFUSE_SECRET_KEY` / `LANGFUSE_PUBLIC_KEY` come from the Langfuse project settings and are sensitive - they stay server-side only.
+- `LANGFUSE_BASE_URL` is plain configuration and defaults to `https://us.cloud.langfuse.com` (use the EU host only if the Langfuse project is EU-hosted).
+- Tracing is fully fail-open: if the secrets are unset or Langfuse is unreachable, the functions still run normally and no telemetry failure changes app behavior.
+- Optional per-environment sampling knob: set the `LLM_OBSERVABILITY_SAMPLE_RATE` env var (0-1) to sample telemetry; unset defaults to full tracing.
+
 ## Firestore rules
 
 Currently **deny-all** (no client collections yet). Per the project rule, each new model ships with its own strict `hasOnly` + `hasAll` per-collection rule, deployed before/with the app.

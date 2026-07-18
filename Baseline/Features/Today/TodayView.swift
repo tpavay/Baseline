@@ -71,7 +71,9 @@ struct TodayView: View {
                 DailyReadingFlowView(type: type, config: readinessConfig, duration: duration(for: type))
             }
         }
-        .sheet(isPresented: $showChat, onDismiss: { Task { await reassemble() } }) { AskBaselineSheet() }
+        .sheet(isPresented: $showChat, onDismiss: { Task { await reassemble() } }) {
+            AskBaselineSheet(surface: .today)
+        }
         .task(id: "\(readings.count)-\(entries.count)") { await reassemble() }
         .onAppear { maybeShowMorningPrompt(auto: true) }
         .onChange(of: readings.count) { _, _ in maybeShowMorningPrompt(auto: true) }

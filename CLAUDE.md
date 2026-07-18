@@ -126,6 +126,9 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
   They are gitignored secrets, so copy them from an existing checkout or re-download them from the Firebase console; the whole `Firebase/` directory is absent until you do.
 - The Cloud Functions in `functions/` need `npm ci` before `npm run build` (tsc) or `npm test`.
   Without it, tsc reports dozens of missing-type errors in files you did not touch. There is no lint script; `npm run build` is the type gate.
+- Sign-in gates the app at launch, so a plain simulator run reaches the auth screen and no further; there is no bypass.
+  To look at a screen, host it in an app-hosted test: attach a `UIWindow` to the window scene from `UIApplication.shared.connectedScenes`, give it a `UIHostingController` root, then `drawHierarchy` into a `UIGraphicsImageRenderer`.
+  An unattached window renders blank, and `ImageRenderer` is not a substitute: it cannot rasterize `ScrollView` content or `TextField`.
 
 ---
 

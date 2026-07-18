@@ -132,6 +132,7 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
         appliedRequestIDs: [payload.requestID],
         cancelled: false,
         model,
+        ...(payload.observability ? { observability: payload.observability } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
         expiresAt,
@@ -610,6 +611,7 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
     claimToken: string,
     document: ParsedWorkoutDocument,
     repaired: boolean,
+    fallbackReason?: WorkoutImportFailureCode,
   ): Promise<boolean> {
     assertEncodedSize(document, MAX_SECTION_RESULT_BYTES, "section_result");
     const rootRef = this.root(jobID);
@@ -636,13 +638,14 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
         status: "completed",
         result: document,
         repaired,
+        ...(fallbackReason ? { failureCode: fallbackReason } : {}),
         updatedAt: timestamp,
       }, MAX_SECTION_DOCUMENT_BYTES, "section_document");
       transaction.update(sectionRef, {
         status: "completed", result: document, repaired,
         repairInput: FieldValue.delete(), repairDiagnostic: FieldValue.delete(),
         claimToken: FieldValue.delete(), leasedUntil: FieldValue.delete(),
-        failureCode: FieldValue.delete(), updatedAt: timestamp,
+        failureCode: fallbackReason ?? FieldValue.delete(), updatedAt: timestamp,
       });
       transaction.update(rootRef, {
         completedSections: root.completedSections + 1,

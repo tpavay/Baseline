@@ -66,7 +66,7 @@ struct PlanView: View {
         .sheet(item: $execContext, onDismiss: flushExecution) { ctx in
             WorkoutView(onRequestDelete: { queuedDeletionID = ctx.id }).environment(ctx.store)
         }
-        .sheet(isPresented: $showChat) { AskBaselineSheet() }
+        .sheet(isPresented: $showChat) { AskBaselineSheet(surface: .plan) }
         .sheet(item: $addContext, onDismiss: runPendingAdd) { context in
             AddToDaySheet(title: addSheetTitle(for: context.date), templates: plan.templates()) { option in
                 pendingAdd = (context.date, option)

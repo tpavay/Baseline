@@ -9,6 +9,12 @@ enum AskBaselineContext: Equatable {
     case workoutImport
 }
 
+enum AskBaselineSurface: Equatable {
+    case today
+    case plan
+    case workout
+}
+
 struct AskBaselineSheet: View {
     @Environment(TrainingContextStore.self) private var context
     @Environment(HealthService.self) private var health
@@ -22,9 +28,11 @@ struct AskBaselineSheet: View {
     @State private var service: ConversationService?
     @State private var showInspector = false
     let mode: AskBaselineContext
+    let surface: AskBaselineSurface
 
-    init(mode: AskBaselineContext = .general) {
+    init(mode: AskBaselineContext = .general, surface: AskBaselineSurface = .today) {
         self.mode = mode
+        self.surface = surface
     }
 
     var body: some View {
@@ -81,8 +89,17 @@ struct AskBaselineSheet: View {
                                readings: readings, workouts: workouts, plan: mode == .general ? plan : nil)
         service = ConversationService(
             tools: tools,
-            scope: mode == .workoutImport ? .workoutImport : .general
+            scope: mode == .workoutImport ? .workoutImport : .general,
+            surface: conversationSurface
         )
+    }
+
+    private var conversationSurface: ConversationService.Surface {
+        switch surface {
+        case .today: .today
+        case .plan: .plan
+        case .workout: .workout
+        }
     }
 }
 
@@ -108,8 +125,27 @@ private struct ConversationView: View {
                 .onChange(of: service.log.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: service.isThinking) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
+            // Openers, offered while the greeting is, so the two retire together the moment the
+            // athlete says anything.
+            if showsSuggestions {
+                ConversationSuggestionChips(suggestions: ConversationSuggestion.all(for: mode)) {
+                    draft = $0.prompt
+                    inputFocused = true
+                }
+                .transition(.opacity)
+            }
             composer
         }
+        .animation(.easeInOut(duration: 0.2), value: service.log.isEmpty)
+        .animation(.easeInOut(duration: 0.2), value: showsSuggestions)
+    }
+
+    /// A chip fills the composer, so the row has to leave once the box holds words of the athlete's
+    /// own: tapping one would silently throw them away, and a binding written in code is nothing the
+    /// undo manager can give back. Untouched chip text stays replaceable, which is what lets a second
+    /// chip swap out the first.
+    private var showsSuggestions: Bool {
+        service.log.isEmpty && ConversationSuggestion.isUnedited(draft: draft, for: mode)
     }
 
     private var greeting: some View {
@@ -123,12 +159,14 @@ private struct ConversationView: View {
         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
     }
 
+    /// Deliberately short: the suggestion chips above the composer now carry the concrete examples
+    /// this copy used to spell out, and tappably. Saying both would say it twice.
     private var greetingCopy: String {
         switch mode {
         case .general:
-            "Tell me what changed and I'll adjust today's plan — \u{201C}only 30 minutes\u{201D}, \u{201C}my Achilles hurts\u{201D}, \u{201C}I'm traveling\u{201D} — or ask why."
+            "Tell me what changed and I'll adjust today's plan, or ask why."
         case .workoutImport:
-            "Tell me what the photos meant — \u{201C}that's Echo Bike\u{201D}, \u{201C}add a load field to the sled pull\u{201D}, or \u{201C}replace bench with dumbbell push press\u{201D}."
+            "Tell me what the photos meant and I'll fix the draft."
         }
     }
 
