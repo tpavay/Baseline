@@ -46,6 +46,7 @@ import {
   recordClientToolObservations,
   recordTerminalOutcome,
   recordValidatorObservation,
+  shouldSampleTelemetry,
   withLLMGeneration,
   withLLMSpan,
   withLLMTrace,
@@ -151,6 +152,9 @@ export const recordLLMObservability = onCall(
     configureObservabilityFromSecrets();
     const model = process.env.CONVERSATION_MODEL || "claude-sonnet-4-5-20250929";
     const trace = conversationTraceContext(data, req.auth.uid, model);
+    if (!shouldSampleTelemetry(trace.traceID)) {
+      return { accepted: true, sampled: false };
+    }
     const terminalOutcome = allowedChatTerminalOutcome(data.terminalOutcome);
     try {
       await withLLMTrace("client-telemetry", trace, async () => {
@@ -159,7 +163,7 @@ export const recordLLMObservability = onCall(
           await recordTerminalOutcome(terminalOutcome, undefined, { round_index: trace.roundIndex });
         }
       });
-      return { accepted: true };
+      return { accepted: true, sampled: true };
     } finally {
       await flushLLMObservability();
     }
@@ -203,6 +207,7 @@ export const parseWorkoutImport = onCall(
         validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
         catalogVersion: catalogFingerprint(payload.catalogHints),
       }, async () => {
+        try {
         const client = createWorkoutImportProviderClient(
           (await import("@anthropic-ai/sdk")).default,
           anthropicKey.value(),
@@ -278,14 +283,17 @@ export const parseWorkoutImport = onCall(
           latencyMs: Date.now() - started,
         });
         return { document, model: IMPORT_MODEL };
+        } catch (error) {
+          await Promise.all(validationObservations);
+          const failureCode = workoutImportFailureCode(error);
+          await recordTerminalOutcome(
+            failureCode.startsWith("invalid-structured-output") ? "validation_failed" : "provider_failed",
+            failureCode,
+          );
+          throw error;
+        }
       });
     } catch (error) {
-      await Promise.all(validationObservations);
-      const failureCode = workoutImportFailureCode(error);
-      await recordTerminalOutcome(
-        failureCode.startsWith("invalid-structured-output") ? "validation_failed" : "provider_failed",
-        failureCode,
-      );
       logger.error("workout_import.provider_error", {
         uid,
         model: IMPORT_MODEL,

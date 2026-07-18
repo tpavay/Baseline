@@ -189,14 +189,42 @@ export function configureLLMObservability(options: ConfigureOptions): boolean {
   }
 }
 
-/** Serverless runtimes may freeze immediately after returning, so every traced handler flushes. */
+const FLUSH_DEADLINE_MILLISECONDS = 300;
+
+/**
+ * Serverless runtimes may freeze after returning, so every traced handler kicks off an export. The
+ * export runs fire-and-forget with all failures swallowed, and the handler waits at most a short
+ * deadline so an unreachable exporter can never add meaningful latency to the user-facing response.
+ */
 export async function flushLLMObservability(): Promise<void> {
   if (!spanProcessor) return;
-  try {
-    await spanProcessor.forceFlush();
-  } catch (error) {
-    logger.warn("llm_observability_export_failed", { errorType: errorName(error) });
-  }
+  const flush = spanProcessor
+    .forceFlush()
+    .catch((error) => logger.warn("llm_observability_export_failed", { errorType: errorName(error) }));
+  await Promise.race([flush, flushDeadline(FLUSH_DEADLINE_MILLISECONDS)]);
+}
+
+function flushDeadline(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, milliseconds);
+    if (typeof timer.unref === "function") timer.unref();
+  });
+}
+
+/** Config-driven sampling knob. Defaults to full tracing; deterministic per trace identifier. */
+export function shouldSampleTelemetry(identifier: string): boolean {
+  const rate = telemetrySampleRate();
+  if (rate >= 1) return true;
+  if (rate <= 0) return false;
+  const bucket = parseInt(createHash("sha256").update(identifier).digest("hex").slice(0, 8), 16);
+  return bucket / 0xffffffff < rate;
+}
+
+function telemetrySampleRate(): number {
+  const raw = process.env.LLM_OBSERVABILITY_SAMPLE_RATE;
+  if (raw === undefined || raw.trim() === "") return 1;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(parsed, 1)) : 1;
 }
 
 export async function withLLMTrace<T>(
