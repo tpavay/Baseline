@@ -1329,7 +1329,7 @@ BaselineTests/WorkoutImport/
 
 1. Register both Firebase apps for App Check with App Attest and enable the App Attest capability for the App Store signing profile.
 2. Generate a fresh simulator debug token, register it in each development Firebase project, and keep it in local/CI secret storage only.
-3. Deploy `parseWorkoutImport` after confirming `ANTHROPIC_API_KEY` exists in the target project.
+3. Deploy `parseWorkoutImport` after confirming its secrets exist in the target project: `ANTHROPIC_API_KEY` plus the Langfuse observability secrets (`LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL`); the deploy fails while any is unset. See [firebase-setup.md](../firebase-setup.md) for the `functions:secrets:set` commands.
 4. Leave `IMPORT_ENFORCE_APP_CHECK` unset while monitoring valid/invalid request metrics; set it to `true` only after legitimate builds are verified.
 5. Optionally set `WORKOUT_IMPORT_MODEL`; the pinned default is `claude-sonnet-4-5-20250929`.
 6. Run the sanitized screenshot corpus on physical devices before enabling the feature for TestFlight users.
