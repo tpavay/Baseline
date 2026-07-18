@@ -292,6 +292,7 @@ struct UnitsStepView: View {
                 .padding(.top, 24)
             }
         }
+        .onAppear { select(store.draft.unitSystem) }
     }
 
     /// Record the choice and keep the body height/weight toggles coherent with it, so the following

@@ -140,6 +140,7 @@ final class WorkoutStore {
         preferences = source.preferences
         customDefinitions = source.customDefinitions
         recentExerciseIds = source.recentExerciseIds
+        unitSystem = source.unitSystem
     }
 
     // MARK: - Exercise catalog (curated + custom)
