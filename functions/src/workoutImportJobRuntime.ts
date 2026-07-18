@@ -127,6 +127,7 @@ export interface WorkoutImportJobStore {
     claimToken: string,
     document: ParsedWorkoutDocument,
     repaired: boolean,
+    fallbackReason?: WorkoutImportFailureCode,
   ): Promise<boolean>;
   failSection(
     jobID: string,
@@ -159,7 +160,41 @@ export interface WorkoutImportTaskQueue {
 }
 
 export interface WorkoutImportProvider {
-  request(content: string, maxTokens: number): Promise<unknown>;
+  request(
+    content: string,
+    maxTokens: number,
+    context?: WorkoutImportProviderCallContext,
+  ): Promise<unknown>;
+}
+
+export interface WorkoutImportProviderCallContext {
+  callIndex: number;
+  sectionIndex: number;
+  repairIndex: number;
+  providerRetryIndex: number;
+  callKind: "initial" | "repair";
+}
+
+export interface WorkoutImportObservability {
+  withTrace<T>(job: StoredWorkoutImportJob, operation: () => Promise<T>): Promise<T>;
+  withSection<T>(
+    job: StoredWorkoutImportJob,
+    section: StoredWorkoutImportSection,
+    operation: () => Promise<T>,
+  ): Promise<T>;
+  validator(
+    section: StoredWorkoutImportSection,
+    diagnostic: WorkoutDocumentValidationDiagnostic | undefined,
+    repairIndex: number,
+    durationMilliseconds: number,
+    willRepair: boolean,
+  ): Promise<void>;
+  terminal(
+    outcome: "success" | "success_after_repair" | "success_with_fallback" |
+      "validation_failed" | "cancelled",
+    fallbackReason?: WorkoutImportFailureCode,
+    metadata?: Record<string, unknown>,
+  ): Promise<void>;
 }
 
 export interface WorkoutImportRuntimeLogger {
@@ -172,6 +207,7 @@ export interface WorkoutImportJobRuntimeDependencies {
   queue: WorkoutImportTaskQueue;
   provider: WorkoutImportProvider;
   logger: WorkoutImportRuntimeLogger;
+  observability?: WorkoutImportObservability;
   randomID?: () => string;
   now?: () => number;
 }
@@ -186,7 +222,9 @@ export class WorkoutImportProviderOutputTruncated extends Error {
   constructor() { super("provider_output_truncated"); }
 }
 
-type ClaimResult = "completed" | "retryable" | "terminal" | "stale";
+interface ClaimResult {
+  status: "completed" | "retryable" | "terminal" | "stale";
+}
 
 const WORKOUT_IMPORT_FALLBACK_AMBIGUITY =
   "Baseline preserved the recognized text because this section could not be structured automatically. Review it and add or correct exercises before saving.";
@@ -329,6 +367,13 @@ export class WorkoutImportJobRuntime {
       sections: job?.totalSections ?? 0,
       model: job?.model,
     }));
+    if (job && this.dependencies.observability) {
+      await this.dependencies.observability.withTrace(job, () =>
+        this.dependencies.observability!.terminal("cancelled", undefined, {
+          section_count: job.totalSections,
+          completed_section_count: job.completedSections,
+        }));
+    }
     return job ? publicWorkoutImportStatus(job) : {
       serverJobID: command.serverJobID,
       status: "cancelled",
@@ -351,111 +396,139 @@ export class WorkoutImportJobRuntime {
     if (!acquisition) return;
     if (acquisition.status === "busy") throw new RetryableWorkoutImportFailure("worker_busy");
 
-    try {
-      const startedAt = this.now();
-      await this.requireWorkerHeartbeat(serverJobID, generation, workerLeaseToken);
-      const sourceSections = await this.dependencies.store.sections(serverJobID, generation);
-      this.dependencies.logger.info("workout_import_job.worker_started", workoutImportOperationalLog({
-        jobID: serverJobID,
-        stage: "processing",
-        generation,
-        dispatchAttempt,
-        sections: sourceSections.length,
-        completedSections: sourceSections.filter((section) => section.status === "completed").length,
-        model: acquisition.job.model,
-      }));
-      const incomplete = sourceSections.filter((section) => section.status !== "completed");
-      const results = await mapWithConcurrency(incomplete, 2, async (candidate): Promise<ClaimResult> => {
-        const claimToken = this.randomID();
-        const claim = await this.dependencies.store.claimSection(
-          serverJobID, generation, workerLeaseToken, candidate.id, claimToken,
-        );
-        if (!claim) return "stale";
-        return this.processClaim(acquisition.job, workerLeaseToken, claim);
-      });
-      if (results.includes("stale")) throw new StaleWorkoutImportClaim();
-      if (results.includes("retryable")) throw new RetryableWorkoutImportFailure("provider_unavailable");
-      if (results.includes("terminal")) return;
-
-      await this.requireWorkerHeartbeat(serverJobID, generation, workerLeaseToken);
-      const completed = await this.dependencies.store.sections(serverJobID, generation);
-      if (!completed.every((section) => section.status === "completed" && section.result)) {
-        throw new RetryableWorkoutImportFailure("incomplete_sections");
-      }
-
-      let document: ParsedWorkoutDocument;
+    const processAcquiredJob = async (): Promise<void> => {
       try {
-        document = assembleWorkoutImportSectionDocuments(
-          completed.sort((left, right) => left.order - right.order).map((section) => ({
-            sectionID: section.id,
-            startScopeID: section.startScopeID,
-            endScopeID: section.endScopeID,
-            startObservationIDs: assemblyObservationIDs(section, false),
-            endObservationIDs: assemblyObservationIDs(section, true),
-            startFragmentPath: section.startFragmentPath,
-            endFragmentPath: section.endFragmentPath,
-            ...(section.continuationFromSectionID
-              ? { continuationFromSectionID: section.continuationFromSectionID }
-              : {}),
-            document: expandWorkoutImportProvenance(section.result!, section.provenance),
-          })),
-          observationIDs(completed),
-        );
-        document = reconcileParsedWorkoutCatalogIdentities(
-          document,
-          completed.flatMap((section) => section.observations),
-          acquisition.job.catalogHints,
-        );
-        assertEncodedSize(document, MAX_RESULT_ENCODED_BYTES, "result");
-      } catch (error) {
-        const failureCode: WorkoutImportFailureCode = sizeError(error)
-          ? "result_too_large"
-          : "cross_section_assembly";
-        const fallback = buildWorkoutImportFallbackJobDocument(completed, failureCode);
-        assertEncodedSize(fallback, MAX_RESULT_ENCODED_BYTES, "fallback_result");
+        const startedAt = this.now();
+        await this.requireWorkerHeartbeat(serverJobID, generation, workerLeaseToken);
+        const sourceSections = await this.dependencies.store.sections(serverJobID, generation);
+        this.dependencies.logger.info("workout_import_job.worker_started", workoutImportOperationalLog({
+          jobID: serverJobID,
+          stage: "processing",
+          generation,
+          dispatchAttempt,
+          sections: sourceSections.length,
+          completedSections: sourceSections.filter((section) => section.status === "completed").length,
+          model: acquisition.job.model,
+        }));
+        const incomplete = sourceSections.filter((section) => section.status !== "completed");
+        const results = await mapWithConcurrency(incomplete, 2, async (candidate): Promise<ClaimResult> => {
+          const claimToken = this.randomID();
+          const claim = await this.dependencies.store.claimSection(
+            serverJobID, generation, workerLeaseToken, candidate.id, claimToken,
+          );
+          if (!claim) return { status: "stale" };
+          const operation = () => this.processClaim(acquisition.job, workerLeaseToken, claim);
+          return this.dependencies.observability
+            ? this.dependencies.observability.withSection(acquisition.job, claim.section, operation)
+            : operation();
+        });
+        if (results.some((result) => result.status === "stale")) throw new StaleWorkoutImportClaim();
+        if (results.some((result) => result.status === "retryable")) {
+          throw new RetryableWorkoutImportFailure("provider_unavailable");
+        }
+        if (results.some((result) => result.status === "terminal")) return;
+
+        await this.requireWorkerHeartbeat(serverJobID, generation, workerLeaseToken);
+        const completed = await this.dependencies.store.sections(serverJobID, generation);
+        if (!completed.every((section) => section.status === "completed" && section.result)) {
+          throw new RetryableWorkoutImportFailure("incomplete_sections");
+        }
+
+        let document: ParsedWorkoutDocument;
+        try {
+          document = assembleWorkoutImportSectionDocuments(
+            completed.sort((left, right) => left.order - right.order).map((section) => ({
+              sectionID: section.id,
+              startScopeID: section.startScopeID,
+              endScopeID: section.endScopeID,
+              startObservationIDs: assemblyObservationIDs(section, false),
+              endObservationIDs: assemblyObservationIDs(section, true),
+              startFragmentPath: section.startFragmentPath,
+              endFragmentPath: section.endFragmentPath,
+              ...(section.continuationFromSectionID
+                ? { continuationFromSectionID: section.continuationFromSectionID }
+                : {}),
+              document: expandWorkoutImportProvenance(section.result!, section.provenance),
+            })),
+            observationIDs(completed),
+          );
+          document = reconcileParsedWorkoutCatalogIdentities(
+            document,
+            completed.flatMap((section) => section.observations),
+            acquisition.job.catalogHints,
+          );
+          assertEncodedSize(document, MAX_RESULT_ENCODED_BYTES, "result");
+        } catch (error) {
+          const failureCode: WorkoutImportFailureCode = sizeError(error)
+            ? "result_too_large"
+            : "cross_section_assembly";
+          const fallback = buildWorkoutImportFallbackJobDocument(completed, failureCode);
+          assertEncodedSize(fallback, MAX_RESULT_ENCODED_BYTES, "fallback_result");
+          this.requireCAS(await this.dependencies.store.completeJob(
+            serverJobID, generation, workerLeaseToken, fallback,
+          ));
+          this.dependencies.logger.warn("workout_import_job.assembly_fallback_completed", workoutImportOperationalLog({
+            jobID: serverJobID,
+            stage: "completed",
+            generation,
+            sections: completed.length,
+            reasonCode: failureCode,
+            model: acquisition.job.model,
+          }));
+          await this.dependencies.observability?.terminal(
+            "success_with_fallback", failureCode, { section_count: completed.length },
+          );
+          return;
+        }
+
+        await this.requireWorkerHeartbeat(serverJobID, generation, workerLeaseToken);
         this.requireCAS(await this.dependencies.store.completeJob(
-          serverJobID, generation, workerLeaseToken, fallback,
+          serverJobID, generation, workerLeaseToken, document,
         ));
-        this.dependencies.logger.warn("workout_import_job.assembly_fallback_completed", workoutImportOperationalLog({
+        this.dependencies.logger.info("workout_import_job.completed", workoutImportOperationalLog({
           jobID: serverJobID,
           stage: "completed",
           generation,
           sections: completed.length,
-          reasonCode: failureCode,
+          latencyMs: this.now() - startedAt,
           model: acquisition.job.model,
         }));
-        return;
-      }
-
-      await this.requireWorkerHeartbeat(serverJobID, generation, workerLeaseToken);
-      this.requireCAS(await this.dependencies.store.completeJob(
-        serverJobID, generation, workerLeaseToken, document,
-      ));
-      this.dependencies.logger.info("workout_import_job.completed", workoutImportOperationalLog({
-        jobID: serverJobID,
-        stage: "completed",
-        generation,
-        sections: completed.length,
-        latencyMs: this.now() - startedAt,
-        model: acquisition.job.model,
-      }));
-    } catch (error) {
-      if (error instanceof StaleWorkoutImportClaim) return;
-      if (schemaIncompatible(error)) {
-        await this.dependencies.store.failJob(
-          serverJobID, generation, workerLeaseToken, "schema_incompatible",
+        const fallbackReason = completed.find((section) => section.failureCode)?.failureCode;
+        const repaired = completed.some((section) => section.repaired);
+        await this.dependencies.observability?.terminal(
+          fallbackReason ? "success_with_fallback" : repaired ? "success_after_repair" : "success",
+          fallbackReason,
+          {
+            section_count: completed.length,
+            repair_count: completed.reduce((sum, section) => sum + section.repairAttempts, 0),
+          },
         );
-        this.dependencies.logger.warn("workout_import_job.schema_incompatible", workoutImportOperationalLog({
-          jobID: serverJobID,
-          stage: "stored_schema",
-          generation,
-          model: acquisition.job.model,
-          reasonCode: "schema_incompatible",
-        }));
-        return;
+      } catch (error) {
+        if (error instanceof StaleWorkoutImportClaim) return;
+        if (schemaIncompatible(error)) {
+          await this.dependencies.store.failJob(
+            serverJobID, generation, workerLeaseToken, "schema_incompatible",
+          );
+          this.dependencies.logger.warn("workout_import_job.schema_incompatible", workoutImportOperationalLog({
+            jobID: serverJobID,
+            stage: "stored_schema",
+            generation,
+            model: acquisition.job.model,
+            reasonCode: "schema_incompatible",
+          }));
+          await this.dependencies.observability?.terminal(
+            "validation_failed", "schema_incompatible",
+          );
+          return;
+        }
+        await this.dependencies.store.releaseWorker(serverJobID, generation, workerLeaseToken);
+        throw error;
       }
-      await this.dependencies.store.releaseWorker(serverJobID, generation, workerLeaseToken);
-      throw error;
+    };
+    if (this.dependencies.observability) {
+      await this.dependencies.observability.withTrace(acquisition.job, processAcquiredJob);
+    } else {
+      await processAcquiredJob();
     }
   }
 
@@ -468,10 +541,13 @@ export class WorkoutImportJobRuntime {
     const payload = sectionPayload(section, job.catalogHints);
     const providerBoundary = createWorkoutImportProviderAliasBoundary(payload);
     const maxTokens = workoutImportTokenBudget(payload);
+    let providerCallIndex = section.providerCalls;
 
     const request = async (
       content: string,
       requestedTokens = maxTokens,
+      repairIndex = 0,
+      callKind: "initial" | "repair" = repairIndex > 0 ? "repair" : "initial",
     ): Promise<{ value?: unknown; result?: ClaimResult }> => {
       let outputTokens = requestedTokens;
       let localAttempt = 0;
@@ -486,11 +562,19 @@ export class WorkoutImportJobRuntime {
             job, section, workerLeaseToken, claimToken, "worker_budget_exhausted",
           ) };
         }
+        const callIndex = providerCallIndex;
+        providerCallIndex += 1;
         const providerStartedAt = this.now();
         const requestBytes = Buffer.byteLength(content, "utf8");
-        const attempt = section.providerCalls + localAttempt;
+        const attempt = callIndex + 1;
         try {
-          const value = await this.dependencies.provider.request(content, outputTokens);
+          const value = await this.dependencies.provider.request(content, outputTokens, {
+            callIndex,
+            sectionIndex: section.order,
+            repairIndex,
+            providerRetryIndex: localAttempt - 1,
+            callKind,
+          });
           this.dependencies.logger.info("workout_import_job.provider_attempt_completed", workoutImportOperationalLog({
             jobID: job.clientJobID,
             stage: "provider",
@@ -555,8 +639,13 @@ export class WorkoutImportJobRuntime {
         let raw = candidate;
         let repairAttempts = completedRepairAttempts;
         while (true) {
+          const validationStartedAt = this.now();
           const validation = this.validateIR(raw, section, job.catalogHints);
+          const validationMilliseconds = this.now() - validationStartedAt;
           if (validation.document) {
+            await this.dependencies.observability?.validator(
+              section, undefined, repairAttempts, validationMilliseconds, false,
+            );
             return this.persistCompleted(
               job, section, workerLeaseToken, claimToken,
               validation.document, repairAttempts > 0,
@@ -564,6 +653,11 @@ export class WorkoutImportJobRuntime {
           }
 
           const invalidIR = boundedRawIR(raw);
+          const willRepair = Boolean(validation.diagnostic && invalidIR &&
+            repairAttempts < MAX_SECTION_REPAIR_ATTEMPTS);
+          await this.dependencies.observability?.validator(
+            section, validation.diagnostic, repairAttempts, validationMilliseconds, willRepair,
+          );
           if (validation.diagnostic) {
             this.dependencies.logger.warn("workout_import_job.validation_failed", {
               ...workoutImportOperationalLog({
@@ -600,6 +694,8 @@ export class WorkoutImportJobRuntime {
               providerBoundary.compactDiagnostic(validation.diagnostic),
             ),
             WORKOUT_IMPORT_MAX_OUTPUT_TOKENS,
+            repairAttempts,
+            "repair",
           );
           if (repaired.result) return repaired.result;
           raw = providerBoundary.expandIR(repaired.value);
@@ -612,18 +708,18 @@ export class WorkoutImportJobRuntime {
           providerBoundary.compactDiagnostic(
             section.repairDiagnostic as unknown as WorkoutDocumentValidationDiagnostic,
           ),
-        ), WORKOUT_IMPORT_MAX_OUTPUT_TOKENS);
+        ), WORKOUT_IMPORT_MAX_OUTPUT_TOKENS, Math.max(1, section.repairAttempts), "repair");
         if (response.result) return response.result;
         return await validateRepairLoop(
           providerBoundary.expandIR(response.value), section.repairAttempts,
         );
       }
 
-      const initial = await request(JSON.stringify(providerBoundary.payload));
+      const initial = await request(JSON.stringify(providerBoundary.payload), maxTokens, 0, "initial");
       if (initial.result) return initial.result;
       return await validateRepairLoop(providerBoundary.expandIR(initial.value), 0);
     } catch (error) {
-      if (error instanceof StaleWorkoutImportClaim) return "stale";
+      if (error instanceof StaleWorkoutImportClaim) return { status: "stale" };
       throw error;
     }
   }
@@ -672,7 +768,7 @@ export class WorkoutImportJobRuntime {
         job.clientJobID, job.generation, workerLeaseToken,
         section.id, claimToken, document, repaired,
       ));
-      return "completed";
+      return { status: "completed" };
     } catch (error) {
       if (!sizeError(error)) throw error;
       return this.persistFallback(
@@ -697,6 +793,7 @@ export class WorkoutImportJobRuntime {
       claimToken,
       document,
       true,
+      reasonCode,
     ));
     this.dependencies.logger.warn("workout_import_job.section_fallback_completed", workoutImportOperationalLog({
       jobID: job.clientJobID,
@@ -706,7 +803,7 @@ export class WorkoutImportJobRuntime {
       reasonCode,
       model: job.model,
     }));
-    return "completed";
+    return { status: "completed" };
   }
 
   private async failClaim(
@@ -729,7 +826,7 @@ export class WorkoutImportJobRuntime {
       reasonCode: failureCode,
       model: job.model,
     }));
-    return terminal ? "terminal" : "retryable";
+    return { status: terminal ? "terminal" : "retryable" };
   }
 
   private async dispatchIfNeeded(

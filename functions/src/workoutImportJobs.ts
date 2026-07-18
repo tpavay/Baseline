@@ -90,6 +90,15 @@ export interface StartWorkoutImportJobPayload {
   jobHash: string;
   sections: ServerWorkoutImportSectionInput[];
   catalogHints: string[];
+  observability?: WorkoutImportClientObservability;
+}
+
+export interface WorkoutImportClientObservability {
+  appVersion?: string;
+  appBuild?: string;
+  iosVersion?: string;
+  deviceClass?: string;
+  catalogVersion?: string;
 }
 
 export interface StoredWorkoutImportJob {
@@ -114,6 +123,7 @@ export interface StoredWorkoutImportJob {
   appliedRequestIDs: string[];
   cancelled: boolean;
   model: string;
+  observability?: WorkoutImportClientObservability;
   workerLeaseToken?: string;
   workerLeasedUntil?: unknown;
   document?: ParsedWorkoutDocument;
@@ -219,7 +229,21 @@ export function parseStartWorkoutImportJobPayload(raw: unknown): StartWorkoutImp
     jobHash: value.jobHash,
     sections,
     catalogHints,
+    ...(parseClientObservability(value.observability)
+      ? { observability: parseClientObservability(value.observability) }
+      : {}),
   };
+}
+
+function parseClientObservability(raw: unknown): WorkoutImportClientObservability | undefined {
+  if (!record(raw)) return undefined;
+  const value: WorkoutImportClientObservability = {};
+  if (typeof raw.appVersion === "string") value.appVersion = raw.appVersion.slice(0, 40);
+  if (typeof raw.appBuild === "string") value.appBuild = raw.appBuild.slice(0, 40);
+  if (typeof raw.iosVersion === "string") value.iosVersion = raw.iosVersion.slice(0, 80);
+  if (typeof raw.deviceClass === "string") value.deviceClass = raw.deviceClass.slice(0, 40);
+  if (typeof raw.catalogVersion === "string") value.catalogVersion = raw.catalogVersion.slice(0, 80);
+  return Object.keys(value).length > 0 ? value : undefined;
 }
 
 export function initialOutputTokenBudget(payload: StartWorkoutImportJobPayload): number {

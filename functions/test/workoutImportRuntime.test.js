@@ -369,13 +369,16 @@ class MemoryStore {
     return true;
   }
 
-  async completeSection(id, generation, workerToken, candidateID, claimToken, document, repaired) {
+  async completeSection(
+    id, generation, workerToken, candidateID, claimToken, document, repaired, fallbackReason,
+  ) {
     if (this.throwOnComplete) throw this.throwOnComplete;
     const section = this.sectionsByID.get(candidateID);
     if (!this.activeSection(id, generation, workerToken, section, claimToken)) return false;
     section.status = "completed";
     section.result = structuredClone(document);
     section.repaired = repaired;
+    section.failureCode = fallbackReason;
     section.claimToken = undefined;
     section.leasedUntil = undefined;
     section.repairInput = undefined;
@@ -435,7 +438,7 @@ class MemoryStore {
   }
 }
 
-function runtime(store, queue, provider, logger = { info() {}, warn() {} }) {
+function runtime(store, queue, provider, logger = { info() {}, warn() {} }, observability) {
   let counter = 0;
   return new WorkoutImportJobRuntime({
     store,
@@ -444,6 +447,7 @@ function runtime(store, queue, provider, logger = { info() {}, warn() {} }) {
     now: () => store.now,
     randomID: () => `token-${counter++}`,
     logger,
+    observability,
   });
 }
 
@@ -683,6 +687,62 @@ test("durable runtime repairs a bounded invalid root instead of failing before r
   assert.equal(requests[1].content.task, "repair_one_workout_section");
   assert.equal(requests[1].content.diagnostic.code, "ir.shape");
   assert.deepEqual(requests[1].content.invalidIR, { unexpected: "provider root" });
+});
+
+test("durable runtime reports provider call, validator, repair, and terminal trace context", async () => {
+  const store = new MemoryStore();
+  const providerContexts = [];
+  const validators = [];
+  const terminals = [];
+  let traceCount = 0;
+  let sectionCount = 0;
+  const responses = [{ unexpected: "provider root" }, validIR("o1")];
+  const observability = {
+    withTrace: async (_job, operation) => {
+      traceCount += 1;
+      return operation();
+    },
+    withSection: async (_job, _section, operation) => {
+      sectionCount += 1;
+      return operation();
+    },
+    validator: async (_section, diagnostic, repairIndex, durationMilliseconds, willRepair) => {
+      validators.push({ diagnostic, repairIndex, durationMilliseconds, willRepair });
+    },
+    terminal: async (outcome, fallbackReason, metadata) => {
+      terminals.push({ outcome, fallbackReason, metadata });
+    },
+  };
+  const service = runtime(store, { enqueue: async () => {} }, {
+    request: async (_content, _maxTokens, context) => {
+      providerContexts.push(context);
+      return responses.shift();
+    },
+  }, { info() {}, warn() {} }, observability);
+
+  await service.start("user", payload(), "model");
+  await service.process(jobID, 1, 1);
+
+  assert.equal(traceCount, 1);
+  assert.equal(sectionCount, 1);
+  assert.deepEqual(providerContexts.map(({ callIndex, sectionIndex, repairIndex, callKind }) => ({
+    callIndex, sectionIndex, repairIndex, callKind,
+  })), [
+    { callIndex: 0, sectionIndex: 0, repairIndex: 0, callKind: "initial" },
+    { callIndex: 1, sectionIndex: 0, repairIndex: 1, callKind: "repair" },
+  ]);
+  assert.equal(validators.length, 2);
+  assert.equal(validators[0].diagnostic.code, "ir.shape");
+  assert.equal(validators[0].repairIndex, 0);
+  assert.equal(validators[0].willRepair, true);
+  assert.equal(validators[1].diagnostic, undefined);
+  assert.equal(validators[1].repairIndex, 1);
+  assert.equal(validators[1].willRepair, false);
+  assert.deepEqual(terminals, [{
+    outcome: "success_after_repair",
+    fallbackReason: undefined,
+    metadata: { section_count: 1, repair_count: 1 },
+  }]);
 });
 
 test("durable runtime can repair a new fixed validation error introduced by the first repair", async () => {

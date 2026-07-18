@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import UIKit
 @preconcurrency import FirebaseFunctions
 
 /// The app side of the **Conversation Runtime**. Sends the transcript to the `conversation` Cloud
@@ -13,6 +15,13 @@ final class ConversationService {
     enum Scope: Equatable, Sendable {
         case general
         case workoutImport
+    }
+
+    enum Surface: String, Equatable, Sendable {
+        case today = "chat.today"
+        case plan = "chat.plan"
+        case workout = "chat.workout"
+        case workoutImport = "chat.import_fix"
     }
 
     struct Message: Identifiable, Sendable {
@@ -41,17 +50,23 @@ final class ConversationService {
     private let tools: AgentTools
     private let functions: Functions
     private let scope: Scope
+    private let surface: Surface
+    private let conversationSessionID = UUID().uuidString.lowercased()
     private var transcript: [[String: Any]] = []      // Anthropic wire-format messages
     private let maxToolRounds = 6                       // safety bound on tool ping-pong
+    private var activeTraceID = ""
+    private var pendingToolObservations: [ClientToolObservation] = []
 
     init(
         tools: AgentTools,
         functions: Functions = Functions.functions(),
-        scope: Scope = .general
+        scope: Scope = .general,
+        surface: Surface = .today
     ) {
         self.tools = tools
         self.functions = functions
         self.scope = scope
+        self.surface = scope == .workoutImport ? .workoutImport : surface
     }
 
     func send(_ text: String) {
@@ -62,6 +77,8 @@ final class ConversationService {
         // ends on a dangling user/tool turn — otherwise the next send stacks two user turns and the
         // API rejects every subsequent message until the chat is reopened.
         let checkpoint = transcript.count
+        activeTraceID = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+        pendingToolObservations = []
         transcript.append(["role": "user", "content": userText])
         isThinking = true
         Task { [weak self] in
@@ -80,8 +97,9 @@ final class ConversationService {
         // follow-up fails, the change is already committed — so report the deterministic tool result
         // instead of a misleading "couldn't reach the coach" (which implies nothing happened).
         var lastToolResult: String?
-        for _ in 0..<maxToolRounds {
-            guard let content = await callFunction() else {
+        for roundIndex in 0..<maxToolRounds {
+            guard let content = await callFunction(roundIndex: roundIndex) else {
+                await sendTerminalTelemetry("provider_failed", roundIndex: roundIndex)
                 log.append(Message(role: .baseline, text: lastToolResult
                     ?? "I couldn't reach the coach just now — try again in a moment."))
                 return false
@@ -109,22 +127,73 @@ final class ConversationService {
 
             // Execute each requested tool on-device and feed results back for the model's follow-up.
             var results: [[String: Any]] = []
-            for tu in toolUses {
+            for (requestedOrder, tu) in toolUses.enumerated() {
+                let started = ContinuousClock.now
+                let decodeStarted = ContinuousClock.now
+                let mappedCall = ToolCallMapper.map(name: tu.name, input: tu.input)
+                let decodeMilliseconds = Self.milliseconds(since: decodeStarted)
+                let permissionStarted = ContinuousClock.now
+                let permissionGranted = mappedCall.map(permits)
+                let permissionMilliseconds = Self.milliseconds(since: permissionStarted)
                 let resultText: String
-                if let call = ToolCallMapper.map(name: tu.name, input: tu.input), permits(call) {
+                let resultCategory: String
+                let errorCode: String?
+                let readOnly: Bool
+                var executionMilliseconds = 0.0
+                var resultHasDecision = false
+                var resultHasPlan = false
+                if let call = mappedCall, permissionGranted == true {
+                    let executionStarted = ContinuousClock.now
                     let response = await tools.execute(call)   // retrieval tools query HealthKit / the store
+                    executionMilliseconds = Self.milliseconds(since: executionStarted)
                     resultText = response.text
+                    resultCategory = "completed"
+                    errorCode = nil
+                    readOnly = !call.showsInActivityFeed
+                    resultHasDecision = response.decision != nil
+                    resultHasPlan = response.plan != nil
                     record(call, response)
                 } else if scope == .workoutImport {
                     resultText = "That action isn't available while fixing an imported workout. Only edit the draft workout."
+                    resultCategory = mappedCall == nil ? "malformed" : "rejected_scope"
+                    errorCode = mappedCall == nil ? "invalid_tool_call" : "scope_denied"
+                    readOnly = mappedCall.map { !$0.showsInActivityFeed } ?? false
                 } else {
                     resultText = "That tool call wasn't valid."
+                    resultCategory = "malformed"
+                    errorCode = "invalid_tool_call"
+                    readOnly = false
                 }
+                pendingToolObservations.append(ClientToolObservation(
+                    toolUseID: tu.id,
+                    name: tu.name,
+                    roundIndex: roundIndex,
+                    requestedOrder: requestedOrder,
+                    argumentSummary: Self.argumentSummary(tu.input),
+                    argumentHash: Self.hashJSON(tu.input),
+                    decodeResult: mappedCall == nil ? "failed" : "passed",
+                    permissionResult: mappedCall == nil ? "not_evaluated" :
+                        permissionGranted == true ? "passed" : "failed",
+                    resultCategory: resultCategory,
+                    resultSummary: .init(
+                        textBytes: resultText.lengthOfBytes(using: .utf8),
+                        hasDecision: resultHasDecision,
+                        hasPlan: resultHasPlan
+                    ),
+                    resultHash: Self.hash(resultText),
+                    errorCode: errorCode,
+                    decodeMilliseconds: decodeMilliseconds,
+                    permissionMilliseconds: permissionMilliseconds,
+                    executionMilliseconds: executionMilliseconds,
+                    durationMilliseconds: Self.milliseconds(since: started),
+                    readOnly: readOnly
+                ))
                 results.append(["type": "tool_result", "tool_use_id": tu.id, "content": resultText])
             }
             lastToolResult = results.compactMap { $0["content"] as? String }.joined(separator: "\n")
             transcript.append(["role": "user", "content": results])
         }
+        await sendTerminalTelemetry("tool_round_exhausted", roundIndex: maxToolRounds - 1)
         log.append(Message(role: .baseline, text: "Let's take that one step at a time — ask me again?"))
         return false   // tool rounds exhausted → transcript ends on a tool_result; roll it back
     }
@@ -137,7 +206,7 @@ final class ConversationService {
         if call.showsInActivityFeed { toolActivity.append(ToolEvent(label: call.activityLabel)) }
     }
 
-    private func callFunction() async -> [[String: Any]]? {
+    private func callFunction(roundIndex: Int) async -> [[String: Any]]? {
         let today = tools.dispatch(.getToday)
         latestDecision = today.decision
         latestPlan = today.plan
@@ -148,14 +217,47 @@ final class ConversationService {
         // dict is then [String: String] (Sendable) and safe to send across the callable boundary.
         guard let data = try? JSONSerialization.data(withJSONObject: transcript),
               let messagesJSON = String(data: data, encoding: .utf8) else { return nil }
-        let request: [String: String] = ["messages": messagesJSON, "contextSummary": contextSummary]
+        var request = traceRequest(roundIndex: roundIndex)
+        request["messages"] = messagesJSON
+        request["contextSummary"] = contextSummary
+        if let toolEvents = Self.encodedToolObservations(pendingToolObservations) {
+            request["toolEvents"] = toolEvents
+        }
         do {
             let result = try await functions.httpsCallable("conversation").call(request)
             let payload = result.data as? [String: Any]
+            pendingToolObservations = []
             return payload?["content"] as? [[String: Any]]
         } catch {
             return nil
         }
+    }
+
+    private func sendTerminalTelemetry(_ outcome: String, roundIndex: Int) async {
+        var request = traceRequest(roundIndex: roundIndex)
+        request["terminalOutcome"] = outcome
+        if let toolEvents = Self.encodedToolObservations(pendingToolObservations) {
+            request["toolEvents"] = toolEvents
+        }
+        do {
+            _ = try await functions.httpsCallable("recordLLMObservability").call(request)
+            pendingToolObservations = []
+        } catch {
+            // Observability is fail-open. The athlete's chat result must never depend on export.
+        }
+    }
+
+    private func traceRequest(roundIndex: Int) -> [String: String] {
+        [
+            "traceID": activeTraceID,
+            "sessionID": conversationSessionID,
+            "surface": surface.rawValue,
+            "roundIndex": String(roundIndex),
+            "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            "appBuild": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            "iosVersion": Self.operatingSystemVersion,
+            "deviceClass": Self.deviceClass,
+        ]
     }
 
     /// An allowlist, denying by default: a tool added later stays out of the import scope until someone
@@ -172,5 +274,107 @@ final class ConversationService {
         default:
             return false
         }
+    }
+
+    private struct ClientToolObservation: Codable {
+        struct ArgumentSummary: Codable {
+            var argumentCount: Int
+            var valueTypeCounts: [String: Int]
+        }
+
+        struct ResultSummary: Codable {
+            var textBytes: Int
+            var hasDecision: Bool
+            var hasPlan: Bool
+        }
+
+        var toolUseID: String
+        var name: String
+        var roundIndex: Int
+        var requestedOrder: Int
+        var argumentSummary: ArgumentSummary
+        var argumentHash: String
+        var decodeResult: String
+        var permissionResult: String
+        var resultCategory: String
+        var resultSummary: ResultSummary
+        var resultHash: String
+        var errorCode: String?
+        var decodeMilliseconds: Double
+        var permissionMilliseconds: Double
+        var executionMilliseconds: Double
+        var durationMilliseconds: Double
+        var readOnly: Bool
+    }
+
+    private static func argumentSummary(_ input: [String: Any]) -> ClientToolObservation.ArgumentSummary {
+        var valueTypeCounts: [String: Int] = [:]
+        for (_, value) in input.prefix(40) {
+            let valueType: String
+            switch value {
+            case let number as NSNumber where CFGetTypeID(number) == CFBooleanGetTypeID():
+                valueType = "boolean"
+            case is NSNumber:
+                valueType = "number"
+            case is String:
+                valueType = "string"
+            case is [Any]:
+                valueType = "array"
+            case is [String: Any]:
+                valueType = "object"
+            case is NSNull:
+                valueType = "null"
+            default:
+                valueType = "other"
+            }
+            valueTypeCounts[valueType, default: 0] += 1
+        }
+        return .init(
+            argumentCount: min(input.count, 40),
+            valueTypeCounts: valueTypeCounts
+        )
+    }
+
+    private static func encodedToolObservations(_ observations: [ClientToolObservation]) -> String? {
+        guard !observations.isEmpty,
+              let data = try? JSONEncoder().encode(Array(observations.prefix(24))) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func hashJSON(_ value: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else {
+            return hash("unserializable")
+        }
+        return hash(data)
+    }
+
+    private static func hash(_ value: String) -> String {
+        hash(Data(value.utf8))
+    }
+
+    private static func hash(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func milliseconds(since start: ContinuousClock.Instant) -> Double {
+        let duration = start.duration(to: .now)
+        return Double(duration.components.seconds) * 1_000 +
+            Double(duration.components.attoseconds) / 1_000_000_000_000_000
+    }
+
+    private static var deviceClass: String {
+        switch UIDevice.current.userInterfaceIdiom {
+        case .phone: "iphone"
+        case .pad: "ipad"
+        case .mac: "mac"
+        case .vision: "vision"
+        default: "other"
+        }
+    }
+
+    private static var operatingSystemVersion: String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
     }
 }

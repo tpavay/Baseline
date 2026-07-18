@@ -6,6 +6,7 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getFunctions } from "firebase-admin/functions";
 import { onTaskDispatched } from "firebase-functions/v2/tasks";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import { createHash, randomUUID } from "node:crypto";
 
 import { AnthropicProvider } from "./provider";
 import { buildSystem } from "./prompt";
@@ -23,9 +24,11 @@ import {
 } from "./workoutImport";
 import {
   parseStartWorkoutImportJobPayload,
+  StoredWorkoutImportJob,
 } from "./workoutImportJobs";
 import {
   WorkoutImportJobRuntime,
+  WorkoutImportObservability,
   WorkoutImportProvider,
   WorkoutImportProviderOutputTruncated,
 } from "./workoutImportJobRuntime";
@@ -33,10 +36,33 @@ import {
   FirestoreWorkoutImportJobStore,
   WorkoutImportStoreError,
 } from "./workoutImportFirestoreStore";
+import {
+  AppTraceMetadata,
+  LLM_OBSERVABILITY_VERSIONS,
+  LLMSurface,
+  configureLLMObservability,
+  flushLLMObservability,
+  parseClientToolObservations,
+  recordClientToolObservations,
+  recordTerminalOutcome,
+  recordValidatorObservation,
+  withLLMGeneration,
+  withLLMSpan,
+  withLLMTrace,
+} from "./llmObservability";
 
 initializeApp();
 
 const anthropicKey = defineSecret("ANTHROPIC_API_KEY");
+const langfuseSecretKey = defineSecret("LANGFUSE_SECRET_KEY");
+const langfusePublicKey = defineSecret("LANGFUSE_PUBLIC_KEY");
+const langfuseBaseURL = defineSecret("LANGFUSE_BASE_URL");
+const providerAndObservabilitySecrets = [
+  anthropicKey,
+  langfuseSecretKey,
+  langfusePublicKey,
+  langfuseBaseURL,
+];
 const DAILY_LIMIT = 200; // per-user request cap; abuse guard, tune later
 const IMPORT_DAILY_LIMIT = 25;
 const IMPORT_MODEL = process.env.WORKOUT_IMPORT_MODEL || "claude-sonnet-4-5-20250929";
@@ -53,12 +79,24 @@ const IMPORT_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
  * Response : { content: ContentBlock[] }
  */
 export const conversation = onCall(
-  { secrets: [anthropicKey], region: "us-central1", cors: true },
+  { secrets: providerAndObservabilitySecrets, region: "us-central1", cors: true },
   async (req) => {
     if (!req.auth) throw new HttpsError("unauthenticated", "Please sign in.");
     const uid = req.auth.uid;
 
-    const data = (req.data ?? {}) as { messages?: unknown; contextSummary?: unknown };
+    const data = (req.data ?? {}) as {
+      messages?: unknown;
+      contextSummary?: unknown;
+      traceID?: unknown;
+      sessionID?: unknown;
+      surface?: unknown;
+      roundIndex?: unknown;
+      appVersion?: unknown;
+      appBuild?: unknown;
+      iosVersion?: unknown;
+      deviceClass?: unknown;
+      toolEvents?: unknown;
+    };
     // The app sends the heterogeneous transcript as a JSON string (Sendable across Swift's callable).
     let messages: unknown = data.messages;
     if (typeof messages === "string") {
@@ -70,21 +108,62 @@ export const conversation = onCall(
     const contextSummary = typeof data.contextSummary === "string" ? data.contextSummary : undefined;
 
     await enforceDailyLimit(uid);
+    configureObservabilityFromSecrets();
+    const provider = new AnthropicProvider(anthropicKey.value(), process.env.CONVERSATION_MODEL);
+    const trace = conversationTraceContext(data, uid, provider.model);
 
     try {
-      const provider = new AnthropicProvider(anthropicKey.value(), process.env.CONVERSATION_MODEL);
-      const content = await provider.complete({
-        system: buildSystem(contextSummary),
-        tools: TOOLS,
-        messages: messages,
+      return await withLLMTrace(`cloud_function.round.${trace.roundIndex}`, trace, async () => {
+        await recordClientToolObservations(parseToolEvents(data.toolEvents));
+        try {
+          const content = await provider.complete({
+            system: buildSystem(contextSummary),
+            tools: TOOLS,
+            messages: messages,
+            roundIndex: trace.roundIndex,
+          });
+          const requestedTools = content.filter((block) => block.type === "tool_use").length;
+          if (requestedTools === 0) {
+            await recordTerminalOutcome("success", undefined, { round_index: trace.roundIndex });
+          }
+          logger.info("conversation.ok", { uid, turns: (messages as unknown[]).length, blocks: content.length });
+          return { content };
+        } catch (error) {
+          await recordTerminalOutcome("provider_failed", undefined, { round_index: trace.roundIndex });
+          throw error;
+        }
       });
-      logger.info("conversation.ok", { uid, turns: (messages as unknown[]).length, blocks: content.length });
-      return { content };
     } catch (err) {
       logger.error("conversation.provider_error", { uid, error: `${err}` });
       throw new HttpsError("internal", "Baseline couldn't reach the coach right now. Try again.");
+    } finally {
+      await flushLLMObservability();
     }
   }
+);
+
+/** Accepts privacy-filtered client tool spans that cannot be attached to a later model round. */
+export const recordLLMObservability = onCall(
+  { secrets: [langfuseSecretKey, langfusePublicKey, langfuseBaseURL], region: "us-central1", cors: true },
+  async (req) => {
+    if (!req.auth) throw new HttpsError("unauthenticated", "Please sign in.");
+    const data = (req.data ?? {}) as Record<string, unknown>;
+    configureObservabilityFromSecrets();
+    const model = process.env.CONVERSATION_MODEL || "claude-sonnet-4-5-20250929";
+    const trace = conversationTraceContext(data, req.auth.uid, model);
+    const terminalOutcome = allowedChatTerminalOutcome(data.terminalOutcome);
+    try {
+      await withLLMTrace("client-telemetry", trace, async () => {
+        await recordClientToolObservations(parseToolEvents(data.toolEvents));
+        if (terminalOutcome) {
+          await recordTerminalOutcome(terminalOutcome, undefined, { round_index: trace.roundIndex });
+        }
+      });
+      return { accepted: true };
+    } finally {
+      await flushLLMObservability();
+    }
+  },
 );
 
 /**
@@ -94,7 +173,7 @@ export const conversation = onCall(
  */
 export const parseWorkoutImport = onCall(
   {
-    secrets: [anthropicKey],
+    secrets: providerAndObservabilitySecrets,
     region: "us-central1",
     cors: true,
     enforceAppCheck: ENFORCE_IMPORT_APP_CHECK,
@@ -104,44 +183,109 @@ export const parseWorkoutImport = onCall(
     if (!req.auth) throw new HttpsError("unauthenticated", "Please sign in.");
     const uid = req.auth.uid;
     const started = Date.now();
-    let payload;
+    let payload: ReturnType<typeof parseWorkoutImportPayload>;
     try { payload = parseWorkoutImportPayload((req.data as { payload?: unknown } | undefined)?.payload); }
     catch (error) { throw new HttpsError("invalid-argument", `${error}`); }
     await enforceImportDailyLimit(uid);
+    configureObservabilityFromSecrets();
+    const traceID = randomUUID();
+    const validationObservations: Array<Promise<void>> = [];
 
     try {
-      const client = createWorkoutImportProviderClient(
-        (await import("@anthropic-ai/sdk")).default,
-        anthropicKey.value(),
-      );
-      const requestDocument = async (content: string) => {
-        const message = await client.messages.create(buildWorkoutImportProviderRequest(IMPORT_MODEL, content));
-        const toolUse = message.content.find(
-          (block) => block.type === "tool_use" && block.name === WORKOUT_IMPORT_TOOL.name,
+      return await withLLMTrace("import-legacy", {
+        traceID,
+        sessionID: traceID,
+        surface: "import.image.legacy",
+        uid,
+        model: IMPORT_MODEL,
+        promptVersion: LLM_OBSERVABILITY_VERSIONS.importPrompt,
+        outputSchemaVersion: LLM_OBSERVABILITY_VERSIONS.importOutput,
+        validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
+        catalogVersion: catalogFingerprint(payload.catalogHints),
+      }, async () => {
+        const client = createWorkoutImportProviderClient(
+          (await import("@anthropic-ai/sdk")).default,
+          anthropicKey.value(),
         );
-        if (!toolUse || toolUse.type !== "tool_use") throw new Error("provider returned no workout document");
-        return toolUse.input;
-      };
-      const { document } = await orchestrateWorkoutDocumentParse(payload, requestDocument, {
-        onValidationFailure: (attempt, diagnostic) => {
-          logger.warn("workout_import.validation_failure", {
-            uid,
+        const requestDocument = async (content: string) => {
+          const request = buildWorkoutImportProviderRequest(IMPORT_MODEL, content);
+          const message = await withLLMGeneration({
+            name: "llm.generation.initial",
             model: IMPORT_MODEL,
-            ...workoutImportValidationLogFields(attempt, diagnostic),
-          });
-        },
+            maxTokens: request.max_tokens,
+            temperature: request.temperature,
+            toolChoice: "submit_workout_import_ir",
+            requestContent: content,
+            messageCount: request.messages.length,
+            toolSchemaBytes: Buffer.byteLength(JSON.stringify(request.tools), "utf8"),
+            callIndex: 0,
+            sectionIndex: 0,
+            repairIndex: 0,
+            providerRetryIndex: 0,
+          }, () => client.messages.create(request));
+          const toolUse = message.content.find(
+            (block) => block.type === "tool_use" && block.name === WORKOUT_IMPORT_TOOL.name,
+          );
+          if (!toolUse || toolUse.type !== "tool_use") throw new Error("provider returned no workout document");
+          return toolUse.input;
+        };
+        const { document } = await orchestrateWorkoutDocumentParse(payload, requestDocument, {
+          onValidationFailure: (attempt, diagnostic) => {
+            logger.warn("workout_import.validation_failure", {
+              uid,
+              model: IMPORT_MODEL,
+              ...workoutImportValidationLogFields(attempt, diagnostic),
+            });
+            validationObservations.push(recordValidatorObservation({
+              validatorName: "workout-import-ir",
+              validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
+              attemptKind: attempt,
+              passed: false,
+              durationMilliseconds: 0,
+              ruleCode: diagnostic.code,
+              stage: diagnostic.boundary,
+              path: diagnostic.path,
+              relationshipRule: diagnostic.relationshipRule,
+              observedCount: diagnostic.observedCount,
+              expectedCount: diagnostic.expectedExerciseCount,
+              rejectedRecordKind: diagnostic.recordKind,
+              repairCount: 0,
+              repairRequested: false,
+              finalAction: "terminal_reject",
+              relatedIdentifiers: diagnostic.relatedObservationIDs,
+            }));
+          },
+        });
+        await Promise.all(validationObservations);
+        await recordValidatorObservation({
+          validatorName: "workout-import-ir",
+          validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
+          attemptKind: "initial",
+          passed: true,
+          durationMilliseconds: 0,
+          repairCount: 0,
+          repairRequested: false,
+          finalAction: "accept",
+        });
+        await recordTerminalOutcome("success");
+        logger.info("workout_import.ok", {
+          uid, model: IMPORT_MODEL, appCheck: Boolean(req.app),
+          observations: payload.observations.length,
+          sourceImages: Math.max(...payload.observations.map((item) => item.sourceImageIndex)) + 1,
+          characters: payload.observations.reduce((sum, item) => sum + item.text.length, 0),
+          blocks: document.blocks.length,
+          exercises: countParsedExercises(document),
+          latencyMs: Date.now() - started,
+        });
+        return { document, model: IMPORT_MODEL };
       });
-      logger.info("workout_import.ok", {
-        uid, model: IMPORT_MODEL, appCheck: Boolean(req.app),
-        observations: payload.observations.length,
-        sourceImages: Math.max(...payload.observations.map((item) => item.sourceImageIndex)) + 1,
-        characters: payload.observations.reduce((sum, item) => sum + item.text.length, 0),
-        blocks: document.blocks.length,
-        exercises: countParsedExercises(document),
-        latencyMs: Date.now() - started,
-      });
-      return { document, model: IMPORT_MODEL };
     } catch (error) {
+      await Promise.all(validationObservations);
+      const failureCode = workoutImportFailureCode(error);
+      await recordTerminalOutcome(
+        failureCode.startsWith("invalid-structured-output") ? "validation_failed" : "provider_failed",
+        failureCode,
+      );
       logger.error("workout_import.provider_error", {
         uid,
         model: IMPORT_MODEL,
@@ -149,12 +293,15 @@ export const parseWorkoutImport = onCall(
         reasonCode: workoutImportFailureCode(error),
       });
       throw new HttpsError("internal", "Baseline couldn't parse that workout right now. Try again.");
+    } finally {
+      await flushLLMObservability();
     }
   }
 );
 
 export const startWorkoutImportJob = onCall(
   {
+    secrets: [langfuseSecretKey, langfusePublicKey, langfuseBaseURL],
     region: "us-central1",
     cors: true,
     enforceAppCheck: ENFORCE_IMPORT_APP_CHECK,
@@ -162,14 +309,27 @@ export const startWorkoutImportJob = onCall(
   },
   async (req) => {
     if (!req.auth) throw new HttpsError("unauthenticated", "Please sign in.");
-    let payload;
+    let payload: ReturnType<typeof parseStartWorkoutImportJobPayload>;
     try {
       payload = parseStartWorkoutImportJobPayload(
         (req.data as { payload?: unknown } | undefined)?.payload,
       );
-      return await workoutImportRuntime().start(req.auth.uid, payload, IMPORT_MODEL);
+      configureObservabilityFromSecrets();
+      return await withLLMTrace("server.job_accept", {
+        traceID: payload.clientJobID,
+        sessionID: payload.clientJobID,
+        surface: "import.image.durable",
+        uid: req.auth.uid,
+        model: IMPORT_MODEL,
+        promptVersion: LLM_OBSERVABILITY_VERSIONS.importPrompt,
+        outputSchemaVersion: LLM_OBSERVABILITY_VERSIONS.importOutput,
+        validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
+        ...payload.observability,
+      }, () => workoutImportRuntime().start(req.auth!.uid, payload, IMPORT_MODEL));
     } catch (error) {
       throw workoutImportCallableError(error);
+    } finally {
+      await flushLLMObservability();
     }
   },
 );
@@ -205,10 +365,17 @@ export const retryWorkoutImportJob = onCall(
 );
 
 export const cancelWorkoutImportJob = onCall(
-  { region: "us-central1", cors: true, enforceAppCheck: ENFORCE_IMPORT_APP_CHECK, timeoutSeconds: 45 },
+  {
+    secrets: [langfuseSecretKey, langfusePublicKey, langfuseBaseURL],
+    region: "us-central1",
+    cors: true,
+    enforceAppCheck: ENFORCE_IMPORT_APP_CHECK,
+    timeoutSeconds: 45,
+  },
   async (req) => {
     if (!req.auth) throw new HttpsError("unauthenticated", "Please sign in.");
     try {
+      configureObservabilityFromSecrets();
       const command = parseJobCommand((req.data as { payload?: unknown } | undefined)?.payload, true);
       if (!command.requestID) throw new HttpsError("invalid-argument", "Invalid request.");
       return await workoutImportRuntime().cancel(req.auth.uid, {
@@ -217,6 +384,8 @@ export const cancelWorkoutImportJob = onCall(
       });
     } catch (error) {
       throw workoutImportCallableError(error);
+    } finally {
+      await flushLLMObservability();
     }
   },
 );
@@ -227,7 +396,7 @@ export const processWorkoutImportJob = onTaskDispatched<{
   dispatchAttempt: number;
 }>(
   {
-    secrets: [anthropicKey],
+    secrets: providerAndObservabilitySecrets,
     region: "us-central1",
     timeoutSeconds: 540,
     retryConfig: {
@@ -247,25 +416,44 @@ export const processWorkoutImportJob = onTaskDispatched<{
         !Number.isInteger(dispatchAttempt) || dispatchAttempt < 1) {
       throw new Error("invalid_job_dispatch");
     }
+    configureObservabilityFromSecrets();
     const client = createWorkoutImportProviderClient(
       (await import("@anthropic-ai/sdk")).default,
       anthropicKey.value(),
     );
-    await workoutImportRuntime({
-      request: async (content, maxTokens) => {
-        const message = await client.messages.create(
-          buildWorkoutImportProviderRequest(IMPORT_MODEL, content, maxTokens),
-        );
-        if (message.stop_reason === "max_tokens") {
-          throw new WorkoutImportProviderOutputTruncated();
-        }
-        const toolUse = message.content.find(
-          (block) => block.type === "tool_use" && block.name === WORKOUT_IMPORT_TOOL.name,
-        );
-        if (!toolUse || toolUse.type !== "tool_use") throw new Error("missing_tool_output");
-        return toolUse.input;
-      },
-    }).process(serverJobID, generation, dispatchAttempt);
+    try {
+      await workoutImportRuntime({
+        request: async (content, maxTokens, context) => {
+          const request = buildWorkoutImportProviderRequest(IMPORT_MODEL, content, maxTokens);
+          const message = await withLLMGeneration({
+            name: context?.callKind === "repair"
+              ? `llm.generation.repair.${context.repairIndex}`
+              : "llm.generation.initial",
+            model: IMPORT_MODEL,
+            maxTokens: request.max_tokens,
+            temperature: request.temperature,
+            toolChoice: "submit_workout_import_ir",
+            requestContent: content,
+            messageCount: request.messages.length,
+            toolSchemaBytes: Buffer.byteLength(JSON.stringify(request.tools), "utf8"),
+            callIndex: context?.callIndex,
+            sectionIndex: context?.sectionIndex,
+            repairIndex: context?.repairIndex,
+            providerRetryIndex: context?.providerRetryIndex,
+          }, () => client.messages.create(request));
+          if (message.stop_reason === "max_tokens") {
+            throw new WorkoutImportProviderOutputTruncated();
+          }
+          const toolUse = message.content.find(
+            (block) => block.type === "tool_use" && block.name === WORKOUT_IMPORT_TOOL.name,
+          );
+          if (!toolUse || toolUse.type !== "tool_use") throw new Error("missing_tool_output");
+          return toolUse.input;
+        },
+      }).process(serverJobID, generation, dispatchAttempt);
+    } finally {
+      await flushLLMObservability();
+    }
   },
 );
 
@@ -287,6 +475,176 @@ export const dispatchWorkoutImportJob = onDocumentWritten(
   },
 );
 
+function configureObservabilityFromSecrets(): boolean {
+  try {
+    return configureLLMObservability({
+      secretKey: langfuseSecretKey.value(),
+      publicKey: langfusePublicKey.value(),
+      baseURL: langfuseBaseURL.value(),
+    });
+  } catch {
+    return false;
+  }
+}
+
+function conversationTraceContext(
+  data: Record<string, unknown>,
+  uid: string,
+  model: string,
+): {
+  traceID: string;
+  sessionID: string;
+  surface: LLMSurface;
+  uid: string;
+  model: string;
+  promptVersion: string;
+  toolSchemaVersion: string;
+  outputSchemaVersion: string;
+  validatorVersion: string;
+  roundIndex: number;
+} & AppTraceMetadata {
+  const traceID = validTraceID(data.traceID) ?? randomUUID();
+  const sessionID = safeString(data.sessionID, 120) ?? traceID;
+  const surface = allowedChatSurface(data.surface);
+  return {
+    traceID,
+    sessionID,
+    surface,
+    uid,
+    model,
+    promptVersion: LLM_OBSERVABILITY_VERSIONS.conversationPrompt,
+    toolSchemaVersion: LLM_OBSERVABILITY_VERSIONS.conversationTools,
+    outputSchemaVersion: LLM_OBSERVABILITY_VERSIONS.conversationOutput,
+    validatorVersion: LLM_OBSERVABILITY_VERSIONS.conversationValidator,
+    roundIndex: boundedInteger(data.roundIndex, 0, 12),
+    appVersion: safeString(data.appVersion, 40),
+    appBuild: safeString(data.appBuild, 40),
+    iosVersion: safeString(data.iosVersion, 80),
+    deviceClass: safeString(data.deviceClass, 40),
+  };
+}
+
+function parseToolEvents(raw: unknown) {
+  let value = raw;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return []; }
+  }
+  return parseClientToolObservations(value);
+}
+
+function allowedChatSurface(value: unknown): LLMSurface {
+  switch (value) {
+  case "chat.today":
+  case "chat.plan":
+  case "chat.workout":
+  case "chat.import_fix":
+    return value;
+  default:
+    return "chat.today";
+  }
+}
+
+function allowedChatTerminalOutcome(value: unknown): string | undefined {
+  switch (value) {
+  case "tool_round_exhausted":
+  case "client_failed":
+  case "provider_failed":
+  case "cancelled":
+    return value;
+  default:
+    return undefined;
+  }
+}
+
+function validTraceID(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const compact = value.toLowerCase().replaceAll("-", "");
+  return /^[0-9a-f]{32}$/.test(compact) && compact !== "00000000000000000000000000000000"
+    ? compact
+    : undefined;
+}
+
+function safeString(value: unknown, maximumLength: number): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value.slice(0, maximumLength) : undefined;
+}
+
+function boundedInteger(value: unknown, minimum: number, maximum: number): number {
+  const parsed = typeof value === "string" && /^\d{1,3}$/.test(value) ? Number(value) : value;
+  const number = typeof parsed === "number" ? Math.trunc(parsed) : minimum;
+  return Math.max(minimum, Math.min(number, maximum));
+}
+
+function durableImportObservability(): WorkoutImportObservability {
+  return {
+    withTrace: async (job, operation) => withLLMTrace("server.worker", importTraceContext(job), operation),
+    withSection: async (_job, section, operation) => withLLMSpan(`section.${section.order}`, {
+      section_index: section.order,
+      generation: section.generation,
+      input_bytes: section.observations.reduce((sum, observation) => sum + observation.text.length, 0),
+      observed_count: section.observations.length,
+      repair_count: section.repairAttempts,
+    }, operation),
+    validator: async (section, diagnostic, repairIndex, durationMilliseconds, willRepair) => {
+      await recordValidatorObservation({
+        validatorName: "workout-import-ir",
+        validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
+        attemptKind: repairIndex === 0 ? "initial" : "repair",
+        passed: diagnostic === undefined,
+        durationMilliseconds,
+        ruleCode: diagnostic?.code,
+        stage: diagnostic?.boundary,
+        path: diagnostic?.path,
+        relationshipRule: diagnostic?.relationshipRule,
+        observedCount: diagnostic?.observedCount,
+        expectedCount: diagnostic?.expectedExerciseCount,
+        rejectedRecordKind: diagnostic?.recordKind,
+        repairCount: repairIndex,
+        repairRequested: willRepair,
+        finalAction: diagnostic === undefined ? "accept" : willRepair ? "repair" : "fallback",
+        relatedIdentifiers: diagnostic?.relatedObservationIDs,
+      });
+      logger.debug("workout_import_job.validation_observed", {
+        sectionOrder: section.order,
+        repairIndex,
+        passed: diagnostic === undefined,
+      });
+    },
+    terminal: async (outcome, fallbackReason, metadata) => {
+      await recordTerminalOutcome(outcome, fallbackReason, metadata);
+    },
+  };
+}
+
+function importTraceContext(job: StoredWorkoutImportJob) {
+  const createdAt = timestampMilliseconds(job.createdAt);
+  return {
+    traceID: job.clientJobID,
+    sessionID: job.clientJobID,
+    surface: "import.image.durable" as const,
+    uid: job.uid,
+    model: job.model,
+    promptVersion: LLM_OBSERVABILITY_VERSIONS.importPrompt,
+    outputSchemaVersion: LLM_OBSERVABILITY_VERSIONS.importOutput,
+    validatorVersion: LLM_OBSERVABILITY_VERSIONS.importValidator,
+    generation: job.generation,
+    dispatchAttempt: job.dispatchAttempt,
+    queueMilliseconds: createdAt === undefined ? undefined : Math.max(0, Date.now() - createdAt),
+    ...job.observability,
+  };
+}
+
+function timestampMilliseconds(value: unknown): number | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const toMillis = (value as { toMillis?: unknown }).toMillis;
+  if (typeof toMillis !== "function") return undefined;
+  const milliseconds = (toMillis as () => unknown).call(value);
+  return typeof milliseconds === "number" && Number.isFinite(milliseconds) ? milliseconds : undefined;
+}
+
+function catalogFingerprint(catalogHints: string[]): string {
+  return `sha256:${createHash("sha256").update([...catalogHints].sort().join("\n")).digest("hex")}`;
+}
+
 function workoutImportRuntime(provider: WorkoutImportProvider = {
   request: async () => { throw new Error("provider_unavailable"); },
 }): WorkoutImportJobRuntime {
@@ -305,6 +663,7 @@ function workoutImportRuntime(provider: WorkoutImportProvider = {
       },
     },
     provider,
+    observability: durableImportObservability(),
     logger: {
       info: (event, fields) => logger.info(event, fields),
       warn: (event, fields) => logger.warn(event, fields),

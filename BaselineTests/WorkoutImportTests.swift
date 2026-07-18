@@ -2795,6 +2795,12 @@ struct ResumableWorkoutImportJobTests {
             progress: { _ in }
         )
         let sent = try #require(await parser.receivedRequest())
+        let observability = try #require(sent.observability)
+        #expect(observability.appVersion.isEmpty == false)
+        #expect(observability.appBuild.isEmpty == false)
+        #expect(observability.iosVersion.isEmpty == false)
+        #expect(observability.deviceClass == "ios")
+        #expect(observability.catalogVersion.isEmpty == false)
         let expectedPayloadBytes = try sent.encodedPayload().count
         #expect(result.diagnostics.parserPayloadBytes == expectedPayloadBytes)
         await coordinator.cancel(result)

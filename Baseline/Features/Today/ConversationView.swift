@@ -9,6 +9,12 @@ enum AskBaselineContext: Equatable {
     case workoutImport
 }
 
+enum AskBaselineSurface: Equatable {
+    case today
+    case plan
+    case workout
+}
+
 struct AskBaselineSheet: View {
     @Environment(TrainingContextStore.self) private var context
     @Environment(HealthService.self) private var health
@@ -22,9 +28,11 @@ struct AskBaselineSheet: View {
     @State private var service: ConversationService?
     @State private var showInspector = false
     let mode: AskBaselineContext
+    let surface: AskBaselineSurface
 
-    init(mode: AskBaselineContext = .general) {
+    init(mode: AskBaselineContext = .general, surface: AskBaselineSurface = .today) {
         self.mode = mode
+        self.surface = surface
     }
 
     var body: some View {
@@ -81,8 +89,17 @@ struct AskBaselineSheet: View {
                                readings: readings, workouts: workouts, plan: mode == .general ? plan : nil)
         service = ConversationService(
             tools: tools,
-            scope: mode == .workoutImport ? .workoutImport : .general
+            scope: mode == .workoutImport ? .workoutImport : .general,
+            surface: conversationSurface
         )
+    }
+
+    private var conversationSurface: ConversationService.Surface {
+        switch surface {
+        case .today: .today
+        case .plan: .plan
+        case .workout: .workout
+        }
     }
 }
 

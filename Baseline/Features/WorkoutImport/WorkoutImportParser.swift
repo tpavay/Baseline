@@ -105,11 +105,31 @@ struct WorkoutImportRemoteStartRequest: Codable, Equatable, Sendable {
     var jobHash: String
     var sections: [WorkoutImportSourceSection]
     var catalogHints: [String]
+    var observability: WorkoutImportClientObservability? = nil
 
     func encodedPayload() throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(self)
+    }
+}
+
+struct WorkoutImportClientObservability: Codable, Equatable, Sendable {
+    var appVersion: String
+    var appBuild: String
+    var iosVersion: String
+    var deviceClass: String
+    var catalogVersion: String
+
+    static func current(catalogVersion: String) -> Self {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return .init(
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            appBuild: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            iosVersion: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
+            deviceClass: "ios",
+            catalogVersion: catalogVersion
+        )
     }
 }
 

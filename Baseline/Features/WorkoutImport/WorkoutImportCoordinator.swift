@@ -734,12 +734,16 @@ actor WorkoutImportCoordinator {
             if let serverJobID = job.serverProgress?.serverJobID {
                 remote = try await parser.status(serverJobID: serverJobID)
             } else {
+                let catalogHints = Self.providerCatalogHints(catalog)
                 let request = WorkoutImportRemoteStartRequest(
                     clientJobID: job.id.uuidString,
                     requestID: job.requestID.uuidString,
                     jobHash: job.jobHash,
                     sections: job.sections,
-                    catalogHints: Self.providerCatalogHints(catalog)
+                    catalogHints: catalogHints,
+                    observability: .current(
+                        catalogVersion: WorkoutImportStableIdentity.digest(catalogHints)
+                    )
                 )
                 job.diagnostics.parserPayloadBytes = try request.encodedPayload().count
                 Self.logger.info(
