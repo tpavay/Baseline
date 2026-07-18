@@ -32,6 +32,7 @@ enum OnboardingStep: String, Codable, Hashable, CaseIterable, Sendable {
     case trainingExperience
     case gender
     case age
+    case units                // imperial vs metric — seeds body height/weight units below
     case height
     case weight
 
@@ -78,7 +79,7 @@ enum OnboardingFlow {
         // Profile calibration follows account creation (existing-user sign-in skips this tail).
         steps.append(contentsOf: [
             .scoreReveal, .auth,
-            .trainingExperience, .gender, .age, .height, .weight,
+            .trainingExperience, .gender, .age, .units, .height, .weight,
             .outlook, .commitment, .reminder,
         ])
         return steps

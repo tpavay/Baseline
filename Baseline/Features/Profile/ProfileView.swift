@@ -46,6 +46,10 @@ struct ProfileView: View {
                                 subtitle: "Dark", destination: .soon)
                         }
 
+                        group("Units") {
+                            unitSystemRow
+                        }
+
                         group("Reading") {
                             cardToggle("Live preview", isOn: $settings.livePreviewEnabled)
                         }
@@ -143,6 +147,23 @@ struct ProfileView: View {
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
         .opacity(trailing == .soon ? 0.6 : 1)
+    }
+
+    /// The global imperial/metric default. Segmented control matches the onboarding units step;
+    /// changing it flips every metric field and body input's default (still overridable per exercise).
+    private var unitSystemRow: some View {
+        let isImperial = Binding(
+            get: { settings.unitSystem == .imperial },
+            set: { settings.unitSystem = $0 ? .imperial : .metric }
+        )
+        return HStack(spacing: 14) {
+            Text("Measurement system")
+                .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
+            Spacer()
+            Segmented2(left: "METRIC", right: "IMPERIAL", isRight: isImperial)
+        }
+        .padding(.horizontal, 16).frame(height: 52)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
     }
 
     private func cardToggle(_ title: String, isOn: Binding<Bool>) -> some View {

@@ -62,8 +62,17 @@ struct OnboardingFlowTests {
     func profileStepsAfterAuth() {
         let steps = OnboardingFlow.steps(for: draft())
         let authIdx = steps.firstIndex(of: .auth)!
-        let tail = Array(steps[authIdx...].prefix(6))
-        #expect(tail == [.auth, .trainingExperience, .gender, .age, .height, .weight])
+        let tail = Array(steps[authIdx...].prefix(7))
+        #expect(tail == [.auth, .trainingExperience, .gender, .age, .units, .height, .weight])
+    }
+
+    @Test("Units step sits before the body height/weight steps and always advances")
+    func unitsStepPlacementAndGate() {
+        let steps = OnboardingFlow.steps(for: draft())
+        #expect(steps.contains(.units))
+        #expect(steps.firstIndex(of: .units)! < steps.firstIndex(of: .height)!)
+        // No selection is required — a locale-derived default is always present.
+        #expect(OnboardingFlow.canAdvance(from: .units, draft: draft()))
     }
 
     @Test("Experience + gender gate on selection; age/height/weight always advance")
@@ -129,6 +138,18 @@ struct OnboardingFlowTests {
         #expect(!OnboardingFlow.canAdvance(from: .commitment, draft: d))
         d.committed = true
         #expect(OnboardingFlow.canAdvance(from: .commitment, draft: d))
+    }
+
+    @Test("A draft persisted before the units field decodes, falling back to the locale default")
+    func draftDecodesWithoutUnitSystem() throws {
+        // A minimal legacy draft JSON with no `unitSystemRaw` key — must decode, not throw.
+        let legacy = Data("""
+        {"name":"Tyler","config":{"heartReadingEnabled":true,"sleepEnabled":true,"checkInEnabled":true,"checkInComponents":["soreness"]},"ageYears":30,"heightCm":180,"weightKg":80,"metricHeight":false,"metricWeight":false,"healthConnectRequested":false,"firstReadingDone":false,"reminderHour":6,"reminderMinute":30,"reminderWeekdays":[1,2,3,4,5,6,7],"reminderScheduled":false,"committed":false}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(OnboardingDraft.self, from: legacy)
+        #expect(decoded.name == "Tyler")
+        #expect(decoded.unitSystemRaw == nil)
+        #expect(decoded.unitSystem == UnitSystem.localeDefault)   // never surfaces nil
     }
 
     @Test("Toggling config mid-flow reshapes the remaining steps")

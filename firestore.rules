@@ -17,7 +17,7 @@ service cloud.firestore {
       function userKeys() {
         return ['name', 'objective', 'acquisition',
                 'experience', 'biologicalSex', 'ageYears', 'heightCm', 'weightKg',
-                'metricHeight', 'metricWeight', 'config',
+                'metricHeight', 'metricWeight', 'unitSystem', 'config',
                 'reminderHour', 'reminderMinute', 'reminderWeekdays', 'reminderScheduled',
                 'onboardingCompleted', 'createdAt', 'lastUpdated'];
       }
@@ -40,6 +40,7 @@ service cloud.firestore {
           && data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 500
           && data.metricHeight is bool
           && data.metricWeight is bool
+          && data.unitSystem in ['metric', 'imperial']
           && data.config is map
           && data.config.keys().hasOnly(configKeys())
           && data.config.keys().hasAll(configKeys())

@@ -27,6 +27,7 @@ struct UserRepository {
             "weightKg": draft.weightKg,
             "metricHeight": draft.metricHeight,
             "metricWeight": draft.metricWeight,
+            "unitSystem": draft.unitSystem.rawValue,
             "config": [
                 "heartReadingEnabled": draft.config.heartReadingEnabled,
                 "heartSource": draft.config.heartSource?.rawValue ?? "",

@@ -55,6 +55,30 @@ enum MetricType: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// The athlete's coarse imperial/metric preference. A single onboarding choice that seeds sensible
+/// per-dimension display-unit defaults (imperial → lb + mi, metric → kg + km); duration is unaffected
+/// and every default stays overridable per exercise. Storage is always canonical (see `MetricValues`);
+/// this only chooses how values are *shown*.
+enum UnitSystem: String, Codable, Sendable, CaseIterable {
+    case metric, imperial
+
+    /// The initial default for an athlete who hasn't chosen yet — inferred from the device locale
+    /// (US and the few other imperial locales → imperial), always user-overridable afterwards.
+    static var localeDefault: UnitSystem {
+        Locale.current.measurementSystem == .metric ? .metric : .imperial
+    }
+
+    /// The display unit this system implies for a convertible metric, or nil for metrics that have a
+    /// single display unit (reps, RPE, …) or that this system doesn't reframe (duration stays as-is).
+    func defaultUnit(for metric: MetricType) -> MetricUnit? {
+        switch metric {
+        case .load: self == .imperial ? .pounds : .kilograms
+        case .distance: self == .imperial ? .miles : .kilometers
+        default: nil
+        }
+    }
+}
+
 enum MetricUnit: String, Codable, Sendable {
     case count, kilograms, pounds, meters, kilometers, miles, seconds, minutes, kcal, bpm, rpm, watts, secondsPerMeter, rpe
 

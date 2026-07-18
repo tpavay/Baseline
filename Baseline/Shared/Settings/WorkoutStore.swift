@@ -100,6 +100,11 @@ final class WorkoutStore {
         }
     }
 
+    /// The athlete's global imperial/metric default, mirrored from `AppSettings` (the source of
+    /// truth) so `displayUnit` can fall back to it. Kept in sync from the root view; defaults to
+    /// metric until set (matching the historical canonical-unit behaviour).
+    var unitSystem: UnitSystem = .metric
+
     private let defaults: UserDefaults
     private let persistsState: Bool
     private weak var configurationSource: WorkoutStore?
@@ -204,13 +209,14 @@ final class WorkoutStore {
     }
 
     /// The display unit for a metric on a planned exercise: this-instance override → per-exercise
-    /// preference → per-category preference → canonical.
+    /// preference → per-category preference → the global unit-system default → canonical.
     func displayUnit(_ metric: MetricType, for ex: PlannedExercise) -> MetricUnit {
         if let u = ex.displayUnits[metric] { return u }
         if let id = ex.definitionId {
             if let u = preferences.unitsByExercise[id]?[metric] { return u }
             if let cat = ExerciseCatalog.definition(id: id)?.category.rawValue, let u = preferences.unitsByCategory[cat]?[metric] { return u }
         }
+        if let u = unitSystem.defaultUnit(for: metric) { return u }
         return metric.canonicalUnit
     }
 
