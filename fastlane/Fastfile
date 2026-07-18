@@ -1,0 +1,177 @@
+# frozen_string_literal: true
+
+require "base64"
+require "shellwords"
+
+default_platform(:ios)
+
+def match_readonly_enabled?
+  return ENV.fetch("MATCH_READONLY", "").casecmp("true").zero? if ENV.key?("MATCH_READONLY")
+
+  ENV["CI"].to_s == "true"
+end
+
+def match_options_for(bundle_identifiers)
+  options = {
+    type: "appstore",
+    readonly: match_readonly_enabled?,
+    app_identifier: Array(bundle_identifiers),
+    git_branch: ENV.fetch("MATCH_GIT_BRANCH", "main")
+  }
+
+  match_git_url = ENV["MATCH_GIT_URL"]
+  options[:git_url] = match_git_url if match_git_url && !match_git_url.empty?
+
+  match_keychain_name = ENV["MATCH_KEYCHAIN_NAME"]
+  options[:keychain_name] = match_keychain_name if match_keychain_name && !match_keychain_name.empty?
+
+  # setup_ci sets MATCH_KEYCHAIN_PASSWORD="" (empty string). We must pass it
+  # to match even when empty, otherwise match skips set-key-partition-list
+  # after importing keys and codesign can't access private keys during export.
+  match_keychain_password = ENV["MATCH_KEYCHAIN_PASSWORD"]
+  options[:keychain_password] = match_keychain_password unless match_keychain_password.nil?
+
+  options
+end
+
+# After match runs, it sets an env var with the full certificate common name:
+#   sigh_<bundle_id>_appstore_certificate-name = "Apple Distribution: Tyler Pavay (QWGVB7TN4T)"
+# Using the full name in export options forces an exact keychain lookup and avoids
+# Xcode 26 mapping "Apple Distribution" to the legacy "iOS Distribution" type.
+def match_cert_name(bundle_identifier)
+  ENV["sigh_#{bundle_identifier}_appstore_certificate-name"]
+end
+
+# Write an export options plist for xcodebuild -exportArchive.
+# We call xcodebuild directly (not through gym) so we can use
+# "app-store-connect" (which gym 2.230 doesn't support) and avoid
+# gym leaking archive xcargs into the export command.
+def write_export_plist(signing_certificate:, team_id:, provisioning_profiles:)
+  provisioning_profiles_xml = provisioning_profiles.map do |bundle_id, profile_name|
+    <<~PROFILE.chomp
+        <key>#{bundle_id}</key>
+        <string>#{profile_name}</string>
+    PROFILE
+  end.join("\n")
+
+  plist = <<~PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>method</key>
+      <string>app-store-connect</string>
+      <key>signingStyle</key>
+      <string>manual</string>
+      <key>signingCertificate</key>
+      <string>#{signing_certificate}</string>
+      <key>teamID</key>
+      <string>#{team_id}</string>
+      <key>provisioningProfiles</key>
+      <dict>
+    #{provisioning_profiles_xml}
+      </dict>
+    </dict>
+    </plist>
+  PLIST
+
+  path = File.join(Dir.tmpdir, "export_options.plist")
+  File.write(path, plist)
+  path
+end
+
+platform :ios do
+  desc "Build a signed staging IPA"
+  lane :build_staging do
+    setup_ci if ENV["CI"]
+
+    staging_signing_identity = ENV.fetch("IOS_SIGNING_IDENTITY", "Apple Distribution")
+    staging_profile_specifier = ENV.fetch("IOS_PROVISIONING_PROFILE_SPECIFIER", "match AppStore com.tylerpavay.Baseline.staging")
+    staging_development_team = ENV.fetch("IOS_DEVELOPMENT_TEAM", "QWGVB7TN4T")
+    staging_bundle_identifier = ENV.fetch("IOS_STAGING_BUNDLE_ID", "com.tylerpavay.Baseline.staging")
+
+    # Auto-increment build number on CI using the workflow run number
+    build_number = ENV["BUILD_NUMBER"]
+    if build_number
+      increment_build_number(
+        build_number: build_number,
+        xcodeproj: "Baseline.xcodeproj"
+      )
+    end
+
+    match(**match_options_for([staging_bundle_identifier]))
+
+    cert_name = match_cert_name(staging_bundle_identifier)
+    export_signing_cert = cert_name || staging_signing_identity
+    UI.message("Using signing certificate: #{export_signing_cert}")
+
+    # Set signing identity on the app target only (not globally via xcargs,
+    # which would break SPM package targets that use automatic signing).
+    update_code_signing_settings(
+      path: "Baseline.xcodeproj",
+      targets: ["Baseline"],
+      build_configurations: ["Staging"],
+      code_sign_identity: export_signing_cert
+    )
+
+    # Step 1: Archive only (skip IPA packaging).
+    # No signing xcargs — all signing settings come from the project file
+    # (set above and in the Xcode project's Staging build configuration).
+    archive_path = File.join(Dir.tmpdir, "Baseline-Staging.xcarchive")
+
+    build_app(
+      project: "Baseline.xcodeproj",
+      scheme: "Baseline-Staging",
+      configuration: "Staging",
+      clean: true,
+      skip_profile_detection: true,
+      skip_package_ipa: true,
+      archive_path: archive_path
+    )
+
+    # Diagnostic: verify entitlements embedded in the archive
+    archive_app = File.join(archive_path, "Products", "Applications", "Baseline.app")
+    UI.message("=== DIAGNOSTIC: Archive entitlements ===")
+    sh("codesign -d --entitlements - '#{archive_app}' 2>&1 || echo 'codesign --entitlements failed'")
+    sh("codesign -dvvv '#{archive_app}' 2>&1 || echo 'codesign -dvvv failed'")
+
+    # Step 2: Export the archive to IPA.
+    # Run xcodebuild directly so no stray xcargs leak into the export command.
+    export_plist = write_export_plist(
+      signing_certificate: export_signing_cert,
+      team_id: staging_development_team,
+      provisioning_profiles: {
+        staging_bundle_identifier => staging_profile_specifier
+      }
+    )
+
+    output_dir = File.expand_path("build")
+    FileUtils.mkdir_p(output_dir)
+
+    export_cmd = "xcodebuild -exportArchive" \
+      " -archivePath #{archive_path.shellescape}" \
+      " -exportOptionsPlist #{export_plist.shellescape}" \
+      " -exportPath #{output_dir.shellescape}"
+    sh(export_cmd)
+
+    # Rename exported IPA to expected name
+    exported_ipa = Dir.glob(File.join(output_dir, "*.ipa")).first
+    target_ipa = File.join(output_dir, "Baseline-Staging.ipa")
+    FileUtils.mv(exported_ipa, target_ipa) if exported_ipa && exported_ipa != target_ipa
+  end
+
+  desc "Upload an IPA artifact to TestFlight"
+  lane :upload_testflight do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
+      key_content: Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY"))
+    )
+
+    upload_to_testflight(
+      ipa: ENV.fetch("IPA_PATH"),
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
