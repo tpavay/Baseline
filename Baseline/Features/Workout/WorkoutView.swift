@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// The manual surface for a workout template and its performed log. The hierarchy stays visually
 /// stable across reading, editing, and logging; only the controls inside each row change.
@@ -90,9 +91,18 @@ struct WorkoutView: View {
         .onDisappear {
             if isEditingTemplate { finishEditing() }
             stopLiveMonitor()
+            // Leaving the workout always restores normal idle behavior. The system also auto-clears
+            // this on background and re-applies it via onAppear on return, matching ReadingView.
+            UIApplication.shared.isIdleTimerDisabled = false
         }
-        .onAppear { syncLiveMonitor() }
-        .onChange(of: mode) { _, _ in syncLiveMonitor() }
+        .onAppear {
+            syncLiveMonitor()
+            syncKeepAwake()
+        }
+        .onChange(of: mode) { _, _ in
+            syncLiveMonitor()
+            syncKeepAwake()
+        }
     }
 
     // MARK: - Navigation
@@ -261,6 +271,18 @@ struct WorkoutView: View {
         hrMonitor?.stopMonitoring()
         hrMonitor = nil
         showLiveHR = false
+    }
+
+    /// Keep the screen awake only while actively logging, so a user can glance at their live heart
+    /// rate without the display dimming or locking. Viewing a template or the completed summary keeps
+    /// normal idle behavior. Called from the same lifecycle as the live monitor; onDisappear restores it.
+    private func syncKeepAwake() {
+        UIApplication.shared.isIdleTimerDisabled = Self.shouldKeepScreenAwake(for: mode)
+    }
+
+    /// Pure mode→keep-awake mapping so the "only while logging" rule is testable without a view tree.
+    static func shouldKeepScreenAwake(for mode: WorkoutPresentationMode) -> Bool {
+        mode.isLogging
     }
 
     /// The segmented Log ↔ ♥ Live control. The live tab shows the current BPM once streaming, tinted
