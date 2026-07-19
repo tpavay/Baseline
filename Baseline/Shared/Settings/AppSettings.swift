@@ -16,6 +16,9 @@ final class AppSettings {
             defaults.set(morningReadingDurationSeconds, forKey: Keys.morningDuration)
         }
     }
+    /// The athlete's global imperial/metric default, seeding every exercise-metric and body input's
+    /// display unit. The source of truth (`WorkoutStore` mirrors it for the display-unit fallback).
+    var unitSystem: UnitSystem { didSet { defaults.set(unitSystem.rawValue, forKey: Keys.unitSystem) } }
 
     private let defaults: UserDefaults
 
@@ -23,6 +26,7 @@ final class AppSettings {
         static let livePreview = "settings.reading.livePreview"
         static let position = "settings.reading.position"
         static let morningDuration = "settings.reading.morningDuration"
+        static let unitSystem = "settings.units.system"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -34,5 +38,7 @@ final class AppSettings {
         // valid seconds, so they migrate with no special handling. 0 (unset) → default.
         let storedDuration = defaults.integer(forKey: Keys.morningDuration)
         morningReadingDurationSeconds = storedDuration == 0 ? ReadingLength.default : storedDuration
+        // Un-set installs infer from the device locale once (US → imperial); any later choice sticks.
+        unitSystem = defaults.string(forKey: Keys.unitSystem).flatMap(UnitSystem.init(rawValue:)) ?? .localeDefault
     }
 }

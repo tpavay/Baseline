@@ -253,6 +253,61 @@ struct AgeStepView: View {
     }
 }
 
+// MARK: - Units (imperial vs metric)
+
+/// One global choice that sets sensible per-dimension defaults (imperial → lb + mi, metric → kg + km)
+/// and seeds the body height/weight unit toggles so the next two screens open in the same system.
+/// Every default stays overridable per exercise later via the workout unit picker.
+struct UnitsStepView: View {
+    @Bindable var store: OnboardingStore
+
+    private let options: [(system: UnitSystem, title: String, subtitle: String, icon: String)] = [
+        (.imperial, "Imperial", "Pounds · miles · feet", "ruler"),
+        (.metric, "Metric", "Kilograms · kilometres · centimetres", "ruler.fill"),
+    ]
+
+    var body: some View {
+        OnboardingStepScaffold(store: store, ctaTitle: "NEXT") {
+            VStack(alignment: .leading, spacing: 0) {
+                OnboardingHeadline("Units of\nmeasure", size: 28)
+                InfoNote(text: "Sets the default for weights, distances, and your profile. You can still switch units per exercise anytime.")
+                    .padding(.top, 12)
+
+                VStack(spacing: 10) {
+                    ForEach(options, id: \.system) { option in
+                        SelectableCard(
+                            title: option.title,
+                            subtitle: option.subtitle,
+                            isSelected: store.draft.unitSystem == option.system,
+                            action: { select(option.system) }
+                        ) {
+                            Image(systemName: option.icon)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(store.draft.unitSystem == option.system ? BaselineColor.accent : BaselineColor.textMid)
+                                .frame(width: 38, height: 38)
+                                .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.base))
+                        }
+                    }
+                }
+                .padding(.top, 24)
+            }
+        }
+        // Seed the choice (and body-unit flags) only on first entry, so accepting the pre-selected
+        // card without tapping still works while a later manual ft/in or lb toggle survives back-nav.
+        .onAppear {
+            if store.draft.unitSystemRaw == nil { select(store.draft.unitSystem) }
+        }
+    }
+
+    /// Record the choice and keep the body height/weight toggles coherent with it, so the following
+    /// two screens open showing the matching unit.
+    private func select(_ system: UnitSystem) {
+        store.draft.unitSystem = system
+        store.draft.metricHeight = (system == .metric)
+        store.draft.metricWeight = (system == .metric)
+    }
+}
+
 // MARK: - Height
 
 struct HeightStepView: View {

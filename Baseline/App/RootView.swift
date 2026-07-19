@@ -5,6 +5,7 @@ import SwiftUI
 /// that, signed-in users get the app and signed-out users get the standalone auth gate.
 struct RootView: View {
     @Environment(AuthViewModel.self) private var authVM
+    @Environment(AppSettings.self) private var settings
     @Environment(PlanStore.self) private var plan
     @Environment(WorkoutStore.self) private var workouts
     @State private var onboarding = OnboardingStore()
@@ -25,6 +26,11 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.3), value: onboarding.isComplete)
         .task { await reconcileProfile() }
         .task { bindWorkoutsToPlan() }
+        // Mirror the global unit-system default into the shared store so every metric field's
+        // display-unit fallback resolves to the athlete's chosen system.
+        .onChange(of: settings.unitSystem, initial: true) { _, system in
+            workouts.unitSystem = system
+        }
     }
 
     /// After migration, make the shared `WorkoutStore` (the agent's editing surface) a live view of

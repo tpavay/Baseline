@@ -207,6 +207,15 @@ struct OnboardingDraft: Codable, Equatable, Sendable {
     var weightKg: Double = 79
     var metricHeight: Bool = false     // false = ft/in
     var metricWeight: Bool = false     // false = lb
+    /// Global imperial/metric choice, seeding every exercise-metric default and the two body-unit
+    /// flags above (the units step keeps them coherent). Optional-backed so drafts persisted before
+    /// this field existed decode unchanged (a missing key stays nil → locale default). Read/write
+    /// through `unitSystem`, which never surfaces nil.
+    var unitSystemRaw: UnitSystem?
+    var unitSystem: UnitSystem {
+        get { unitSystemRaw ?? .localeDefault }
+        set { unitSystemRaw = newValue }
+    }
     var healthConnectRequested = false
     var checkIn: CheckInAnswers?
     /// RMSSD / lnRMSSD of the completed first reading (nil = no reading taken yet).

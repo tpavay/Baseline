@@ -256,7 +256,9 @@ struct WorkoutStoreTests {
             displayLabel: "Option B sled",
             definitionId: "sled_pull",
             selectedMetrics: [.distance, .load],
-            displayUnits: [.load: .pounds],
+            // Pin both units so this structural test is independent of the global unit-system
+            // default (metric now defaults distance to km — see the displayUnit fallback tests).
+            displayUnits: [.load: .pounds, .distance: .meters],
             prescription: Prescription(
                 sets: [PlannedSet(
                     distance: 25,
@@ -431,5 +433,51 @@ struct WorkoutStoreTests {
         #expect(s2.current?.title == "Persisted")
         #expect(s2.current?.blocks.contains { $0.name == "A" } == true)
         #expect(s2.current?.blocks.count == 2)
+    }
+
+    // MARK: - Global unit-system default (fallback tier in displayUnit)
+
+    @Test func globalUnitSystemSeedsConvertibleDefaults() {
+        let s = store()
+        // A bare exercise with no per-instance override and no saved preference.
+        let ex = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift", selectedMetrics: [.load, .distance])
+
+        s.unitSystem = .imperial
+        #expect(s.displayUnit(.load, for: ex) == .pounds)
+        #expect(s.displayUnit(.distance, for: ex) == .miles)
+
+        s.unitSystem = .metric
+        #expect(s.displayUnit(.load, for: ex) == .kilograms)
+        #expect(s.displayUnit(.distance, for: ex) == .kilometers)
+
+        // Non-convertible / duration metrics ignore the system and stay canonical.
+        #expect(s.displayUnit(.reps, for: ex) == .count)
+        #expect(s.displayUnit(.duration, for: ex) == .seconds)
+    }
+
+    @Test func perInstanceAndPreferenceStillWinOverGlobalDefault() {
+        let s = store()
+        s.unitSystem = .metric
+        // Per-instance override beats the global default.
+        let overridden = PlannedExercise(
+            exerciseName: "Sled Pull", definitionId: "sled_pull",
+            selectedMetrics: [.load], displayUnits: [.load: .pounds]
+        )
+        #expect(s.displayUnit(.load, for: overridden) == .pounds)
+
+        // A saved per-exercise preference also beats the global default for a fresh instance.
+        #expect(s.setExercisePreference(exerciseNamed: "Stationary Bike", scope: .exercise, units: [.distance: .miles]).succeeded)
+        let fresh = PlannedExercise(exerciseName: "Stationary Bike", definitionId: "stationary_bike", selectedMetrics: [.distance])
+        #expect(s.displayUnit(.distance, for: fresh) == .miles)   // preference (miles), not metric-default km
+    }
+
+    @Test func unitSystemPerDimensionMapping() {
+        #expect(UnitSystem.imperial.defaultUnit(for: .load) == .pounds)
+        #expect(UnitSystem.imperial.defaultUnit(for: .distance) == .miles)
+        #expect(UnitSystem.metric.defaultUnit(for: .load) == .kilograms)
+        #expect(UnitSystem.metric.defaultUnit(for: .distance) == .kilometers)
+        // Duration and single-unit metrics don't vary by system.
+        #expect(UnitSystem.imperial.defaultUnit(for: .duration) == nil)
+        #expect(UnitSystem.metric.defaultUnit(for: .reps) == nil)
     }
 }

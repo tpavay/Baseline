@@ -27,6 +27,7 @@ struct UserRepository {
             "weightKg": draft.weightKg,
             "metricHeight": draft.metricHeight,
             "metricWeight": draft.metricWeight,
+            "unitSystem": draft.unitSystem.rawValue,
             "config": [
                 "heartReadingEnabled": draft.config.heartReadingEnabled,
                 "heartSource": draft.config.heartSource?.rawValue ?? "",
@@ -45,6 +46,17 @@ struct UserRepository {
             data["createdAt"] = FieldValue.serverTimestamp()
         }
         try await ref.setData(data, merge: true)
+    }
+
+    /// Persist just the global unit-system preference (the Profile toggle for an existing athlete).
+    /// Merge-write so it never clobbers the rest of the profile; the resulting document still
+    /// satisfies the strict validUser validation in firestore.rules (`unitSystem` in
+    /// ['metric','imperial']) as long as the document already exists.
+    func saveUnitSystem(uid: String, unitSystem: UnitSystem) async throws {
+        try await db.collection("users").document(uid).setData([
+            "unitSystem": unitSystem.rawValue,
+            "lastUpdated": FieldValue.serverTimestamp(),
+        ], merge: true)
     }
 
     /// Whether this account already finished onboarding on another install — used by the
