@@ -292,7 +292,11 @@ struct UnitsStepView: View {
                 .padding(.top, 24)
             }
         }
-        .onAppear { select(store.draft.unitSystem) }
+        // Seed the choice (and body-unit flags) only on first entry, so accepting the pre-selected
+        // card without tapping still works while a later manual ft/in or lb toggle survives back-nav.
+        .onAppear {
+            if store.draft.unitSystemRaw == nil { select(store.draft.unitSystem) }
+        }
     }
 
     /// Record the choice and keep the body height/weight toggles coherent with it, so the following
