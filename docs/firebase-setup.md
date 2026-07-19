@@ -7,11 +7,11 @@ Baseline uses **Firebase Auth + Firestore** with separate **dev**, **staging**, 
 | Env  | Firebase project ID  | Project # | `.firebaserc` alias | Build config | Plist |
 |------|----------------------|-----------|---------------------|--------------|-------|
 | Dev  | `baseline-app-dev`   | 121306436388 | `dev` (default)  | **Debug**    | `GoogleService-Info-Dev.plist` |
-| Staging | `baseline-app-staging` | *(pending)* | `staging`      | **Staging**  | `GoogleService-Info-Staging.plist` |
+| Staging | `baseline-app-staging` | 773651861110 | `staging`      | **Staging**  | `GoogleService-Info-Staging.plist` |
 | Prod | `baseline-app-prod`  | 1963302344   | `prod`           | **Release**  | `GoogleService-Info-Production.plist` |
 
 - **iOS app (dev + prod):** bundle ID `com.tylerpavay.Baseline` (same ID across those two envs → one Apple Sign-In config). **Staging** overrides the bundle id to `com.tylerpavay.Baseline.staging` (via the `Staging` config in `project.yml`) so it installs alongside a future prod build and gets its own App Store Connect record + `match` profile.
-- **Staging is the CI/CD tier and is not fully provisioned yet.** The `staging` alias, `Staging` build config, and plist-selection branch are in place, but the `baseline-app-staging` Firebase project and its iOS app still need to be created (captain task). Until then the staging `REVERSED_CLIENT_ID` in `project.yml` is a `TODO(captain)` placeholder and the Staging build's URL-scheme guard fails by design. See the staging pipeline in `.github/workflows/deploy-staging.yml` and the CI/CD notes in `CLAUDE.md`.
+- **Staging is the CI/CD tier.** The `staging` alias, `Staging` build config, and plist-selection branch are in place, the `baseline-app-staging` Firebase iOS app is registered with its OAuth client, and its real `REVERSED_CLIENT_ID` is wired into `project.yml`'s `CFBundleURLTypes`, so the Staging build's URL-scheme guard passes. See the staging pipeline in `.github/workflows/deploy-staging.yml` and the CI/CD notes in `CLAUDE.md`.
 - Console: https://console.firebase.google.com/ (signed in as pavayt@gmail.com).
 
 ## How environment selection works
@@ -19,12 +19,12 @@ Baseline uses **Firebase Auth + Firestore** with separate **dev**, **staging**, 
 - The `GoogleService-Info-*.plist` files live in `Baseline/App/Firebase/` and are **gitignored** (not committed).
 - They are **excluded** from the app bundle directly (see `project.yml` → `sources.excludes`).
 - A build phase script, [`scripts/select-firebase-plist.sh`](../scripts/select-firebase-plist.sh), copies the right one to `GoogleService-Info.plist` in the built app based on `$CONFIGURATION` (Debug→Dev, Staging→Staging, Release→Prod). It also validates the plist's bundle ID and that its Google `REVERSED_CLIENT_ID` is registered as a URL scheme.
-- Each env's Google redirect URL scheme is listed in the generated `Baseline/Info.plist` (`CFBundleURLTypes`); staging's is still a `TODO(captain)` placeholder in `project.yml`.
+- All three envs' Google redirect URL schemes (dev/staging/prod) are declared in `project.yml` and listed in the generated `Baseline/Info.plist` (`CFBundleURLTypes`).
 - `FirebaseApp.configure()` (in `BaselineApp.swift`) then loads whichever plist the script placed.
 
 ## What's already done (automated)
 
-- ✅ Both Firebase projects created + iOS app registered in each.
+- ✅ All three Firebase projects created + iOS app registered in each.
 - ✅ **Google** sign-in provider enabled and deployed (OAuth clients provisioned → plists have `CLIENT_ID`/`REVERSED_CLIENT_ID`).
 - ✅ Firestore database created in each, with **locked rules** (`firestore.rules`, deny-all by default) deployed.
 - ✅ App wired: SPM deps (firebase-ios-sdk, GoogleSignIn-iOS), `Baseline.entitlements` (Sign in with Apple), `AuthService` / `AuthViewModel` / `AuthView` + root gate.
