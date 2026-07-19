@@ -1,0 +1,4 @@
+# Baseline's primary/first app identifier. Staging is the first tier wired for
+# CI; the production lane can override this later. Team is QWGVB7TN4T (shared
+# with Ascend), so the App Store Connect API key and match repo are reusable.
+app_identifier("com.tylerpavay.Baseline.staging")

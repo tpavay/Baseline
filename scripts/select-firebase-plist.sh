@@ -6,6 +6,7 @@ set -eu
 # so FirebaseApp.configure() loads the right backend (dev vs prod).
 #
 #   Debug   -> GoogleService-Info-Dev.plist         (baseline-app-dev)
+#   Staging -> GoogleService-Info-Staging.plist      (baseline-app-staging)
 #   Release -> GoogleService-Info-Production.plist   (baseline-app-prod)
 #
 # Source plists live in Baseline/App/Firebase/ and are gitignored.
@@ -14,6 +15,7 @@ FIREBASE_DIR="${SRCROOT}/Baseline/App/Firebase"
 
 case "${CONFIGURATION}" in
   Debug)   ENV_PLIST="GoogleService-Info-Dev.plist" ;;
+  Staging) ENV_PLIST="GoogleService-Info-Staging.plist" ;;
   Release) ENV_PLIST="GoogleService-Info-Production.plist" ;;
   *)
     echo "error: Unknown configuration '${CONFIGURATION}' — cannot pick a Firebase plist."
@@ -25,8 +27,9 @@ source_plist="${FIREBASE_DIR}/${ENV_PLIST}"
 if [ ! -f "${source_plist}" ]; then
   cat <<MSG
 error: Missing Firebase config for ${CONFIGURATION}: ${source_plist}
-       Expected GoogleService-Info-Dev.plist (Debug) / GoogleService-Info-Production.plist (Release)
-       in Baseline/App/Firebase/. These are gitignored — re-download from the Firebase console if absent.
+       Expected GoogleService-Info-Dev.plist (Debug) / GoogleService-Info-Staging.plist (Staging) /
+       GoogleService-Info-Production.plist (Release) in Baseline/App/Firebase/.
+       These are gitignored — re-download from the Firebase console if absent.
 MSG
   exit 1
 fi

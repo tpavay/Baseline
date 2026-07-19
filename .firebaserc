@@ -2,6 +2,7 @@
   "projects": {
     "default": "baseline-app-dev",
     "dev": "baseline-app-dev",
+    "staging": "baseline-app-staging",
     "prod": "baseline-app-prod"
   }
 }

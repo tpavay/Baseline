@@ -1,0 +1,12 @@
+# Signing certs + provisioning profiles are stored in Ascend's match repo,
+# reused here because Baseline shares Apple team QWGVB7TN4T. The distribution
+# certificate is team-scoped; only Baseline's provisioning profiles are added.
+git_url(ENV.fetch("MATCH_GIT_URL", "git@github.com:tpavay/ascend-match-signing.git"))
+storage_mode("git")
+type("appstore")
+git_branch(ENV.fetch("MATCH_GIT_BRANCH", "main"))
+app_identifier([
+  "com.tylerpavay.Baseline.staging",
+  "com.tylerpavay.Baseline"
+])
+team_id("QWGVB7TN4T")

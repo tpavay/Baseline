@@ -1,4 +1,11 @@
 name: Baseline
+# Three build configurations. Declaring `configs:` overrides XcodeGen's default
+# Debug/Release pair, so all three must be listed. Staging is a release-type
+# build (optimized, like a TestFlight build) that targets baseline-app-staging.
+configs:
+  Debug: debug
+  Staging: release
+  Release: release
 options:
   bundleIdPrefix: com.tylerpavay
   deploymentTarget:
@@ -55,9 +62,14 @@ targets:
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
-              # Google Sign-In redirect schemes (REVERSED_CLIENT_ID) for both envs.
+              # Google Sign-In redirect schemes (REVERSED_CLIENT_ID) per env.
               - "com.googleusercontent.apps.121306436388-ep4vqd24ivlcjmd58m37bpsvrkp39c5g"   # baseline-app-dev
               - "com.googleusercontent.apps.1963302344-09rsgnfjm77n0468nstu863kl01rjefk"     # baseline-app-prod
+              # TODO(captain): replace with the REVERSED_CLIENT_ID from the
+              # baseline-app-staging GoogleService-Info-Staging.plist (created when
+              # the staging Firebase iOS app is registered). Until then the Staging
+              # build's select-firebase-plist.sh URL-scheme guard will fail by design.
+              - "com.googleusercontent.apps.REPLACE_WITH_STAGING_REVERSED_CLIENT_ID"          # baseline-app-staging
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tylerpavay.Baseline
@@ -67,8 +79,13 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_ENTITLEMENTS: Baseline/Baseline.entitlements
+      configs:
+        # Staging installs alongside a future prod build via a suffixed bundle id,
+        # and gets its own App Store Connect record + match provisioning profile.
+        Staging:
+          PRODUCT_BUNDLE_IDENTIFIER: com.tylerpavay.Baseline.staging
     postCompileScripts:
-      - name: "Select Firebase plist (dev/prod)"
+      - name: "Select Firebase plist (dev/staging/prod)"
         script: '"${SRCROOT}/scripts/select-firebase-plist.sh"'
         basedOnDependencyAnalysis: false
   BaselineTests:
@@ -96,7 +113,32 @@ schemes:
       targets:
         Baseline: all
         BaselineTests: [test]
+    # Pin run/archive configs explicitly so the new Staging config can never
+    # become this scheme's archive config by accident.
+    run:
+      config: Debug
     test:
+      config: Debug
       gatherCoverageData: true
       targets:
         - BaselineTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+  # Archives the staging IPA. Fastlane's build_staging lane drives this scheme
+  # with configuration Staging (see fastlane/Fastfile).
+  Baseline-Staging:
+    build:
+      targets:
+        Baseline: all
+    run:
+      config: Staging
+    profile:
+      config: Staging
+    analyze:
+      config: Staging
+    archive:
+      config: Staging
