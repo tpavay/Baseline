@@ -65,11 +65,7 @@ targets:
               # Google Sign-In redirect schemes (REVERSED_CLIENT_ID) per env.
               - "com.googleusercontent.apps.121306436388-ep4vqd24ivlcjmd58m37bpsvrkp39c5g"   # baseline-app-dev
               - "com.googleusercontent.apps.1963302344-09rsgnfjm77n0468nstu863kl01rjefk"     # baseline-app-prod
-              # TODO(captain): replace with the REVERSED_CLIENT_ID from the
-              # baseline-app-staging GoogleService-Info-Staging.plist (created when
-              # the staging Firebase iOS app is registered). Until then the Staging
-              # build's select-firebase-plist.sh URL-scheme guard will fail by design.
-              - "com.googleusercontent.apps.REPLACE_WITH_STAGING_REVERSED_CLIENT_ID"          # baseline-app-staging
+              - "com.googleusercontent.apps.773651861110-bf5bmac3gufk8s63gt9lldn47um0ui4f"    # baseline-app-staging
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tylerpavay.Baseline
