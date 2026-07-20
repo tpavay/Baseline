@@ -148,8 +148,6 @@ final class WorkoutStore {
         }
     }
 
-    private func baseWorkout(_ scope: WorkoutEditScope) -> Workout? { workout(scope) }
-
     /// Adopt an edited workout and write it to the destination the caller named. The payload travels
     /// with the write; nothing downstream re-reads `current` to decide what or where to push.
     private func apply(_ workout: Workout, _ scope: WorkoutEditScope) {
@@ -302,7 +300,7 @@ final class WorkoutStore {
 
     /// Add a fully-built planned exercise (from the catalog picker) to a block, tracking recents.
     func addExercise(_ exercise: PlannedExercise, toBlockID blockID: UUID, scope: WorkoutEditScope) {
-        guard var w = baseWorkout(scope) else { return }
+        guard var w = workout(scope) else { return }
         _ = w.addExercise(exercise, toBlock: blockID)
         apply(w, scope)
         if let id = exercise.definitionId { noteRecent(id) }
@@ -331,7 +329,7 @@ final class WorkoutStore {
     /// Apply an id-based structural edit (add/remove/reorder/move/substitute) and write it to the
     /// destination the caller names — the session's copy while performing, the plan otherwise.
     func edit(_ scope: WorkoutEditScope, _ transform: (inout Workout) -> Void) {
-        guard var w = baseWorkout(scope) else { return }
+        guard var w = workout(scope) else { return }
         transform(&w)
         apply(w, scope)
     }
@@ -340,7 +338,7 @@ final class WorkoutStore {
     /// guidance stay intact; only catalog identity and incompatible logging configuration change.
     @discardableResult
     func replaceExercise(_ exerciseID: UUID, with definition: ExerciseDefinition, scope: WorkoutEditScope) -> Bool {
-        guard var workout = baseWorkout(scope),
+        guard var workout = workout(scope),
               applyReplacement(definition, to: exerciseID, in: &workout) else { return false }
         apply(workout, scope)
         noteRecent(definition.id)
@@ -538,7 +536,7 @@ final class WorkoutStore {
 
     @discardableResult
     func addBlock(name: String, intent: String?) -> Bool {
-        guard var w = baseWorkout(agentScope) else { return false }
+        guard var w = workout(agentScope) else { return false }
         w.addBlock(name: name, intent: intent)
         apply(w, agentScope)
         return true
@@ -548,7 +546,7 @@ final class WorkoutStore {
     func addExercise(name: String, toBlockNamed block: String,
                      sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?,
                      distanceMeters: Double? = nil) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet — create one first.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet — create one first.") }
         let blockID: UUID
         switch resolveBlock(block, in: w) {
         case .none:
@@ -585,7 +583,7 @@ final class WorkoutStore {
 
     @discardableResult
     func moveExercise(named exercise: String, toBlockNamed block: String) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
@@ -605,7 +603,7 @@ final class WorkoutStore {
 
     @discardableResult
     func removeExercise(named exercise: String) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
         case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
@@ -622,7 +620,7 @@ final class WorkoutStore {
         inBlock block: String? = nil,
         replaceAll: Bool = false
     ) -> EditOutcome {
-        guard var workout = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var workout = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let definition = resolveDefinition(replacement)
         guard definition.id != ExerciseCatalog.generic.id else {
             return .notFound("I couldn't find \"\(replacement)\" in the exercise catalog.")
@@ -662,7 +660,7 @@ final class WorkoutStore {
     @discardableResult
     func updateSet(exerciseNamed exercise: String, setNumber: Int,
                    reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double? = nil, rpe: Double?) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
@@ -691,7 +689,7 @@ final class WorkoutStore {
     /// metrics the exercise doesn't support.
     @discardableResult
     func setLoggingConfig(exerciseNamed name: String, enabled: [MetricType]?, units: [MetricType: MetricUnit] = [:]) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(name, in: w) {
         case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
@@ -720,7 +718,7 @@ final class WorkoutStore {
         units: [MetricType: MetricUnit] = [:],
         scope: WorkoutEditScope
     ) -> Bool {
-        guard var workout = baseWorkout(scope), let exercise = workout.exercise(exerciseID) else { return false }
+        guard var workout = workout(scope), let exercise = workout.exercise(exerciseID) else { return false }
         let requested = (enabled ?? []) + Array(units.keys)
         guard requested.allSatisfy(exercise.supportedMetrics.contains) else { return false }
         workout.updateExercise(exerciseID) { updated in
@@ -738,7 +736,7 @@ final class WorkoutStore {
     /// Turn an incorrectly inferred either/or choice into one required ordered group. Name matching
     /// is ambiguity-aware so an agent can never silently change the wrong choice.
     func requireAllOptions(choiceNamed name: String) -> EditOutcome {
-        guard var workout = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var workout = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let choices = workout.allChoices
         let exact = choices.filter { $0.label.localizedCaseInsensitiveCompare(key) == .orderedSame }
@@ -786,7 +784,7 @@ final class WorkoutStore {
     /// the metric is selected/visible. Rejects unsupported metrics.
     @discardableResult
     func setMetricValue(exerciseNamed name: String, setNumber: Int, metric: MetricType, value: Double, unit: MetricUnit?) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(name, in: w) {
         case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
@@ -812,7 +810,7 @@ final class WorkoutStore {
     /// Remove a metric from an exercise this workout — unselect it and clear its values.
     @discardableResult
     func removeMetric(exerciseNamed name: String, metric: MetricType) -> EditOutcome {
-        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(name, in: w) {
         case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")

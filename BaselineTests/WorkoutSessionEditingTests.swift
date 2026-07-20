@@ -513,10 +513,11 @@ struct WorkoutSessionEditingTests {
 
     // MARK: - What the coach says matches what the coach changed
 
-    private func agentTools(_ workouts: WorkoutStore) -> AgentTools {
+    private func agentTools(_ workouts: WorkoutStore, _ plan: PlanStore? = nil) -> AgentTools {
         AgentTools(store: TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!),
                    base: DecisionEngine.Inputs(),
-                   workouts: workouts)
+                   workouts: workouts,
+                   plan: plan)
     }
 
     /// The confirmation must describe the workout the tool actually changed. Echoing the declined
@@ -536,6 +537,39 @@ struct WorkoutSessionEditingTests {
         #expect(response.text.contains("Finisher"))
         #expect(!response.text.contains("Bench press"))
         #expect(!(appLevel.compactSummary(appLevel.agentScope) ?? "").isEmpty)
+    }
+
+    /// The one door that outlives the session: a template instantiates into every future workout built
+    /// from it, so declined content saved there would escape the session permanently.
+    @Test func savingATemplateAfterDecliningCapturesThePlanNotTheDeclinedSession() async {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        exec.startWorkout()
+        exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        await finishAndDecline(exec)
+        appLevel.reloadFromPlan()
+
+        _ = agentTools(appLevel, plan).dispatch(.saveAsTemplate(name: "Push A"))
+
+        let saved = plan.template(named: "Push A")
+        #expect(saved != nil)
+        #expect(plan.templateWorkout(saved!.id)?.allExercises.map(\.exerciseName) == ["Squat"])
+    }
+
+    @Test func updatingATemplateAfterDecliningCapturesThePlanNotTheDeclinedSession() async {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        let seed = plan.saveAsTemplate(name: "Push A", from: workout("Seed", [exercise("Squat")]))
+        exec.startWorkout()
+        exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        await finishAndDecline(exec)
+        appLevel.reloadFromPlan()
+
+        _ = agentTools(appLevel, plan).dispatch(.updateTemplate(name: "Push A"))
+
+        #expect(plan.templateWorkout(seed.id)?.allExercises.map(\.exerciseName) == ["Squat"])
     }
 
     /// The mirror: while the session owns the editing surface, the coach reads and echoes the session.

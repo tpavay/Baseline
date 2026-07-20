@@ -296,7 +296,7 @@ final class AgentTools {
             return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
         case .createWorkout(let title, let goal, let replace):
             guard let workouts else { return workoutUnavailable() }
-            if let existing = workouts.workout(workouts.agentScope), !replace {
+            if let existing = currentWorkout, !replace {
                 return Response(text: "There's already a workout (\"\(existing.title)\"). Creating a new one will replace it and discard the current one — confirm and I'll do it.", decision: nil, plan: nil)
             }
             guard workouts.create(title: title, goal: goal) else {
@@ -343,10 +343,10 @@ final class AgentTools {
                            success: "Updated set \(n) of \(exercise).")
         case .getCurrentWorkout:
             guard let workouts else { return workoutUnavailable() }
-            return Response(text: workouts.summary(workouts.agentScope), decision: nil, plan: nil)
+            return Response(text: currentWorkoutSummary ?? "No workout has been created yet.", decision: nil, plan: nil)
         case .startWorkout:
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.workout(workouts.agentScope) != nil else {
+            guard currentWorkout != nil else {
                 return Response(text: "There's no workout built yet, so there's nothing to start — want me to create one?", decision: nil, plan: nil)
             }
             // Safe to begin immediately: workout exists and no session is active. Idempotent if it is.
@@ -358,7 +358,7 @@ final class AgentTools {
             return Response(text: "Started the workout — logging is live and the sets are ready to check off. (session \(sid))", decision: nil, plan: nil)
         case .completeWorkout(let confirm):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.workout(workouts.agentScope) != nil else {
+            guard currentWorkout != nil else {
                 return Response(text: "There's no workout to finish yet.", decision: nil, plan: nil)
             }
             // Never finalize a workout that was never started, or one with open sets, without a
@@ -416,7 +416,11 @@ final class AgentTools {
             }
         case .saveAsTemplate(let name):
             guard let plan else { return workoutUnavailable() }
-            guard let w = workouts?.current else { return Response(text: "There's no workout to save as a template yet.", decision: nil, plan: nil) }
+            // The same scoped resolution every other tool uses. After a decline that means the plan:
+            // the athlete just rejected that session shape, so persisting it as a reusable template —
+            // which would then instantiate into every future workout built from it — would contradict
+            // the choice they made.
+            guard let w = currentWorkout else { return Response(text: "There's no workout to save as a template yet.", decision: nil, plan: nil) }
             if plan.template(named: name) != nil {
                 return Response(text: "A template named \"\(name)\" already exists. Say \"update it\" to replace it, or give me a different name.", decision: nil, plan: nil)
             }
@@ -424,7 +428,7 @@ final class AgentTools {
             return Response(text: "Saved \(name) as a template — you can reuse it any day.", decision: nil, plan: nil)
         case .updateTemplate(let name):
             guard let plan else { return workoutUnavailable() }
-            guard let w = workouts?.current else { return Response(text: "There's no workout to update the template from.", decision: nil, plan: nil) }
+            guard let w = currentWorkout else { return Response(text: "There's no workout to update the template from.", decision: nil, plan: nil) }
             let matches = matchTemplates(name, plan)
             switch matches.count {
             case 0: return Response(text: "I don't have a template called \"\(name)\".", decision: nil, plan: nil)
@@ -645,9 +649,18 @@ final class AgentTools {
         }
     }
 
+    // MARK: - The one resolution every workout tool uses
+
+    /// "The current workout", resolved once through the store's scope. Every agent-facing read, write,
+    /// and echo goes through these, so no tool can hold a private notion of which workout it means —
+    /// the read source and the write source are the same lookup, not two that usually agree.
+    private var currentWorkout: Workout? { workouts.map { $0.workout($0.agentScope) } ?? nil }
+    private var currentWorkoutSummary: String? { workouts.map { $0.summary($0.agentScope) } }
+    private var currentWorkoutIndex: String? { workouts.flatMap { $0.compactSummary($0.agentScope) } }
+
     /// After a workout edit, hand the model the refreshed structure so its reply reflects the truth.
     private func workoutResponse(prefix: String) -> Response {
-        let text = [prefix, workouts.map { $0.summary($0.agentScope) }].compactMap { $0 }.joined(separator: "\n")
+        let text = [prefix, currentWorkoutSummary].compactMap { $0 }.joined(separator: "\n")
         return Response(text: text, decision: nil, plan: nil)
     }
 
@@ -695,7 +708,7 @@ final class AgentTools {
         // A compact INDEX of the current workout — enough to know it exists and its status, never the
         // full exercise/set detail (that would inflate every request). Detail is fetched on demand via
         // get_current_workout. Never deny a workout the index shows.
-        if let workouts, let compact = workouts.compactSummary(workouts.agentScope) {
+        if let compact = currentWorkoutIndex {
             lines.append("Current workout (call get_current_workout for its exercises/sets; never answer content from memory):\n\(compact)\nTo begin it call start_workout; to finish it call complete_workout.")
         } else {
             lines.append("No workout has been built yet. If the athlete wants one, use create_workout (or build it up with add_block/add_exercise).")
