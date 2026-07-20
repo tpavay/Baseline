@@ -178,6 +178,11 @@ jobs:
       - name: Install dependencies for deploy
         run: npm --prefix functions ci
 
+      # firebase-tools authenticates via Application Default Credentials, which
+      # only reads a key file path, so the secret has to land on disk. It is
+      # written with umask 077 at deploy time, never echoed or uploaded as an
+      # artifact, and removed by both the in-step trap and the always() step
+      # below so a cancelled or failed deploy cannot leave it behind.
       - name: Deploy Functions, Rules, Indexes, and Storage
         env:
           FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
