@@ -198,6 +198,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
   Staging uses bundle id `com.tylerpavay.Baseline.staging` via the `Staging` build config in `project.yml`.
   `match` for signing (CI readonly) **reuses Ascend's `ascend-match-signing` repo**.
   Baseline shares Apple team `QWGVB7TN4T`, so the ASC API key and match repo are shared.
+  Signing settings for the distribution configs live in `project.yml`, not the Xcode project, because XcodeGen regenerates the project on every CI run - see the comment above `settings.configs` on the `Baseline` target before changing or removing them.
   Firebase deploys authenticate through Application Default Credentials backed by the `FIREBASE_SERVICE_ACCOUNT_STAGING` repository secret.
   OIDC + GCP Workload Identity Federation remains the intended future hardening.
   Prod tier is not built yet.
