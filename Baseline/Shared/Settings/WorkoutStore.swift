@@ -285,6 +285,15 @@ final class WorkoutStore {
 
     // MARK: - Session ⇄ plan reconciliation (mid-workout edits promote to the plan only on opt-in)
 
+    /// A captured, self-contained answer to "did this session diverge from the saved plan, and what
+    /// would promoting it write?". Captured *before* completing so the decision never depends on the
+    /// store's post-completion state, and so the prompt can outlive the session it describes.
+    struct SessionReconciliation: Equatable {
+        let diff: WorkoutSessionDiff
+        /// The workout to write to the plan if the athlete says yes.
+        let sessionWorkout: Workout
+    }
+
     /// The workout as the athlete shaped it this session — the live copy with top-level log
     /// substitutions folded in. Nil only when there is no current workout at all.
     private var effectiveSessionPlan: Workout? {
@@ -292,20 +301,19 @@ final class WorkoutStore {
         return WorkoutSessionReconciliation.effectiveSessionPlan(base: current, log: log)
     }
 
-    /// Differences between the saved plan and the session as performed — drives the completion prompt.
-    /// Empty when unbound (no plan to promote to) or when nothing changed, so the prompt stays hidden.
-    var sessionPlanDiff: WorkoutSessionDiff {
-        guard let sink, let plan = sink.planWorkout(), let session = effectiveSessionPlan else {
-            return WorkoutSessionDiff(changes: [])
-        }
-        return WorkoutSessionReconciliation.diff(plan: plan, session: session)
+    /// Capture how this session diverged from the saved plan. Nil when unbound (no plan to promote to)
+    /// or when nothing changed — in both cases completion shows no prompt.
+    func captureSessionReconciliation() -> SessionReconciliation? {
+        guard let sink, let plan = sink.planWorkout(), let session = effectiveSessionPlan else { return nil }
+        let diff = WorkoutSessionReconciliation.diff(plan: plan, session: session)
+        guard diff.hasChanges else { return nil }
+        return SessionReconciliation(diff: diff, sessionWorkout: session)
     }
 
-    /// Promote the session's edits to the saved plan/template as a new revision — the completion
-    /// "Update template" opt-in. No-op when unbound or nothing changed.
-    func reconcileSessionToPlan() {
-        guard let sink, let session = effectiveSessionPlan, sessionPlanDiff.hasChanges else { return }
-        sink.pushWorkout(session)
+    /// Promote a captured session shape to the saved plan/template as a new revision — the completion
+    /// "Update template" opt-in. This is the only path by which a mid-workout edit reaches the plan.
+    func applySessionReconciliation(_ reconciliation: SessionReconciliation) {
+        sink?.pushWorkout(reconciliation.sessionWorkout)
     }
 
     /// True-remove a top-level exercise from the workout. During a live session this edits the session
@@ -318,11 +326,32 @@ final class WorkoutStore {
         }
     }
 
+    /// True-remove a whole block, purging the performed record of every exercise it contained so the
+    /// same no-orphaned-sets guarantee as `removeExerciseFromWorkout` holds for block deletion.
+    /// A workout always keeps at least one block, so deleting the last one leaves an empty default.
+    func removeBlockFromWorkout(_ blockID: UUID) {
+        let removedIDs = current?.blocks.first { $0.id == blockID }?.exercises.map(\.id) ?? []
+        edit { workout in
+            workout.removeBlock(blockID)
+            if workout.blocks.isEmpty { workout.blocks.append(WorkoutBlock(name: "", isDefault: true)) }
+        }
+        if currentLog != nil, !removedIDs.isEmpty {
+            editLog { log in for id in removedIDs { log.removePerformed(forPlanned: id) } }
+        }
+    }
+
     /// Whether a top-level exercise has real logged work that a true-remove would discard — the signal
     /// to confirm before removing.
     func hasLoggedWork(forExercise exerciseID: UUID) -> Bool {
         currentLog?.hasLoggedWork(forPlanned: exerciseID) ?? false
     }
+
+    /// Whether a block holds any exercise with real logged work — the confirm signal for block deletion.
+    func hasLoggedWork(inBlock blockID: UUID) -> Bool {
+        guard let log = currentLog, let block = current?.blocks.first(where: { $0.id == blockID }) else { return false }
+        return block.exercises.contains { log.hasLoggedWork(forPlanned: $0.id) }
+    }
+
     func discardLog() {
         sink?.discard()
         isSyncing = true
