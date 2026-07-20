@@ -178,8 +178,29 @@ jobs:
 
       - name: Deploy Functions, Rules, Indexes, and Storage
         env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        run: npx -y firebase-tools@15.22.1 deploy --project baseline-app-staging --only functions,firestore:rules,firestore:indexes,storage --non-interactive --force --token "$FIREBASE_TOKEN"
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/.firebase-service-account-staging.json
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          umask 077
+          trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
+
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_STAGING" ]; then
+            echo "::error::Required secret FIREBASE_SERVICE_ACCOUNT_STAGING is missing or empty."
+            exit 1
+          fi
+
+          printf "%s" "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$GOOGLE_APPLICATION_CREDENTIALS"
+          unset FIREBASE_SERVICE_ACCOUNT_STAGING
+
+          npx -y firebase-tools@15.22.1 deploy --project baseline-app-staging --only functions,firestore:rules,firestore:indexes,storage --non-interactive --force
+
+      - name: Remove Firebase service account credentials
+        if: always()
+        shell: bash
+        run: rm -f "$GITHUB_WORKSPACE/.firebase-service-account-staging.json"
 
   upload-testflight:
     name: Upload to TestFlight (Staging)
