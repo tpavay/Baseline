@@ -198,7 +198,11 @@ final class SwiftDataPlanRepository: PlanRepository {
     @discardableResult func startSession(forScheduled id: UUID, now: Date = Date()) -> WorkoutSession? {
         guard let sw = scheduledWorkout(id) else { return nil }
         if let live = latestSession(id), live.statusRaw == SessionStatus.active.rawValue || live.statusRaw == SessionStatus.paused.rawValue {
-            return map(live)   // idempotent — a session is already live
+            // Idempotent — a session is already live. Still mark the decision pending: a live session has
+            // by definition not been answered, and it may predate the field or have been reached only
+            // through resume, in which case nobody has ever written it.
+            markDecisionPending(live)
+            return map(live)
         }
         let sd = SDWorkoutSession(scheduledWorkoutID: id, startedAt: now,
                                   statusRaw: SessionStatus.active.rawValue, logJSON: PlanCoding.data(sw.workout.startLog()),
@@ -209,8 +213,19 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     @discardableResult func resumeSession(forScheduled id: UUID) -> WorkoutSession? {
         guard let sd = latestSession(id) else { return nil }
-        sd.statusRaw = SessionStatus.active.rawValue; save()
+        sd.statusRaw = SessionStatus.active.rawValue
+        sd.reconciliationPending = true      // live again ⇒ its decision is open again
+        save()
         return map(sd)
+    }
+
+    /// Every path that yields a *live* session marks the decision open, however that session was
+    /// reached. Nil stays "not pending" for completed rows written before the field existed, so an old
+    /// finished session cannot suddenly claim an unanswered decision.
+    private func markDecisionPending(_ sd: SDWorkoutSession) {
+        guard sd.reconciliationPending != true else { return }
+        sd.reconciliationPending = true
+        save()
     }
 
     func updateSessionLog(forScheduled id: UUID, _ transform: (inout WorkoutLog) -> Void) {

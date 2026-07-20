@@ -68,7 +68,7 @@ struct PlanBindingTests {
         store.editLog { $0.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: ex.prescription.sets[0].id) { $0.completed = true } }
         #expect(plan.session(for: sw.id)?.log.performed(forPlanned: ex.id)?.setLogs.first?.completed == true)
 
-        store.completeWorkout()
+        store.completeWorkout(awaitingReconciliationDecision: false)
         #expect(store.currentLog?.isComplete == true)
     }
 

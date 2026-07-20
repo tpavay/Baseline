@@ -59,6 +59,20 @@ struct WorkoutSessionEditingTests {
         return (plan, store, sw.id)
     }
 
+    /// Drive the finish sequence the app actually runs: capture, complete, and answer the prompt when
+    /// one appears. Tests that call `completeWorkout` directly can reach states the product cannot.
+    private func finishAndDecline(_ store: WorkoutStore) async {
+        let coordinator = WorkoutFinishCoordinator()
+        await coordinator.finish(store)?.value
+        if coordinator.pendingReconciliation != nil { coordinator.decline(store) }
+    }
+
+    private func finishAndAccept(_ store: WorkoutStore) async {
+        let coordinator = WorkoutFinishCoordinator()
+        await coordinator.finish(store)?.value
+        if let pending = coordinator.pendingReconciliation { coordinator.apply(pending, to: store) }
+    }
+
     // MARK: - Session-scoped edits
 
     @Test func midWorkoutEditDoesNotRewriteTheSavedPlan() {
@@ -135,7 +149,7 @@ struct WorkoutSessionEditingTests {
             }
         }
         store.removeExerciseFromWorkout(squat.id, scope: .session)
-        store.completeWorkout()
+        store.completeWorkout(awaitingReconciliationDecision: false)
 
         let completed = plan.completed(for: id)
         #expect(completed?.log.performed(forPlanned: squat.id) == nil)
@@ -240,23 +254,20 @@ struct WorkoutSessionEditingTests {
         #expect(reconciliation?.diff.summaryLine == "Added Bench press")
     }
 
-    @Test func decliningReconciliationLeavesThePlanUntouched() {
+    @Test func decliningReconciliationLeavesThePlanUntouched() async {
         let (plan, store, id) = startedSession()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
-        _ = store.captureSessionReconciliation()   // captured, then discarded — the athlete said no
-        store.completeWorkout()
+        await finishAndDecline(store)
 
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
     }
 
-    @Test func acceptingReconciliationPromotesTheSessionToThePlan() {
+    @Test func acceptingReconciliationPromotesTheSessionToThePlan() async {
         let (plan, store, id) = startedSession()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
-        let reconciliation = store.captureSessionReconciliation()!
-        store.completeWorkout()
-        store.applySessionReconciliation(reconciliation)
+        await finishAndAccept(store)
 
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
@@ -321,7 +332,7 @@ struct WorkoutSessionEditingTests {
         }
 
         store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id, scope: .session)
-        store.completeWorkout()
+        store.completeWorkout(awaitingReconciliationDecision: false)
 
         #expect(plan.completed(for: id)?.log.performed(forPlanned: planned.id)?.setLogs.count == 1)
     }
@@ -386,29 +397,25 @@ struct WorkoutSessionEditingTests {
     }
 
     /// The hard invariant: `applySessionReconciliation` is the only path that may promote a session shape.
-    @Test func decliningReconciliationThenFlushingLeavesThePlanUntouched() {
+    @Test func decliningReconciliationThenFlushingLeavesThePlanUntouched() async {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
 
-        _ = store.captureSessionReconciliation()   // the athlete tapped "Keep Original"
-        store.completeWorkout()
-        store.declineSessionReconciliation()
+        await finishAndDecline(store)              // the athlete tapped "Keep Original"
         store.flush()                              // ...and then dismissed the sheet
 
         #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
     }
 
-    @Test func acceptingReconciliationThenFlushingPromotesExactlyOnce() {
+    @Test func acceptingReconciliationThenFlushingPromotesExactlyOnce() async {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
-        let reconciliation = store.captureSessionReconciliation()!
-        store.completeWorkout()
-        store.applySessionReconciliation(reconciliation)
+        await finishAndAccept(store)
         let revisionAfterPromotion = plan.scheduledWorkout(id)?.workoutRevisionID
         store.flush()
 
@@ -419,43 +426,39 @@ struct WorkoutSessionEditingTests {
 
     /// Declining settles the decision without touching content, so the summary still shows the workout
     /// the athlete actually performed — added exercises present, removed ones gone.
-    @Test func decliningLeavesTheCompletedSummaryOnThePerformedShape() {
+    @Test func decliningLeavesTheCompletedSummaryOnThePerformedShape() async {
         let (_, store, _) = startedSession(workout("W", [exercise("Squat"), exercise("Bench press")]))
         store.edit(.session) { $0.addExercise(self.exercise("Curl"), toBlock: $0.blocks[0].id) }
         store.removeExerciseFromWorkout(store.current!.allExercises[1].id, scope: .session)
 
-        _ = store.captureSessionReconciliation()
-        store.completeWorkout()
-        store.declineSessionReconciliation()
+        await finishAndDecline(store)
 
         #expect(store.current?.allExercises.map(\.exerciseName) == ["Squat", "Curl"])
     }
 
     /// The agent has no presentation mode, so it follows the one explicit lifecycle signal: session
     /// while the decision is open, plan once it is settled.
-    @Test func anAgentEditAfterDecliningReachesThePlanAndNotTheFinishedSession() {
+    @Test func anAgentEditAfterDecliningReachesThePlanAndNotTheFinishedSession() async {
         let (plan, store, id) = startedSession()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
-        _ = store.captureSessionReconciliation()
-        store.completeWorkout()
+        await finishAndDecline(store)
         let sessionShape = plan.session(for: id)?.workout?.allExercises.map(\.exerciseName)
 
-        store.declineSessionReconciliation()
         store.addBlock(name: "Finisher", intent: nil)
 
         #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
+        // ...built on the plan, so it cannot carry the exercise the athlete just declined.
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
         // The frozen session is history, not an editing surface — the edit must not rewrite it.
         #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == sessionShape)
         #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } != true)
     }
 
-    @Test func anAgentEditAfterAcceptingReachesThePlanOnTopOfThePromotedShape() {
+    @Test func anAgentEditAfterAcceptingReachesThePlanOnTopOfThePromotedShape() async {
         let (plan, store, id) = startedSession()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
-        let reconciliation = store.captureSessionReconciliation()!
-        store.completeWorkout()
 
-        store.applySessionReconciliation(reconciliation)
+        await finishAndAccept(store)
         store.addBlock(name: "Finisher", intent: nil)
 
         #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
@@ -464,12 +467,10 @@ struct WorkoutSessionEditingTests {
 
     /// A fresh store bound after the workout is over — the app relaunching, then the agent asked to
     /// change today's plan. Nothing in the completed session may be rewritten.
-    @Test func aStoreReboundAfterCompletionEditsThePlanNotTheFinishedSession() {
+    @Test func aStoreReboundAfterCompletionEditsThePlanNotTheFinishedSession() async {
         let (plan, store, id) = startedSession()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
-        _ = store.captureSessionReconciliation()
-        store.completeWorkout()
-        store.declineSessionReconciliation()
+        await finishAndDecline(store)
         let sessionShape = plan.session(for: id)?.workout?.allExercises.map(\.exerciseName)
 
         let relaunched = buffer()
@@ -502,6 +503,41 @@ struct WorkoutSessionEditingTests {
 
         #expect(!exec.hasUnresolvedSessionDecision)
         #expect(!appLevel.hasUnresolvedSessionDecision)
+    }
+
+    /// The last door: a plan-scoped write used to build its payload from `current`, which still holds the
+    /// performed shape after a decline. No relaunch needed — this is the chat opened from the Today tab.
+    @Test func aPlanEditAfterDecliningCannotCarryTheDeclinedSessionContent() async {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        exec.startWorkout()
+        exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+
+        await finishAndDecline(exec)
+        appLevel.reloadFromPlan()                       // ConversationView does this before dispatching
+        appLevel.addBlock(name: "Finisher", intent: nil)
+
+        // The plan is the original content plus the plan edit — and nothing else.
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
+        #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
+    }
+
+    /// A session reached through resume (or one that was live across an app update, whose stored flag
+    /// predates the field) is still unanswered, so its edits belong to the session.
+    @Test func aResumedSessionRoutesEditsToTheSessionNotThePlan() {
+        let (plan, store, id) = planTabSession()
+        store.startWorkout()
+        plan.resolveSessionDecision(id)                 // simulate a row that lost the fact
+        #expect(!store.hasUnresolvedSessionDecision)
+
+        _ = plan.resume(id)
+
+        #expect(store.hasUnresolvedSessionDecision)
+        let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
+        store.addBlock(name: "Finisher", intent: nil)
+        #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } == true)
+        #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
     }
 
     @Test func anAgentEditThroughTheAppLevelStoreMidSessionIsSessionScoped() {

@@ -372,7 +372,8 @@ final class AgentTools {
                 let e = open.exercises == 1 ? "exercise" : "exercises"
                 return Response(text: "You still have \(open.sets) unlogged \(s) across \(open.exercises) \(e). Want me to finish the workout anyway?", decision: nil, plan: nil)
             }
-            workouts.completeWorkout()
+            // Finishing through the agent shows no promotion prompt, so the decision is settled here.
+            workouts.completeWorkout(awaitingReconciliationDecision: false)
             return Response(text: "Marked the workout complete — nice work.", decision: nil, plan: nil)
         case .getWeekPlan:
             guard let plan else { return workoutUnavailable() }

@@ -1,13 +1,6 @@
 import Foundation
 import Observation
 
-/// Holds the athlete's **current structured workout** and applies validated edits. The conversation's
-/// plan-edit tools write here; the workout screen (later) reads here. Local-first (UserDefaults JSON),
-/// same pattern as `TrainingContextStore`.
-///
-/// The model speaks in *names* ("move bench to the warm-up block"); this resolves names → ids and
-/// calls the id-based operations on `Workout` (which own the invariants + are unit-tested). Every
-/// mutation is get-copy-mutate-reassign so `@Observable` fires and it persists.
 /// Where a content edit is written.
 ///
 /// Every caller states this, because inferring it from ambient lifecycle state is exactly what let
@@ -23,6 +16,12 @@ enum WorkoutEditScope {
     case session
 }
 
+/// Holds the athlete's **current structured workout** and applies validated edits. The conversation's
+/// plan-edit tools write here; the workout screen reads here. Local-first (UserDefaults JSON), same
+/// pattern as `TrainingContextStore`.
+///
+/// The model speaks in *names* ("move bench to the warm-up block"); this resolves names → ids and
+/// calls the id-based operations on `Workout` (which own the invariants + are unit-tested).
 @MainActor
 @Observable
 final class WorkoutStore {
@@ -123,18 +122,44 @@ final class WorkoutStore {
         sink.pushWorkout(pending)
     }
 
+    /// The workout a plan-scoped edit is built on: the saved plan revision, or the buffered edit still
+    /// waiting to be flushed on top of it. Deliberately **not** `current` — `current` shows what the
+    /// athlete performed, and a plan write that started from it would carry session content into the
+    /// plan wholesale. Only an unbound store falls back, where the two are the same object anyway.
+    private var planBaseline: Workout? { pendingPlanEdit ?? sink?.planWorkout() ?? current }
+
+    /// The workout an edit of this scope transforms. A plan edit never even sees session content, so a
+    /// leak is impossible by construction rather than by checking a condition at the right moment.
+    private func baseWorkout(_ scope: WorkoutEditScope) -> Workout? {
+        switch scope {
+        case .session: current
+        case .plan: planBaseline
+        }
+    }
+
     /// Adopt an edited workout and write it to the destination the caller named. The payload travels
     /// with the write; nothing downstream re-reads `current` to decide what or where to push.
     private func apply(_ workout: Workout, _ scope: WorkoutEditScope) {
-        let changed = workout != current
-        current = workout
-        guard let sink, changed else { return }
         switch scope {
-        case .session:
-            sink.pushSessionWorkout(workout)
-        case .plan:
-            if coalesceContent { pendingPlanEdit = workout } else { sink.pushWorkout(workout) }
+        case .session: applySession(workout)
+        case .plan: applyPlan(workout)
         }
+    }
+
+    private func applySession(_ workout: Workout) {
+        guard workout != current else { return }
+        current = workout
+        sink?.pushSessionWorkout(workout)
+    }
+
+    private func applyPlan(_ workout: Workout) {
+        guard let base = planBaseline, workout != base else { return }
+        // The display follows a plan edit only when the display *was* the plan. While a session's shape
+        // is on screen it keeps showing what was performed: the summary is the past, the plan is the
+        // future, and rewriting the performed record to keep them in step would be the worse trade.
+        if current == base { current = workout }
+        guard let sink else { return }
+        if coalesceContent { pendingPlanEdit = workout } else { sink.pushWorkout(workout) }
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -264,7 +289,7 @@ final class WorkoutStore {
 
     /// Add a fully-built planned exercise (from the catalog picker) to a block, tracking recents.
     func addExercise(_ exercise: PlannedExercise, toBlockID blockID: UUID, scope: WorkoutEditScope) {
-        guard var w = current else { return }
+        guard var w = baseWorkout(scope) else { return }
         _ = w.addExercise(exercise, toBlock: blockID)
         apply(w, scope)
         if let id = exercise.definitionId { noteRecent(id) }
@@ -293,7 +318,7 @@ final class WorkoutStore {
     /// Apply an id-based structural edit (add/remove/reorder/move/substitute) and write it to the
     /// destination the caller names — the session's copy while performing, the plan otherwise.
     func edit(_ scope: WorkoutEditScope, _ transform: (inout Workout) -> Void) {
-        guard var w = current else { return }
+        guard var w = baseWorkout(scope) else { return }
         transform(&w)
         apply(w, scope)
     }
@@ -302,7 +327,7 @@ final class WorkoutStore {
     /// guidance stay intact; only catalog identity and incompatible logging configuration change.
     @discardableResult
     func replaceExercise(_ exerciseID: UUID, with definition: ExerciseDefinition, scope: WorkoutEditScope) -> Bool {
-        guard var workout = current,
+        guard var workout = baseWorkout(scope),
               applyReplacement(definition, to: exerciseID, in: &workout) else { return false }
         apply(workout, scope)
         noteRecent(definition.id)
@@ -330,8 +355,9 @@ final class WorkoutStore {
 
     /// Finish the session. `awaitingReconciliationDecision` says a prompt is about to be shown, which is
     /// the only reason the decision stays open past completion — finishing a workout that matched the
-    /// plan resolves it here, because no prompt will ever appear to resolve it later.
-    func completeWorkout(awaitingReconciliationDecision: Bool = false) {
+    /// plan resolves it here, because no prompt will ever appear to resolve it later. Required, not
+    /// defaulted: a caller that omitted it would silently close a prompt that had not been shown yet.
+    func completeWorkout(awaitingReconciliationDecision: Bool) {
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
         if !awaitingReconciliationDecision { sink?.resolveSessionDecision() }
@@ -478,8 +504,8 @@ final class WorkoutStore {
         w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block (hidden until structured)
 
         if sink != nil {
-            apply(w, .plan)         // already bound → replaces today's plan content
-            isSyncing = true; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
+            applyPlan(w)            // already bound → replaces today's plan content
+            isSyncing = true; current = w; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
         } else if let make = makeTodayScheduled, let newSink = make(w) {
             // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
             sink = newSink; coalesceContent = false; pendingPlanEdit = nil
@@ -499,7 +525,7 @@ final class WorkoutStore {
 
     @discardableResult
     func addBlock(name: String, intent: String?) -> Bool {
-        guard var w = current else { return false }
+        guard var w = baseWorkout(agentScope) else { return false }
         w.addBlock(name: name, intent: intent)
         apply(w, agentScope)
         return true
@@ -509,7 +535,7 @@ final class WorkoutStore {
     func addExercise(name: String, toBlockNamed block: String,
                      sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?,
                      distanceMeters: Double? = nil) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet — create one first.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet — create one first.") }
         let blockID: UUID
         switch resolveBlock(block, in: w) {
         case .none:
@@ -546,7 +572,7 @@ final class WorkoutStore {
 
     @discardableResult
     func moveExercise(named exercise: String, toBlockNamed block: String) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
@@ -566,7 +592,7 @@ final class WorkoutStore {
 
     @discardableResult
     func removeExercise(named exercise: String) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
         case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
@@ -583,7 +609,7 @@ final class WorkoutStore {
         inBlock block: String? = nil,
         replaceAll: Bool = false
     ) -> EditOutcome {
-        guard var workout = current else { return .notFound("There's no workout yet.") }
+        guard var workout = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let definition = resolveDefinition(replacement)
         guard definition.id != ExerciseCatalog.generic.id else {
             return .notFound("I couldn't find \"\(replacement)\" in the exercise catalog.")
@@ -623,7 +649,7 @@ final class WorkoutStore {
     @discardableResult
     func updateSet(exerciseNamed exercise: String, setNumber: Int,
                    reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double? = nil, rpe: Double?) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
@@ -652,7 +678,7 @@ final class WorkoutStore {
     /// metrics the exercise doesn't support.
     @discardableResult
     func setLoggingConfig(exerciseNamed name: String, enabled: [MetricType]?, units: [MetricType: MetricUnit] = [:]) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(name, in: w) {
         case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
@@ -681,7 +707,7 @@ final class WorkoutStore {
         units: [MetricType: MetricUnit] = [:],
         scope: WorkoutEditScope
     ) -> Bool {
-        guard var workout = current, let exercise = workout.exercise(exerciseID) else { return false }
+        guard var workout = baseWorkout(scope), let exercise = workout.exercise(exerciseID) else { return false }
         let requested = (enabled ?? []) + Array(units.keys)
         guard requested.allSatisfy(exercise.supportedMetrics.contains) else { return false }
         workout.updateExercise(exerciseID) { updated in
@@ -699,7 +725,7 @@ final class WorkoutStore {
     /// Turn an incorrectly inferred either/or choice into one required ordered group. Name matching
     /// is ambiguity-aware so an agent can never silently change the wrong choice.
     func requireAllOptions(choiceNamed name: String) -> EditOutcome {
-        guard var workout = current else { return .notFound("There's no workout yet.") }
+        guard var workout = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let choices = workout.allChoices
         let exact = choices.filter { $0.label.localizedCaseInsensitiveCompare(key) == .orderedSame }
@@ -747,7 +773,7 @@ final class WorkoutStore {
     /// the metric is selected/visible. Rejects unsupported metrics.
     @discardableResult
     func setMetricValue(exerciseNamed name: String, setNumber: Int, metric: MetricType, value: Double, unit: MetricUnit?) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(name, in: w) {
         case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
@@ -773,7 +799,7 @@ final class WorkoutStore {
     /// Remove a metric from an exercise this workout — unselect it and clear its values.
     @discardableResult
     func removeMetric(exerciseNamed name: String, metric: MetricType) -> EditOutcome {
-        guard var w = current else { return .notFound("There's no workout yet.") }
+        guard var w = baseWorkout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
         switch resolveExercise(name, in: w) {
         case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")

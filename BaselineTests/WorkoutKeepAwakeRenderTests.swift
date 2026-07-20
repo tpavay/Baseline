@@ -89,7 +89,7 @@ private final class WorkoutScreen {
             store.startWorkout()
         case .completed:
             store.startWorkout()
-            store.completeWorkout()
+            store.completeWorkout(awaitingReconciliationDecision: false)
         }
 
         let scene = try #require(
