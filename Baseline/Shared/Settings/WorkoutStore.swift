@@ -39,10 +39,14 @@ final class WorkoutStore {
     private var pendingPlanEdit: Workout?
 
     /// The single lifecycle signal for callers that have no presentation mode of their own (the agent
-    /// tools): a session exists whose reconciliation decision is unresolved. Set by `startWorkout` and
-    /// cleared by accepting, declining, or discarding — never derived from the log, the session's
-    /// status, or the presence of a session workout copy, and never refreshed by `reloadFromPlan`.
-    private(set) var hasUnresolvedSessionDecision = false
+    /// tools): a session exists whose reconciliation decision is unresolved.
+    ///
+    /// It is read from the session record **on demand**, never mirrored into a property here. The fact
+    /// describes the session, and two stores are bound to the same scheduled workout at once — the Plan
+    /// tab's execution store and the app-level agent store — so a copy held by whichever instance
+    /// happened to call `startWorkout` would make the answer depend on which screen the athlete opened
+    /// the chat from. It is also not derived: the repository writes it at explicit lifecycle moments.
+    var hasUnresolvedSessionDecision: Bool { sink?.isSessionDecisionPending() ?? false }
 
     /// The destination for an edit arriving from the agent, which cannot state a scope of its own.
     private var agentScope: WorkoutEditScope { hasUnresolvedSessionDecision ? .session : .plan }
@@ -71,6 +75,11 @@ final class WorkoutStore {
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
         let discard: () -> Void
+        /// The session's own record of whether its promotion decision is still unanswered — one shared
+        /// answer for every store bound to this scheduled workout.
+        let isSessionDecisionPending: () -> Bool
+        let resolveSessionDecision: () -> Void
+        let resolveAbandonedSessionDecision: () -> Void
         let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
     }
@@ -84,6 +93,10 @@ final class WorkoutStore {
     func bind(_ sink: PlanSink, coalesceContent: Bool) {
         pendingPlanEdit = nil
         self.sink = sink; self.coalesceContent = coalesceContent
+        // A finished session whose prompt was never answered (the app was terminated between the two)
+        // must not stay pending forever. Attaching a surface is where that is noticed; declining is the
+        // safe resolution, and it writes nothing to the plan.
+        sink.resolveAbandonedSessionDecision()
         reloadFromPlan()
     }
     func unbind() { sink = nil; coalesceContent = false; pendingPlanEdit = nil }
@@ -306,7 +319,6 @@ final class WorkoutStore {
             currentLogStartedAt = Date()
             currentLog = w.startLog()
         }
-        hasUnresolvedSessionDecision = true
     }
 
     /// Apply an edit to the performed log (log a set, skip/complete, note). Write-through in didSet.
@@ -316,9 +328,13 @@ final class WorkoutStore {
         currentLog = l
     }
 
-    func completeWorkout() {
+    /// Finish the session. `awaitingReconciliationDecision` says a prompt is about to be shown, which is
+    /// the only reason the decision stays open past completion — finishing a workout that matched the
+    /// plan resolves it here, because no prompt will ever appear to resolve it later.
+    func completeWorkout(awaitingReconciliationDecision: Bool = false) {
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
+        if !awaitingReconciliationDecision { sink?.resolveSessionDecision() }
     }
 
     // MARK: - Session ⇄ plan reconciliation (mid-workout edits promote to the plan only on opt-in)
@@ -355,7 +371,7 @@ final class WorkoutStore {
     /// plan. A source `WorkoutTemplate` the workout was instantiated from is a separate, immutable
     /// object and is deliberately left untouched.
     func applySessionReconciliation(_ reconciliation: SessionReconciliation) {
-        hasUnresolvedSessionDecision = false
+        sink?.resolveSessionDecision()
         sink?.pushWorkout(reconciliation.sessionWorkout)
     }
 
@@ -363,7 +379,7 @@ final class WorkoutStore {
     /// `current` keeps the shape they actually performed so the completed summary stays honest, while
     /// nothing can promote that shape, because promotion is `applySessionReconciliation`'s alone.
     func declineSessionReconciliation() {
-        hasUnresolvedSessionDecision = false
+        sink?.resolveSessionDecision()
     }
 
     /// True-remove a top-level exercise from the workout. During a live session this edits the session
@@ -419,7 +435,6 @@ final class WorkoutStore {
     }
 
     func discardLog() {
-        hasUnresolvedSessionDecision = false
         guard let sink else {
             isSyncing = true
             currentLog = nil

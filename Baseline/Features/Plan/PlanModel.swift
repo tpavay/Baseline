@@ -142,6 +142,9 @@ struct WorkoutSession: Identifiable, Codable, Equatable, Sendable {
     var status: SessionStatus = .active
     var log: WorkoutLog
     var workout: Workout? = nil
+    /// Whether the "update your plan?" decision for this session is still unanswered — the one shared
+    /// fact every store bound to this workout consults to route an agent edit.
+    var reconciliationPending: Bool = false
 }
 
 /// The frozen, immutable performed fact. Plan restore never touches it; found by `scheduledWorkoutID`.

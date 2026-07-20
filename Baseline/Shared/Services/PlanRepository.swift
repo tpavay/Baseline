@@ -41,6 +41,15 @@ protocol PlanRepository {
     func setSessionWorkout(forScheduled id: UUID, _ workout: Workout)
     func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date) -> SessionCompletion
     func discardSession(forScheduled id: UUID)
+    /// Whether this session's promotion decision is still unanswered — the shared answer every bound
+    /// editing surface reads on demand.
+    func sessionDecisionPending(forScheduled id: UUID) -> Bool
+    /// The athlete answered (accepted, declined, discarded) or finished a session that never diverged.
+    func resolveSessionDecision(forScheduled id: UUID)
+    /// Safety net for a decision the athlete never got to answer — the app was terminated between
+    /// completion and the prompt. Resolving it as *declined* is the only safe direction, because they
+    /// never said yes; this writes nothing to the plan.
+    func resolveAbandonedSessionDecision(forScheduled id: UUID)
 
     // Slice 2 — typed, versioned mutations (append-only history). Only `delete` is confirmation-gated.
     func versions(limit: Int) -> [PlanVersion]
@@ -192,7 +201,8 @@ final class SwiftDataPlanRepository: PlanRepository {
             return map(live)   // idempotent — a session is already live
         }
         let sd = SDWorkoutSession(scheduledWorkoutID: id, startedAt: now,
-                                  statusRaw: SessionStatus.active.rawValue, logJSON: PlanCoding.data(sw.workout.startLog()))
+                                  statusRaw: SessionStatus.active.rawValue, logJSON: PlanCoding.data(sw.workout.startLog()),
+                                  reconciliationPending: true)
         context.insert(sd); save()
         return map(sd)
     }
@@ -240,7 +250,24 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     func discardSession(forScheduled id: UUID) {
         guard let sd = latestSession(id) else { return }
-        sd.statusRaw = SessionStatus.discarded.rawValue; save()
+        sd.statusRaw = SessionStatus.discarded.rawValue
+        sd.reconciliationPending = false
+        save()
+    }
+
+    func sessionDecisionPending(forScheduled id: UUID) -> Bool {
+        latestSession(id)?.reconciliationPending ?? false
+    }
+
+    func resolveSessionDecision(forScheduled id: UUID) {
+        guard let sd = latestSession(id), sd.reconciliationPending == true else { return }
+        sd.reconciliationPending = false
+        save()
+    }
+
+    func resolveAbandonedSessionDecision(forScheduled id: UUID) {
+        guard let sd = latestSession(id), sd.statusRaw == SessionStatus.completed.rawValue else { return }
+        resolveSessionDecision(forScheduled: id)
     }
 
     // MARK: - Mutations & versioning (Slice 2) — append-only history, typed confirmation
@@ -577,7 +604,8 @@ final class SwiftDataPlanRepository: PlanRepository {
         guard let log = PlanCoding.value(WorkoutLog.self, sd.logJSON) else { return nil }
         return WorkoutSession(id: sd.id, scheduledWorkoutID: sd.scheduledWorkoutID, startedAt: sd.startedAt,
                               status: SessionStatus(rawValue: sd.statusRaw) ?? .active, log: log,
-                              workout: PlanCoding.value(Workout.self, sd.sessionWorkoutJSON))
+                              workout: PlanCoding.value(Workout.self, sd.sessionWorkoutJSON),
+                              reconciliationPending: sd.reconciliationPending ?? false)
     }
 
     private func map(_ sd: SDCompletedLog) -> CompletedWorkoutLog? {

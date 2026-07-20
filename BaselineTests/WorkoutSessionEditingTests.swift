@@ -481,6 +481,77 @@ struct WorkoutSessionEditingTests {
         #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } != true)
     }
 
+    // MARK: - One decision, shared by every store bound to the workout
+
+    /// The Plan tab's execution store and the app-level agent store are bound to the same scheduled
+    /// workout at once. The unresolved-decision fact belongs to the session, so they must not disagree —
+    /// otherwise where an agent edit lands depends on which screen the chat was opened from.
+    @Test func everyStoreBoundToTheSameWorkoutAgreesAboutTheDecision() {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)   // as RootView binds at launch
+
+        exec.startWorkout()
+
+        #expect(exec.hasUnresolvedSessionDecision)
+        #expect(appLevel.hasUnresolvedSessionDecision)
+
+        _ = exec.captureSessionReconciliation()
+        exec.completeWorkout(awaitingReconciliationDecision: true)
+        exec.declineSessionReconciliation()
+
+        #expect(!exec.hasUnresolvedSessionDecision)
+        #expect(!appLevel.hasUnresolvedSessionDecision)
+    }
+
+    @Test func anAgentEditThroughTheAppLevelStoreMidSessionIsSessionScoped() {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        exec.startWorkout()
+        let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
+
+        appLevel.reloadFromPlan()                       // as the chat surface does before dispatching
+        appLevel.addBlock(name: "Finisher", intent: nil)
+
+        #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } == true)
+        #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
+        #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } != true)
+    }
+
+    /// The common path: the workout was performed as planned, so no prompt appears. Completion has to
+    /// settle the decision itself, or the finished session stays the editing surface indefinitely.
+    @Test func anEditAfterAnUneditedSessionReachesThePlan() {
+        let (plan, store, id) = startedSession()
+        let finishing = WorkoutFinishCoordinator()
+
+        #expect(finishing.finish(store) == nil)         // nothing diverged ⇒ no prompt
+        #expect(!store.hasUnresolvedSessionDecision)
+
+        store.addBlock(name: "Finisher", intent: nil)
+
+        #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
+        #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } != true)
+    }
+
+    /// Terminated between finishing and answering the prompt: the decision must not stay open forever,
+    /// and resolving it as declined must not write anything to the plan.
+    @Test func aCompletedSessionWhosePromptWasNeverAnsweredIsTreatedAsDeclined() {
+        let (plan, store, id) = startedSession()
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        _ = store.captureSessionReconciliation()
+        store.completeWorkout(awaitingReconciliationDecision: true)
+        #expect(store.hasUnresolvedSessionDecision)
+        let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
+
+        let relaunched = buffer()
+        relaunched.bind(plan.sink(forScheduled: id), coalesceContent: false)
+
+        #expect(!relaunched.hasUnresolvedSessionDecision)
+        #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
+    }
+
     @Test func replacingTheWorkoutIsRefusedWhileASessionOwnsIt() {
         let (plan, store, id) = startedSession()
 
@@ -556,6 +627,19 @@ struct WorkoutSessionEditingTests {
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
 
+}
+
+/// Which destination each surface writes to. Asserted for every mode so the mapping is a stated
+/// decision rather than a default that can quietly flip.
+@MainActor
+struct WorkoutEditScopeMappingTests {
+
+    @Test func performedSurfacesEditTheSessionAndPlanSurfacesEditThePlan() {
+        #expect(WorkoutPresentationMode.log.editScope == .session)
+        #expect(WorkoutPresentationMode.completed.editScope == .session)
+        #expect(WorkoutPresentationMode.editTemplate.editScope == .plan)
+        #expect(WorkoutPresentationMode.view.editScope == .plan)
+    }
 }
 
 /// The reconciliation diff itself, exercised without a store or persistence. These are the sentences

@@ -12,7 +12,16 @@ enum WorkoutPresentationMode: Equatable {
     var isLogging: Bool { self == .log }
     var usesPerformedData: Bool { self == .log || self == .completed }
 
-    /// Where an edit made on this surface belongs. A surface showing performed data is showing the
-    /// session's own shape, so its edits stay on the session copy; the plan surfaces edit the plan.
-    var editScope: WorkoutEditScope { usesPerformedData ? .session : .plan }
+    /// Where an edit made on this surface belongs. Stated for every mode rather than derived, so the
+    /// mapping cannot silently change when another flag does.
+    var editScope: WorkoutEditScope {
+        switch self {
+        // Both of these show performed data, which is the session's own shape. A note, display label,
+        // or set role typed there is a fact about that performance — including after it is finished.
+        // Routing them to the plan would silently edit future workouts from a screen showing the past.
+        case .log, .completed: .session
+        // These show the saved plan, so edits are plan edits, exactly as before sessions existed.
+        case .editTemplate, .view: .plan
+        }
+    }
 }

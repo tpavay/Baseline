@@ -66,6 +66,9 @@ final class PlanStore {
         defer { reload() }; return repo.completeSession(forScheduled: id, acknowledgingOpenWork: acknowledgingOpenWork, now: Date())
     }
     func discard(_ id: UUID) { repo.discardSession(forScheduled: id); reload() }
+    func sessionDecisionPending(_ id: UUID) -> Bool { repo.sessionDecisionPending(forScheduled: id) }
+    func resolveSessionDecision(_ id: UUID) { repo.resolveSessionDecision(forScheduled: id); reload() }
+    func resolveAbandonedSessionDecision(_ id: UUID) { repo.resolveAbandonedSessionDecision(forScheduled: id); reload() }
     func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); reload() }
     /// Store the session's own copy of the planned workout (a session-scoped mid-workout edit; no revision).
     func setSessionWorkout(_ id: UUID, _ workout: Workout) { repo.setSessionWorkout(forScheduled: id, workout) }
@@ -129,6 +132,9 @@ final class PlanStore {
             start: { [weak self] in _ = self?.start(id) },
             complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
             discard: { [weak self] in self?.discard(id) },
+            isSessionDecisionPending: { [weak self] in self?.sessionDecisionPending(id) ?? false },
+            resolveSessionDecision: { [weak self] in self?.resolveSessionDecision(id) },
+            resolveAbandonedSessionDecision: { [weak self] in self?.resolveAbandonedSessionDecision(id) },
             reload: { [weak self] in
                 guard let self, let sw = self.scheduledWorkout(id) else { return nil }
                 let session = self.session(for: id)

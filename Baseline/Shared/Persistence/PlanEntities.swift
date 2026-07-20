@@ -99,11 +99,19 @@ import SwiftData
     /// reconciliation opts in. Optional with a nil default, so it is a lightweight SwiftData migration
     /// and CloudKit-safe (matches the entity conventions in this file).
     var sessionWorkoutJSON: Data?
+    /// Whether this session's "update your plan?" decision is still unanswered. It describes the
+    /// *session*, so it lives here rather than on whichever `WorkoutStore` happened to start it — two
+    /// stores are bound to the same scheduled workout at once (the Plan tab's execution store and the
+    /// app-level agent store) and they must not disagree. Written only at lifecycle moments: true when
+    /// the session is created, false when the athlete accepts, declines, discards, or finishes a session
+    /// that did not diverge. Nil (a row from before this field existed) means *not* pending.
+    var reconciliationPending: Bool?
     init(id: UUID = UUID(), scheduledWorkoutID: UUID = UUID(), startedAt: Date = Date.distantPast,
          statusRaw: String = SessionStatus.active.rawValue, logJSON: Data = Data(),
-         sessionWorkoutJSON: Data? = nil) {
+         sessionWorkoutJSON: Data? = nil, reconciliationPending: Bool? = nil) {
         self.id = id; self.scheduledWorkoutID = scheduledWorkoutID; self.startedAt = startedAt
         self.statusRaw = statusRaw; self.logJSON = logJSON; self.sessionWorkoutJSON = sessionWorkoutJSON
+        self.reconciliationPending = reconciliationPending
     }
 }
 

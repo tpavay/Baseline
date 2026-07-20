@@ -21,7 +21,9 @@ final class WorkoutFinishCoordinator {
     @discardableResult
     func finish(_ store: WorkoutStore) -> Task<Void, Never>? {
         let reconciliation = store.captureSessionReconciliation()
-        store.completeWorkout()
+        // Most workouts are performed as planned, so no prompt appears — completion itself has to settle
+        // the decision, or the session would stay the editing surface for the rest of the app's life.
+        store.completeWorkout(awaitingReconciliationDecision: reconciliation != nil)
         guard let reconciliation else { return nil }
         return Task { @MainActor [weak self] in
             self?.pendingReconciliation = reconciliation
