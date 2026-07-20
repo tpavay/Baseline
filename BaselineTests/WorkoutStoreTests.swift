@@ -12,8 +12,8 @@ struct WorkoutStoreTests {
     @Test func createAddAndMoveByName() {
         let s = store()
         s.create(title: "Push", goal: nil)
-        #expect(s.addBlock(name: "Warm-up", intent: nil))
-        #expect(s.addBlock(name: "Strength", intent: "hypertrophy"))
+        #expect(s.addBlock(name: "Warm-up", intent: nil).succeeded)
+        #expect(s.addBlock(name: "Strength", intent: "hypertrophy").succeeded)
         #expect(s.addExercise(name: "Bench press", toBlockNamed: "Strength", sets: 3, reps: 8, load: 60, durationSeconds: nil).succeeded)
         #expect(s.current?.blocks.first { $0.name == "Strength" }?.exercises.first?.exerciseName == "Bench press")
         #expect(s.current?.allExercises.first?.prescription.sets.count == 3)

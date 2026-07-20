@@ -396,6 +396,9 @@ struct WorkoutSessionEditingTests {
 
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         store.removeExerciseFromWorkout(store.current!.allExercises[0].id, scope: .session)
+        // The edits really happened — the session copy has them, so an unchanged plan means routing.
+        #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == ["Bench press"])
+
         store.flush()
 
         #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
@@ -408,6 +411,7 @@ struct WorkoutSessionEditingTests {
         store.startWorkout()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
+        #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
 
         await finishAndDecline(store)              // the athlete tapped "Keep Original"
         store.flush()                              // ...and then dismissed the sheet
@@ -420,12 +424,14 @@ struct WorkoutSessionEditingTests {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
         store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
 
         await finishAndAccept(store)
         let revisionAfterPromotion = plan.scheduledWorkout(id)?.workoutRevisionID
         store.flush()
 
         // One revision for the promotion, and none for the dismissal that followed it.
+        #expect(revisionAfterPromotion != revisionBefore)
         #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionAfterPromotion)
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
@@ -561,14 +567,17 @@ struct WorkoutSessionEditingTests {
         let (plan, exec, id) = planTabSession()
         let appLevel = buffer()
         appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
-        let seed = plan.saveAsTemplate(name: "Push A", from: workout("Seed", [exercise("Squat")]))
+        let seed = plan.saveAsTemplate(name: "Push A", from: workout("Seed", [exercise("Row")]))
         exec.startWorkout()
         exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         await finishAndDecline(exec)
         appLevel.reloadFromPlan()
 
+        #expect(plan.templateWorkout(seed.id)?.allExercises.map(\.exerciseName) == ["Row"])
+
         _ = agentTools(appLevel, plan).dispatch(.updateTemplate(name: "Push A"))
 
+        // Distinct seed content, so this proves both halves: the update ran, and it took the plan.
         #expect(plan.templateWorkout(seed.id)?.allExercises.map(\.exerciseName) == ["Squat"])
     }
 
@@ -697,10 +706,35 @@ struct WorkoutSessionEditingTests {
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
     }
 
+    /// A bound store whose scheduled workout has been deleted has nowhere to write. The agent must say
+    /// so rather than reporting a creation that only ever existed in the local buffer.
+    @Test func creatingAWorkoutReportsFailureWhenThePlanWorkoutIsGone() {
+        let plan = makePlan()
+        let program = plan.addProgram(Program(name: "P", createdAt: Date()))
+        plan.addScheduled(ScheduledWorkout(programID: program.id, date: Date(), origin: .userCreated,
+                                           workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()))
+        let sw = plan.todayScheduled()!
+        let store = buffer()
+        store.bind(plan.sink(forScheduled: sw.id), coalesceContent: false)
+
+        guard case .confirmationRequired(_, _, let proposalID) = plan.delete(sw.id) else {
+            Issue.record("deleting a scheduled workout should ask for confirmation"); return
+        }
+        #expect(plan.delete(sw.id, proposalID: proposalID).isApplied)
+
+        let response = agentTools(store, plan).dispatch(.createWorkout(title: "Something else", goal: nil,
+                                                                      replaceExisting: true))
+
+        #expect(response.text.contains("isn't in your plan any more"))
+        #expect(!response.text.contains("Created workout"))
+        #expect(plan.todayScheduled() == nil)
+        #expect(plan.scheduledWorkout(sw.id) == nil)
+    }
+
     @Test func replacingTheWorkoutIsRefusedWhileASessionOwnsIt() {
         let (plan, store, id) = startedSession()
 
-        #expect(store.create(title: "Something else", goal: nil) == false)
+        #expect(!store.create(title: "Something else", goal: nil).succeeded)
 
         // Neither side was touched, and the log still matches the workout it was started against.
         #expect(store.current?.allExercises.map(\.exerciseName) == ["Squat"])

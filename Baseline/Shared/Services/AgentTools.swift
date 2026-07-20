@@ -299,16 +299,10 @@ final class AgentTools {
             if let existing = currentWorkout, !replace {
                 return Response(text: "There's already a workout (\"\(existing.title)\"). Creating a new one will replace it and discard the current one — confirm and I'll do it.", decision: nil, plan: nil)
             }
-            guard workouts.create(title: title, goal: goal) else {
-                return Response(text: "You're partway through this workout, so I can't replace it — finish or discard the log first and I'll build the new one.", decision: nil, plan: nil)
-            }
-            return workoutResponse(prefix: "Created workout \"\(title)\".")
+            return outcome(workouts.create(title: title, goal: goal), success: "Created workout \"\(title)\".")
         case .addBlock(let name, let intent):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.addBlock(name: name, intent: intent) else {
-                return Response(text: "There's no workout yet — create one first.", decision: nil, plan: nil)
-            }
-            return workoutResponse(prefix: "Added block \"\(name)\".")
+            return outcome(workouts.addBlock(name: name, intent: intent), success: "Added block \"\(name)\".")
         case .addExercise(let block, let name, let sets, let reps, let load, let dur, let dist):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist),

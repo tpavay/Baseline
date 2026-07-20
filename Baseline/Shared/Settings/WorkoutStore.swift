@@ -150,27 +150,38 @@ final class WorkoutStore {
 
     /// Adopt an edited workout and write it to the destination the caller named. The payload travels
     /// with the write; nothing downstream re-reads `current` to decide what or where to push.
-    private func apply(_ workout: Workout, _ scope: WorkoutEditScope) {
+    ///
+    /// Returns whether the write reached its destination, so no caller can confirm a change it did not
+    /// make. A no-op because nothing actually changed still counts as reaching it.
+    @discardableResult
+    private func apply(_ workout: Workout, _ scope: WorkoutEditScope) -> Bool {
         switch scope {
         case .session: applySession(workout)
         case .plan: applyPlan(workout)
         }
     }
 
-    private func applySession(_ workout: Workout) {
-        guard workout != current else { return }
+    @discardableResult
+    private func applySession(_ workout: Workout) -> Bool {
+        guard workout != current else { return true }
         current = workout
         sink?.pushSessionWorkout(workout)
+        return true
     }
 
-    private func applyPlan(_ workout: Workout) {
-        guard let base = planBaseline, workout != base else { return }
+    @discardableResult
+    private func applyPlan(_ workout: Workout) -> Bool {
+        // A bound store with no resolvable plan revision has nothing to edit — the scheduled workout was
+        // deleted. Say so rather than writing against an invented baseline.
+        guard let base = planBaseline else { return false }
+        guard workout != base else { return true }
         // The display follows a plan edit only when the display *was* the plan. While a session's shape
         // is on screen it keeps showing what was performed: the summary is the past, the plan is the
         // future, and rewriting the performed record to keep them in step would be the worse trade.
         if current == base { current = workout }
-        guard let sink else { return }
+        guard let sink else { return true }
         if coalesceContent { pendingPlanEdit = workout } else { sink.pushWorkout(workout) }
+        return true
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -328,10 +339,11 @@ final class WorkoutStore {
 
     /// Apply an id-based structural edit (add/remove/reorder/move/substitute) and write it to the
     /// destination the caller names — the session's copy while performing, the plan otherwise.
-    func edit(_ scope: WorkoutEditScope, _ transform: (inout Workout) -> Void) {
-        guard var w = workout(scope) else { return }
+    @discardableResult
+    func edit(_ scope: WorkoutEditScope, _ transform: (inout Workout) -> Void) -> Bool {
+        guard var w = workout(scope) else { return false }
         transform(&w)
-        apply(w, scope)
+        return apply(w, scope)
     }
 
     /// Replace a planned movement in place. The exercise identity, position, prescription, and
@@ -494,6 +506,16 @@ final class WorkoutStore {
         var succeeded: Bool { if case .done = self { return true } else { return false } }
     }
 
+    /// An agent-facing operation never confirms a change it did not make: if the write could not reach
+    /// its destination the athlete hears why, rather than a fabricated success.
+    private func committed(_ applied: Bool) -> EditOutcome {
+        applied ? .done : .notFound(Self.missingPlanWorkout)
+    }
+
+    private static let missingPlanWorkout =
+        "Today's workout isn't in your plan any more - it looks like it was deleted. Open the Plan tab and add one, and I'll pick it up from there."
+
+
     /// Whether the stored workout is for today. Unstamped (legacy) workouts count as today's; a
     /// workout from an earlier day must not be presented as "today's".
     var currentIsForToday: Bool {
@@ -508,14 +530,17 @@ final class WorkoutStore {
     /// still open against the old shape. Returns false so callers can say so out loud. A standalone store
     /// has no session copy to contradict, so it keeps its long-standing replace-and-clear behavior.
     @discardableResult
-    func create(title: String, goal: String?) -> Bool {
-        guard sink == nil || !hasUnresolvedSessionDecision else { return false }
+    func create(title: String, goal: String?) -> EditOutcome {
+        guard sink == nil || !hasUnresolvedSessionDecision else {
+            return .notFound("You're partway through this workout, so I can't replace it — finish or discard the log first and I'll build the new one.")
+        }
         var w = Workout(title: title, goal: goal)
         w.scheduledDate = Calendar.current.startOfDay(for: .now)
         w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block (hidden until structured)
 
         if sink != nil {
-            applyPlan(w)            // already bound → replaces today's plan content
+            // Bound → replaces today's plan content, but only if there is still a plan to replace.
+            guard applyPlan(w) else { return .notFound(Self.missingPlanWorkout) }
             isSyncing = true; current = w; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
         } else if let make = makeTodayScheduled, let newSink = make(w) {
             // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
@@ -524,7 +549,7 @@ final class WorkoutStore {
         } else {
             current = w; currentLog = nil; currentLogStartedAt = nil   // standalone (no plan)
         }
-        return true
+        return .done
     }
 
     // Numeric guards at the tool boundary — the model can propose anything; reps/load/duration can't
@@ -535,11 +560,10 @@ final class WorkoutStore {
     private func clampRPE(_ v: Double?) -> Double? { v.map { min(max($0, 0), 10) } }
 
     @discardableResult
-    func addBlock(name: String, intent: String?) -> Bool {
-        guard var w = workout(agentScope) else { return false }
+    func addBlock(name: String, intent: String?) -> EditOutcome {
+        guard var w = workout(agentScope) else { return .notFound("There's no workout yet — create one first.") }
         w.addBlock(name: name, intent: intent)
-        apply(w, agentScope)
-        return true
+        return committed(apply(w, agentScope))
     }
 
     @discardableResult
@@ -576,9 +600,9 @@ final class WorkoutStore {
             PlannedSet(reps: clampReps(reps), load: clampLoad(load), duration: clampDuration(durationSeconds), distance: clampLoad(distanceMeters))
         }
         _ = w.addExercise(exercise, toBlock: blockID)
-        apply(w, agentScope)
+        let applied = apply(w, agentScope)
         if let id = exercise.definitionId { noteRecent(id) }
-        return .done
+        return committed(applied)
     }
 
     @discardableResult
@@ -597,8 +621,7 @@ final class WorkoutStore {
         case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
         }
         _ = w.moveExercise(exID, toBlock: blockID)
-        apply(w, agentScope)
-        return .done
+        return committed(apply(w, agentScope))
     }
 
     @discardableResult
@@ -607,7 +630,7 @@ final class WorkoutStore {
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
         case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
-        case .one(let id): _ = w.removeExercise(id); apply(w, agentScope); return .done
+        case .one(let id): _ = w.removeExercise(id); return committed(apply(w, agentScope))
         }
     }
 
@@ -651,9 +674,9 @@ final class WorkoutStore {
                 return .notFound("I couldn't replace \"\(target.label)\".")
             }
         }
-        apply(workout, agentScope)
+        let applied = apply(workout, agentScope)
         noteRecent(definition.id)
-        return .done
+        return committed(applied)
     }
 
     /// Update one set (1-based `setNumber`) of a named exercise. Only the supplied fields change.
@@ -679,8 +702,7 @@ final class WorkoutStore {
             if let distanceMeters { s.distance = clampLoad(distanceMeters) }
             if let rpe { s.rpe = clampRPE(rpe) }
         }
-        apply(w, agentScope)
-        return .done
+        return committed(apply(w, agentScope))
     }
 
     // MARK: - Logging configuration & values (metric system)
@@ -705,8 +727,7 @@ final class WorkoutStore {
             if let enabled { e.selectedMetrics = MetricType.allCases.filter { enabled.contains($0) } }
             for (metric, unit) in units where metric.displayUnits.contains(unit) { e.displayUnits[metric] = unit }
         }
-        apply(w, agentScope)
-        return .done
+        return committed(apply(w, agentScope))
     }
 
     /// UI edits already know the exact exercise identity, so duplicates must never make a tapped
@@ -729,8 +750,7 @@ final class WorkoutStore {
                 updated.displayUnits[metric] = unit
             }
         }
-        apply(workout, scope)
-        return true
+        return apply(workout, scope)
     }
 
     /// Turn an incorrectly inferred either/or choice into one required ordered group. Name matching
@@ -750,8 +770,7 @@ final class WorkoutStore {
         guard workout.convertChoiceToRequiredGroup(choice.id) else {
             return .notFound("I couldn't update \"\(choice.label)\".")
         }
-        apply(workout, agentScope)
-        return .done
+        return committed(apply(workout, agentScope))
     }
 
     /// FUTURE DEFAULT: a user preference for an exercise identity (or its whole category). Applies to
@@ -803,8 +822,7 @@ final class WorkoutStore {
             e.prescription.sets[setNumber - 1].values[metric] = canonical
             if !e.selectedMetrics.contains(metric) { e.selectedMetrics = MetricType.allCases.filter { e.selectedMetrics.contains($0) || $0 == metric } }
         }
-        apply(w, agentScope)
-        return .done
+        return committed(apply(w, agentScope))
     }
 
     /// Remove a metric from an exercise this workout — unselect it and clear its values.
@@ -822,8 +840,7 @@ final class WorkoutStore {
             e.displayUnits[metric] = nil
             for i in e.prescription.sets.indices { e.prescription.sets[i].values[metric] = nil }
         }
-        apply(w, agentScope)
-        return .done
+        return committed(apply(w, agentScope))
     }
 
     // MARK: - Read
