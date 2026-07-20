@@ -9,6 +9,12 @@ import Testing
 /// The invariant these tests defend is that a live session and the saved plan can diverge, and that the
 /// divergence is described honestly and promoted only on request. Everything here runs against the real
 /// SwiftData-backed repository because the plan-vs-session split is a persistence-boundary behavior.
+/// Collects the workouts a stub sink was asked to push, so a test can assert nothing was written.
+@MainActor
+private final class WorkoutBox {
+    var workouts: [Workout] = []
+}
+
 @Suite(.serialized) @MainActor
 struct WorkoutSessionEditingTests {
     /// SwiftData contexts do not retain their container; hold them for the suite's lifetime.
@@ -503,6 +509,75 @@ struct WorkoutSessionEditingTests {
 
         #expect(!exec.hasUnresolvedSessionDecision)
         #expect(!appLevel.hasUnresolvedSessionDecision)
+    }
+
+    // MARK: - What the coach says matches what the coach changed
+
+    private func agentTools(_ workouts: WorkoutStore) -> AgentTools {
+        AgentTools(store: TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!),
+                   base: DecisionEngine.Inputs(),
+                   workouts: workouts)
+    }
+
+    /// The confirmation must describe the workout the tool actually changed. Echoing the declined
+    /// session content back — while omitting what was just added — would be the coach stating something
+    /// false about the athlete's own plan.
+    @Test func anAgentConfirmationAfterDecliningDescribesThePlanNotTheDeclinedSession() async {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        exec.startWorkout()
+        exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        await finishAndDecline(exec)
+        appLevel.reloadFromPlan()
+
+        let response = agentTools(appLevel).dispatch(.addBlock(name: "Finisher", intent: nil))
+
+        #expect(response.text.contains("Finisher"))
+        #expect(!response.text.contains("Bench press"))
+        #expect(!(appLevel.compactSummary(appLevel.agentScope) ?? "").isEmpty)
+    }
+
+    /// The mirror: while the session owns the editing surface, the coach reads and echoes the session.
+    @Test func anAgentConfirmationDuringALiveSessionDescribesTheSession() {
+        let (plan, exec, id) = planTabSession()
+        let appLevel = buffer()
+        appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        exec.startWorkout()
+        exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        appLevel.reloadFromPlan()
+
+        let response = agentTools(appLevel).dispatch(.addBlock(name: "Finisher", intent: nil))
+
+        #expect(response.text.contains("Finisher"))
+        #expect(response.text.contains("Bench press"))
+    }
+
+    /// A bound store whose scheduled workout has been deleted has no plan to edit. It must do nothing
+    /// rather than treat whatever is on screen as the plan — the last way session content could become
+    /// a plan payload.
+    @Test func aBoundStoreWithNoResolvablePlanWorkoutDoesNotFallBackToCurrent() {
+        let pushes = WorkoutBox()
+        let sessionShape = workout("Session shape", [exercise("Squat"), exercise("Bench press")])
+        let sink = WorkoutStore.PlanSink(
+            pushWorkout: { pushes.workouts.append($0) },
+            pushSessionWorkout: { _ in },
+            pushLog: { _ in },
+            start: {}, complete: {}, discard: {},
+            isSessionDecisionPending: { false },
+            resolveSessionDecision: {},
+            resolveAbandonedSessionDecision: {},
+            reload: { (sessionShape, nil, nil) },
+            planWorkout: { nil }                      // the scheduled workout is gone
+        )
+        let store = buffer()
+        store.bind(sink, coalesceContent: false)
+
+        store.edit(.plan) { $0.rename("Renamed") }
+
+        #expect(pushes.workouts.isEmpty)
+        #expect(store.current?.title == "Session shape")
+        #expect(store.summary(.plan) == "No workout has been created yet.")
     }
 
     /// The last door: a plan-scoped write used to build its payload from `current`, which still holds the

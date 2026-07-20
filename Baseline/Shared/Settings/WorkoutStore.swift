@@ -47,8 +47,10 @@ final class WorkoutStore {
     /// the chat from. It is also not derived: the repository writes it at explicit lifecycle moments.
     var hasUnresolvedSessionDecision: Bool { sink?.isSessionDecisionPending() ?? false }
 
-    /// The destination for an edit arriving from the agent, which cannot state a scope of its own.
-    private var agentScope: WorkoutEditScope { hasUnresolvedSessionDecision ? .session : .plan }
+    /// The scope of an operation arriving from the agent, which cannot state one of its own. It governs
+    /// the agent's reads as well as its writes: the coach must describe the workout it is about to
+    /// change, or it would confirm an edit while echoing content from somewhere else.
+    var agentScope: WorkoutEditScope { hasUnresolvedSessionDecision ? .session : .plan }
 
     /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
     /// from `current` (the plan) — logging never mutates the plan.
@@ -125,17 +127,28 @@ final class WorkoutStore {
     /// The workout a plan-scoped edit is built on: the saved plan revision, or the buffered edit still
     /// waiting to be flushed on top of it. Deliberately **not** `current` — `current` shows what the
     /// athlete performed, and a plan write that started from it would carry session content into the
-    /// plan wholesale. Only an unbound store falls back, where the two are the same object anyway.
-    private var planBaseline: Workout? { pendingPlanEdit ?? sink?.planWorkout() ?? current }
+    /// plan wholesale.
+    ///
+    /// A **bound** store never falls back: if the scheduled workout cannot be resolved (it was deleted),
+    /// there is no plan to edit and the operation does nothing, rather than inventing a baseline out of
+    /// whatever is on screen. Only an unbound store reads `current`, where the two are the same object.
+    private var planBaseline: Workout? {
+        if let pendingPlanEdit { return pendingPlanEdit }
+        guard let sink else { return current }
+        return sink.planWorkout()
+    }
 
-    /// The workout an edit of this scope transforms. A plan edit never even sees session content, so a
-    /// leak is impossible by construction rather than by checking a condition at the right moment.
-    private func baseWorkout(_ scope: WorkoutEditScope) -> Workout? {
+    /// The workout an operation of this scope reads **and** writes. One resolution serves both, so what
+    /// the store describes and what it changes can never be two independent lookups that drift apart.
+    /// A plan operation never even sees session content, so a leak is impossible by construction.
+    func workout(_ scope: WorkoutEditScope) -> Workout? {
         switch scope {
         case .session: current
         case .plan: planBaseline
         }
     }
+
+    private func baseWorkout(_ scope: WorkoutEditScope) -> Workout? { workout(scope) }
 
     /// Adopt an edited workout and write it to the destination the caller named. The payload travels
     /// with the write; nothing downstream re-reads `current` to decide what or where to push.
@@ -817,14 +830,14 @@ final class WorkoutStore {
 
     // MARK: - Read
 
-    /// A compact, model-and-inspector-friendly rendering of the current workout.
-    /// A cheap **index** of the current workout for the always-sent context — ID, title, status,
-    /// counts, date — WITHOUT the exercise/set detail. Detail is fetched on demand via
+    /// A cheap **index** of the workout this scope describes, for the always-sent context — ID, title,
+    /// status, counts, date — WITHOUT the exercise/set detail. Detail is fetched on demand via
     /// get_current_workout, so a 30-exercise workout doesn't inflate every chat request.
-    var compactSummary: String? {
-        guard let w = current else { return nil }
+    func compactSummary(_ scope: WorkoutEditScope) -> String? {
+        guard let w = workout(scope) else { return nil }
         let status = currentLog == nil ? "not started" : (currentLog?.isComplete == true ? "completed" : "in progress")
-        let date: String = currentIsForToday ? "today"
+        let isForToday = w.scheduledDate.map { Calendar.current.isDateInToday($0) } ?? true
+        let date: String = isForToday ? "today"
             : (w.scheduledDate.map { $0.formatted(.dateTime.month().day()) } ?? "unscheduled")
         let exercises = w.allExercises.count
         let blocks = w.blocks.filter { !$0.isDefault || !$0.exercises.isEmpty }.count
@@ -856,8 +869,10 @@ final class WorkoutStore {
         return (sets, exercises)
     }
 
-    var summary: String {
-        guard let w = current else { return "No workout has been created yet." }
+    /// The full rendering of the workout this scope describes — the same one an edit of this scope would
+    /// change, so a confirmation can never echo a workout the tool did not touch.
+    func summary(_ scope: WorkoutEditScope) -> String {
+        guard let w = workout(scope) else { return "No workout has been created yet." }
         var lines = ["WORKOUT: \(w.title)" + (w.goal.map { " — goal: \($0)" } ?? "")]
         lines.append(contentsOf: guidanceSummary(w.guidance, indent: "  "))
         if w.blocks.isEmpty { lines.append("(no blocks yet)") }

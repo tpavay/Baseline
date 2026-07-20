@@ -296,7 +296,7 @@ final class AgentTools {
             return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
         case .createWorkout(let title, let goal, let replace):
             guard let workouts else { return workoutUnavailable() }
-            if let existing = workouts.current, !replace {
+            if let existing = workouts.workout(workouts.agentScope), !replace {
                 return Response(text: "There's already a workout (\"\(existing.title)\"). Creating a new one will replace it and discard the current one — confirm and I'll do it.", decision: nil, plan: nil)
             }
             guard workouts.create(title: title, goal: goal) else {
@@ -343,10 +343,10 @@ final class AgentTools {
                            success: "Updated set \(n) of \(exercise).")
         case .getCurrentWorkout:
             guard let workouts else { return workoutUnavailable() }
-            return Response(text: workouts.summary, decision: nil, plan: nil)
+            return Response(text: workouts.summary(workouts.agentScope), decision: nil, plan: nil)
         case .startWorkout:
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.current != nil else {
+            guard workouts.workout(workouts.agentScope) != nil else {
                 return Response(text: "There's no workout built yet, so there's nothing to start — want me to create one?", decision: nil, plan: nil)
             }
             // Safe to begin immediately: workout exists and no session is active. Idempotent if it is.
@@ -358,7 +358,7 @@ final class AgentTools {
             return Response(text: "Started the workout — logging is live and the sets are ready to check off. (session \(sid))", decision: nil, plan: nil)
         case .completeWorkout(let confirm):
             guard let workouts else { return workoutUnavailable() }
-            guard workouts.current != nil else {
+            guard workouts.workout(workouts.agentScope) != nil else {
                 return Response(text: "There's no workout to finish yet.", decision: nil, plan: nil)
             }
             // Never finalize a workout that was never started, or one with open sets, without a
@@ -647,7 +647,7 @@ final class AgentTools {
 
     /// After a workout edit, hand the model the refreshed structure so its reply reflects the truth.
     private func workoutResponse(prefix: String) -> Response {
-        let text = [prefix, workouts?.summary].compactMap { $0 }.joined(separator: "\n")
+        let text = [prefix, workouts.map { $0.summary($0.agentScope) }].compactMap { $0 }.joined(separator: "\n")
         return Response(text: text, decision: nil, plan: nil)
     }
 
@@ -695,7 +695,7 @@ final class AgentTools {
         // A compact INDEX of the current workout — enough to know it exists and its status, never the
         // full exercise/set detail (that would inflate every request). Detail is fetched on demand via
         // get_current_workout. Never deny a workout the index shows.
-        if let workouts, let compact = workouts.compactSummary {
+        if let workouts, let compact = workouts.compactSummary(workouts.agentScope) {
             lines.append("Current workout (call get_current_workout for its exercises/sets; never answer content from memory):\n\(compact)\nTo begin it call start_workout; to finish it call complete_workout.")
         } else {
             lines.append("No workout has been built yet. If the athlete wants one, use create_workout (or build it up with add_block/add_exercise).")

@@ -110,10 +110,10 @@ struct WorkoutStoreTests {
 
     @Test func compactSummaryIndexesWithoutDumpingDetail() {
         let s = store()
-        #expect(s.compactSummary == nil)                    // no workout yet
+        #expect(s.compactSummary(.plan) == nil)                    // no workout yet
         s.create(title: "MED", goal: nil)
         s.addExercise(name: "Row", toBlockNamed: "Main", sets: 3, reps: nil, load: nil, durationSeconds: 600)
-        let compact = s.compactSummary ?? ""
+        let compact = s.compactSummary(.plan) ?? ""
         #expect(compact.contains("Title: MED"))
         #expect(compact.contains("1 exercise"))
         #expect(compact.contains("not started"))
@@ -296,7 +296,7 @@ struct WorkoutStoreTests {
             workout.blocks[0].nodes = [.group(group), .choice(choice)]
         }
 
-        let summary = s.summary
+        let summary = s.summary(.plan)
 
         #expect(summary.contains("REQUIRED GROUP: Option B"))
         #expect(summary.contains("CHOICE: Bike modality — choose 1 of 2"))
