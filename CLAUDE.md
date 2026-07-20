@@ -194,7 +194,13 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - **Branches:** `main` (production-ready), `develop` (integration / default base), `feature/*` · `fix/*` · `chore/*` off `develop`.
 - **Issue-first:** resolve work to a GitHub issue before coding; branch names include the issue number (`feature/issue-<n>-<slug>`); PRs target `develop` and include `Closes #<n>`.
 - **CI:** GitHub Actions on PRs to `develop` — build + run the test suite on an iPhone simulator.
-- **Distribution:** `.github/workflows/deploy-staging.yml` is the staging tier — push to `develop` builds the IPA (Fastlane `build_staging`), deploys Firebase to `baseline-app-staging`, and uploads to TestFlight (`upload_testflight`). Staging uses bundle id `com.tylerpavay.Baseline.staging` via the `Staging` build config in `project.yml`. `match` for signing (CI readonly) **reuses Ascend's `ascend-match-signing` repo** — Baseline shares Apple team `QWGVB7TN4T`, so the ASC API key and match repo are shared. Firebase deploys authenticate via `FIREBASE_TOKEN` (mirrors Ascend); OIDC + GCP Workload Identity Federation remains the intended future hardening. Prod tier is not built yet.
+- **Distribution:** `.github/workflows/deploy-staging.yml` is the staging tier - push to `develop` builds the IPA (Fastlane `build_staging`), deploys Firebase to `baseline-app-staging`, and uploads to TestFlight (`upload_testflight`).
+  Staging uses bundle id `com.tylerpavay.Baseline.staging` via the `Staging` build config in `project.yml`.
+  `match` for signing (CI readonly) **reuses Ascend's `ascend-match-signing` repo**.
+  Baseline shares Apple team `QWGVB7TN4T`, so the ASC API key and match repo are shared.
+  Firebase deploys authenticate through Application Default Credentials backed by the `FIREBASE_SERVICE_ACCOUNT_STAGING` repository secret.
+  OIDC + GCP Workload Identity Federation remains the intended future hardening.
+  Prod tier is not built yet.
 
 # Privacy & Compliance
 - Keep `PrivacyInfo.xcprivacy`, the privacy policy, the App Store privacy questionnaire, and `NS*UsageDescription` strings in sync.

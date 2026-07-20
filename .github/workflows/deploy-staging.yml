@@ -163,6 +163,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/.firebase-service-account-staging.json
 
     steps:
       - name: Checkout repository
@@ -176,10 +178,58 @@ jobs:
       - name: Install dependencies for deploy
         run: npm --prefix functions ci
 
+      # firebase-tools authenticates via Application Default Credentials, which
+      # only reads a key file path, so the secret has to land on disk. It is
+      # written with umask 077 at deploy time, never echoed or uploaded as an
+      # artifact, and removed by both the in-step trap and the always() step
+      # below so a cancelled or failed deploy cannot leave it behind.
       - name: Deploy Functions, Rules, Indexes, and Storage
         env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        run: npx -y firebase-tools@15.22.1 deploy --project baseline-app-staging --only functions,firestore:rules,firestore:indexes,storage --non-interactive --force --token "$FIREBASE_TOKEN"
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          umask 077
+          trap 'rm -f "$GOOGLE_APPLICATION_CREDENTIALS"' EXIT
+
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_STAGING" ]; then
+            echo "::error::Required secret FIREBASE_SERVICE_ACCOUNT_STAGING is missing or empty."
+            exit 1
+          fi
+
+          printf "%s" "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$GOOGLE_APPLICATION_CREDENTIALS"
+          unset FIREBASE_SERVICE_ACCOUNT_STAGING
+
+          if ! node -e '
+            const fs = require("fs");
+            let parsed;
+            try {
+              parsed = JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
+            } catch {
+              console.error("not valid JSON (a base64-encoded or truncated secret would look like this)");
+              process.exit(1);
+            }
+            const missing = ["client_email", "private_key", "project_id"].filter((key) => !parsed[key]);
+            if (parsed.type !== "service_account") {
+              console.error("JSON is not a service account key (missing type: \"service_account\")");
+              process.exit(1);
+            }
+            if (missing.length > 0) {
+              console.error(`service account key is missing required fields: ${missing.join(", ")}`);
+              process.exit(1);
+            }
+          '; then
+            echo "::error::Secret FIREBASE_SERVICE_ACCOUNT_STAGING is not a valid Google service account key JSON. Store the raw key file contents, not base64."
+            exit 1
+          fi
+
+          npx -y firebase-tools@15.22.1 deploy --project baseline-app-staging --only functions,firestore:rules,firestore:indexes,storage --non-interactive --force
+
+      - name: Remove Firebase service account credentials
+        if: always()
+        shell: bash
+        run: rm -f "$GOOGLE_APPLICATION_CREDENTIALS"
 
   upload-testflight:
     name: Upload to TestFlight (Staging)
