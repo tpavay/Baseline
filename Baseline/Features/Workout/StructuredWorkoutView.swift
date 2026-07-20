@@ -796,6 +796,8 @@ private struct WorkoutExerciseSection: View {
     @State private var sheet: ExerciseSheet?
     @State private var showLabelEditor = false
     @State private var labelDraft = ""
+    /// Raised instead of removing outright when a mid-workout true-remove would discard logged sets.
+    @State private var showRemoveConfirmation = false
 
     private var performed: PerformedExercise? {
         store.currentLog?.performed(forPlanned: exercise.id)
@@ -894,6 +896,18 @@ private struct WorkoutExerciseSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This changes how the movement is labeled in this workout without renaming the exercise.")
+        }
+        .confirmationDialog(
+            "Remove \(presentedExercise.exerciseName)?",
+            isPresented: $showRemoveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove and Discard Sets", role: .destructive) {
+                store.removeExerciseFromWorkout(exercise.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You have already logged sets for this exercise. Removing it from this workout discards them.")
         }
     }
 
@@ -1545,7 +1559,29 @@ private struct WorkoutExerciseSection: View {
                     Button { sheet = .substituteLog(exercise.id, presentedExercise.exerciseName, nil, nil) } label: {
                         Label("Replace Exercise", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    Button(role: .destructive) { removeExercise(groupID: nil, iteration: nil) } label: {
+                    // Mid-workout prescription and logging-config edits. These change what the workout
+                    // asks for (not what was logged), apply to this session only, and are what the
+                    // completion "update your template?" prompt offers to promote to the plan.
+                    Button { sheet = .prescription(exercise.id) } label: {
+                        Label("Edit Sets & Targets", systemImage: "slider.horizontal.below.rectangle")
+                    }
+                    Button { sheet = .configure(exercise.id, exercise.exerciseName, .metrics) } label: {
+                        Label("Metrics", systemImage: "slider.horizontal.3")
+                    }
+                    Button { sheet = .configure(exercise.id, exercise.exerciseName, .units) } label: {
+                        Label("Units", systemImage: "ruler")
+                    }
+                    Divider()
+                    // A true structural removal from this session — not the reversible skip. It also
+                    // purges any logged sets, so completion can't resurrect work for an exercise the
+                    // athlete removed. Confirmed first when there is real logged work to lose.
+                    Button(role: .destructive) {
+                        if store.hasLoggedWork(forExercise: exercise.id) {
+                            showRemoveConfirmation = true
+                        } else {
+                            store.removeExerciseFromWorkout(exercise.id)
+                        }
+                    } label: {
                         Label("Remove from This Workout", systemImage: "trash")
                     }
                 }
@@ -1641,6 +1677,8 @@ private struct WorkoutExerciseSection: View {
                     store.setLoggingConfig(exerciseID: id, enabled: enabled, units: units)
                 }
             }
+        case .prescription(let id):
+            EditPrescriptionSheet(exerciseID: id)
         }
     }
 
@@ -1975,6 +2013,7 @@ private enum ExerciseSheet: Identifiable {
     case substituteTemplate(UUID, String)
     case substituteLog(UUID, String, UUID?, Int?)
     case configure(UUID, String, MetricConfigFocus)
+    case prescription(UUID)
 
     var id: String {
         switch self {
@@ -1983,6 +2022,7 @@ private enum ExerciseSheet: Identifiable {
         case .substituteLog(let id, _, let groupID, let iteration):
             "substitute-log-\(id)-\(groupID?.uuidString ?? "top")-\(iteration.map(String.init) ?? "all")"
         case .configure(let id, _, let focus): "configure-\(id)-\(focus)"
+        case .prescription(let id): "prescription-\(id)"
         }
     }
 }
