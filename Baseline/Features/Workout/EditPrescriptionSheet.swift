@@ -68,7 +68,7 @@ struct EditPrescriptionSheet: View {
                     guard exercise.prescription.sets.count > offsets.count else { return }
                     let ids = offsets.compactMap { exercise.prescription.sets[safe: $0]?.id }
                     Haptics.tap()
-                    store.removePlannedSets(ids, fromExercise: exerciseID)
+                    store.removePlannedSets(ids, fromExercise: exerciseID, scope: .session)
                 }
             } header: {
                 Text("Planned sets")
@@ -153,7 +153,7 @@ struct EditPrescriptionSheet: View {
                     .first { $0.id == setID }?.values[metric]
             },
             set: { value in
-                store.edit { $0.updateSet(setID) { $0.values[metric] = value.map { max(0, $0) } } }
+                store.edit(.session) { $0.updateSet(setID) { $0.values[metric] = value.map { max(0, $0) } } }
             }
         )
     }
@@ -162,7 +162,7 @@ struct EditPrescriptionSheet: View {
     /// adding a fifth set gets the fourth set's targets rather than an empty row.
     private func addSet(after exercise: PlannedExercise) {
         Haptics.tap()
-        store.edit { workout in
+        store.edit(.session) { workout in
             workout.updateExercise(exerciseID) { planned in
                 var copy = planned.prescription.sets.last ?? PlannedSet()
                 copy.id = UUID()

@@ -11,4 +11,8 @@ enum WorkoutPresentationMode: Equatable {
     var isEditing: Bool { self == .editTemplate }
     var isLogging: Bool { self == .log }
     var usesPerformedData: Bool { self == .log || self == .completed }
+
+    /// Where an edit made on this surface belongs. A surface showing performed data is showing the
+    /// session's own shape, so its edits stay on the session copy; the plan surfaces edit the plan.
+    var editScope: WorkoutEditScope { usesPerformedData ? .session : .plan }
 }

@@ -59,7 +59,7 @@ struct WorkoutReorderSheet: View {
             presenting: blockPendingDeletion
         ) { block in
             Button("Delete Block", role: .destructive) {
-                store.removeBlockFromWorkout(block.id)
+                store.removeBlockFromWorkout(block.id, scope: .session)
                 blockPendingDeletion = nil
             }
             Button("Cancel", role: .cancel) { blockPendingDeletion = nil }
@@ -91,7 +91,7 @@ struct WorkoutReorderSheet: View {
                 }
                 .onMove { source, destination in
                     Haptics.select()
-                    store.edit { $0.moveBlocks(fromOffsets: source, toOffset: destination) }
+                    store.edit(.session) { $0.moveBlocks(fromOffsets: source, toOffset: destination) }
                 }
                 .onDelete { offsets in
                     // Route through the confirmation rather than deleting on the swipe, because a
@@ -173,7 +173,7 @@ private struct ExerciseReorderList: View {
                     }
                     .onMove { source, destination in
                         Haptics.select()
-                        store.edit { $0.moveNodes(inBlock: blockID, fromOffsets: source, toOffset: destination) }
+                        store.edit(.session) { $0.moveNodes(inBlock: blockID, fromOffsets: source, toOffset: destination) }
                     }
                 } footer: {
                     Text("Drag to reorder within this block. To move an exercise to another block, use the exercise's actions menu.")

@@ -133,14 +133,13 @@ final class PlanStore {
                 guard let self, let sw = self.scheduledWorkout(id) else { return nil }
                 let session = self.session(for: id)
                 guard let session, session.status != .discarded else {
-                    return (sw.workout, nil, nil, false, false)
+                    return (sw.workout, nil, nil)
                 }
-                // A live/completed session carries its own (possibly edited) workout copy; fall back to
-                // the saved plan revision when the session hasn't been edited. Only a *live* session owns
-                // the editing surface, but the copy stays session-derived after completion so it can
-                // never be flushed into the plan behind the athlete's back.
-                return (session.workout ?? sw.workout, session.log, session.startedAt,
-                        session.status == .active, session.workout != nil)
+                // A live/completed session carries its own (possibly edited) workout copy — what the
+                // athlete performed, and what the summary must show; fall back to the saved plan revision
+                // when the session hasn't been edited. Nothing here decides write routing: an edit names
+                // its own destination.
+                return (session.workout ?? sw.workout, session.log, session.startedAt)
             },
             planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
     }

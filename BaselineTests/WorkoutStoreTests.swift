@@ -70,7 +70,7 @@ struct WorkoutStoreTests {
         s.addExercise(name: "Treadmill Run", toBlockNamed: "Main Run", sets: 1, reps: nil, load: nil, durationSeconds: 1_800)
 
         let originalIDs = try #require(s.current?.allExercises.map(\.id))
-        s.edit { workout in
+        s.edit(.plan) { workout in
             _ = workout.updateExercise(originalIDs[0]) { $0.prescription.sets[0].rpe = 2 }
             _ = workout.updateExercise(originalIDs[1]) { $0.prescription.sets[0].rpe = 3 }
         }
@@ -240,10 +240,10 @@ struct WorkoutStoreTests {
             definitionId: "stationary_bike",
             selectedMetrics: [.duration, .distance]
         )
-        s.addExercise(first, toBlockID: blockID)
-        s.addExercise(second, toBlockID: blockID)
+        s.addExercise(first, toBlockID: blockID, scope: .plan)
+        s.addExercise(second, toBlockID: blockID, scope: .plan)
 
-        #expect(s.setLoggingConfig(exerciseID: second.id, enabled: [.duration], units: [:]))
+        #expect(s.setLoggingConfig(exerciseID: second.id, enabled: [.duration], units: [:], scope: .plan))
         #expect(s.current?.exercise(first.id)?.selectedMetrics == [.duration, .distance])
         #expect(s.current?.exercise(second.id)?.selectedMetrics == [.duration])
     }
@@ -290,7 +290,7 @@ struct WorkoutStoreTests {
             .exercise(PlannedExercise(exerciseName: "Echo Bike", definitionId: "echo_bike")),
             .exercise(PlannedExercise(exerciseName: "Concept2 Bike", definitionId: "concept2_bike")),
         ])
-        s.edit { workout in
+        s.edit(.plan) { workout in
             workout.guidance = CoachGuidance(formCues: ["Protect the next intensity day"])
             workout.blocks[0].guidance = CoachGuidance(formCues: ["Stay aerobic"])
             workout.blocks[0].nodes = [.group(group), .choice(choice)]
@@ -330,7 +330,7 @@ struct WorkoutStoreTests {
         )
         let review = WorkoutStore(transientWorkout: imported, configurationFrom: source)
 
-        review.edit { $0.rename("Edited import") }
+        review.edit(.plan) { $0.rename("Edited import") }
         #expect(review.current?.title == "Edited import")
         #expect(source.current?.title == "Today's workout")
         #expect(WorkoutStore(defaults: defaults).current?.title == "Today's workout")
@@ -360,7 +360,7 @@ struct WorkoutStoreTests {
                 definitionId: "lateral_burpee_over_barbell"
             )),
         ])
-        s.edit { workout in
+        s.edit(.plan) { workout in
             workout.blocks[0].nodes.append(.choice(choice))
         }
 
@@ -397,7 +397,7 @@ struct WorkoutStoreTests {
         // Adding tracks recents.
         s.create(title: "x", goal: nil); s.addBlock(name: "A", intent: nil)
         var ex = PlannedExercise(exerciseName: "Deadlift"); ex.definitionId = "deadlift"
-        s.addExercise(ex, toBlockID: s.current!.blocks.first!.id)
+        s.addExercise(ex, toBlockID: s.current!.blocks.first!.id, scope: .plan)
         #expect(s.recentExerciseIds.first == "deadlift")
     }
 

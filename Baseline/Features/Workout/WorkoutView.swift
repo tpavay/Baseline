@@ -74,7 +74,7 @@ struct WorkoutView: View {
         }
         .sheet(isPresented: $showReorder) { WorkoutReorderSheet() }
         .sheet(item: $addExerciseRequest) { request in
-            AddExerciseFlow(blockID: request.id) { _ in }
+            AddExerciseFlow(blockID: request.id, scope: mode.editScope) { _ in }
         }
         .alert(
             "Update your plan?",
@@ -466,7 +466,7 @@ struct WorkoutView: View {
 
     private func cancelEditing() {
         if let snapshot = editSnapshot {
-            store.edit { $0 = snapshot }
+            store.edit(.plan) { $0 = snapshot }
             store.flush()
         }
         editSnapshot = nil

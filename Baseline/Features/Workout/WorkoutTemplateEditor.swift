@@ -32,7 +32,7 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .sheet(item: $addExerciseRequest) { request in
-            AddExerciseFlow(blockID: request.id) { _ in }
+            AddExerciseFlow(blockID: request.id, scope: .plan) { _ in }
         }
     }
 
@@ -107,10 +107,10 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
     private func blockMenu(_ block: WorkoutBlock) -> some View {
         Menu("Block actions", systemImage: "ellipsis") {
             Button("Duplicate Block", systemImage: "plus.square.on.square") {
-                store.edit { $0.duplicateBlock(block.id) }
+                store.edit(.plan) { $0.duplicateBlock(block.id) }
             }
             Button("Delete Block", systemImage: "trash", role: .destructive) {
-                store.edit { workout in
+                store.edit(.plan) { workout in
                     workout.removeBlock(block.id)
                     if workout.blocks.isEmpty {
                         workout.blocks.append(WorkoutBlock(name: "", isDefault: true))
@@ -140,20 +140,20 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
     }
 
     private func addBlock() {
-        store.edit { $0.addUserBlock(name: "New Block") }
+        store.edit(.plan) { $0.addUserBlock(name: "New Block") }
     }
 
     private var workoutTitleBinding: Binding<String> {
         Binding(
             get: { store.current?.title ?? "" },
-            set: { value in store.edit { $0.rename(value) } }
+            set: { value in store.edit(.plan) { $0.rename(value) } }
         )
     }
 
     private var workoutGoalBinding: Binding<String> {
         Binding(
             get: { store.current?.goal ?? "" },
-            set: { value in store.edit { $0.updateGoal(value.isEmpty ? nil : value) } }
+            set: { value in store.edit(.plan) { $0.updateGoal(value.isEmpty ? nil : value) } }
         )
     }
 
@@ -161,7 +161,7 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
         Binding(
             get: { store.current?.guidance?.formCues.joined(separator: "\n\n") ?? "" },
             set: { value in
-                store.edit { workout in
+                store.edit(.plan) { workout in
                     workout.updateGuidance(updatedGuidance(workout.guidance, notesText: value))
                 }
             }
@@ -171,14 +171,14 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
     private func blockNameBinding(_ block: WorkoutBlock) -> Binding<String> {
         Binding(
             get: { store.current?.blocks.first(where: { $0.id == block.id })?.name ?? block.name },
-            set: { value in store.edit { $0.renameBlock(block.id, to: value) } }
+            set: { value in store.edit(.plan) { $0.renameBlock(block.id, to: value) } }
         )
     }
 
     private func blockIntentBinding(_ block: WorkoutBlock) -> Binding<String> {
         Binding(
             get: { store.current?.blocks.first(where: { $0.id == block.id })?.intent ?? "" },
-            set: { value in store.edit { $0.setBlockIntent(block.id, value.isEmpty ? nil : value) } }
+            set: { value in store.edit(.plan) { $0.setBlockIntent(block.id, value.isEmpty ? nil : value) } }
         )
     }
 
@@ -189,7 +189,7 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
                     .joined(separator: "\n\n") ?? ""
             },
             set: { value in
-                store.edit { workout in
+                store.edit(.plan) { workout in
                     let current = workout.blocks.first(where: { $0.id == block.id })?.guidance
                     workout.setBlockGuidance(block.id, updatedGuidance(current, notesText: value))
                 }

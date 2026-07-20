@@ -307,7 +307,7 @@ private struct WorkoutGroupHeader: View {
     private var groupNameBinding: Binding<String> {
         Binding(
             get: { store.current?.allGroups.first(where: { $0.id == group.id })?.label ?? group.label },
-            set: { value in store.edit { $0.updateGroup(group.id) { $0.label = value } } }
+            set: { value in store.edit(mode.editScope) { $0.updateGroup(group.id) { $0.label = value } } }
         )
     }
 
@@ -318,7 +318,7 @@ private struct WorkoutGroupHeader: View {
                     .joined(separator: "\n\n") ?? ""
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateGroup(group.id) { updated in
                         updated.guidance = updatedGuidance(updated.guidance, notesText: value)
                     }
@@ -337,7 +337,7 @@ private struct WorkoutGroupHeader: View {
     }
 
     private func updateRepetition(_ repetition: RepetitionRule) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateGroup(group.id) { $0.execution.repetition = repetition }
         }
     }
@@ -701,7 +701,7 @@ private struct WorkoutChoiceHeader: View {
                 if mode.isEditing {
                     Menu("Choice actions", systemImage: "ellipsis") {
                         Button("Require All Exercises", systemImage: "list.bullet") {
-                            store.edit { $0.convertChoiceToRequiredGroup(choice.id) }
+                            store.edit(mode.editScope) { $0.convertChoiceToRequiredGroup(choice.id) }
                         }
                     }
                     .labelStyle(.iconOnly)
@@ -903,7 +903,7 @@ private struct WorkoutExerciseSection: View {
             titleVisibility: .visible
         ) {
             Button("Remove and Discard Sets", role: .destructive) {
-                store.removeExerciseFromWorkout(exercise.id)
+                store.removeExerciseFromWorkout(exercise.id, scope: mode.editScope)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -1363,7 +1363,7 @@ private struct WorkoutExerciseSection: View {
             Menu {
                 ForEach(SetRole.allCases, id: \.self) { role in
                     Button {
-                        store.edit { $0.updateSet(set.id) { $0.role = role } }
+                        store.edit(mode.editScope) { $0.updateSet(set.id) { $0.role = role } }
                     } label: {
                         Label(role.fullLabel, systemImage: set.role == role ? "checkmark" : role.symbol)
                     }
@@ -1526,7 +1526,7 @@ private struct WorkoutExerciseSection: View {
                     Menu {
                         ForEach(otherBlocks) { block in
                             Button(block.name.isEmpty ? "Main" : block.name) {
-                                store.edit { $0.moveExercise(exercise.id, toBlock: block.id) }
+                                store.edit(mode.editScope) { $0.moveExercise(exercise.id, toBlock: block.id) }
                             }
                         }
                     } label: {
@@ -1534,10 +1534,10 @@ private struct WorkoutExerciseSection: View {
                     }
                 }
 
-                Button { store.edit { $0.duplicateExercise(exercise.id) } } label: {
+                Button { store.edit(mode.editScope) { $0.duplicateExercise(exercise.id) } } label: {
                     Label("Duplicate Exercise", systemImage: "plus.square.on.square")
                 }
-                Button(role: .destructive) { store.edit { $0.removeExercise(exercise.id) } } label: {
+                Button(role: .destructive) { store.edit(mode.editScope) { $0.removeExercise(exercise.id) } } label: {
                     Label("Remove Exercise", systemImage: "trash")
                 }
             } else if mode.isLogging {
@@ -1579,7 +1579,7 @@ private struct WorkoutExerciseSection: View {
                         if store.hasLoggedWork(forExercise: exercise.id) {
                             showRemoveConfirmation = true
                         } else {
-                            store.removeExerciseFromWorkout(exercise.id)
+                            store.removeExerciseFromWorkout(exercise.id, scope: mode.editScope)
                         }
                     } label: {
                         Label("Remove from This Workout", systemImage: "trash")
@@ -1611,7 +1611,7 @@ private struct WorkoutExerciseSection: View {
 
     private func saveDisplayLabel() {
         let value = labelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) { planned in
                 planned.displayLabel = value.isEmpty ? nil : value
             }
@@ -1625,7 +1625,7 @@ private struct WorkoutExerciseSection: View {
                     .joined(separator: "\n\n") ?? ""
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateExercise(exercise.id) { updated in
                         updated.guidance = updatedGuidance(updated.guidance, notesText: value)
                     }
@@ -1649,7 +1649,7 @@ private struct WorkoutExerciseSection: View {
             ExerciseHistoryView(exercise: exercise)
         case .substituteTemplate(let id, let current):
             SubstituteExerciseFlow(currentName: current) { definition in
-                store.replaceExercise(id, with: definition)
+                store.replaceExercise(id, with: definition, scope: mode.editScope)
             }
         case .substituteLog(_, let current, let targetGroupID, let targetIteration):
             SubstituteExerciseFlow(currentName: current) { definition in
@@ -1674,7 +1674,7 @@ private struct WorkoutExerciseSection: View {
                         )
                     }
                 ) { enabled, units in
-                    store.setLoggingConfig(exerciseID: id, enabled: enabled, units: units)
+                    store.setLoggingConfig(exerciseID: id, enabled: enabled, units: units, scope: mode.editScope)
                 }
             }
         case .prescription(let id):
@@ -1764,7 +1764,7 @@ private struct WorkoutExerciseSection: View {
                     .first(where: { $0.id == set.id })?.values[metric]
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateSet(set.id) { $0.values[metric] = value.map { max(0, $0) } }
                 }
             }
@@ -1783,7 +1783,7 @@ private struct WorkoutExerciseSection: View {
                     .first(where: { $0.id == alternativeID })?.values[metric]
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateSet(setID) { set in
                         guard let index = set.alternatives.firstIndex(where: { $0.id == alternativeID }) else { return }
                         set.alternatives[index].values[metric] = value.map { max(0, $0) }
@@ -1970,7 +1970,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func addSet() {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) { planned in
                 var copy = planned.prescription.sets.last ?? PlannedSet()
                 copy.id = UUID()
@@ -1980,7 +1980,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func duplicateSet(_ setID: UUID) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) { planned in
                 guard let index = planned.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
                 var copy = planned.prescription.sets[index]
@@ -1991,7 +1991,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func deleteSet(_ setID: UUID) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) {
                 $0.prescription.sets.removeAll { $0.id == setID }
             }
@@ -1999,7 +1999,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func removeAlternative(_ alternativeID: UUID, from setID: UUID) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateSet(setID) { set in
                 set.alternatives.removeAll { $0.id == alternativeID }
             }

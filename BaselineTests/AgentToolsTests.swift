@@ -209,7 +209,7 @@ struct AgentToolsTests {
             selectedMetrics: [.reps],
             prescription: Prescription(sets: [PlannedSet(id: UUID(), reps: 12)])
         )
-        workouts.edit { workout in
+        workouts.edit(.plan) { workout in
             workout.blocks[0].nodes.append(.choice(WorkoutChoice(label: "Option B", options: [
                 .exercise(deadlift),
                 .exercise(burpee),

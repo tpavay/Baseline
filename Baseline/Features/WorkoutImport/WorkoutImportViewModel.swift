@@ -703,7 +703,7 @@ final class WorkoutImportViewModel {
         }), didResolve else { return false }
 
         prepareUnresolvedIntensityIssuesForReconciliation(resolving: issue)
-        reviewStore.edit { $0 = workout }
+        reviewStore.edit(.plan) { $0 = workout }
         synchronizeDraft(from: reviewStore)
         return true
     }

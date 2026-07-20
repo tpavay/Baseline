@@ -64,7 +64,7 @@ struct WorkoutSessionEditingTests {
     @Test func midWorkoutEditDoesNotRewriteTheSavedPlan() {
         let (plan, store, id) = startedSession()
 
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         // The session sees the addition...
         #expect(store.current?.allExercises.count == 2)
@@ -84,14 +84,14 @@ struct WorkoutSessionEditingTests {
         let store = buffer()
         store.bind(plan.sink(forScheduled: sw.id), coalesceContent: false)
 
-        store.edit { $0.rename("Renamed") }
+        store.edit(.plan) { $0.rename("Renamed") }
 
         #expect(plan.scheduledWorkout(sw.id)?.workout.title == "Renamed")
     }
 
     @Test func sessionEditsSurviveAReloadFromThePlan() {
         let (plan, store, id) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Row"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Row"), toBlock: $0.blocks[0].id) }
 
         // A fresh buffer bound to the same session must see the session's shape, not the plan's.
         let reopened = buffer()
@@ -114,7 +114,7 @@ struct WorkoutSessionEditingTests {
         }
         #expect(store.hasLoggedWork(forExercise: squat.id))
 
-        store.removeExerciseFromWorkout(squat.id)
+        store.removeExerciseFromWorkout(squat.id, scope: .session)
 
         // Gone from both sides — no performed record left to resurface at completion.
         #expect(store.current?.allExercises.map(\.exerciseName) == ["Bench press"])
@@ -134,7 +134,7 @@ struct WorkoutSessionEditingTests {
                 set.completed = true
             }
         }
-        store.removeExerciseFromWorkout(squat.id)
+        store.removeExerciseFromWorkout(squat.id, scope: .session)
         store.completeWorkout()
 
         let completed = plan.completed(for: id)
@@ -155,7 +155,7 @@ struct WorkoutSessionEditingTests {
         }
         #expect(store.hasLoggedWork(inBlock: store.current!.blocks[1].id))
 
-        store.removeBlockFromWorkout(store.current!.blocks[1].id)
+        store.removeBlockFromWorkout(store.current!.blocks[1].id, scope: .session)
 
         #expect(store.current?.blocks.count == 1)
         #expect(store.currentLog?.performed(forPlanned: curl.id) == nil)
@@ -164,7 +164,7 @@ struct WorkoutSessionEditingTests {
     @Test func removingTheOnlyBlockLeavesAnEmptyDefaultBlock() {
         let (_, store, _) = startedSession()
 
-        store.removeBlockFromWorkout(store.current!.blocks[0].id)
+        store.removeBlockFromWorkout(store.current!.blocks[0].id, scope: .session)
 
         // A workout with zero blocks has nowhere to add an exercise back, so one always remains.
         #expect(store.current?.blocks.count == 1)
@@ -179,7 +179,7 @@ struct WorkoutSessionEditingTests {
         )
         let blockID = store.current!.blocks[0].id
 
-        store.edit { $0.moveNodes(inBlock: blockID, fromOffsets: IndexSet(integer: 2), toOffset: 0) }
+        store.edit(.session) { $0.moveNodes(inBlock: blockID, fromOffsets: IndexSet(integer: 2), toOffset: 0) }
 
         #expect(store.current?.allExercises.map(\.exerciseName) == ["C", "A", "B"])
     }
@@ -189,7 +189,7 @@ struct WorkoutSessionEditingTests {
         w.blocks.append(WorkoutBlock(name: "Second", exercises: [exercise("B")], isDefault: false))
         let (_, store, _) = startedSession(w)
 
-        store.edit { $0.moveBlocks(fromOffsets: IndexSet(integer: 1), toOffset: 0) }
+        store.edit(.session) { $0.moveBlocks(fromOffsets: IndexSet(integer: 1), toOffset: 0) }
 
         #expect(store.current?.blocks.map(\.name) == ["Second", ""])
         #expect(store.current?.allExercises.map(\.exerciseName) == ["B", "A"])
@@ -207,7 +207,7 @@ struct WorkoutSessionEditingTests {
             }
         }
 
-        store.edit { $0.moveNodes(inBlock: $0.blocks[0].id, fromOffsets: IndexSet(integer: 1), toOffset: 0) }
+        store.edit(.session) { $0.moveNodes(inBlock: $0.blocks[0].id, fromOffsets: IndexSet(integer: 1), toOffset: 0) }
 
         #expect(store.current?.allExercises.map(\.exerciseName) == ["B", "A"])
         #expect(store.currentLog?.performed(forPlanned: second.id)?.setLogs.first?.values[.load] == 60)
@@ -233,7 +233,7 @@ struct WorkoutSessionEditingTests {
     @Test func anEditedSessionReportsWhatChanged() {
         let (_, store, _) = startedSession()
 
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         let reconciliation = store.captureSessionReconciliation()
         #expect(reconciliation?.diff.changes.map(\.kind) == [.added])
@@ -242,7 +242,7 @@ struct WorkoutSessionEditingTests {
 
     @Test func decliningReconciliationLeavesThePlanUntouched() {
         let (plan, store, id) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         _ = store.captureSessionReconciliation()   // captured, then discarded — the athlete said no
         store.completeWorkout()
@@ -252,7 +252,7 @@ struct WorkoutSessionEditingTests {
 
     @Test func acceptingReconciliationPromotesTheSessionToThePlan() {
         let (plan, store, id) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         let reconciliation = store.captureSessionReconciliation()!
         store.completeWorkout()
@@ -265,7 +265,7 @@ struct WorkoutSessionEditingTests {
         let (_, store, _) = startedSession()
         let setID = store.current!.allExercises[0].prescription.sets[0].id
 
-        store.edit { $0.updateSet(setID) { $0.values[.reps] = 8 } }
+        store.edit(.session) { $0.updateSet(setID) { $0.values[.reps] = 8 } }
 
         #expect(store.captureSessionReconciliation()?.diff.changes.map(\.kind) == [.adjusted])
     }
@@ -273,7 +273,7 @@ struct WorkoutSessionEditingTests {
     @Test func aRemovedExerciseIsReportedAsRemoved() {
         let (_, store, _) = startedSession(workout("W", [exercise("Squat"), exercise("Bench press")]))
 
-        store.removeExerciseFromWorkout(store.current!.allExercises[0].id)
+        store.removeExerciseFromWorkout(store.current!.allExercises[0].id, scope: .session)
 
         #expect(store.captureSessionReconciliation()?.diff.changes.map(\.kind) == [.removed])
     }
@@ -295,7 +295,7 @@ struct WorkoutSessionEditingTests {
             }
         }
 
-        store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id)
+        store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id, scope: .session)
 
         #expect(store.current?.exercise(planned.id)?.prescription.sets.count == 1)
         // The remaining actual is the one whose planned set survived — the deleted row leaves nothing.
@@ -320,7 +320,7 @@ struct WorkoutSessionEditingTests {
             }
         }
 
-        store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id)
+        store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id, scope: .session)
         store.completeWorkout()
 
         #expect(plan.completed(for: id)?.log.performed(forPlanned: planned.id)?.setLogs.count == 1)
@@ -350,7 +350,7 @@ struct WorkoutSessionEditingTests {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
 
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
         // A fresh store — the app relaunching mid-session — reads the edit straight back.
@@ -362,7 +362,7 @@ struct WorkoutSessionEditingTests {
     @Test func preSessionEditingStillCoalescesAndFlushesToThePlan() {
         let (plan, store, id) = planTabSession()
 
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.plan) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         // Held until the sheet dismisses, exactly as before — no session is involved.
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.count == 1)
@@ -370,71 +370,115 @@ struct WorkoutSessionEditingTests {
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
 
-    /// The hard invariant: `applySessionReconciliation` is the only path that may promote a session shape
-    /// into the plan. Provenance has to outlive the log, because `flush` fires after completion.
+    /// Dismissing the workout sheet mid-session must write nothing to the plan — not because a flag
+    /// happened to hold the right value, but because a session edit never fills the flush buffer.
+    @Test func flushingMidSessionCreatesNoPlanRevision() {
+        let (plan, store, id) = planTabSession()
+        store.startWorkout()
+        let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
+
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.removeExerciseFromWorkout(store.current!.allExercises[0].id, scope: .session)
+        store.flush()
+
+        #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
+    }
+
+    /// The hard invariant: `applySessionReconciliation` is the only path that may promote a session shape.
     @Test func decliningReconciliationThenFlushingLeavesThePlanUntouched() {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        let revisionBefore = plan.scheduledWorkout(id)?.workoutRevisionID
 
         _ = store.captureSessionReconciliation()   // the athlete tapped "Keep Original"
         store.completeWorkout()
+        store.declineSessionReconciliation()
         store.flush()                              // ...and then dismissed the sheet
 
+        #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionBefore)
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
     }
 
     @Test func acceptingReconciliationThenFlushingPromotesExactlyOnce() {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         let reconciliation = store.captureSessionReconciliation()!
         store.completeWorkout()
         store.applySessionReconciliation(reconciliation)
+        let revisionAfterPromotion = plan.scheduledWorkout(id)?.workoutRevisionID
         store.flush()
 
+        // One revision for the promotion, and none for the dismissal that followed it.
+        #expect(plan.scheduledWorkout(id)?.workoutRevisionID == revisionAfterPromotion)
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
 
-    /// The session owns the editing surface only until the decision is settled. After that the store
-    /// edits the plan again — and must not smuggle the declined session content along with the edit.
-    @Test func anEditAfterDecliningReachesThePlanWithoutTheDeclinedChanges() {
-        let (plan, store, id) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+    /// Declining settles the decision without touching content, so the summary still shows the workout
+    /// the athlete actually performed — added exercises present, removed ones gone.
+    @Test func decliningLeavesTheCompletedSummaryOnThePerformedShape() {
+        let (_, store, _) = startedSession(workout("W", [exercise("Squat"), exercise("Bench press")]))
+        store.edit(.session) { $0.addExercise(self.exercise("Curl"), toBlock: $0.blocks[0].id) }
+        store.removeExerciseFromWorkout(store.current!.allExercises[1].id, scope: .session)
+
         _ = store.captureSessionReconciliation()
         store.completeWorkout()
-
         store.declineSessionReconciliation()
-        store.edit { $0.rename("Renamed") }
 
-        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
-        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
+        #expect(store.current?.allExercises.map(\.exerciseName) == ["Squat", "Curl"])
     }
 
-    @Test func anEditAfterAcceptingReachesThePlanOnTopOfThePromotedShape() {
+    /// The agent has no presentation mode, so it follows the one explicit lifecycle signal: session
+    /// while the decision is open, plan once it is settled.
+    @Test func anAgentEditAfterDecliningReachesThePlanAndNotTheFinishedSession() {
         let (plan, store, id) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        _ = store.captureSessionReconciliation()
+        store.completeWorkout()
+        let sessionShape = plan.session(for: id)?.workout?.allExercises.map(\.exerciseName)
+
+        store.declineSessionReconciliation()
+        store.addBlock(name: "Finisher", intent: nil)
+
+        #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
+        // The frozen session is history, not an editing surface — the edit must not rewrite it.
+        #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == sessionShape)
+        #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } != true)
+    }
+
+    @Test func anAgentEditAfterAcceptingReachesThePlanOnTopOfThePromotedShape() {
+        let (plan, store, id) = startedSession()
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         let reconciliation = store.captureSessionReconciliation()!
         store.completeWorkout()
 
         store.applySessionReconciliation(reconciliation)
-        store.edit { $0.rename("Renamed") }
+        store.addBlock(name: "Finisher", intent: nil)
 
-        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
+        #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
 
-    @Test func anEditAfterAnUneditedSessionReachesThePlan() {
-        // Nothing diverged ⇒ no prompt ⇒ nothing to decide, so the scope closes at completion rather
-        // than leaving the finished session as a permanent editing surface.
+    /// A fresh store bound after the workout is over — the app relaunching, then the agent asked to
+    /// change today's plan. Nothing in the completed session may be rewritten.
+    @Test func aStoreReboundAfterCompletionEditsThePlanNotTheFinishedSession() {
         let (plan, store, id) = startedSession()
-        #expect(store.captureSessionReconciliation() == nil)
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        _ = store.captureSessionReconciliation()
         store.completeWorkout()
+        store.declineSessionReconciliation()
+        let sessionShape = plan.session(for: id)?.workout?.allExercises.map(\.exerciseName)
 
-        store.edit { $0.rename("Renamed") }
+        let relaunched = buffer()
+        relaunched.bind(plan.sink(forScheduled: id), coalesceContent: false)
+        relaunched.addBlock(name: "Finisher", intent: nil)
 
-        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
+        #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
+        #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == sessionShape)
+        #expect(plan.session(for: id)?.workout?.blocks.contains { $0.name == "Finisher" } != true)
     }
 
     @Test func replacingTheWorkoutIsRefusedWhileASessionOwnsIt() {
@@ -451,13 +495,13 @@ struct WorkoutSessionEditingTests {
     @Test func discardingASessionReturnsTheStoreToTheSavedPlan() {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
         store.discardLog()
 
         // The session's shape went with the session; later edits are ordinary plan edits again.
         #expect(store.current?.allExercises.map(\.exerciseName) == ["Squat"])
-        store.edit { $0.rename("Renamed") }
+        store.edit(.plan) { $0.rename("Renamed") }
         store.flush()
         #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
     }
@@ -466,7 +510,7 @@ struct WorkoutSessionEditingTests {
 
     @Test func finishingAnEditedSessionRaisesThePromotionPrompt() async {
         let (_, store, _) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         let finishing = WorkoutFinishCoordinator()
 
         let presentation = finishing.finish(store)
@@ -501,7 +545,7 @@ struct WorkoutSessionEditingTests {
 
     @Test func acceptingThePromptFromTheFinishFlowPromotesTheSession() async {
         let (plan, store, id) = startedSession()
-        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         let finishing = WorkoutFinishCoordinator()
 
         await finishing.finish(store)?.value

@@ -8,48 +8,45 @@ import Observation
 /// The model speaks in *names* ("move bench to the warm-up block"); this resolves names → ids and
 /// calls the id-based operations on `Workout` (which own the invariants + are unit-tested). Every
 /// mutation is get-copy-mutate-reassign so `@Observable` fires and it persists.
+/// Where a content edit is written.
+///
+/// Every caller states this, because inferring it from ambient lifecycle state is exactly what let
+/// session edits leak into the saved plan: any inferred signal has a window in which it is wrong.
+/// The two destinations cannot reach each other — `.session` never writes a plan revision, and
+/// `.plan` never writes the session copy.
+enum WorkoutEditScope {
+    /// The saved plan revision. Coalesced when the binding asked for it, and flushed on dismiss.
+    case plan
+    /// The session's own copy of the workout. Never coalesced — an abandoned or force-quit session must
+    /// still reload with its edits intact — and it reaches the plan only through
+    /// `applySessionReconciliation`.
+    case session
+}
+
 @MainActor
 @Observable
 final class WorkoutStore {
+    /// What to **display**. Assigning it persists locally and nothing more: assignment can never
+    /// promote content to the plan, which is what makes the session/plan boundary structural rather
+    /// than a matter of some flag holding the right value at the right moment.
     private(set) var current: Workout? {
-        didSet {
-            persist(current, Self.key)
-            guard let sink, !isSyncing, let c = current, c != oldValue else { return }
-            if isSessionScoped {
-                // Mid-workout edits are session-scoped: they update the live session copy only, leaving the
-                // saved scheduled workout untouched until completion reconciliation opts in. Never
-                // coalesced — an abandoned or force-quit session must still reload with its edits intact.
-                sink.pushSessionWorkout(c)
-            } else if !coalesceContent {
-                // Not session-scoped → ordinary plan editing. Immediate for the agent; the manual editor
-                // coalesces and flushes on dismiss so keystrokes don't each become a revision.
-                sink.pushWorkout(c)
-            }
-        }
+        didSet { persist(current, Self.key) }
     }
 
-    /// **Routing** — content edits land on the session's own copy of the workout rather than the saved
-    /// plan revision.
-    ///
-    /// Deliberately neither pure liveness nor pure provenance, because either alone gets this wrong.
-    /// Liveness alone ends too early: it flips the instant the log completes, while `current` still
-    /// holds the session's shape, so a later `flush` would promote edits the athlete had not agreed to.
-    /// Provenance alone never ends: a completed session would stay the editing surface forever, so an
-    /// agent edit after the workout finished would rewrite frozen history and never reach the plan.
-    ///
-    /// So the window runs from `startWorkout()` until the reconciliation **decision is resolved** —
-    /// accepted, declined, or discarded — and `endSessionScope()` closes it by rebasing `current` back
-    /// onto the saved plan, so no later edit can carry un-promoted session content into it.
-    private(set) var isSessionScoped = false
+    /// The one buffered plan edit awaiting `flush()`. Only `edit(.plan)` on a coalescing binding fills
+    /// it, so `flush` never has to ask what `current` happens to hold — during a live session the
+    /// buffer is empty and sheet dismissal writes nothing to the plan by construction.
+    private var pendingPlanEdit: Workout?
 
-    /// **Provenance** — `current` came from a session's own copy. Separate from routing so that a store
-    /// bound to an already-finished session (a completed workout reopened) still cannot silently promote
-    /// that shape through `flush`.
-    private(set) var isSessionDerived = false
+    /// The single lifecycle signal for callers that have no presentation mode of their own (the agent
+    /// tools): a session exists whose reconciliation decision is unresolved. Set by `startWorkout` and
+    /// cleared by accepting, declining, or discarding — never derived from the log, the session's
+    /// status, or the presence of a session workout copy, and never refreshed by `reloadFromPlan`.
+    private(set) var hasUnresolvedSessionDecision = false
 
-    /// True between capturing a reconciliation and resolving it, which is what holds the session scope
-    /// open across completion. No divergence ⇒ nothing to decide ⇒ the scope closes at completion.
-    private var hasPendingReconciliationDecision = false
+    /// The destination for an edit arriving from the agent, which cannot state a scope of its own.
+    private var agentScope: WorkoutEditScope { hasUnresolvedSessionDecision ? .session : .plan }
+
     /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
     /// from `current` (the plan) — logging never mutates the plan.
     private(set) var currentLog: WorkoutLog? {
@@ -74,11 +71,7 @@ final class WorkoutStore {
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
         let discard: () -> Void
-        /// `isSessionScoped` reports whether the session is still the editing surface (it is live);
-        /// `isSessionDerived` reports whether `workout` is the session's own copy rather than the saved
-        /// plan revision. Together they keep un-promoted session shapes out of the plan.
-        let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?,
-                           isSessionScoped: Bool, isSessionDerived: Bool)?
+        let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
     }
     private var sink: PlanSink?
@@ -89,49 +82,46 @@ final class WorkoutStore {
     var makeTodayScheduled: ((Workout) -> PlanSink?)?
 
     func bind(_ sink: PlanSink, coalesceContent: Bool) {
-        clearSessionScope()
+        pendingPlanEdit = nil
         self.sink = sink; self.coalesceContent = coalesceContent
         reloadFromPlan()
     }
-    func unbind() { sink = nil; coalesceContent = false; clearSessionScope() }
+    func unbind() { sink = nil; coalesceContent = false; pendingPlanEdit = nil }
 
-    /// Pull the authoritative workout + session back from the plan (suppressing write-back).
+    /// Pull the authoritative workout + session back from the plan (suppressing log write-back).
     func reloadFromPlan() {
         guard let s = sink?.reload() else { return }
+        pendingPlanEdit = nil
         isSyncing = true
-        isSessionScoped = s.isSessionScoped
-        isSessionDerived = s.isSessionDerived
         current = s.workout
         currentLog = s.log
         currentLogStartedAt = s.startedAt
         isSyncing = false
     }
 
-    /// Push coalesced content edits on demand (the manual editor calls this on dismiss).
+    /// Push the buffered plan edit (the manual editor calls this on dismiss), then clear the buffer.
     ///
-    /// A session-derived workout is never flushed to the plan: its edits belong to the session, and
-    /// promoting them is the completion opt-in's sole privilege. This is the silent path — it fires on
-    /// sheet dismissal with no user intent behind it — so it stays closed for as long as `current` holds
-    /// a session's shape, not merely while the session is the editing surface.
+    /// It reads only the buffer, never `current`. That is the point: this is the silent path — it fires
+    /// on sheet dismissal with no user intent behind it — and a session edit never fills the buffer, so
+    /// there is structurally nothing session-shaped for it to promote.
     func flush() {
-        guard let sink, let c = current, !isSessionDerived else { return }
-        sink.pushWorkout(c)
+        guard let sink, let pending = pendingPlanEdit else { return }
+        pendingPlanEdit = nil
+        sink.pushWorkout(pending)
     }
 
-    private func clearSessionScope() {
-        isSessionScoped = false
-        isSessionDerived = false
-        hasPendingReconciliationDecision = false
-    }
-
-    /// End the session's claim on editing and rebase `current` onto the saved plan revision, so the next
-    /// edit is an honest plan edit that cannot carry un-promoted session content with it.
-    private func endSessionScope() {
-        clearSessionScope()
-        guard let plan = sink?.planWorkout() else { return }
-        isSyncing = true
-        current = plan
-        isSyncing = false
+    /// Adopt an edited workout and write it to the destination the caller named. The payload travels
+    /// with the write; nothing downstream re-reads `current` to decide what or where to push.
+    private func apply(_ workout: Workout, _ scope: WorkoutEditScope) {
+        let changed = workout != current
+        current = workout
+        guard let sink, changed else { return }
+        switch scope {
+        case .session:
+            sink.pushSessionWorkout(workout)
+        case .plan:
+            if coalesceContent { pendingPlanEdit = workout } else { sink.pushWorkout(workout) }
+        }
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -260,10 +250,10 @@ final class WorkoutStore {
     }
 
     /// Add a fully-built planned exercise (from the catalog picker) to a block, tracking recents.
-    func addExercise(_ exercise: PlannedExercise, toBlockID blockID: UUID) {
+    func addExercise(_ exercise: PlannedExercise, toBlockID blockID: UUID, scope: WorkoutEditScope) {
         guard var w = current else { return }
         _ = w.addExercise(exercise, toBlock: blockID)
-        current = w
+        apply(w, scope)
         if let id = exercise.definitionId { noteRecent(id) }
     }
 
@@ -287,21 +277,21 @@ final class WorkoutStore {
 
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
 
-    /// Apply an id-based structural edit to the plan (add/remove/reorder/move/substitute). Write-through
-    /// to the plan (if bound) happens in `current`'s didSet.
-    func edit(_ transform: (inout Workout) -> Void) {
+    /// Apply an id-based structural edit (add/remove/reorder/move/substitute) and write it to the
+    /// destination the caller names — the session's copy while performing, the plan otherwise.
+    func edit(_ scope: WorkoutEditScope, _ transform: (inout Workout) -> Void) {
         guard var w = current else { return }
         transform(&w)
-        current = w
+        apply(w, scope)
     }
 
     /// Replace a planned movement in place. The exercise identity, position, prescription, and
     /// guidance stay intact; only catalog identity and incompatible logging configuration change.
     @discardableResult
-    func replaceExercise(_ exerciseID: UUID, with definition: ExerciseDefinition) -> Bool {
+    func replaceExercise(_ exerciseID: UUID, with definition: ExerciseDefinition, scope: WorkoutEditScope) -> Bool {
         guard var workout = current,
               applyReplacement(definition, to: exerciseID, in: &workout) else { return false }
-        current = workout
+        apply(workout, scope)
         noteRecent(definition.id)
         return true
     }
@@ -316,6 +306,7 @@ final class WorkoutStore {
             currentLogStartedAt = Date()
             currentLog = w.startLog()
         }
+        hasUnresolvedSessionDecision = true
     }
 
     /// Apply an edit to the performed log (log a set, skip/complete, note). Write-through in didSet.
@@ -328,9 +319,6 @@ final class WorkoutStore {
     func completeWorkout() {
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
-        // A session that diverged holds its scope open until the athlete answers the prompt; one that
-        // did not has nothing to decide, so the store returns to editing the plan immediately.
-        if hasPendingReconciliationDecision { isSessionScoped = true } else { endSessionScope() }
     }
 
     // MARK: - Session ⇄ plan reconciliation (mid-workout edits promote to the plan only on opt-in)
@@ -353,12 +341,12 @@ final class WorkoutStore {
 
     /// Capture how this session diverged from the saved plan. Nil when unbound (no plan to promote to)
     /// or when nothing changed — in both cases completion shows no prompt.
+    /// A pure query: it changes no state, so a second call — or a future "what would change?" preview —
+    /// cannot disturb where edits are written.
     func captureSessionReconciliation() -> SessionReconciliation? {
-        hasPendingReconciliationDecision = false
         guard let sink, let plan = sink.planWorkout(), let session = effectiveSessionPlan else { return nil }
         let diff = WorkoutSessionReconciliation.diff(plan: plan, session: session)
         guard diff.hasChanges else { return nil }
-        hasPendingReconciliationDecision = true
         return SessionReconciliation(diff: diff, sessionWorkout: session)
     }
 
@@ -367,22 +355,22 @@ final class WorkoutStore {
     /// plan. A source `WorkoutTemplate` the workout was instantiated from is a separate, immutable
     /// object and is deliberately left untouched.
     func applySessionReconciliation(_ reconciliation: SessionReconciliation) {
+        hasUnresolvedSessionDecision = false
         sink?.pushWorkout(reconciliation.sessionWorkout)
-        endSessionScope()
     }
 
-    /// The athlete kept their original plan. Symmetric with accepting: the decision is resolved, so the
-    /// session stops being the editing surface and `current` rebases onto the untouched plan — otherwise
-    /// the next edit would carry the very content they just declined into it.
+    /// The athlete kept their original plan. Symmetric with accepting, and it changes routing only:
+    /// `current` keeps the shape they actually performed so the completed summary stays honest, while
+    /// nothing can promote that shape, because promotion is `applySessionReconciliation`'s alone.
     func declineSessionReconciliation() {
-        endSessionScope()
+        hasUnresolvedSessionDecision = false
     }
 
     /// True-remove a top-level exercise from the workout. During a live session this edits the session
     /// copy and also purges the exercise's performed record, so no orphaned logged sets survive to be
     /// resurfaced at completion. Before a session it edits the plan as an ordinary structural change.
-    func removeExerciseFromWorkout(_ exerciseID: UUID) {
-        edit { $0.removeExercise(exerciseID) }
+    func removeExerciseFromWorkout(_ exerciseID: UUID, scope: WorkoutEditScope) {
+        edit(scope) { $0.removeExercise(exerciseID) }
         if currentLog != nil {
             editLog { $0.removePerformed(forPlanned: exerciseID) }
         }
@@ -391,10 +379,10 @@ final class WorkoutStore {
     /// True-remove planned sets from an exercise's prescription, purging the matching logged actuals for
     /// the same reason `removeExerciseFromWorkout` does: the log table renders rows from the
     /// prescription, so a surviving actual would be invisible yet still committed to completed history.
-    func removePlannedSets(_ setIDs: [UUID], fromExercise exerciseID: UUID) {
+    func removePlannedSets(_ setIDs: [UUID], fromExercise exerciseID: UUID, scope: WorkoutEditScope) {
         let ids = Set(setIDs)
         guard !ids.isEmpty else { return }
-        edit { workout in
+        edit(scope) { workout in
             workout.updateExercise(exerciseID) { planned in
                 planned.prescription.sets.removeAll { ids.contains($0.id) }
             }
@@ -407,9 +395,9 @@ final class WorkoutStore {
     /// True-remove a whole block, purging the performed record of every exercise it contained so the
     /// same no-orphaned-sets guarantee as `removeExerciseFromWorkout` holds for block deletion.
     /// A workout always keeps at least one block, so deleting the last one leaves an empty default.
-    func removeBlockFromWorkout(_ blockID: UUID) {
+    func removeBlockFromWorkout(_ blockID: UUID, scope: WorkoutEditScope) {
         let removedIDs = current?.blocks.first { $0.id == blockID }?.exercises.map(\.id) ?? []
-        edit { workout in
+        edit(scope) { workout in
             workout.removeBlock(blockID)
             if workout.blocks.isEmpty { workout.blocks.append(WorkoutBlock(name: "", isDefault: true)) }
         }
@@ -431,8 +419,8 @@ final class WorkoutStore {
     }
 
     func discardLog() {
+        hasUnresolvedSessionDecision = false
         guard let sink else {
-            clearSessionScope()
             isSyncing = true
             currentLog = nil
             currentLogStartedAt = nil
@@ -441,8 +429,7 @@ final class WorkoutStore {
         }
         sink.discard()
         // Reload rather than just dropping the log: a discarded session has no workout copy any more, so
-        // the saved plan revision becomes authoritative again and the store stops being session-scoped.
-        clearSessionScope()
+        // the saved plan revision is what the athlete should be looking at and editing again.
         reloadFromPlan()
     }
 
@@ -464,24 +451,23 @@ final class WorkoutStore {
 
     // MARK: - Tool-facing operations (name-resolved)
 
-    /// Replace the workout wholesale. Refused while a session owns the editing surface: the new content
-    /// would land on the session's copy instead of the plan, and its exercise ids would match nothing in
-    /// the log that is still open against the old shape. Returns false so callers can say so out loud.
+    /// Replace the workout wholesale. Refused while a plan-bound session's decision is open: the plan and
+    /// the session copy would disagree, and the new exercise ids would match nothing in the log that is
+    /// still open against the old shape. Returns false so callers can say so out loud. A standalone store
+    /// has no session copy to contradict, so it keeps its long-standing replace-and-clear behavior.
     @discardableResult
     func create(title: String, goal: String?) -> Bool {
-        guard !isSessionScoped else { return false }
+        guard sink == nil || !hasUnresolvedSessionDecision else { return false }
         var w = Workout(title: title, goal: goal)
         w.scheduledDate = Calendar.current.startOfDay(for: .now)
         w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block (hidden until structured)
 
         if sink != nil {
-            clearSessionScope()
-            current = w             // already bound → didSet write-throughs (replaces today's content)
+            apply(w, .plan)         // already bound → replaces today's plan content
             isSyncing = true; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
         } else if let make = makeTodayScheduled, let newSink = make(w) {
             // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
-            clearSessionScope()
-            sink = newSink; coalesceContent = false
+            sink = newSink; coalesceContent = false; pendingPlanEdit = nil
             isSyncing = true; current = w; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
         } else {
             current = w; currentLog = nil; currentLogStartedAt = nil   // standalone (no plan)
@@ -500,7 +486,7 @@ final class WorkoutStore {
     func addBlock(name: String, intent: String?) -> Bool {
         guard var w = current else { return false }
         w.addBlock(name: name, intent: intent)
-        current = w
+        apply(w, agentScope)
         return true
     }
 
@@ -538,7 +524,7 @@ final class WorkoutStore {
             PlannedSet(reps: clampReps(reps), load: clampLoad(load), duration: clampDuration(durationSeconds), distance: clampLoad(distanceMeters))
         }
         _ = w.addExercise(exercise, toBlock: blockID)
-        current = w
+        apply(w, agentScope)
         if let id = exercise.definitionId { noteRecent(id) }
         return .done
     }
@@ -559,7 +545,7 @@ final class WorkoutStore {
         case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
         }
         _ = w.moveExercise(exID, toBlock: blockID)
-        current = w
+        apply(w, agentScope)
         return .done
     }
 
@@ -569,7 +555,7 @@ final class WorkoutStore {
         switch resolveExercise(exercise, in: w) {
         case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
         case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
-        case .one(let id): _ = w.removeExercise(id); current = w; return .done
+        case .one(let id): _ = w.removeExercise(id); apply(w, agentScope); return .done
         }
     }
 
@@ -613,7 +599,7 @@ final class WorkoutStore {
                 return .notFound("I couldn't replace \"\(target.label)\".")
             }
         }
-        current = workout
+        apply(workout, agentScope)
         noteRecent(definition.id)
         return .done
     }
@@ -641,7 +627,7 @@ final class WorkoutStore {
             if let distanceMeters { s.distance = clampLoad(distanceMeters) }
             if let rpe { s.rpe = clampRPE(rpe) }
         }
-        current = w
+        apply(w, agentScope)
         return .done
     }
 
@@ -667,7 +653,7 @@ final class WorkoutStore {
             if let enabled { e.selectedMetrics = MetricType.allCases.filter { enabled.contains($0) } }
             for (metric, unit) in units where metric.displayUnits.contains(unit) { e.displayUnits[metric] = unit }
         }
-        current = w
+        apply(w, agentScope)
         return .done
     }
 
@@ -677,7 +663,8 @@ final class WorkoutStore {
     func setLoggingConfig(
         exerciseID: UUID,
         enabled: [MetricType]?,
-        units: [MetricType: MetricUnit] = [:]
+        units: [MetricType: MetricUnit] = [:],
+        scope: WorkoutEditScope
     ) -> Bool {
         guard var workout = current, let exercise = workout.exercise(exerciseID) else { return false }
         let requested = (enabled ?? []) + Array(units.keys)
@@ -690,7 +677,7 @@ final class WorkoutStore {
                 updated.displayUnits[metric] = unit
             }
         }
-        current = workout
+        apply(workout, scope)
         return true
     }
 
@@ -711,7 +698,7 @@ final class WorkoutStore {
         guard workout.convertChoiceToRequiredGroup(choice.id) else {
             return .notFound("I couldn't update \"\(choice.label)\".")
         }
-        current = workout
+        apply(workout, agentScope)
         return .done
     }
 
@@ -764,7 +751,7 @@ final class WorkoutStore {
             e.prescription.sets[setNumber - 1].values[metric] = canonical
             if !e.selectedMetrics.contains(metric) { e.selectedMetrics = MetricType.allCases.filter { e.selectedMetrics.contains($0) || $0 == metric } }
         }
-        current = w
+        apply(w, agentScope)
         return .done
     }
 
@@ -783,7 +770,7 @@ final class WorkoutStore {
             e.displayUnits[metric] = nil
             for i in e.prescription.sets.indices { e.prescription.sets[i].values[metric] = nil }
         }
-        current = w
+        apply(w, agentScope)
         return .done
     }
 
