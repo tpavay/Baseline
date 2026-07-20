@@ -371,10 +371,20 @@ func swap / reorder / add / duplicate / replace / skip / delete …(…, proposa
 func startSession(_ id: UUID) -> Result<WorkoutSession, PlanError>
 func resumeSession(_ id: UUID) -> Result<WorkoutSession, PlanError>
 func completeSession(_ id: UUID, proposalID: UUID?) -> MutationResult
+// Session-scoped mid-workout editing + the completion promotion decision
+func setSessionWorkout(forScheduled id: UUID, _ workout: Workout)
+func sessionDecisionPending(forScheduled id: UUID) -> Bool
+func resolveSessionDecision(forScheduled id: UUID)
+func resolveAbandonedSessionDecision(forScheduled id: UUID)
 // Append-only history
 func undo() -> MutationResult          // appends an inverse-op version
 func restore(version: UUID) -> MutationResult   // appends a restore version == chosen snapshot
 ```
+
+> This sketch is illustrative design intent, not a mirror of the shipped API, and parts of it have drifted
+> (several members shown here returning `Result`/`MutationResult` return optionals or `SessionCompletion` in
+> code). Read `PlanRepository` in `Baseline/Shared/Services/PlanRepository.swift` for the authoritative
+> declaration and trust it over this block.
 
 - `SwiftDataPlanRepository` implements it; `@Observable @MainActor` `PlanStore` wraps it for SwiftUI and
   publishes the current week + version list.
