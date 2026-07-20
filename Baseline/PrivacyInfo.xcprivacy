@@ -21,6 +21,9 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Every entry below is Linked = true: Firestore documents are keyed on users/{uid} and every
+	     model call runs against an authenticated session, so everything transmitted is tied to the
+	     athlete's account identity. Nothing is used for tracking; no ad or analytics SDK ships. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 		<dict>
