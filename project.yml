@@ -56,7 +56,12 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        NSHealthShareUsageDescription: "Baseline reads your workouts, sleep, and heart data to understand your recovery and training context."
+        NSHealthShareUsageDescription: "Baseline reads your sleep, heart rate, workouts, daily activity, and your age and biological sex from Apple Health so it can judge your recovery and set your heart-rate zones before it recommends training."
+        # Baseline is read-only against Health (`HealthService` asks with `toShare: []`), but the
+        # `com.apple.developer.healthkit` entitlement cannot be scoped to reads, so App Store
+        # validation rejects the binary without an update purpose string. Kept honest: the string
+        # is never shown while nothing is written. Revise it if Baseline ever does write.
+        NSHealthUpdateUsageDescription: "Baseline does not save anything to Apple Health today; it only reads. It would ask for this only if you later choose to write a workout you completed in Baseline back to Health, and nothing else would be saved."
         NSBluetoothAlwaysUsageDescription: "Baseline connects to your heart-rate strap to take your morning HRV reading."
         NSCameraUsageDescription: "Baseline uses the camera and flash to read your pulse from your fingertip for your morning HRV reading."
         CFBundleURLTypes:
