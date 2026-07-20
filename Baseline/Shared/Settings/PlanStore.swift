@@ -67,6 +67,8 @@ final class PlanStore {
     }
     func discard(_ id: UUID) { repo.discardSession(forScheduled: id); reload() }
     func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); reload() }
+    /// Store the session's own copy of the planned workout (a session-scoped mid-workout edit; no revision).
+    func setSessionWorkout(_ id: UUID, _ workout: Workout) { repo.setSessionWorkout(forScheduled: id, workout) }
 
     // MARK: Mutations & versioning (Slice 2) — every schedule change is versioned
 
@@ -122,6 +124,7 @@ final class PlanStore {
     func sink(forScheduled id: UUID) -> WorkoutStore.PlanSink {
         WorkoutStore.PlanSink(
             pushWorkout: { [weak self] w in self?.updateWorkout(id) { $0 = w } },
+            pushSessionWorkout: { [weak self] w in self?.setSessionWorkout(id, w) },
             pushLog: { [weak self] l in self?.updateSessionLog(id) { $0 = l } },
             start: { [weak self] in _ = self?.start(id) },
             complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
@@ -132,8 +135,11 @@ final class PlanStore {
                 guard session?.status != .discarded else {
                     return (sw.workout, nil, nil)
                 }
-                return (sw.workout, session?.log, session?.startedAt)
-            })
+                // A live/completed session carries its own (possibly edited) workout copy; fall back to
+                // the saved plan revision when the session hasn't been edited.
+                return (session?.workout ?? sw.workout, session?.log, session?.startedAt)
+            },
+            planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
     }
 
     /// Create a brand-new scheduled workout for today (used when the agent builds one and nothing is

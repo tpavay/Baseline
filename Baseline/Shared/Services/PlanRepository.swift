@@ -35,6 +35,10 @@ protocol PlanRepository {
     @discardableResult func startSession(forScheduled id: UUID, now: Date) -> WorkoutSession?
     @discardableResult func resumeSession(forScheduled id: UUID) -> WorkoutSession?
     func updateSessionLog(forScheduled id: UUID, _ transform: (inout WorkoutLog) -> Void)
+    /// Store the session's own copy of the planned workout (a mid-workout structural/metric edit). This
+    /// is session-scoped only — it never creates a plan revision. Promotion to the plan happens at
+    /// completion via the ordinary `updateWorkout` revision path when the athlete opts in.
+    func setSessionWorkout(forScheduled id: UUID, _ workout: Workout)
     func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date) -> SessionCompletion
     func discardSession(forScheduled id: UUID)
 
@@ -205,9 +209,17 @@ final class SwiftDataPlanRepository: PlanRepository {
         sd.logJSON = PlanCoding.data(log); save()
     }
 
+    func setSessionWorkout(forScheduled id: UUID, _ workout: Workout) {
+        guard let sd = latestSession(id) else { return }
+        sd.sessionWorkoutJSON = PlanCoding.data(workout); save()
+    }
+
     func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date = Date()) -> SessionCompletion {
         guard let sd = latestSession(id), let session = map(sd), let sw = scheduledWorkout(id) else { return .noActiveSession }
-        let open = Self.openWork(plan: sw.workout, log: session.log)
+        // The session may have been edited mid-workout; the athlete performed against that copy, so open
+        // work and history indexing resolve against it — not the untouched saved plan.
+        let effectivePlan = session.workout ?? sw.workout
+        let open = Self.openWork(plan: effectivePlan, log: session.log)
         if open.sets > 0 && !acknowledgingOpenWork { return .unloggedWork(sets: open.sets, exercises: open.exercises) }
 
         var completedLog = session.log
@@ -219,7 +231,7 @@ final class SwiftDataPlanRepository: PlanRepository {
             finishedAt: now,
             logJSON: PlanCoding.data(completedLog)
         ))
-        indexCompletedExercises(completed, plan: sw)
+        indexCompletedExercises(completed, plan: sw, resolving: effectivePlan)
         sd.logJSON = PlanCoding.data(completedLog)
         sd.statusRaw = SessionStatus.completed.rawValue
         save()
@@ -525,10 +537,13 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     /// Write one normalized `SDCompletedExercise` per performed exercise so history/PRs/previous never
     /// decode a full log blob. `exerciseInstanceID` is the stable per-exercise identity.
-    private func indexCompletedExercises(_ completed: CompletedWorkoutLog, plan sw: ScheduledWorkout) {
+    private func indexCompletedExercises(_ completed: CompletedWorkoutLog, plan sw: ScheduledWorkout, resolving effectivePlan: Workout) {
         for perf in completed.log.exercises {
             let instanceID = perf.plannedExerciseID ?? perf.id
-            let def = perf.plannedExerciseID.flatMap { sw.workout.exercise($0)?.definitionId }
+            // Resolve identity against the effective session plan so an exercise added or replaced
+            // mid-workout keeps its catalog identity in history even if the athlete declines to update
+            // the saved plan at completion.
+            let def = perf.plannedExerciseID.flatMap { effectivePlan.exercise($0)?.definitionId }
             context.insert(SDCompletedExercise(
                 completedLogID: completed.id, date: completed.finishedAt, programID: sw.programID,
                 workoutTitle: sw.workout.title, exerciseInstanceID: instanceID, exerciseDefinitionID: def,
@@ -561,7 +576,8 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func map(_ sd: SDWorkoutSession) -> WorkoutSession? {
         guard let log = PlanCoding.value(WorkoutLog.self, sd.logJSON) else { return nil }
         return WorkoutSession(id: sd.id, scheduledWorkoutID: sd.scheduledWorkoutID, startedAt: sd.startedAt,
-                              status: SessionStatus(rawValue: sd.statusRaw) ?? .active, log: log)
+                              status: SessionStatus(rawValue: sd.statusRaw) ?? .active, log: log,
+                              workout: PlanCoding.value(Workout.self, sd.sessionWorkoutJSON))
     }
 
     private func map(_ sd: SDCompletedLog) -> CompletedWorkoutLog? {

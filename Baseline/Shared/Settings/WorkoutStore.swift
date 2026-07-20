@@ -14,11 +14,22 @@ final class WorkoutStore {
     private(set) var current: Workout? {
         didSet {
             persist(current, Self.key)
-            // Bound to a Plan scheduled workout → write content through (a new revision). Coalesced for
-            // the manual editor (flush on dismiss, no keystroke revisions); immediate for the agent.
-            if let sink, !coalesceContent, !isSyncing, let c = current, c != oldValue { sink.pushWorkout(c) }
+            guard let sink, !isSyncing, let c = current, c != oldValue else { return }
+            if isSessionActive {
+                // Mid-workout edits are session-scoped: they update the live session copy only, leaving the
+                // saved scheduled/template workout untouched until completion reconciliation opts in.
+                sink.pushSessionWorkout(c)
+            } else if !coalesceContent {
+                // Not in a live session → ordinary plan editing. Immediate for the agent; the manual editor
+                // coalesces and flushes on dismiss so keystrokes don't each become a revision.
+                sink.pushWorkout(c)
+            }
         }
     }
+
+    /// True while a started, not-yet-complete performed log exists — the window in which structural and
+    /// metric edits apply to the session rather than rewriting the saved plan.
+    var isSessionActive: Bool { currentLog != nil && currentLog?.isComplete != true }
     /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
     /// from `current` (the plan) — logging never mutates the plan.
     private(set) var currentLog: WorkoutLog? {
@@ -38,11 +49,13 @@ final class WorkoutStore {
     /// ad-hoc), which behaves exactly as before.
     struct PlanSink {
         let pushWorkout: (Workout) -> Void            // edit content → new immutable revision
+        let pushSessionWorkout: (Workout) -> Void     // mid-workout edit → session copy only (no revision)
         let pushLog: (WorkoutLog) -> Void             // log a set → the session log
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
         let discard: () -> Void
         let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
+        let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
     }
     private var sink: PlanSink?
     private var coalesceContent = false
@@ -67,8 +80,12 @@ final class WorkoutStore {
         isSyncing = false
     }
 
-    /// Push coalesced content edits to the plan on demand (the manual editor calls this on dismiss).
-    func flush() { if let sink, let c = current { sink.pushWorkout(c) } }
+    /// Push coalesced content edits on demand (the manual editor calls this on dismiss). Session-aware:
+    /// during a live session the edits belong to the session copy, not a new plan revision.
+    func flush() {
+        guard let sink, let c = current else { return }
+        if isSessionActive { sink.pushSessionWorkout(c) } else { sink.pushWorkout(c) }
+    }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
     /// *future* instances, so "use miles for Stationary Bike from now on" doesn't touch today's.
@@ -264,6 +281,47 @@ final class WorkoutStore {
     func completeWorkout() {
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
+    }
+
+    // MARK: - Session ⇄ plan reconciliation (mid-workout edits promote to the plan only on opt-in)
+
+    /// The workout as the athlete shaped it this session — the live copy with top-level log
+    /// substitutions folded in. Nil only when there is no current workout at all.
+    private var effectiveSessionPlan: Workout? {
+        guard let current, let log = currentLog else { return current }
+        return WorkoutSessionReconciliation.effectiveSessionPlan(base: current, log: log)
+    }
+
+    /// Differences between the saved plan and the session as performed — drives the completion prompt.
+    /// Empty when unbound (no plan to promote to) or when nothing changed, so the prompt stays hidden.
+    var sessionPlanDiff: WorkoutSessionDiff {
+        guard let sink, let plan = sink.planWorkout(), let session = effectiveSessionPlan else {
+            return WorkoutSessionDiff(changes: [])
+        }
+        return WorkoutSessionReconciliation.diff(plan: plan, session: session)
+    }
+
+    /// Promote the session's edits to the saved plan/template as a new revision — the completion
+    /// "Update template" opt-in. No-op when unbound or nothing changed.
+    func reconcileSessionToPlan() {
+        guard let sink, let session = effectiveSessionPlan, sessionPlanDiff.hasChanges else { return }
+        sink.pushWorkout(session)
+    }
+
+    /// True-remove a top-level exercise from the workout. During a live session this edits the session
+    /// copy and also purges the exercise's performed record, so no orphaned logged sets survive to be
+    /// resurfaced at completion. Before a session it edits the plan as an ordinary structural change.
+    func removeExerciseFromWorkout(_ exerciseID: UUID) {
+        edit { $0.removeExercise(exerciseID) }
+        if currentLog != nil {
+            editLog { $0.removePerformed(forPlanned: exerciseID) }
+        }
+    }
+
+    /// Whether a top-level exercise has real logged work that a true-remove would discard — the signal
+    /// to confirm before removing.
+    func hasLoggedWork(forExercise exerciseID: UUID) -> Bool {
+        currentLog?.hasLoggedWork(forPlanned: exerciseID) ?? false
     }
     func discardLog() {
         sink?.discard()

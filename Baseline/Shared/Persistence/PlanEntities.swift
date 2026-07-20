@@ -93,10 +93,17 @@ import SwiftData
     var startedAt: Date = Date.distantPast
     var statusRaw: String = SessionStatus.active.rawValue
     var logJSON: Data = Data()
+    /// The session's own copy of the planned `Workout`, encoded to JSON — present only once the athlete
+    /// makes a mid-workout structural/metric edit. Nil ⇒ the session inherits the scheduled workout's
+    /// current revision unchanged. This decouples in-workout edits from the saved plan until completion
+    /// reconciliation opts in. Optional with a nil default, so it is a lightweight SwiftData migration
+    /// and CloudKit-safe (matches the entity conventions in this file).
+    var sessionWorkoutJSON: Data?
     init(id: UUID = UUID(), scheduledWorkoutID: UUID = UUID(), startedAt: Date = Date.distantPast,
-         statusRaw: String = SessionStatus.active.rawValue, logJSON: Data = Data()) {
+         statusRaw: String = SessionStatus.active.rawValue, logJSON: Data = Data(),
+         sessionWorkoutJSON: Data? = nil) {
         self.id = id; self.scheduledWorkoutID = scheduledWorkoutID; self.startedAt = startedAt
-        self.statusRaw = statusRaw; self.logJSON = logJSON
+        self.statusRaw = statusRaw; self.logJSON = logJSON; self.sessionWorkoutJSON = sessionWorkoutJSON
     }
 }
 
