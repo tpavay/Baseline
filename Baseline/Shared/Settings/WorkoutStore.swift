@@ -15,14 +15,14 @@ final class WorkoutStore {
         didSet {
             persist(current, Self.key)
             guard let sink, !isSyncing, let c = current, c != oldValue else { return }
-            // Immediate for the agent; the manual editor coalesces and flushes (on dismiss, and always
-            // before completion) so keystrokes don't each become a persisted write.
-            guard !coalesceContent else { return }
-            if isSessionActive {
+            if isSessionScoped {
                 // Mid-workout edits are session-scoped: they update the live session copy only, leaving the
-                // saved scheduled workout untouched until completion reconciliation opts in.
+                // saved scheduled workout untouched until completion reconciliation opts in. Never
+                // coalesced — an abandoned or force-quit session must still reload with its edits intact.
                 sink.pushSessionWorkout(c)
-            } else {
+            } else if !coalesceContent {
+                // Not session-scoped → ordinary plan editing. Immediate for the agent; the manual editor
+                // coalesces and flushes on dismiss so keystrokes don't each become a revision.
                 sink.pushWorkout(c)
             }
         }
@@ -31,6 +31,16 @@ final class WorkoutStore {
     /// True while a started, not-yet-complete performed log exists — the window in which structural and
     /// metric edits apply to the session rather than rewriting the saved plan.
     var isSessionActive: Bool { currentLog != nil && currentLog?.isComplete != true }
+
+    /// Whether `current` is the **session's** copy of the workout rather than the saved plan revision.
+    ///
+    /// This is provenance, not liveness: it is reported by the binding when the workout is loaded and
+    /// stays true after the session completes, because a completed session's workout is still a session
+    /// shape. Nothing but `applySessionReconciliation` may write such a shape back to the plan, so every
+    /// other write-through path (`current`'s didSet, `flush`) consults this rather than `isSessionActive`
+    /// — which flips the instant the log completes and would let a later flush promote edits the athlete
+    /// declined.
+    private(set) var isSessionScoped = false
     /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
     /// from `current` (the plan) — logging never mutates the plan.
     private(set) var currentLog: WorkoutLog? {
@@ -55,7 +65,9 @@ final class WorkoutStore {
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
         let discard: () -> Void
-        let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
+        /// `isSessionScoped` reports whether `workout` came from the session's own copy rather than the
+        /// saved plan revision — the provenance that keeps session shapes out of the plan.
+        let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?, isSessionScoped: Bool)?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
     }
     private var sink: PlanSink?
@@ -69,23 +81,26 @@ final class WorkoutStore {
         self.sink = sink; self.coalesceContent = coalesceContent
         reloadFromPlan()
     }
-    func unbind() { sink = nil; coalesceContent = false }
+    func unbind() { sink = nil; coalesceContent = false; isSessionScoped = false }
 
     /// Pull the authoritative workout + session back from the plan (suppressing write-back).
     func reloadFromPlan() {
         guard let s = sink?.reload() else { return }
         isSyncing = true
+        isSessionScoped = s.isSessionScoped
         current = s.workout
         currentLog = s.log
         currentLogStartedAt = s.startedAt
         isSyncing = false
     }
 
-    /// Push coalesced content edits on demand (the manual editor calls this on dismiss). Session-aware:
-    /// during a live session the edits belong to the session copy, not a new plan revision.
+    /// Push coalesced content edits on demand (the manual editor calls this on dismiss).
+    ///
+    /// A session-scoped workout is never flushed to the plan: its edits are already written through to
+    /// the session copy as they happen, and promoting them is the completion opt-in's sole privilege.
     func flush() {
-        guard let sink, let c = current else { return }
-        if isSessionActive { sink.pushSessionWorkout(c) } else { sink.pushWorkout(c) }
+        guard let sink, let c = current, !isSessionScoped else { return }
+        sink.pushWorkout(c)
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -280,9 +295,6 @@ final class WorkoutStore {
     }
 
     func completeWorkout() {
-        // Any coalesced edit must reach the session before it is frozen, or the athlete's last change
-        // would be dropped on completion. Uncoalesced stores have already written through.
-        if coalesceContent { flush() }
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
     }
@@ -375,11 +387,17 @@ final class WorkoutStore {
     }
 
     func discardLog() {
-        sink?.discard()
-        isSyncing = true
-        currentLog = nil
-        currentLogStartedAt = nil
-        isSyncing = false
+        guard let sink else {
+            isSyncing = true
+            currentLog = nil
+            currentLogStartedAt = nil
+            isSyncing = false
+            return
+        }
+        sink.discard()
+        // Reload rather than just dropping the log: a discarded session has no workout copy any more, so
+        // the saved plan revision becomes authoritative again and the store stops being session-scoped.
+        reloadFromPlan()
     }
 
     /// Result of a name-resolved edit — so the tool layer asks the athlete to disambiguate (exactly

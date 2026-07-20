@@ -132,12 +132,14 @@ final class PlanStore {
             reload: { [weak self] in
                 guard let self, let sw = self.scheduledWorkout(id) else { return nil }
                 let session = self.session(for: id)
-                guard session?.status != .discarded else {
-                    return (sw.workout, nil, nil)
+                guard let session, session.status != .discarded else {
+                    return (sw.workout, nil, nil, false)
                 }
                 // A live/completed session carries its own (possibly edited) workout copy; fall back to
-                // the saved plan revision when the session hasn't been edited.
-                return (session?.workout ?? sw.workout, session?.log, session?.startedAt)
+                // the saved plan revision when the session hasn't been edited. Either way the store is
+                // session-scoped for as long as that session exists, so its shape never reaches the plan
+                // except through the completion opt-in.
+                return (session.workout ?? sw.workout, session.log, session.startedAt, true)
             },
             planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
     }

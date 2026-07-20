@@ -326,31 +326,89 @@ struct WorkoutSessionEditingTests {
         #expect(plan.completed(for: id)?.log.performed(forPlanned: planned.id)?.setLogs.count == 1)
     }
 
-    // MARK: - Coalesced editing
+    // MARK: - The plan-tab binding (content edits coalesce; session edits never do)
 
-    /// The Plan tab binds this store with `coalesceContent: true` so a keystroke doesn't become a write.
-    /// Coalescing must never cost the athlete an edit: completion has to see the latest shape.
-    @Test func aCoalescedSessionEditIsStillPresentAtCompletion() {
+    /// The scheduled workout as the Plan tab opens it: coalesced content edits, flushed on dismiss.
+    private func planTabSession(
+        _ w: Workout? = nil
+    ) -> (plan: PlanStore, store: WorkoutStore, scheduledID: UUID) {
         let plan = makePlan()
         let program = plan.addProgram(Program(name: "P", createdAt: Date()))
         plan.addScheduled(ScheduledWorkout(programID: program.id, date: Date(), origin: .userCreated,
-                                           workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()))
+                                           workoutID: UUID(), workoutRevisionID: UUID(),
+                                           workout: w ?? workout()))
         let id = plan.todayScheduled()!.id
         let store = buffer()
         store.bind(plan.sink(forScheduled: id), coalesceContent: true)
+        return (plan, store, id)
+    }
+
+    @Test func aSessionEditIsPersistedImmediatelyEvenOnTheCoalescingBinding() {
+        // Coalescing is a plan-editing optimisation only. A session edit has to hit the session copy as
+        // it happens, or a force-quit mid-workout loses every add, removal, and reorder — while the log,
+        // which is never coalesced, keeps the performed rows that belonged to them.
+        let (plan, store, id) = planTabSession()
         store.startWorkout()
 
         store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
 
-        // Coalesced: the edit is held in memory rather than written through on every keystroke.
-        #expect(plan.session(for: id)?.workout == nil)
-        // ...but it is still the session the athlete performed, so it is captured and committed.
-        let reconciliation = store.captureSessionReconciliation()
-        #expect(reconciliation?.diff.changes.map(\.kind) == [.added])
-
-        store.completeWorkout()
-
         #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+        // A fresh store — the app relaunching mid-session — reads the edit straight back.
+        let reopened = buffer()
+        reopened.bind(plan.sink(forScheduled: id), coalesceContent: true)
+        #expect(reopened.current?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
+    @Test func preSessionEditingStillCoalescesAndFlushesToThePlan() {
+        let (plan, store, id) = planTabSession()
+
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+
+        // Held until the sheet dismisses, exactly as before — no session is involved.
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.count == 1)
+        store.flush()
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
+    /// The hard invariant: `applySessionReconciliation` is the only path that may promote a session shape
+    /// into the plan. Provenance has to outlive the log, because `flush` fires after completion.
+    @Test func decliningReconciliationThenFlushingLeavesThePlanUntouched() {
+        let (plan, store, id) = planTabSession()
+        store.startWorkout()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+
+        _ = store.captureSessionReconciliation()   // the athlete tapped "Keep Original"
+        store.completeWorkout()
+        store.flush()                              // ...and then dismissed the sheet
+
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
+    }
+
+    @Test func acceptingReconciliationThenFlushingPromotesExactlyOnce() {
+        let (plan, store, id) = planTabSession()
+        store.startWorkout()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+
+        let reconciliation = store.captureSessionReconciliation()!
+        store.completeWorkout()
+        store.applySessionReconciliation(reconciliation)
+        store.flush()
+
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
+    @Test func discardingASessionReturnsTheStoreToTheSavedPlan() {
+        let (plan, store, id) = planTabSession()
+        store.startWorkout()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+
+        store.discardLog()
+
+        // The session's shape went with the session; later edits are ordinary plan edits again.
+        #expect(store.current?.allExercises.map(\.exerciseName) == ["Squat"])
+        store.edit { $0.rename("Renamed") }
+        store.flush()
+        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
     }
 
     // MARK: - The finish flow
