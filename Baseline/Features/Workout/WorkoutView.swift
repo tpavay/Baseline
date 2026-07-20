@@ -85,7 +85,7 @@ struct WorkoutView: View {
             presenting: finishing.pendingReconciliation
         ) { reconciliation in
             Button("Update Plan") { finishing.apply(reconciliation, to: store) }
-            Button("Keep Original", role: .cancel) { finishing.pendingReconciliation = nil }
+            Button("Keep Original", role: .cancel) { finishing.decline(store) }
         } message: { reconciliation in
             Text("We noticed changes from your plan:\n\(reconciliation.diff.summaryLine)")
         }
@@ -93,7 +93,7 @@ struct WorkoutView: View {
             Button("Discard Log", role: .destructive) { store.discardLog() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The workout template will remain, but all actual values in this log will be removed.")
+            Text("Everything you logged will be removed, along with any exercises you added, removed, replaced, or reordered during this workout. Your saved plan stays as it was.")
         }
         .confirmationDialog(
             "A template named \"\(templateName)\" already exists",

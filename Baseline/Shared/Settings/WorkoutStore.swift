@@ -28,19 +28,28 @@ final class WorkoutStore {
         }
     }
 
-    /// True while a started, not-yet-complete performed log exists — the window in which structural and
-    /// metric edits apply to the session rather than rewriting the saved plan.
-    var isSessionActive: Bool { currentLog != nil && currentLog?.isComplete != true }
-
-    /// Whether `current` is the **session's** copy of the workout rather than the saved plan revision.
+    /// **Routing** — content edits land on the session's own copy of the workout rather than the saved
+    /// plan revision.
     ///
-    /// This is provenance, not liveness: it is reported by the binding when the workout is loaded and
-    /// stays true after the session completes, because a completed session's workout is still a session
-    /// shape. Nothing but `applySessionReconciliation` may write such a shape back to the plan, so every
-    /// other write-through path (`current`'s didSet, `flush`) consults this rather than `isSessionActive`
-    /// — which flips the instant the log completes and would let a later flush promote edits the athlete
-    /// declined.
+    /// Deliberately neither pure liveness nor pure provenance, because either alone gets this wrong.
+    /// Liveness alone ends too early: it flips the instant the log completes, while `current` still
+    /// holds the session's shape, so a later `flush` would promote edits the athlete had not agreed to.
+    /// Provenance alone never ends: a completed session would stay the editing surface forever, so an
+    /// agent edit after the workout finished would rewrite frozen history and never reach the plan.
+    ///
+    /// So the window runs from `startWorkout()` until the reconciliation **decision is resolved** —
+    /// accepted, declined, or discarded — and `endSessionScope()` closes it by rebasing `current` back
+    /// onto the saved plan, so no later edit can carry un-promoted session content into it.
     private(set) var isSessionScoped = false
+
+    /// **Provenance** — `current` came from a session's own copy. Separate from routing so that a store
+    /// bound to an already-finished session (a completed workout reopened) still cannot silently promote
+    /// that shape through `flush`.
+    private(set) var isSessionDerived = false
+
+    /// True between capturing a reconciliation and resolving it, which is what holds the session scope
+    /// open across completion. No divergence ⇒ nothing to decide ⇒ the scope closes at completion.
+    private var hasPendingReconciliationDecision = false
     /// The in-progress performed log (actual sets, skips, notes) once a workout is started. Distinct
     /// from `current` (the plan) — logging never mutates the plan.
     private(set) var currentLog: WorkoutLog? {
@@ -65,9 +74,11 @@ final class WorkoutStore {
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
         let discard: () -> Void
-        /// `isSessionScoped` reports whether `workout` came from the session's own copy rather than the
-        /// saved plan revision — the provenance that keeps session shapes out of the plan.
-        let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?, isSessionScoped: Bool)?
+        /// `isSessionScoped` reports whether the session is still the editing surface (it is live);
+        /// `isSessionDerived` reports whether `workout` is the session's own copy rather than the saved
+        /// plan revision. Together they keep un-promoted session shapes out of the plan.
+        let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?,
+                           isSessionScoped: Bool, isSessionDerived: Bool)?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
     }
     private var sink: PlanSink?
@@ -78,16 +89,18 @@ final class WorkoutStore {
     var makeTodayScheduled: ((Workout) -> PlanSink?)?
 
     func bind(_ sink: PlanSink, coalesceContent: Bool) {
+        clearSessionScope()
         self.sink = sink; self.coalesceContent = coalesceContent
         reloadFromPlan()
     }
-    func unbind() { sink = nil; coalesceContent = false; isSessionScoped = false }
+    func unbind() { sink = nil; coalesceContent = false; clearSessionScope() }
 
     /// Pull the authoritative workout + session back from the plan (suppressing write-back).
     func reloadFromPlan() {
         guard let s = sink?.reload() else { return }
         isSyncing = true
         isSessionScoped = s.isSessionScoped
+        isSessionDerived = s.isSessionDerived
         current = s.workout
         currentLog = s.log
         currentLogStartedAt = s.startedAt
@@ -96,11 +109,29 @@ final class WorkoutStore {
 
     /// Push coalesced content edits on demand (the manual editor calls this on dismiss).
     ///
-    /// A session-scoped workout is never flushed to the plan: its edits are already written through to
-    /// the session copy as they happen, and promoting them is the completion opt-in's sole privilege.
+    /// A session-derived workout is never flushed to the plan: its edits belong to the session, and
+    /// promoting them is the completion opt-in's sole privilege. This is the silent path — it fires on
+    /// sheet dismissal with no user intent behind it — so it stays closed for as long as `current` holds
+    /// a session's shape, not merely while the session is the editing surface.
     func flush() {
-        guard let sink, let c = current, !isSessionScoped else { return }
+        guard let sink, let c = current, !isSessionDerived else { return }
         sink.pushWorkout(c)
+    }
+
+    private func clearSessionScope() {
+        isSessionScoped = false
+        isSessionDerived = false
+        hasPendingReconciliationDecision = false
+    }
+
+    /// End the session's claim on editing and rebase `current` onto the saved plan revision, so the next
+    /// edit is an honest plan edit that cannot carry un-promoted session content with it.
+    private func endSessionScope() {
+        clearSessionScope()
+        guard let plan = sink?.planWorkout() else { return }
+        isSyncing = true
+        current = plan
+        isSyncing = false
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -297,6 +328,9 @@ final class WorkoutStore {
     func completeWorkout() {
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
+        // A session that diverged holds its scope open until the athlete answers the prompt; one that
+        // did not has nothing to decide, so the store returns to editing the plan immediately.
+        if hasPendingReconciliationDecision { isSessionScoped = true } else { endSessionScope() }
     }
 
     // MARK: - Session ⇄ plan reconciliation (mid-workout edits promote to the plan only on opt-in)
@@ -320,9 +354,11 @@ final class WorkoutStore {
     /// Capture how this session diverged from the saved plan. Nil when unbound (no plan to promote to)
     /// or when nothing changed — in both cases completion shows no prompt.
     func captureSessionReconciliation() -> SessionReconciliation? {
+        hasPendingReconciliationDecision = false
         guard let sink, let plan = sink.planWorkout(), let session = effectiveSessionPlan else { return nil }
         let diff = WorkoutSessionReconciliation.diff(plan: plan, session: session)
         guard diff.hasChanges else { return nil }
+        hasPendingReconciliationDecision = true
         return SessionReconciliation(diff: diff, sessionWorkout: session)
     }
 
@@ -332,6 +368,14 @@ final class WorkoutStore {
     /// object and is deliberately left untouched.
     func applySessionReconciliation(_ reconciliation: SessionReconciliation) {
         sink?.pushWorkout(reconciliation.sessionWorkout)
+        endSessionScope()
+    }
+
+    /// The athlete kept their original plan. Symmetric with accepting: the decision is resolved, so the
+    /// session stops being the editing surface and `current` rebases onto the untouched plan — otherwise
+    /// the next edit would carry the very content they just declined into it.
+    func declineSessionReconciliation() {
+        endSessionScope()
     }
 
     /// True-remove a top-level exercise from the workout. During a live session this edits the session
@@ -388,6 +432,7 @@ final class WorkoutStore {
 
     func discardLog() {
         guard let sink else {
+            clearSessionScope()
             isSyncing = true
             currentLog = nil
             currentLogStartedAt = nil
@@ -397,6 +442,7 @@ final class WorkoutStore {
         sink.discard()
         // Reload rather than just dropping the log: a discarded session has no workout copy any more, so
         // the saved plan revision becomes authoritative again and the store stops being session-scoped.
+        clearSessionScope()
         reloadFromPlan()
     }
 
@@ -418,21 +464,29 @@ final class WorkoutStore {
 
     // MARK: - Tool-facing operations (name-resolved)
 
-    func create(title: String, goal: String?) {
+    /// Replace the workout wholesale. Refused while a session owns the editing surface: the new content
+    /// would land on the session's copy instead of the plan, and its exercise ids would match nothing in
+    /// the log that is still open against the old shape. Returns false so callers can say so out loud.
+    @discardableResult
+    func create(title: String, goal: String?) -> Bool {
+        guard !isSessionScoped else { return false }
         var w = Workout(title: title, goal: goal)
         w.scheduledDate = Calendar.current.startOfDay(for: .now)
         w.blocks = [WorkoutBlock(name: "", isDefault: true)]   // implicit default block (hidden until structured)
 
         if sink != nil {
+            clearSessionScope()
             current = w             // already bound → didSet write-throughs (replaces today's content)
             isSyncing = true; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
         } else if let make = makeTodayScheduled, let newSink = make(w) {
             // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
+            clearSessionScope()
             sink = newSink; coalesceContent = false
             isSyncing = true; current = w; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
         } else {
             current = w; currentLog = nil; currentLogStartedAt = nil   // standalone (no plan)
         }
+        return true
     }
 
     // Numeric guards at the tool boundary — the model can propose anything; reps/load/duration can't

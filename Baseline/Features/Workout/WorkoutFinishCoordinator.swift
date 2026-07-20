@@ -32,4 +32,11 @@ final class WorkoutFinishCoordinator {
         store.applySessionReconciliation(reconciliation)
         pendingReconciliation = nil
     }
+
+    /// The athlete kept their original plan. Told to the store explicitly rather than left as the mere
+    /// absence of an accept, so the session stops being the editing surface either way.
+    func decline(_ store: WorkoutStore) {
+        store.declineSessionReconciliation()
+        pendingReconciliation = nil
+    }
 }

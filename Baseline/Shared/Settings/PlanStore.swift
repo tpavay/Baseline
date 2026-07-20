@@ -133,13 +133,14 @@ final class PlanStore {
                 guard let self, let sw = self.scheduledWorkout(id) else { return nil }
                 let session = self.session(for: id)
                 guard let session, session.status != .discarded else {
-                    return (sw.workout, nil, nil, false)
+                    return (sw.workout, nil, nil, false, false)
                 }
                 // A live/completed session carries its own (possibly edited) workout copy; fall back to
-                // the saved plan revision when the session hasn't been edited. Either way the store is
-                // session-scoped for as long as that session exists, so its shape never reaches the plan
-                // except through the completion opt-in.
-                return (session.workout ?? sw.workout, session.log, session.startedAt, true)
+                // the saved plan revision when the session hasn't been edited. Only a *live* session owns
+                // the editing surface, but the copy stays session-derived after completion so it can
+                // never be flushed into the plan behind the athlete's back.
+                return (session.workout ?? sw.workout, session.log, session.startedAt,
+                        session.status == .active, session.workout != nil)
             },
             planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
     }

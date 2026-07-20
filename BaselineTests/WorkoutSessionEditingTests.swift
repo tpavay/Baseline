@@ -397,6 +397,57 @@ struct WorkoutSessionEditingTests {
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
     }
 
+    /// The session owns the editing surface only until the decision is settled. After that the store
+    /// edits the plan again — and must not smuggle the declined session content along with the edit.
+    @Test func anEditAfterDecliningReachesThePlanWithoutTheDeclinedChanges() {
+        let (plan, store, id) = startedSession()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        _ = store.captureSessionReconciliation()
+        store.completeWorkout()
+
+        store.declineSessionReconciliation()
+        store.edit { $0.rename("Renamed") }
+
+        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat"])
+    }
+
+    @Test func anEditAfterAcceptingReachesThePlanOnTopOfThePromotedShape() {
+        let (plan, store, id) = startedSession()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        let reconciliation = store.captureSessionReconciliation()!
+        store.completeWorkout()
+
+        store.applySessionReconciliation(reconciliation)
+        store.edit { $0.rename("Renamed") }
+
+        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
+    @Test func anEditAfterAnUneditedSessionReachesThePlan() {
+        // Nothing diverged ⇒ no prompt ⇒ nothing to decide, so the scope closes at completion rather
+        // than leaving the finished session as a permanent editing surface.
+        let (plan, store, id) = startedSession()
+        #expect(store.captureSessionReconciliation() == nil)
+        store.completeWorkout()
+
+        store.edit { $0.rename("Renamed") }
+
+        #expect(plan.scheduledWorkout(id)?.workout.title == "Renamed")
+    }
+
+    @Test func replacingTheWorkoutIsRefusedWhileASessionOwnsIt() {
+        let (plan, store, id) = startedSession()
+
+        #expect(store.create(title: "Something else", goal: nil) == false)
+
+        // Neither side was touched, and the log still matches the workout it was started against.
+        #expect(store.current?.allExercises.map(\.exerciseName) == ["Squat"])
+        #expect(plan.scheduledWorkout(id)?.workout.title == "W")
+        #expect(store.currentLog != nil)
+    }
+
     @Test func discardingASessionReturnsTheStoreToTheSavedPlan() {
         let (plan, store, id) = planTabSession()
         store.startWorkout()
