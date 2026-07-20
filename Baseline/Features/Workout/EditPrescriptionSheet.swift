@@ -21,8 +21,17 @@ struct EditPrescriptionSheet: View {
     }
 
     /// Metrics that get an editable column, in the exercise's own configured order.
+    ///
+    /// Falls back to whichever metrics the prescription actually carries values for, matching the log
+    /// table's own resolution. Plenty of exercises — anything imported or built without going through
+    /// the catalog picker — have an empty `selectedMetrics` while still prescribing reps and load, and
+    /// showing those an empty state would make the sheet look broken.
     private var metrics: [MetricType] {
-        exercise?.selectedMetrics ?? []
+        guard let exercise else { return [] }
+        if !exercise.selectedMetrics.isEmpty { return exercise.selectedMetrics }
+        return MetricType.allCases.filter { metric in
+            exercise.prescription.sets.contains { $0.values[metric] != nil }
+        }
     }
 
     var body: some View {
@@ -166,9 +175,12 @@ struct EditPrescriptionSheet: View {
         }
     }
 
+    /// The unit is the most useful column header when there is one ("KG", "MI"), but unitless metrics
+    /// like reps have an empty short form — fall back to the metric's own name so no column is blank.
     private func columnTitle(_ metric: MetricType) -> String {
         guard let exercise else { return metric.label }
-        return store.displayUnit(metric, for: exercise).short
+        let unit = store.displayUnit(metric, for: exercise).short
+        return unit.trimmingCharacters(in: .whitespaces).isEmpty ? metric.label : unit
     }
 
     private static func name(_ exercise: PlannedExercise) -> String {

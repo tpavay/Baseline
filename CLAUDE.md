@@ -75,6 +75,13 @@ A **Session** is a scheduled or completed occurrence containing both the intende
 A **Plan** organizes sessions toward one or more goals over time and can evolve as the user's circumstances and training change.
 The Session is the core unit for scheduling, execution, logging, and adaptation.
 
+**Mid-workout edits belong to the session, not the plan.**
+Once a session is live, structural and prescription edits (add, true-remove, replace, reorder, changed sets or targets) apply to the session's own copy of the workout and leave the saved scheduled workout or template untouched.
+They reach the plan only when the user opts in at completion, where Baseline diffs performed-vs-planned and offers to update the template.
+Logging different actuals is not a plan change and must never trigger that prompt, and neither is skipping an exercise.
+A true removal must also purge the exercise's performed record so completion cannot resurrect sets the user deleted.
+See `WorkoutSessionReconciliation` and the reconciliation section of `WorkoutStore`.
+
 **Creation and import are first-class paths.**
 Users can describe, paste, photograph, import, or manually assemble training.
 Every path resolves into the same validated, native training models.
