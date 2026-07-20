@@ -15,13 +15,14 @@ final class WorkoutStore {
         didSet {
             persist(current, Self.key)
             guard let sink, !isSyncing, let c = current, c != oldValue else { return }
+            // Immediate for the agent; the manual editor coalesces and flushes (on dismiss, and always
+            // before completion) so keystrokes don't each become a persisted write.
+            guard !coalesceContent else { return }
             if isSessionActive {
                 // Mid-workout edits are session-scoped: they update the live session copy only, leaving the
-                // saved scheduled/template workout untouched until completion reconciliation opts in.
+                // saved scheduled workout untouched until completion reconciliation opts in.
                 sink.pushSessionWorkout(c)
-            } else if !coalesceContent {
-                // Not in a live session → ordinary plan editing. Immediate for the agent; the manual editor
-                // coalesces and flushes on dismiss so keystrokes don't each become a revision.
+            } else {
                 sink.pushWorkout(c)
             }
         }
@@ -279,6 +280,9 @@ final class WorkoutStore {
     }
 
     func completeWorkout() {
+        // Any coalesced edit must reach the session before it is frozen, or the athlete's last change
+        // would be dropped on completion. Uncoalesced stores have already written through.
+        if coalesceContent { flush() }
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
     }
@@ -310,8 +314,10 @@ final class WorkoutStore {
         return SessionReconciliation(diff: diff, sessionWorkout: session)
     }
 
-    /// Promote a captured session shape to the saved plan/template as a new revision — the completion
-    /// "Update template" opt-in. This is the only path by which a mid-workout edit reaches the plan.
+    /// Promote a captured session shape to the saved scheduled workout as a new plan revision — the
+    /// completion "Update Plan" opt-in. This is the only path by which a mid-workout edit reaches the
+    /// plan. A source `WorkoutTemplate` the workout was instantiated from is a separate, immutable
+    /// object and is deliberately left untouched.
     func applySessionReconciliation(_ reconciliation: SessionReconciliation) {
         sink?.pushWorkout(reconciliation.sessionWorkout)
     }
@@ -323,6 +329,22 @@ final class WorkoutStore {
         edit { $0.removeExercise(exerciseID) }
         if currentLog != nil {
             editLog { $0.removePerformed(forPlanned: exerciseID) }
+        }
+    }
+
+    /// True-remove planned sets from an exercise's prescription, purging the matching logged actuals for
+    /// the same reason `removeExerciseFromWorkout` does: the log table renders rows from the
+    /// prescription, so a surviving actual would be invisible yet still committed to completed history.
+    func removePlannedSets(_ setIDs: [UUID], fromExercise exerciseID: UUID) {
+        let ids = Set(setIDs)
+        guard !ids.isEmpty else { return }
+        edit { workout in
+            workout.updateExercise(exerciseID) { planned in
+                planned.prescription.sets.removeAll { ids.contains($0.id) }
+            }
+        }
+        if currentLog != nil {
+            editLog { $0.removeSetLogs(forPlanned: exerciseID, plannedSetIDs: ids) }
         }
     }
 

@@ -640,6 +640,17 @@ extension WorkoutLog {
         exerciseAdjustments.removeAll { $0.plannedExerciseID == plannedID }
     }
 
+    /// True-remove the logged sets that belong to planned sets which no longer exist. Deleting a planned
+    /// set is a structural edit like deleting an exercise: the log table can no longer render the row, so
+    /// leaving the actual behind would let completion commit work the athlete deleted.
+    mutating func removeSetLogs(forPlanned plannedID: UUID, plannedSetIDs: Set<UUID>) {
+        guard let index = exercises.firstIndex(where: { $0.plannedExerciseID == plannedID }) else { return }
+        exercises[index].setLogs.removeAll { log in
+            guard let plannedSetID = log.plannedSetID else { return false }
+            return plannedSetIDs.contains(plannedSetID)
+        }
+    }
+
     /// Whether the log holds any actually-logged set for a planned exercise — the signal for confirming
     /// before a destructive true-remove would discard real logged work.
     func hasLoggedWork(forPlanned plannedID: UUID) -> Bool {

@@ -23,6 +23,22 @@ struct WorkoutEditingRenderTests {
         screen.capture("01-reorder-blocks")
     }
 
+    @Test func tappingABlockOpensItsExerciseList() async throws {
+        // The block list is permanently in edit mode so blocks can be dragged, which is exactly what
+        // makes a plain `NavigationLink` row unselectable. Tap the real row and prove it still opens —
+        // without this, the two-level design is unreachable for every multi-block workout.
+        let screen = try await EditingScreen(blocks: true) { WorkoutReorderSheet() }
+        defer { screen.tearDown() }
+
+        #expect(screen.element(labelled: "Curl") == nil)
+        let row = try #require(screen.element(labelled: "Accessory"))
+        #expect(row.accessibilityActivate())
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "Curl") != nil)
+        screen.capture("04-reorder-exercises-within-a-block")
+    }
+
     @Test func reorderSheetGoesStraightToExercisesForASingleBlockWorkout() async throws {
         let screen = try await EditingScreen(blocks: false) { WorkoutReorderSheet() }
         defer { screen.tearDown() }
@@ -146,7 +162,7 @@ private final class EditingScreen {
         window.layoutIfNeeded()
     }
 
-    private func settle(timeout: TimeInterval = 3) async throws {
+    func settle(timeout: TimeInterval = 3) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             spin(0.1)

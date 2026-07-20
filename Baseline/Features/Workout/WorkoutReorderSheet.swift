@@ -20,6 +20,9 @@ struct WorkoutReorderSheet: View {
 
     /// Block queued for deletion while its confirmation dialog is up.
     @State private var blockPendingDeletion: WorkoutBlock?
+    /// The block whose exercise list is pushed. Drives navigation explicitly because the block list is
+    /// permanently in edit mode, where a `NavigationLink` row is not selectable and would never open.
+    @State private var openBlockID: UUID?
 
     private var blocks: [WorkoutBlock] { store.current?.blocks ?? [] }
 
@@ -73,11 +76,18 @@ struct WorkoutReorderSheet: View {
         List {
             Section {
                 ForEach(blocks) { block in
-                    NavigationLink {
-                        ExerciseReorderList(blockID: block.id)
-                    } label: {
-                        blockRow(block)
+                    Button { openBlockID = block.id } label: {
+                        HStack(spacing: 8) {
+                            blockRow(block)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(BaselineColor.textFaint)
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens this block to reorder the exercises inside it")
                 }
                 .onMove { source, destination in
                     Haptics.select()
@@ -101,6 +111,7 @@ struct WorkoutReorderSheet: View {
         .scrollContentBackground(.hidden)
         .background(BaselineColor.base)
         .environment(\.editMode, .constant(.active))
+        .navigationDestination(item: $openBlockID) { ExerciseReorderList(blockID: $0) }
     }
 
     private func blockRow(_ block: WorkoutBlock) -> some View {

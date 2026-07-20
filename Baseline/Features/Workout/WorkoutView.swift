@@ -28,9 +28,9 @@ struct WorkoutView: View {
     /// and reach the saved plan solely through the completion prompt below.
     @State private var showReorder = false
     @State private var addExerciseRequest: AddExerciseRequest?
-    /// Captured just before completing, so the "update your template?" decision never depends on
-    /// post-completion store state. Non-nil ⇒ the session diverged from the plan ⇒ prompt.
-    @State private var pendingReconciliation: WorkoutStore.SessionReconciliation?
+    /// Captures the reconciliation just before completing — so the "update your plan?" decision never
+    /// depends on post-completion store state — and defers the prompt past the finish alert's dismissal.
+    @State private var finishing = WorkoutFinishCoordinator()
 
     /// Live heart-rate monitor for the active log, created only while logging with a saved strap.
     /// The HUD reads it; the workout owns its start/stop lifecycle (this is the go-live wiring).
@@ -77,18 +77,15 @@ struct WorkoutView: View {
             AddExerciseFlow(blockID: request.id) { _ in }
         }
         .alert(
-            "Update your template?",
+            "Update your plan?",
             isPresented: Binding(
-                get: { pendingReconciliation != nil },
-                set: { if !$0 { pendingReconciliation = nil } }
+                get: { finishing.pendingReconciliation != nil },
+                set: { if !$0 { finishing.pendingReconciliation = nil } }
             ),
-            presenting: pendingReconciliation
+            presenting: finishing.pendingReconciliation
         ) { reconciliation in
-            Button("Update Template") {
-                store.applySessionReconciliation(reconciliation)
-                pendingReconciliation = nil
-            }
-            Button("Keep Original", role: .cancel) { pendingReconciliation = nil }
+            Button("Update Plan") { finishing.apply(reconciliation, to: store) }
+            Button("Keep Original", role: .cancel) { finishing.pendingReconciliation = nil }
         } message: { reconciliation in
             Text("We noticed changes from your plan:\n\(reconciliation.diff.summaryLine)")
         }
@@ -488,9 +485,7 @@ struct WorkoutView: View {
     /// The reconciliation is captured *before* completing so the summary describes the session that was
     /// actually performed, and so declining leaves the plan untouched with no further bookkeeping.
     private func finishWorkout() {
-        let reconciliation = store.captureSessionReconciliation()
-        store.completeWorkout()
-        pendingReconciliation = reconciliation
+        finishing.finish(store)
     }
 
     // MARK: - Templates

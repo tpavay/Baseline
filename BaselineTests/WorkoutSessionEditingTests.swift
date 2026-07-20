@@ -277,6 +277,132 @@ struct WorkoutSessionEditingTests {
 
         #expect(store.captureSessionReconciliation()?.diff.changes.map(\.kind) == [.removed])
     }
+
+    // MARK: - Deleting a planned set
+
+    @Test func deletingAPlannedSetPurgesItsLoggedActual() {
+        var squat = exercise("Squat")
+        squat.prescription.sets.append(PlannedSet(reps: 5, load: 100))
+        let (_, store, _) = startedSession(workout("W", [squat]))
+        let planned = store.current!.allExercises[0]
+        for set in planned.prescription.sets {
+            store.editLog {
+                $0.upsertSetLog(forPlanned: planned.id, name: planned.exerciseName,
+                                plannedSetID: set.id) { log in
+                    log.values[.load] = 100
+                    log.completed = true
+                }
+            }
+        }
+
+        store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id)
+
+        #expect(store.current?.exercise(planned.id)?.prescription.sets.count == 1)
+        // The remaining actual is the one whose planned set survived — the deleted row leaves nothing.
+        let logs = store.currentLog?.performed(forPlanned: planned.id)?.setLogs ?? []
+        #expect(logs.map(\.plannedSetID) == [planned.prescription.sets[0].id])
+    }
+
+    @Test func aDeletedPlannedSetDoesNotReachCompletedHistory() {
+        // Completion indexes history straight off the log's setLogs, so an orphaned actual would be
+        // committed as volume the athlete had already deleted.
+        var squat = exercise("Squat")
+        squat.prescription.sets.append(PlannedSet(reps: 5, load: 100))
+        let (plan, store, id) = startedSession(workout("W", [squat]))
+        let planned = store.current!.allExercises[0]
+        for set in planned.prescription.sets {
+            store.editLog {
+                $0.upsertSetLog(forPlanned: planned.id, name: planned.exerciseName,
+                                plannedSetID: set.id) { log in
+                    log.values[.load] = 100
+                    log.completed = true
+                }
+            }
+        }
+
+        store.removePlannedSets([planned.prescription.sets[1].id], fromExercise: planned.id)
+        store.completeWorkout()
+
+        #expect(plan.completed(for: id)?.log.performed(forPlanned: planned.id)?.setLogs.count == 1)
+    }
+
+    // MARK: - Coalesced editing
+
+    /// The Plan tab binds this store with `coalesceContent: true` so a keystroke doesn't become a write.
+    /// Coalescing must never cost the athlete an edit: completion has to see the latest shape.
+    @Test func aCoalescedSessionEditIsStillPresentAtCompletion() {
+        let plan = makePlan()
+        let program = plan.addProgram(Program(name: "P", createdAt: Date()))
+        plan.addScheduled(ScheduledWorkout(programID: program.id, date: Date(), origin: .userCreated,
+                                           workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()))
+        let id = plan.todayScheduled()!.id
+        let store = buffer()
+        store.bind(plan.sink(forScheduled: id), coalesceContent: true)
+        store.startWorkout()
+
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+
+        // Coalesced: the edit is held in memory rather than written through on every keystroke.
+        #expect(plan.session(for: id)?.workout == nil)
+        // ...but it is still the session the athlete performed, so it is captured and committed.
+        let reconciliation = store.captureSessionReconciliation()
+        #expect(reconciliation?.diff.changes.map(\.kind) == [.added])
+
+        store.completeWorkout()
+
+        #expect(plan.session(for: id)?.workout?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
+    // MARK: - The finish flow
+
+    @Test func finishingAnEditedSessionRaisesThePromotionPrompt() async {
+        let (_, store, _) = startedSession()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        let finishing = WorkoutFinishCoordinator()
+
+        let presentation = finishing.finish(store)
+
+        // Completion is synchronous; only the prompt is deferred past the finish alert's dismissal,
+        // because SwiftUI silently drops an alert raised from inside another alert's action handler.
+        #expect(store.currentLog?.isComplete == true)
+        #expect(finishing.pendingReconciliation == nil)
+        await presentation?.value
+        #expect(finishing.pendingReconciliation?.diff.summaryLine == "Added Bench press")
+    }
+
+    @Test func finishingAnUneditedSessionRaisesNoPrompt() async {
+        let (_, store, _) = startedSession()
+        let ex = store.current!.allExercises[0]
+        // Logging actuals is a performed fact, not a plan change — finishing must stay silent.
+        store.editLog {
+            $0.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName,
+                            plannedSetID: ex.prescription.sets[0].id) { set in
+                set.values[.load] = 120
+                set.completed = true
+            }
+        }
+        let finishing = WorkoutFinishCoordinator()
+
+        let presentation = finishing.finish(store)
+
+        #expect(presentation == nil)
+        #expect(store.currentLog?.isComplete == true)
+        #expect(finishing.pendingReconciliation == nil)
+    }
+
+    @Test func acceptingThePromptFromTheFinishFlowPromotesTheSession() async {
+        let (plan, store, id) = startedSession()
+        store.edit { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        let finishing = WorkoutFinishCoordinator()
+
+        await finishing.finish(store)?.value
+        let pending = finishing.pendingReconciliation!
+        finishing.apply(pending, to: store)
+
+        #expect(finishing.pendingReconciliation == nil)
+        #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
 }
 
 /// The reconciliation diff itself, exercised without a store or persistence. These are the sentences
@@ -388,7 +514,19 @@ struct WorkoutSessionReconciliationTests {
         #expect(diff.changes.map(\.kind) == [.replaced])
     }
 
-    @Test func aSkippedExerciseIsNotATemplateChange() {
+    @Test func duplicateExerciseIDsDiffWithoutTrapping() {
+        // Workouts also arrive from JSON import and agent tools, so a repeated exercise id is
+        // data-shaped. Diffing runs the instant the athlete taps Finish Workout — it must not trap.
+        let squat = exercise("Squat")
+        let before = workout([squat, squat])
+        var after = before
+        after.blocks[0].nodes.append(.exercise(exercise("Bench press")))
+
+        let diff = WorkoutSessionReconciliation.diff(plan: before, session: after)
+        #expect(diff.changes.map(\.kind) == [.added])
+    }
+
+    @Test func aSkippedExerciseIsNotAPlanChange() {
         // Skipping means "not today", not "change my plan" — it must never trigger the prompt.
         let squat = exercise("Squat")
         let base = workout([squat])

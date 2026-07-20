@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// This is deliberately distinct from logging. Typing a different number into the log table records
 /// what you actually did; changing the prescription here changes what the workout is *asking* for. Only
-/// the latter counts as diverging from the plan, which is why the completion "update your template?"
+/// the latter counts as diverging from the plan, which is why the completion "update your plan?"
 /// prompt diffs prescriptions rather than logged actuals — otherwise every honest session would prompt.
 ///
 /// Every edit goes through `store.edit`, so during a live session it lands on the session's own workout
@@ -68,11 +68,7 @@ struct EditPrescriptionSheet: View {
                     guard exercise.prescription.sets.count > offsets.count else { return }
                     let ids = offsets.compactMap { exercise.prescription.sets[safe: $0]?.id }
                     Haptics.tap()
-                    store.edit { workout in
-                        workout.updateExercise(exerciseID) { planned in
-                            planned.prescription.sets.removeAll { ids.contains($0.id) }
-                        }
-                    }
+                    store.removePlannedSets(ids, fromExercise: exerciseID)
                 }
             } header: {
                 Text("Planned sets")

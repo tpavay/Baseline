@@ -1,18 +1,18 @@
 import Foundation
 
 /// Compares the workout **as it was shaped during a session** against the **saved plan** it started
-/// from, so completion can ask whether to promote the session's edits back to the plan/template.
+/// from, so completion can ask whether to promote the session's edits back to the scheduled plan.
 ///
 /// Mid-workout edits (add / true-remove / reorder / replace / metric changes) are session-scoped — they
-/// live on the session's own `Workout` copy and its log, never touching the saved scheduled/template
-/// workout until the athlete opts in at completion. This is the pure, view-free diff that drives that
+/// live on the session's own `Workout` copy and its log, never touching the saved scheduled workout
+/// until the athlete opts in at completion. This is the pure, view-free diff that drives that
 /// opt-in: it is deterministic and unit-tested so the "we noticed changes from your plan" summary is
 /// trustworthy.
 enum WorkoutSessionReconciliation {
 
     /// The workout the athlete actually shaped this session: the session's plan copy with any top-level
     /// exercise substitutions (log "Replace Exercise") folded in. Per-round substitutions and skips stay
-    /// out — a skip means "not today", not "change my template", and a per-round swap is a logging fact.
+    /// out — a skip means "not today", not "change my plan", and a per-round swap is a logging fact.
     static func effectiveSessionPlan(base: Workout, log: WorkoutLog) -> Workout {
         var workout = base
         for exercise in base.allExercises {
@@ -41,8 +41,11 @@ enum WorkoutSessionReconciliation {
 
         let originalExercises = original.allExercises
         let sessionExercises = session.allExercises
-        let originalByID = Dictionary(uniqueKeysWithValues: originalExercises.map { ($0.id, $0) })
-        let sessionByID = Dictionary(uniqueKeysWithValues: sessionExercises.map { ($0.id, $0) })
+        // Workouts also arrive from JSON import and agent tools, so a duplicated exercise id is
+        // data-shaped rather than impossible. Keep the first occurrence instead of trapping at the
+        // exact moment the athlete taps Finish Workout.
+        let originalByID = Dictionary(originalExercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let sessionByID = Dictionary(sessionExercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // Added exercises live in a block that already existed (a brand-new block is reported above).
         for exercise in sessionExercises where originalByID[exercise.id] == nil {
