@@ -19,7 +19,7 @@ Dark, **"calm precision"** — a trustworthy instrument that bridges the calm mo
 
 **Why violet:** zone-safe (not in the blue/green/amber/red families, so a control never reads as a recovery state) and premium on near-black. Electric blue was rejected — it collides with the blue recovery zone.
 
-**Type:** Inter (Regular / Medium / Semi Bold / Bold). Big display weights for readiness / HR / HRV numbers.
+**Type:** See [`design-system/README.md`](design-system/README.md#typography) for the production type system (SF Pro for prose, SF Mono for instrumentation; no custom fonts bundled).
 
 ## Screen inventory (in Figma)
 - **Daily Home** — readiness gauge in the zone color, supporting stats, today's session card (amethyst), violet CTA, bottom nav. 4 states: Pre-reading · High/green · Moderate/amber · Low/red (chassis).
