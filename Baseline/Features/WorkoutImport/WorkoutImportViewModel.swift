@@ -570,12 +570,19 @@ final class WorkoutImportViewModel {
                 reviewPersistenceError = nil
                 session.status = .reviewing
             } else {
+                // A review stage with no exercises is not something to show; Baseline never
+                // synthesizes one. Record it as a retryable failure so the screen explains itself
+                // and the retry affordance works through the same path as every other failure.
                 reviewDraftIsPersisted = false
                 session.draft = nil
                 session.issues = []
-                session.status = .failed(
-                    message: "Baseline could not build a usable workout from those photos."
+                let failure = job.failure ?? WorkoutImportFailure(
+                    stage: "review",
+                    reasonCode: "unusable_structured_result",
+                    isRetryable: true
                 )
+                currentJob?.failure = failure
+                session.status = .failed(message: failureMessage(failure))
             }
         case .failed:
             reviewDraftIsPersisted = false
@@ -627,10 +634,18 @@ final class WorkoutImportViewModel {
             "Parsing took too long. Your import is saved, so you can try again."
         case "draft_persistence_failed":
             "Baseline could not safely save the workout draft. Try again."
-        case "section_invalid", "cross_section_assembly", "result_too_large", "worker_budget_exhausted", "schema_incompatible":
+        case "result_too_large", "schema_incompatible":
             "Baseline could not safely turn this workout into an editable template. Review the photos and start a new import."
+        case "section_invalid", "cross_section_assembly":
+            "Baseline could not assemble those photos into one workout it trusts, so it did not guess. Try again, or start over with the pages in order."
+        case "worker_budget_exhausted":
+            "Baseline stopped before it could finish reading that workout. Your import is saved, so you can try again."
         case "section_failed":
             "Baseline could not interpret one part of that workout. Try again."
+        case "unusable_structured_result":
+            "Baseline read the photos but could not turn them into a workout it trusts, so it did not guess. Try again, or start over with clearer or more tightly cropped photos."
+        case "unusable_saved_draft":
+            "The saved import did not contain a usable workout. Try again to re-run it from the photos Baseline already has."
         case "server_cancelled":
             "This saved import was canceled on the server. Start a new import with the original photos."
         default:

@@ -1243,20 +1243,14 @@ struct WorkoutImportSourcePipelineTests {
             ))
         }
 
+        // Only the device-side half is asserted here. Structuring recognized text into a workout is
+        // the parser's job, and Baseline no longer synthesizes one locally, so a smoke test that
+        // needs no network can honestly check OCR and sectioning and nothing beyond them.
         let source = try WorkoutImportSourceDocumentBuilder.build(pages: pages)
-        let document = WorkoutImportFallbackBuilder.build(
-            sections: source.sections,
-            catalog: ExerciseCatalog.definitions
-        )
-        let built = WorkoutImportDraftBuilder.build(document, catalog: ExerciseCatalog.definitions)
-        let definitionIDs = Set(built.draft.workout.allExercises.compactMap(\.definitionId))
 
-        #expect(!built.draft.workout.allExercises.isEmpty)
-        #expect(definitionIDs.contains("sled_pull"))
-        #expect(definitionIDs.contains("deadlift"))
-        #expect(definitionIDs.contains("echo_bike"))
-        #expect(!String(data: try JSONEncoder().encode(document), encoding: .utf8)!
-            .contains("Recognized text"))
+        #expect(!source.sections.isEmpty)
+        #expect(source.sections.allSatisfy { !$0.observations.isEmpty })
+        #expect(pages.allSatisfy { !$0.observations.isEmpty })
     }
 
     /// A retry is the same device-side handoff, so it reports saved progress and the same
@@ -1298,108 +1292,6 @@ struct WorkoutImportSourcePipelineTests {
 
         #expect(document.notes.isEmpty)
         #expect(document.blocks.first?.notes.isEmpty == true)
-    }
-
-    @Test func deterministicFallbackCreatesOnlyCatalogBackedExercisesInSourceOrder() throws {
-        let first = WorkoutTextObservation(
-            id: "first-line",
-            text: "Run 400 m",
-            confidence: 0.98,
-            boundingBox: .init(x: 0.1, y: 0.7, width: 0.6, height: 0.06),
-            sourceImageIndex: 0
-        )
-        let second = WorkoutTextObservation(
-            id: "second-line",
-            text: "12 Deadlifts @ bodyweight",
-            confidence: 0.97,
-            boundingBox: .init(x: 0.1, y: 0.5, width: 0.7, height: 0.06),
-            sourceImageIndex: 1
-        )
-        let sections = [
-            WorkoutImportSourceSection(
-                id: "section-2",
-                order: 1,
-                observations: [second],
-                contextBefore: [],
-                characterCount: second.text.count
-            ),
-            WorkoutImportSourceSection(
-                id: "section-1",
-                order: 0,
-                observations: [first],
-                contextBefore: [],
-                characterCount: first.text.count
-            ),
-        ]
-
-        let document = WorkoutImportFallbackBuilder.build(sections: sections)
-
-        #expect(document.title == "Workout")
-        #expect(document.blocks.map(\.name) == ["Workout"])
-        let exercises = document.blocks.flatMap(\.exercises)
-        #expect(exercises.map(\.name) == ["Run", "Deadlift"])
-        #expect(exercises[0].sets.first?.metrics.first?.type == "distance")
-        #expect(exercises[0].sets.first?.metrics.first?.value == 400)
-        #expect(exercises[1].sets.first?.metrics.first?.type == "reps")
-        #expect(exercises[1].sets.first?.metrics.first?.value == 12)
-        #expect(exercises[0].sourceObservationIDs == ["first-line"])
-        #expect(exercises[1].sourceObservationIDs == ["second-line"])
-        #expect(exercises[1].notes == ["12 Deadlifts @ bodyweight"])
-        #expect(!String(data: try JSONEncoder().encode(document), encoding: .utf8)!
-            .contains("Recognized text"))
-    }
-
-    @Test func deterministicFallbackRejectsCatalogWordsInsideCoachingNotes() {
-        let notes = [
-            "Avoid running today so you are ready for tomorrow's intensity session.",
-            "Running 3 days per week is too much during recovery.",
-            "Running 60 minutes is too much during recovery.",
-            "Recovery after 60 minutes of running should be the priority.",
-        ]
-        let observations = notes.enumerated().map { index, text in
-            WorkoutTextObservation(
-                id: "coaching-note-\(index)",
-                text: text,
-                confidence: 0.99,
-                boundingBox: .init(x: 0.1, y: 0.5, width: 0.8, height: 0.08),
-                sourceImageIndex: 0
-            )
-        }
-        let section = WorkoutImportSourceSection(
-            id: "coaching-section",
-            order: 0,
-            observations: observations,
-            contextBefore: [],
-            characterCount: notes.reduce(0) { $0 + $1.count }
-        )
-
-        let document = WorkoutImportFallbackBuilder.build(sections: [section])
-
-        #expect(document.blocks.isEmpty)
-    }
-
-    @Test func deterministicFallbackRetainsAValidTimedPrescription() throws {
-        let observation = WorkoutTextObservation(
-            id: "timed-run",
-            text: "Run 60 minutes at an easy pace",
-            confidence: 0.99,
-            boundingBox: .init(x: 0.1, y: 0.5, width: 0.8, height: 0.08),
-            sourceImageIndex: 0
-        )
-        let section = WorkoutImportSourceSection(
-            id: "timed-section",
-            order: 0,
-            observations: [observation],
-            contextBefore: [],
-            characterCount: observation.text.count
-        )
-
-        let document = WorkoutImportFallbackBuilder.build(sections: [section])
-        let exercise = try #require(document.blocks.first?.exercises.first)
-
-        #expect(exercise.name == "Run")
-        #expect(exercise.sets.first?.metrics.first?.type == "duration")
-        #expect(exercise.sets.first?.metrics.first?.value == 60)
     }
 
     @Test func reviewCloseRemainsUnavailableUntilLatestEditsArePersisted() async throws {
@@ -1699,6 +1591,34 @@ struct WorkoutImportSourcePipelineTests {
         #expect(FileManager.default.fileExists(atPath: temporaryImportFolder(sessionID).path))
         await model.cancel().value
         #expect(!FileManager.default.fileExists(atPath: temporaryImportFolder(sessionID).path))
+    }
+
+    /// The regression this whole change exists for. Recognized text that is *full* of real catalog
+    /// exercise names used to be enough for the client to assemble a draft out of single OCR lines,
+    /// and the athlete saw that draft believing the parser had produced it — wrong title, dropped
+    /// main sets, prescriptions truncated at OCR line boundaries. A visibly failed import is better
+    /// than a confidently wrong one, so a parser failure now fails no matter how matchable the text is.
+    @Test func aRemoteParserFailureNeverSynthesizesAWorkoutFromMatchableRecognizedText() async {
+        let model = WorkoutImportViewModel(
+            normalizer: PassthroughWorkoutImageNormalizer(),
+            recognizer: CatalogRichWorkoutTextRecognizer(),
+            parser: FailingWorkoutParser()
+        )
+
+        await model.importImages([Data([1])], catalog: ExerciseCatalog.definitions).value
+
+        guard case .failed(let message) = model.session.status else {
+            Issue.record("Expected the import to fail rather than synthesize a workout")
+            return
+        }
+        #expect(model.session.draft == nil)
+        #expect(model.currentJob?.parsedDocument == nil)
+        // The failure explains itself and offers a way forward.
+        #expect(!message.isEmpty)
+        #expect(model.canRetry)
+        // The recognized text really was matchable, so the guard above is meaningful.
+        #expect(model.session.observations.contains { $0.text.contains("Deadlift") })
+        await model.cancel().value
     }
 
     @Test func aRemoteParserFailureWithoutCatalogExercisesDoesNotOpenTheEditor() async {
@@ -2010,40 +1930,6 @@ struct ResumableWorkoutImportJobTests {
         let scheduled = try #require(persisted.scheduleDate)
         #expect(abs(scheduled.timeIntervalSince1970 - day.timeIntervalSince1970) < 0.001)
         model.cancel()
-    }
-
-    @Test func deterministicRecoveryBuildsAUsableDraftFromTheSharedFivePhotoFixture() throws {
-        let bundle = Bundle(for: WorkoutImportTestsBundleMarker.self)
-        let fixtureURL = try #require(bundle.url(
-            forResource: "realistic-five-page-ocr",
-            withExtension: "json"
-        ))
-        let fixture = try JSONDecoder().decode(
-            RealisticWorkoutOCRFixture.self,
-            from: Data(contentsOf: fixtureURL)
-        )
-        let source = try WorkoutImportSourceDocumentBuilder.build(pages: fixture.pages)
-        let document = WorkoutImportFallbackBuilder.build(
-            sections: source.sections,
-            catalog: ExerciseCatalog.definitions
-        )
-        let built = WorkoutImportDraftBuilder.build(document, catalog: ExerciseCatalog.definitions)
-        let exercises = built.draft.workout.allExercises
-        let definitionIDs = Set(exercises.compactMap(\.definitionId))
-
-        #expect(document.title == "Aerobic Capacity (Low Impact) Block 12 - Week 3")
-        #expect(document.blocks.map(\.name) == ["Workout"])
-        #expect(definitionIDs.isSuperset(of: [
-            "bike_erg", "echo_bike", "sled_pull", "deadlift",
-            "lateral_burpee_over_barbell", "stair_stepper", "box_step_over",
-            "hand_release_push_up", "dual_dumbbell_push_press", "wall_balls",
-            "ski_erg", "hanging_leg_raise", "plank",
-        ]))
-        #expect(!exercises.isEmpty)
-        #expect(built.issues.isEmpty)
-        #expect(!document.blocks.contains { $0.name.lowercased().hasPrefix("imported") })
-        #expect(!String(data: try JSONEncoder().encode(document), encoding: .utf8)!
-            .contains("Recognized text"))
     }
 
     @Test func realisticFivePageFixtureBuildsSerializesAndMaterializesWithoutLosingTrainingSemantics() throws {
@@ -3400,7 +3286,7 @@ struct ResumableWorkoutImportJobTests {
     }
 
     @Test @MainActor
-    func recognizedTextReviewCanRefreshTheStillRunningServerJobWithoutRepeatingOCR() async throws {
+    func earlyReviewCanRefreshTheStillRunningServerJobWithoutRepeatingOCR() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "WorkoutImportFallbackRefreshTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3414,9 +3300,20 @@ struct ResumableWorkoutImportJobTests {
             contextBefore: [],
             characterCount: recognized.text.count
         )
-        let fallbackDocument = WorkoutImportFallbackBuilder.build(sections: [section])
-        let fallback = WorkoutImportDraftBuilder.build(
-            fallbackDocument,
+        let earlyDocument = ParsedWorkoutDocument(
+            title: "Workout",
+            blocks: [ParsedWorkoutBlock(
+                name: "Workout",
+                exercises: [ParsedWorkoutExercise(
+                    name: "Run",
+                    sets: [ParsedWorkoutSet(metrics: [.init(type: "distance", value: 400, unit: "m")])],
+                    sourceObservationIDs: [recognized.id]
+                )],
+                sourceObservationIDs: [recognized.id]
+            )]
+        )
+        let early = WorkoutImportDraftBuilder.build(
+            earlyDocument,
             catalog: ExerciseCatalog.definitions
         )
         let job = WorkoutImportJob(
@@ -3430,16 +3327,16 @@ struct ResumableWorkoutImportJobTests {
                 completedSections: 0,
                 totalSections: 1
             ),
-            parsedDocument: fallbackDocument,
-            draft: fallback.draft,
-            issues: fallback.issues,
-            evidence: fallback.evidence
+            parsedDocument: earlyDocument,
+            draft: early.draft,
+            issues: early.issues,
+            evidence: early.evidence
         )
         try await repository.create(job)
         let parser = CompletingWorkoutImportJobParser(serverJobID: "fallback-refresh-job")
         let recognizer = IndexRecordingWorkoutTextRecognizer()
         var initialSession = ImportSession(id: job.id)
-        initialSession.draft = fallback.draft
+        initialSession.draft = early.draft
         initialSession.status = .reviewing
         let model = WorkoutImportViewModel(
             normalizer: PassthroughWorkoutImageNormalizer(),
@@ -3471,7 +3368,7 @@ struct ResumableWorkoutImportJobTests {
         WorkoutImportRemoteJobState.failed,
         WorkoutImportRemoteJobState.cancelled,
     ]) @MainActor
-    func refreshKeepsFallbackEditsUntilACompletedServerResultIsReady(
+    func refreshKeepsEarlyReviewEditsUntilACompletedServerResultIsReady(
         state: WorkoutImportRemoteJobState
     ) async throws {
         let root = FileManager.default.temporaryDirectory
@@ -3487,9 +3384,20 @@ struct ResumableWorkoutImportJobTests {
             contextBefore: [],
             characterCount: recognized.text.count
         )
-        let fallbackDocument = WorkoutImportFallbackBuilder.build(sections: [section])
-        let fallback = WorkoutImportDraftBuilder.build(
-            fallbackDocument,
+        let earlyDocument = ParsedWorkoutDocument(
+            title: "Workout",
+            blocks: [ParsedWorkoutBlock(
+                name: "Workout",
+                exercises: [ParsedWorkoutExercise(
+                    name: "Run",
+                    sets: [ParsedWorkoutSet(metrics: [.init(type: "distance", value: 400, unit: "m")])],
+                    sourceObservationIDs: [recognized.id]
+                )],
+                sourceObservationIDs: [recognized.id]
+            )]
+        )
+        let early = WorkoutImportDraftBuilder.build(
+            earlyDocument,
             catalog: ExerciseCatalog.definitions
         )
         let job = WorkoutImportJob(
@@ -3503,14 +3411,14 @@ struct ResumableWorkoutImportJobTests {
                 completedSections: 0,
                 totalSections: 1
             ),
-            parsedDocument: fallbackDocument,
-            draft: fallback.draft,
-            issues: fallback.issues,
-            evidence: fallback.evidence
+            parsedDocument: earlyDocument,
+            draft: early.draft,
+            issues: early.issues,
+            evidence: early.evidence
         )
         try await repository.create(job)
         var initialSession = ImportSession(id: job.id)
-        initialSession.draft = fallback.draft
+        initialSession.draft = early.draft
         initialSession.status = .reviewing
         let parser = FixedStatusWorkoutImportJobParser(state: state)
         let model = WorkoutImportViewModel(
@@ -3521,12 +3429,12 @@ struct ResumableWorkoutImportJobTests {
             initialSession: initialSession,
             initialJob: job
         )
-        model.updateWorkout { $0.title = "Athlete's fallback edit" }
+        model.updateWorkout { $0.title = "Athlete's early review edit" }
 
         await model.refreshStructuredResult(catalog: ExerciseCatalog.definitions)?.value
 
         #expect(model.session.status == .reviewing)
-        #expect(model.session.draft?.workout.title == "Athlete's fallback edit")
+        #expect(model.session.draft?.workout.title == "Athlete's early review edit")
         #expect(model.currentJob?.serverProgress?.status == state.rawValue)
         #expect(model.canRefreshStructuredResult == (state == .queued || state == .processing))
         #expect(!model.hasCompletedServerResult)
@@ -3535,7 +3443,7 @@ struct ResumableWorkoutImportJobTests {
     }
 
     @Test @MainActor
-    func unreachableRefreshKeepsFallbackEditsAndRemainsRefreshable() async throws {
+    func unreachableRefreshKeepsEarlyReviewEditsAndRemainsRefreshable() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "WorkoutImportFallbackRefreshOfflineTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3549,9 +3457,20 @@ struct ResumableWorkoutImportJobTests {
             contextBefore: [],
             characterCount: recognized.text.count
         )
-        let fallbackDocument = WorkoutImportFallbackBuilder.build(sections: [section])
-        let fallback = WorkoutImportDraftBuilder.build(
-            fallbackDocument,
+        let earlyDocument = ParsedWorkoutDocument(
+            title: "Workout",
+            blocks: [ParsedWorkoutBlock(
+                name: "Workout",
+                exercises: [ParsedWorkoutExercise(
+                    name: "Run",
+                    sets: [ParsedWorkoutSet(metrics: [.init(type: "distance", value: 400, unit: "m")])],
+                    sourceObservationIDs: [recognized.id]
+                )],
+                sourceObservationIDs: [recognized.id]
+            )]
+        )
+        let early = WorkoutImportDraftBuilder.build(
+            earlyDocument,
             catalog: ExerciseCatalog.definitions
         )
         let job = WorkoutImportJob(
@@ -3565,14 +3484,14 @@ struct ResumableWorkoutImportJobTests {
                 completedSections: 0,
                 totalSections: 1
             ),
-            parsedDocument: fallbackDocument,
-            draft: fallback.draft,
-            issues: fallback.issues,
-            evidence: fallback.evidence
+            parsedDocument: earlyDocument,
+            draft: early.draft,
+            issues: early.issues,
+            evidence: early.evidence
         )
         try await repository.create(job)
         var initialSession = ImportSession(id: job.id)
-        initialSession.draft = fallback.draft
+        initialSession.draft = early.draft
         initialSession.status = .reviewing
         let parser = RecoveringCancellationWorkoutImportParser()
         let model = WorkoutImportViewModel(
@@ -3583,12 +3502,12 @@ struct ResumableWorkoutImportJobTests {
             initialSession: initialSession,
             initialJob: job
         )
-        model.updateWorkout { $0.title = "Offline fallback edit" }
+        model.updateWorkout { $0.title = "Offline early review edit" }
 
         await model.refreshStructuredResult(catalog: ExerciseCatalog.definitions)?.value
 
         #expect(model.session.status == .reviewing)
-        #expect(model.session.draft?.workout.title == "Offline fallback edit")
+        #expect(model.session.draft?.workout.title == "Offline early review edit")
         #expect(model.canRefreshStructuredResult)
         #expect(!model.hasCompletedServerResult)
         await parser.makeCancellationAvailable()
@@ -4624,6 +4543,31 @@ private struct IndexedWorkoutTextRecognizer: WorkoutTextRecognizing {
             boundingBox: .init(x: 0, y: 0, width: 1, height: 0.1),
             sourceImageIndex: sourceImageIndex
         )]
+    }
+}
+
+/// Recognized text that the deleted client-side synthesizer would happily have turned into a draft:
+/// every line names a catalog exercise or alias and carries a plausible-looking quantity.
+private struct CatalogRichWorkoutTextRecognizer: WorkoutTextRecognizing {
+    private static let lines = [
+        "AM: VO2 THRESHOLDS",
+        "Run 400 m",
+        "12 Deadlifts @ bodyweight",
+        "Echo Bike 20 cal",
+        "3 sets Wall Balls",
+    ]
+
+    func recognize(image: ImportedWorkoutImage, sourceImageIndex: Int,
+                   customWords: [String]) async throws -> [WorkoutTextObservation] {
+        Self.lines.enumerated().map { index, text in
+            WorkoutTextObservation(
+                id: "page-\(sourceImageIndex)-line-\(index)",
+                text: text,
+                confidence: 0.98,
+                boundingBox: .init(x: 0.1, y: 0.9 - (Double(index) * 0.1), width: 0.7, height: 0.06),
+                sourceImageIndex: sourceImageIndex
+            )
+        }
     }
 }
 
