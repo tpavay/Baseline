@@ -352,8 +352,13 @@ final class WorkoutStore {
     /// The definition backing a planned exercise, resolved against the athlete's **own** catalog.
     /// `PlannedExercise.definition` only consults the curated catalog, so a custom movement would
     /// fall through to the generic definition and lose the category the unit rule depends on.
+    ///
+    /// Runs inside `displayUnit` on the SwiftUI render path, so it stays O(1): the small
+    /// `customDefinitions` array first, then the catalog's snapshot dictionary — never the ~900-element
+    /// `allDefinitions` concatenation.
     private func resolvedDefinition(for ex: PlannedExercise) -> ExerciseDefinition {
-        ex.definitionId.flatMap { id in allDefinitions.first { $0.id == id } } ?? ex.definition
+        guard let id = ex.definitionId else { return ex.definition }
+        return customDefinitions.first { $0.id == id } ?? ExerciseCatalog.definition(id: id) ?? ex.definition
     }
 
     /// The display unit for a quantity with no exercise to hang an override on — weekly aggregates,
@@ -363,15 +368,17 @@ final class WorkoutStore {
     }
 
     /// The display unit for a group's **total** target. A total is a single number with room for one
-    /// unit, so the group's composition decides it and nothing about the values does: a group whose
-    /// distance-bearing movements are all endurance reads in the athlete's endurance unit, and any
-    /// floor work in the mix puts the whole total back in meters.
+    /// unit, so the group's composition decides it and nothing about the values does: only a group
+    /// with at least one distance-bearing movement, all of them endurance, reads in the athlete's
+    /// endurance unit. Any floor movement in the mix — or no distance-bearing movement at all, which
+    /// is absence of evidence rather than evidence of endurance — puts the whole total back in meters.
     func displayUnit(_ metric: MetricType, forTotalsIn group: WorkoutGroup) -> MetricUnit {
         guard metric == .distance else { return displayUnit(metric) }
         let distanceMovements = group.children.flatMap(\.exercises)
-            .filter { $0.selectedMetrics.contains(.distance) || resolvedDefinition(for: $0).supported.contains(.distance) }
             .map(resolvedDefinition(for:))
-        guard distanceMovements.allSatisfy({ $0.category.distanceContext == .endurance }) else { return .meters }
+            .filter { $0.supported.contains(.distance) }
+        guard !distanceMovements.isEmpty,
+              distanceMovements.allSatisfy({ $0.category.distanceContext == .endurance }) else { return .meters }
         return displayUnit(metric)
     }
 

@@ -181,6 +181,20 @@ struct UnitSystemReachTests {
         #expect(store.displayUnit(.load, forTotalsIn: mixed) == .pounds)
     }
 
+    /// Absence of evidence is not evidence of endurance. A group that carries a distance total but
+    /// whose children declare no distance-bearing movement (an AMRAP whose run got matched to a
+    /// reps-only movement) must read metres, not fall vacuously through to the endurance unit.
+    @Test func aGroupWithNoDistanceMovementReadsItsTotalInMetres() {
+        let units = StubUnitSystem(.imperial)
+        let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
+        let pullUp = PlannedExercise(exerciseName: "Pull-Up", definitionId: "pull_up", selectedMetrics: [.reps])
+        let group = WorkoutGroup(label: "AMRAP",
+                                 execution: GroupExecution(totalTargets: MetricValues([.distance: 100])),
+                                 children: [.exercise(pullUp)])
+
+        #expect(store.displayUnit(.distance, forTotalsIn: group) == .meters)
+    }
+
     /// Retiring a unit must not be undone by state written before it was retired: pace no longer
     /// offers raw `s/m`, so a stored `s/m` falls through to the default instead of rendering "0:00".
     @Test func aStoredUnitThatIsNoLongerOfferedFallsThrough() {
