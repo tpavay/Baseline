@@ -129,13 +129,11 @@ enum WorkoutImportDraftBuilder {
                 let setID = UUID()
                 let built = buildMetrics(parsedSet.metrics, exerciseName: parsedExercise.name,
                                          exerciseID: exerciseID, setID: setID, selected: &selected,
-                                         displayUnits: &exercise.displayUnits,
                                          setNumber: setIndex + 1)
                 let alternatives = parsedSet.alternatives.map { alternative in
                     let alternativeID = UUID()
                     let alternate = buildMetrics(alternative.metrics, exerciseName: parsedExercise.name,
                                                  exerciseID: exerciseID, setID: setID, selected: &selected,
-                                                 displayUnits: &exercise.displayUnits,
                                                  setNumber: setIndex + 1,
                                                  alternativeID: alternativeID,
                                                  alternativeLabel: alternative.label)
@@ -168,7 +166,6 @@ enum WorkoutImportDraftBuilder {
 
         private mutating func buildMetrics(_ parsedMetrics: [ParsedWorkoutMetric], exerciseName: String,
                                            exerciseID: UUID, setID: UUID, selected: inout Set<MetricType>,
-                                           displayUnits: inout [MetricType: MetricUnit],
                                            setNumber: Int,
                                            alternativeID: UUID? = nil,
                                            alternativeLabel: String? = nil)
@@ -202,9 +199,13 @@ enum WorkoutImportDraftBuilder {
                                         alternativeID: alternativeID, metric: type))
                     continue
                 }
+                // The source's unit is read, converted, and then deliberately forgotten. Writing it
+                // back as a per-instance display override would show kilometres to an athlete who
+                // has chosen Imperial, because that override wins over every tier beneath it in
+                // `WorkoutStore.displayUnit(_:for:)`. Storage is canonical; display is the athlete's
+                // `AppSettings.unitSystem`, and an imported workout gets no say in it.
                 let canonical = MetricConvert.toCanonical(metric.value, type, from: unit)
                 values[type] = canonical
-                if unit != type.canonicalUnit { displayUnits[type] = unit }
                 if let upper = metric.upperValue, upper.isFinite, upper >= 0 {
                     ranges.append(MetricTargetRange(metric: type, lower: canonical,
                                                     upper: MetricConvert.toCanonical(upper, type, from: unit)))

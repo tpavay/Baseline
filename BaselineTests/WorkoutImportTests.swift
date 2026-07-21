@@ -366,8 +366,10 @@ struct WorkoutImportTests {
         #expect(result.issues.isEmpty)
         #expect(set.values[.distance] == 1_000)
         #expect(abs((set.values[.load] ?? 0) - 22.6796185) < 0.0001)
-        #expect(exercise.displayUnits[.distance] == .kilometers)
-        #expect(exercise.displayUnits[.load] == .pounds)
+        // The source wrote kilometres and pounds. Both are converted and then forgotten: a
+        // per-instance override would outrank the athlete's own unit setting, so an imported
+        // workout never decides how it is displayed. See WorkoutStore.displayUnit(_:for:).
+        #expect(exercise.displayUnits.isEmpty)
     }
 
     @Test func unknownExerciseBlocksSavingWithoutCreatingCatalogData() throws {

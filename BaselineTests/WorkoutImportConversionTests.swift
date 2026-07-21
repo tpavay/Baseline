@@ -212,6 +212,25 @@ struct WorkoutImportConversionTests {
         #expect(exercise.displayUnits.isEmpty)
     }
 
+    /// The rule end to end: a workout written in kilometres, imported by an athlete who has chosen
+    /// Imperial, displays in miles — while the stored value stays the same canonical 5000 metres.
+    @Test @MainActor func aMetricSourceDisplaysImperialToAnImperialAthlete() throws {
+        let sketch = WorkoutImportSketch(blocks: [.init(items: [.init(name: "Run", prescription: "5km")])])
+        let converted = WorkoutImportSketchConverter.convert(sketch, catalog: catalog)
+        let built = WorkoutImportDraftBuilder.build(converted.document, catalog: catalog)
+        let exercise = try #require(built.draft.workout.allExercises.first)
+
+        let store = WorkoutStore(defaults: UserDefaults(suiteName: "import-units-\(UUID().uuidString)")!)
+        store.unitSystem = .imperial
+        #expect(store.displayUnit(.distance, for: exercise) == .miles)
+
+        store.unitSystem = .metric
+        #expect(store.displayUnit(.distance, for: exercise) == .kilometers)
+
+        // The stored value never moved; only the lens over it did.
+        #expect(exercise.prescription.sets.first?.values[.distance] == 5_000)
+    }
+
     @Test func anUnresolvedNameBlocksSavingInsteadOfBecomingSomeOtherMovement() throws {
         let sketch = WorkoutImportSketch(blocks: [.init(items: [
             .init(name: "Zercher Sandbag Yoke Carry Thing", sets: "3", prescription: "50m"),
