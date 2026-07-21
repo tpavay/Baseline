@@ -1,0 +1,386 @@
+name: CI
+
+# Baseline's pull-request gate. Before this existed a PR reported "no checks
+# configured", so every merge rode on whatever the author ran locally.
+#
+# Deliberately NOT path-filtered at the `on:` level. A workflow that never
+# triggers produces no check run at all, which leaves a PR touching only docs
+# permanently pending against a required status check (the problem Ascend has).
+# Instead this workflow always runs, a `changes` job decides which expensive
+# jobs are relevant, and the always-running `ci` job is the single required
+# check. A docs-only PR therefore reports a green required check having
+# correctly skipped the build.
+on:
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap (~15s on ubuntu) triage so a functions-only or docs-only PR does not
+  # spend ~35 macOS-runner minutes, which GitHub bills at 10x. Fails open: if
+  # the diff cannot be computed, every job runs.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.filter.outputs.ios }}
+      functions: ${{ steps.filter.outputs.functions }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "Not a pull_request event — running everything."
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "functions=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+            echo "::warning::Could not diff $BASE_SHA..$HEAD_SHA — running everything."
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "functions=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          printf '%s\n' "$changed"
+
+          matches() {
+            printf '%s\n' "$changed" | grep -Eq "$1"
+          }
+
+          # Anything that feeds the Xcode build: app sources, tests, the
+          # XcodeGen spec, test fixtures compiled into the test bundle, the
+          # build-phase script, the Ruby toolchain, and this workflow.
+          ios_pattern='^(Baseline/|BaselineTests/|fixtures/|project\.yml$|scripts/select-firebase-plist\.sh$|Gemfile(\.lock)?$|\.github/workflows/ci\.yml$)'
+          # Anything that feeds the Cloud Functions type-check and test suite.
+          functions_pattern='^(functions/|firebase\.json$|\.github/workflows/ci\.yml$)'
+
+          if matches "$ios_pattern"; then echo "ios=true" >> "$GITHUB_OUTPUT"; else echo "ios=false" >> "$GITHUB_OUTPUT"; fi
+          if matches "$functions_pattern"; then echo "functions=true" >> "$GITHUB_OUTPUT"; else echo "functions=false" >> "$GITHUB_OUTPUT"; fi
+
+          cat "$GITHUB_OUTPUT"
+
+  # Builds the app and runs the whole Swift test suite on a simulator, in the
+  # Debug configuration the `Baseline` scheme declares for its test action — so
+  # a green run here means the same thing a green local `xcodebuild test` means.
+  ios-test:
+    name: iOS Build & Test (Debug)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Decode Firebase plist files
+        env:
+          GOOGLE_SERVICE_INFO_DEV_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$GOOGLE_SERVICE_INFO_DEV_BASE64" ]; then
+            echo "::error::Required secret GOOGLE_SERVICE_INFO_DEV_BASE64 is missing or empty."
+            exit 1
+          fi
+
+          mkdir -p Baseline/App/Firebase
+          rm -f Baseline/App/Firebase/GoogleService-Info-Dev.plist
+
+          if ! (printf "%s" "$GOOGLE_SERVICE_INFO_DEV_BASE64" | base64 --decode > Baseline/App/Firebase/GoogleService-Info-Dev.plist 2>/dev/null \
+             || printf "%s" "$GOOGLE_SERVICE_INFO_DEV_BASE64" | base64 -D > Baseline/App/Firebase/GoogleService-Info-Dev.plist 2>/dev/null); then
+            echo "::error::Failed to decode secret GOOGLE_SERVICE_INFO_DEV_BASE64 as base64."
+            exit 1
+          fi
+
+          if [ ! -s Baseline/App/Firebase/GoogleService-Info-Dev.plist ]; then
+            echo "::error::Decoded file for GOOGLE_SERVICE_INFO_DEV_BASE64 is empty."
+            exit 1
+          fi
+
+          plutil -lint Baseline/App/Firebase/GoogleService-Info-Dev.plist
+
+      # Baseline's .xcodeproj is gitignored and generated, so this doubles as
+      # the project.yml validity check: a malformed spec fails the PR here.
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Select simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          preferred_names=(
+            "iPhone 16 Pro"
+            "iPhone 16"
+            "iPhone 16 Pro Max"
+            "iPhone 16 Plus"
+            "iPhone 15 Pro"
+            "iPhone 15"
+          )
+
+          destinations="$(
+            xcodebuild \
+              -project Baseline.xcodeproj \
+              -scheme "Baseline" \
+              -showdestinations
+          )"
+
+          parsed_destinations="$(
+            printf '%s\n' "$destinations" | sed -n 's/.*platform:iOS Simulator,.*id:\([^,}]*\), OS:[^,}]*, name:\(.*\) }.*/\1|\2/p'
+          )"
+
+          simulator_id=""
+
+          for name in "${preferred_names[@]}"; do
+            simulator_id="$(
+              printf '%s\n' "$parsed_destinations" | awk -F'|' -v target="$name" '
+                $2 == target {
+                  id = $1
+                }
+                END {
+                  if (id != "") {
+                    print id
+                  }
+                }
+              '
+            )"
+
+            if [ -n "$simulator_id" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$simulator_id" ]; then
+            simulator_id="$(
+              printf '%s\n' "$parsed_destinations" | awk -F'|' '
+                $2 ~ /^iPhone/ {
+                  id = $1
+                }
+                END {
+                  if (id != "") {
+                    print id
+                  }
+                }
+              '
+            )"
+          fi
+
+          if [ -z "$simulator_id" ]; then
+            echo "::error::No available iPhone simulator destination found."
+            exit 1
+          fi
+
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          xcodebuild \
+            -project Baseline.xcodeproj \
+            -scheme "Baseline" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -resultBundlePath TestResults.xcresult \
+            test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Baseline-TestResults
+          path: TestResults.xcresult
+          retention-days: 7
+
+  # Compile-only, ~10 minutes. Staging is a release-type configuration, and it
+  # is what deploy-staging.yml archives on every push to develop. Without this
+  # job an optimization-only or Staging-only build break would first appear
+  # after merge, in the deploy. Signing is disabled because this proves the
+  # compile, not the archive; the real signed archive still happens in
+  # deploy-staging.yml.
+  ios-build-staging:
+    name: iOS Build (Staging, unsigned)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Decode Firebase plist files
+        env:
+          GOOGLE_SERVICE_INFO_STAGING_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_STAGING_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$GOOGLE_SERVICE_INFO_STAGING_BASE64" ]; then
+            echo "::error::Required secret GOOGLE_SERVICE_INFO_STAGING_BASE64 is missing or empty."
+            exit 1
+          fi
+
+          mkdir -p Baseline/App/Firebase
+          rm -f Baseline/App/Firebase/GoogleService-Info-Staging.plist
+
+          if ! (printf "%s" "$GOOGLE_SERVICE_INFO_STAGING_BASE64" | base64 --decode > Baseline/App/Firebase/GoogleService-Info-Staging.plist 2>/dev/null \
+             || printf "%s" "$GOOGLE_SERVICE_INFO_STAGING_BASE64" | base64 -D > Baseline/App/Firebase/GoogleService-Info-Staging.plist 2>/dev/null); then
+            echo "::error::Failed to decode secret GOOGLE_SERVICE_INFO_STAGING_BASE64 as base64."
+            exit 1
+          fi
+
+          if [ ! -s Baseline/App/Firebase/GoogleService-Info-Staging.plist ]; then
+            echo "::error::Decoded file for GOOGLE_SERVICE_INFO_STAGING_BASE64 is empty."
+            exit 1
+          fi
+
+          plutil -lint Baseline/App/Firebase/GoogleService-Info-Staging.plist
+
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      # project.yml pins manual signing and a match provisioning profile on the
+      # Staging config for the archive path. Those are overridden to empty here
+      # so the compile needs no certificates, keychain, or match SSH key.
+      - name: Build app (Staging, unsigned, device arch)
+        run: |
+          xcodebuild \
+            -project Baseline.xcodeproj \
+            -scheme "Baseline-Staging" \
+            -configuration Staging \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+
+  # Ubuntu, ~3 minutes. `tsc` is the only static analysis Baseline has on the
+  # functions: strict mode plus noUnusedLocals (see functions/tsconfig.json).
+  # There is no lint script in functions/package.json and no Swift linter in
+  # the repo, so this is the whole "lint" leg — see the PR body.
+  functions-verify:
+    name: Functions Type-check & Test
+    needs: changes
+    if: needs.changes.outputs.functions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix functions ci
+
+      - name: Type-check
+        run: npm --prefix functions run build
+
+      - name: Run tests
+        run: npm --prefix functions test
+
+  # The single required status check. It always runs, including on PRs where
+  # every other job was correctly skipped, so a docs-only PR is mergeable
+  # rather than stuck waiting on a check that never reports.
+  #
+  # Set branch protection on this job's name ("CI"), not on the job names
+  # above — those are conditional by design.
+  ci:
+    name: CI
+    if: always()
+    needs:
+      - changes
+      - ios-test
+      - ios-build-staging
+      - functions-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check job results
+        shell: bash
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+
+          echo "Upstream job results: $RESULTS"
+
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A required CI job did not pass (results: $RESULTS)."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "All required CI jobs passed or were correctly skipped."
