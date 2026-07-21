@@ -2,10 +2,11 @@
 
 The marketing artwork is `Baseline/Assets.xcassets/AppIcon.appiconset/BaselineAppIcon_1024.png`.
 It is the only file in the icon set: `actool` derives every other size from it at build time, so there is nothing else to regenerate when the artwork changes.
-It must stay fully opaque - App Store upload validation rejects a binary whose 1024 icon carries an alpha channel, and `BaselineTests/AppStoreValidationTests.swift` guards that.
+It must stay fully opaque, because App Store upload validation rejects a binary whose 1024 icon carries an alpha channel.
 It must also stay tagged sRGB, so the purple ramp is unambiguous on wide-gamut displays and outside the build, where the marketing 1024 is consumed on its own.
+`BaselineTests/AppStoreValidationTests.swift` guards both invariants against the checked-in file, so a bitmap edit that loses either one fails the test suite.
 
-After any bitmap edit, check both invariants at once:
+The guards run only with the suite, so after any bitmap edit check both locally first:
 
 ```sh
 sips -g pixelWidth -g pixelHeight -g hasAlpha -g samplesPerPixel -g profile \
@@ -14,7 +15,7 @@ sips -g pixelWidth -g pixelHeight -g hasAlpha -g samplesPerPixel -g profile \
 ```
 
 Both invariants are easy to lose by accident, and neither the build nor Xcode warns about the profile.
-Pillow drops the colour profile unless it is passed back explicitly on save, and several image tools will helpfully promote the file to RGBA.
+The rescale that produced the current artwork lost the profile exactly this way: Pillow drops it unless it is passed back explicitly on save, and several image tools will helpfully promote the file to RGBA.
 The pixels are already sRGB, so a profile that went missing should be re-tagged rather than converted; a `matchTo`-style conversion would remap the ramp.
 
 ## How large the mark can be
