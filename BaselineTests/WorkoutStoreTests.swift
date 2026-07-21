@@ -311,8 +311,10 @@ struct WorkoutStoreTests {
         #expect(summary.contains("phase main"))
         #expect(summary.contains("dose MED"))
         #expect(summary.contains("optional"))
-        #expect(summary.contains("Total targets: Distance=100 m"))
-        #expect(summary.contains("Adjustment: Load step 5, minimum 20, maximum 60"))
+        // Group-level values have no exercise to hang a unit override on, so they follow the
+        // athlete's unit system (metric here) rather than leaking the canonical storage unit.
+        #expect(summary.contains("Total targets: Distance=0.1 km"))
+        #expect(summary.contains("Adjustment: Load step 5 kg, minimum 20 kg, maximum 60 kg"))
         #expect(summary.contains("Protect the next intensity day"))
         #expect(summary.contains("Complete every movement"))
         #expect(summary.contains("Keep the rope tight"))
