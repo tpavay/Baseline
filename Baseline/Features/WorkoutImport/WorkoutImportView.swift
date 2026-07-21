@@ -2,6 +2,7 @@ import CoreTransferable
 import ImageIO
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct WorkoutImageTransfer: Transferable {
@@ -29,9 +30,35 @@ struct SourceEvidenceCrop: Identifiable {
 }
 
 enum WorkoutImportProgressCopy {
+    /// Stages that run on the device pause when Baseline is backgrounded and resume from persisted
+    /// page progress on return - nothing is lost, but nothing advances while the app is away.
+    static let localStageFootnote =
+        "This runs on your iPhone, so it pauses if you leave Baseline and picks up where it left off when you return."
+
+    /// Once the parser owns the job the server keeps working regardless of the app, and foreground
+    /// restoration fetches the durable result. Saying otherwise would be a lie.
+    static let serverStageFootnote =
+        "You can close this screen - the import keeps running on Baseline's server and the result will be here when you come back."
+
     static func retryingDetail(completed: Int, total: Int) -> String {
         guard total > 0 else { return "Keep Baseline open until the retry is handed off." }
         return "Progress saved: \(completed) of \(total) sections. Keep Baseline open until the retry is handed off."
+    }
+
+    /// The server reports queued separately from processing, so the wait can admit the import is in
+    /// line behind other work rather than implying a section is actively being parsed.
+    static func processingStatus(isQueued: Bool, completed: Int, total: Int) -> String {
+        if isQueued { return "Waiting for a parser slot" }
+        if total > 0, completed >= total { return "Preparing editor" }
+        return "Organizing exercises"
+    }
+
+    static func processingDetail(isQueued: Bool, completed: Int, total: Int) -> String {
+        if isQueued {
+            return "Your import is in line and hasn't started yet. \(serverStageFootnote)"
+        }
+        guard total > 0 else { return serverStageFootnote }
+        return "\(completed) of \(total) sections organized. \(serverStageFootnote)"
     }
 }
 
@@ -332,15 +359,20 @@ struct WorkoutImportView: View {
         .onChange(of: model.session.status) { _, status in
             prepareReviewStore(for: status)
             moveAccessibilityFocus(for: status)
+            syncKeepAwake()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
                 model.suspendForBackground()
+                // Never hold the idle timer while Baseline is away; `.active` re-applies it if the
+                // import is still working. A leaked disable would drain the battery invisibly.
+                releaseKeepAwake()
             case .active:
                 if restoresPersistedImport, let job = model.currentJob {
                     model.restore(jobID: job.id, catalog: workouts.allDefinitions)
                 }
+                syncKeepAwake()
             case .inactive:
                 break
             @unknown default:
@@ -375,10 +407,36 @@ struct WorkoutImportView: View {
             prepareReviewStore(for: model.session.status)
             moveAccessibilityFocus(for: model.session.status)
         }
+        .onAppear { syncKeepAwake() }
         .onDisappear {
             model.pause()
+            // Leaving the import - dismissed, cancelled, saved, or failed - always restores normal
+            // idle behavior. This is the last line of defence behind the per-status sync above.
+            releaseKeepAwake()
         }
         .interactiveDismissDisabled(isReviewing && !model.reviewDraftIsPersisted)
+    }
+
+    /// Hold the display on only while an import is actually working. A photo import can run for a
+    /// minute or more, and a screen that dims and locks mid-run reads as a hang. Review, save, the
+    /// saved confirmation, failure, and the picker all keep normal idle behavior.
+    private func syncKeepAwake() {
+        UIApplication.shared.isIdleTimerDisabled = Self.shouldKeepScreenAwake(for: model.session.status)
+    }
+
+    private func releaseKeepAwake() {
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    /// Pure status→keep-awake mapping so the "only while working" rule is testable without a view tree.
+    static func shouldKeepScreenAwake(for status: WorkoutImportStatus) -> Bool {
+        switch status {
+        case .loadingImages, .recognizing, .preparingSections, .waitingForHandoff,
+             .retryingSections, .processingSections, .parsing:
+            true
+        case .selecting, .reviewing, .saving, .saved, .failed:
+            false
+        }
     }
 
     private var title: String {
@@ -496,28 +554,30 @@ struct WorkoutImportView: View {
                 "Creating your workout",
                 status: "Preparing photos",
                 detail: total > 0
-                    ? "Image \(min(completed + 1, total)) of \(total). Large iCloud photos can take a moment."
-                    : ""
+                    ? "Photo \(min(completed + 1, total)) of \(total). Large iCloud photos can take a moment. \(WorkoutImportProgressCopy.localStageFootnote)"
+                    : WorkoutImportProgressCopy.localStageFootnote,
+                steps: (completed, total)
             )
         case .recognizing(let completed, let total):
             progress(
                 "Creating your workout",
                 status: "Reading workout",
                 detail: total > 0
-                    ? "Finished \(completed) of \(total) photos privately on your iPhone."
-                    : "This happens privately on your iPhone."
+                    ? "Finished \(completed) of \(total) photos privately on your iPhone. \(WorkoutImportProgressCopy.localStageFootnote)"
+                    : "This happens privately on your iPhone. \(WorkoutImportProgressCopy.localStageFootnote)",
+                steps: (completed, total)
             )
         case .preparingSections:
             progress(
                 "Creating your workout",
                 status: "Organizing exercises",
-                detail: "Baseline is separating exercises, notes, and workout sections."
+                detail: "Baseline is separating exercises, notes, and workout sections. \(WorkoutImportProgressCopy.localStageFootnote)"
             )
         case .waitingForHandoff:
             progress(
                 "Creating your workout",
-                status: "Organizing exercises",
-                detail: "Keep Baseline open until the workout is handed off. This usually takes a moment."
+                status: "Sending to the parser",
+                detail: "Keep Baseline open until the workout is handed off. \(WorkoutImportProgressCopy.localStageFootnote)"
             )
         case .retryingSections(let completed, let total):
             progress(
@@ -528,14 +588,24 @@ struct WorkoutImportView: View {
         case .processingSections(let completed, let total):
             progress(
                 "Creating your workout",
-                status: total > 0 && completed >= total ? "Preparing editor" : "Organizing exercises",
-                detail: "You can close this screen. Baseline will keep working."
+                status: WorkoutImportProgressCopy.processingStatus(
+                    isQueued: model.isQueuedOnServer,
+                    completed: completed,
+                    total: total
+                ),
+                detail: WorkoutImportProgressCopy.processingDetail(
+                    isQueued: model.isQueuedOnServer,
+                    completed: completed,
+                    total: total
+                ),
+                // A queued job has no section underway, so an empty determinate bar would overstate it.
+                steps: model.isQueuedOnServer ? nil : (completed, total)
             )
         case .parsing:
             progress(
                 "Creating your workout",
                 status: "Organizing exercises",
-                detail: "Baseline is translating the text into editable exercises and sets."
+                detail: "Baseline is translating the text into editable exercises and sets. \(WorkoutImportProgressCopy.serverStageFootnote)"
             )
         case .reviewing:
             review.accessibilityFocused($focusTarget, equals: .review)
@@ -588,11 +658,28 @@ struct WorkoutImportView: View {
             .contentShape(Rectangle())
     }
 
-    private func progress(_ headline: String, status: String?, detail: String) -> some View {
+    /// `steps` is real, server- or device-reported work, never a synthetic timer. When a stage cannot
+    /// report countable units the spinner stays indeterminate rather than inventing a fraction.
+    private func progress(
+        _ headline: String,
+        status: String?,
+        detail: String,
+        steps: (completed: Int, total: Int)? = nil
+    ) -> some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 16) {
-                    ProgressView().tint(BaselineColor.accent).scaleEffect(1.2)
+                    if let steps, steps.total > 0 {
+                        ProgressView(
+                            value: Double(min(max(steps.completed, 0), steps.total)),
+                            total: Double(steps.total)
+                        )
+                        .tint(BaselineColor.accent)
+                        .frame(maxWidth: 260)
+                        .accessibilityLabel("Step \(min(steps.completed + 1, steps.total)) of \(steps.total)")
+                    } else {
+                        ProgressView().tint(BaselineColor.accent).scaleEffect(1.2)
+                    }
                     Text(headline)
                         .font(.title3.weight(.semibold))
                         .multilineTextAlignment(.center)
