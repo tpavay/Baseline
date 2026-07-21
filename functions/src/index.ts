@@ -33,21 +33,14 @@ import {
   WORKOUT_IMPORT_SKETCH_TOOL,
   WORKOUT_IMPORT_SKETCH_TOOL_NAME,
   WORKOUT_IMPORT_SKETCH_VERSION,
-  WORKOUT_IMPORT_STREAM_LIMITS,
+  abortWhenClientDisconnects,
+  emptyWorkoutImportStreamResult,
+  foldWorkoutImportStreamUsage,
 } from "./workoutImportStream";
 import {
   parseStartWorkoutImportJobPayload,
-  MAX_JOB_OUTPUT_TOKENS,
-  MAX_JOB_PROVIDER_CALLS,
   StoredWorkoutImportJob,
 } from "./workoutImportJobs";
-import {
-  ImportUsageError,
-  IMPORT_DAILY_JOB_LIMIT,
-  admitImportAttempt,
-  chargeImportJob,
-  reserveImportJobProviderCall,
-} from "./workoutImportUsage";
 import {
   WorkoutImportJobRuntime,
   WorkoutImportObservability,
@@ -87,7 +80,7 @@ const providerAndObservabilitySecrets = [
   langfuseBaseURL,
 ];
 const DAILY_LIMIT = 200; // per-user request cap; abuse guard, tune later
-const IMPORT_DAILY_LIMIT = IMPORT_DAILY_JOB_LIMIT;
+const IMPORT_DAILY_LIMIT = 25;
 const IMPORT_MODEL = process.env.WORKOUT_IMPORT_MODEL || "claude-sonnet-4-5-20250929";
 // The fast path's model is separately overridable. It intentionally defaults to the same model as
 // the durable path: the measured latency win comes from one call and a permissive schema (~3x fewer
@@ -381,30 +374,17 @@ export const streamWorkoutImport = onRequest(
       res.status(400).json({ error: code });
       return;
     }
-    // The athlete's daily count is charged when this import yields something usable, not here.
-    // Admission only checks they have an import left and that the invisible cost guard is intact,
-    // and reserves this attempt's provider call against the job's own bounded pool.
     try {
-      await admitImportAttempt(getFirestore(), uid, payload.clientJobID);
-      await reserveImportJobProviderCall(
-        getFirestore(),
-        uid,
-        payload.clientJobID,
-        WORKOUT_IMPORT_STREAM_LIMITS.defaultOutputTokens,
-        { maximumProviderCalls: MAX_JOB_PROVIDER_CALLS, maximumOutputTokens: MAX_JOB_OUTPUT_TOKENS },
-      );
+      await enforceImportDailyLimit(uid);
     } catch (error) {
-      if (error instanceof ImportUsageError) {
-        // Only a genuine quota exhaustion is a rate limit. The cost guard and an exhausted per-job
-        // budget are Baseline's own ceilings and must never read as "you hit your daily limit".
-        const rateLimited = error.reason === "daily_job_limit";
-        logger.warn("workout_import_stream.refused", { uid, reason: error.reason });
-        res.status(rateLimited ? 429 : 503).json({ error: rateLimited ? "rate_limited" : error.reason });
+      // Only genuine quota exhaustion is a rate limit. A Firestore outage, a permission error, or
+      // transaction contention is a backend fault and is reported as one rather than being
+      // disguised as the athlete having used up their day.
+      if (error instanceof HttpsError && error.code === "resource-exhausted") {
+        res.status(429).json({ error: "rate_limited" });
         return;
       }
-      // A Firestore outage, a permission error, or transaction contention is a backend fault and is
-      // reported as one rather than being disguised as the athlete's own usage.
-      logger.error("workout_import_stream.usage_unavailable", { uid, error: `${error}` });
+      logger.error("workout_import_stream.limit_unavailable", { uid, error: `${error}` });
       res.status(503).json({ error: "remote_unavailable" });
       return;
     }
@@ -427,8 +407,9 @@ export const streamWorkoutImport = onRequest(
     // closing means nobody is waiting. Aborting the provider call is the other half of that: without
     // it the model keeps writing, at full output-token cost, into a response that is already gone.
     const abandoned = new AbortController();
-    req.on("close", () => abandoned.abort());
-    const writable = () => !abandoned.signal.aborted && !res.writableEnded;
+    abortWhenClientDisconnects(res, abandoned);
+    const writable = () => !abandoned.signal.aborted && !res.writableEnded && !res.destroyed;
+    const usage = emptyWorkoutImportStreamResult();
 
     try {
       await withLLMTrace("import-stream", {
@@ -458,18 +439,21 @@ export const streamWorkoutImport = onRequest(
           messageCount: request.messages.length,
           toolSchemaBytes: Buffer.byteLength(JSON.stringify([WORKOUT_IMPORT_SKETCH_TOOL]), "utf8"),
           callIndex: 0,
+          streaming: true,
         }, async () => {
           const stream = await client.messages.create(request, { signal: abandoned.signal });
           for await (const event of stream as AsyncIterable<Record<string, unknown>>) {
             if (!writable()) break;
+            foldWorkoutImportStreamUsage(usage, event);
             if (event.type !== "content_block_delta") continue;
             const delta = event.delta as { type?: string; partial_json?: string } | undefined;
             if (delta?.type !== "input_json_delta" || typeof delta.partial_json !== "string") continue;
             deltaCount += 1;
             characters += delta.partial_json.length;
-            res.write(serverSentEvent({ type: "delta", text: delta.partial_json }));
+            if (writable()) res.write(serverSentEvent({ type: "delta", text: delta.partial_json }));
           }
-          return null;
+          // Returned rather than discarded: this is the object the trace prices the import from.
+          return usage;
         });
         // Inside the trace, like every other terminal outcome, so it rolls up with the generation
         // span rather than being emitted detached from the trace it belongs to.
@@ -483,11 +467,6 @@ export const streamWorkoutImport = onRequest(
         logger.info("workout_import_stream.abandoned", { uid, deltas: deltaCount, latencyMs: Date.now() - started });
         return;
       }
-      // Deltas arrived and the stream ended cleanly, so this job produced something. The charge is
-      // idempotent on the client job id, so the durable retry cannot charge it a second time.
-      if (deltaCount > 0) await chargeImportJob(getFirestore(), uid, payload.clientJobID).catch((error) => {
-        logger.error("workout_import_stream.charge_failed", { uid, error: `${error}` });
-      });
       res.write(serverSentEvent({ type: "done", model: IMPORT_STREAM_MODEL }));
       logger.info("workout_import_stream.ok", {
         uid,
@@ -495,6 +474,8 @@ export const streamWorkoutImport = onRequest(
         images: payload.images.length,
         deltas: deltaCount,
         characters,
+        inputTokens: usage.usage.input_tokens,
+        outputTokens: usage.usage.output_tokens,
         latencyMs: Date.now() - started,
       });
     } catch (error) {
@@ -920,9 +901,6 @@ function workoutImportCallableError(error: unknown): HttpsError {
     case "already-exists": return new HttpsError("already-exists", "That import identifier is already in use.");
     case "resource-exhausted":
       return new HttpsError("resource-exhausted", "You've hit today's workout import limit. Try again tomorrow.");
-    // Baseline's own ceiling, not the athlete's. It must never read as their daily import limit.
-    case "cost-guard":
-      return new HttpsError("unavailable", "Baseline couldn't start that import right now. Try again shortly.");
     case "failed-precondition":
       return new HttpsError("failed-precondition", "This saved import uses an incompatible schema.");
     }

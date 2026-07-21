@@ -15,7 +15,6 @@ struct WorkoutImportFastPathTests {
         var events: [WorkoutImportStreamEvent]
 
         func stream(
-            jobID: UUID,
             images: [ImportedWorkoutImage],
             text: String?,
             catalogHints: [String]
@@ -30,7 +29,6 @@ struct WorkoutImportFastPathTests {
 
     private struct ThrowingStreamer: WorkoutImportStreaming {
         func stream(
-            jobID: UUID,
             images: [ImportedWorkoutImage],
             text: String?,
             catalogHints: [String]
@@ -53,7 +51,6 @@ struct WorkoutImportFastPathTests {
         }
 
         nonisolated func stream(
-            jobID: UUID,
             images: [ImportedWorkoutImage],
             text: String?,
             catalogHints: [String]
@@ -96,7 +93,7 @@ struct WorkoutImportFastPathTests {
             events: Self.fragments(of: Self.response) + [.completed(model: "test-model")]
         ))
 
-        let outcome = await path.run(jobID: UUID(), images: [], text: "ignored", catalog: ExerciseCatalog.definitions) { _, _ in }
+        let outcome = await path.run(images: [], text: "ignored", catalog: ExerciseCatalog.definitions) { _, _ in }
 
         #expect(outcome.failureCode == nil)
         #expect(outcome.model == "test-model")
@@ -113,7 +110,7 @@ struct WorkoutImportFastPathTests {
         ))
         let collected = Collector()
 
-        _ = await path.run(jobID: UUID(), images: [], text: nil, catalog: ExerciseCatalog.definitions) { build, _ in
+        _ = await path.run(images: [], text: nil, catalog: ExerciseCatalog.definitions) { build, _ in
             await collected.append(build.draft.workout.allExercises.map(\.exerciseName))
         }
 
@@ -135,7 +132,7 @@ struct WorkoutImportFastPathTests {
             events: Self.fragments(of: partial) + [.failed(code: "remote_unavailable")]
         ))
 
-        let outcome = await path.run(jobID: UUID(), images: [], text: nil, catalog: ExerciseCatalog.definitions) { _, _ in }
+        let outcome = await path.run(images: [], text: nil, catalog: ExerciseCatalog.definitions) { _, _ in }
 
         #expect(outcome.failureCode == "remote_unavailable")
         #expect(outcome.isWorthShowing)
@@ -146,12 +143,12 @@ struct WorkoutImportFastPathTests {
     /// fall back rather than open an empty editor.
     @Test func aStreamThatDeliveredNothingIsNotWorthShowing() async {
         let dead = WorkoutImportFastPath(streamer: ScriptedStreamer(events: [.failed(code: "rate_limited")]))
-        let deadOutcome = await dead.run(jobID: UUID(), images: [], text: nil, catalog: ExerciseCatalog.definitions) { _, _ in }
+        let deadOutcome = await dead.run(images: [], text: nil, catalog: ExerciseCatalog.definitions) { _, _ in }
         #expect(!deadOutcome.isWorthShowing)
         #expect(deadOutcome.failureCode == "rate_limited")
 
         let broken = WorkoutImportFastPath(streamer: ThrowingStreamer())
-        let brokenOutcome = await broken.run(jobID: UUID(), images: [], text: nil, catalog: ExerciseCatalog.definitions) { _, _ in }
+        let brokenOutcome = await broken.run(images: [], text: nil, catalog: ExerciseCatalog.definitions) { _, _ in }
         #expect(!brokenOutcome.isWorthShowing)
         #expect(brokenOutcome.failureCode != nil)
     }

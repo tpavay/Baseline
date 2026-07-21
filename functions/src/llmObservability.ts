@@ -68,6 +68,11 @@ export interface GenerationContext {
   sectionIndex?: number;
   repairIndex?: number;
   providerRetryIndex?: number;
+  /**
+   * Whether this request streams. A streaming operation still has to return an Anthropic-shaped
+   * object carrying the accumulated `usage`, because that is what the cost derivation reads.
+   */
+  streaming?: boolean;
 }
 
 export interface ValidatorObservation {
@@ -342,7 +347,7 @@ export async function withLLMGeneration<T>(
         model: context.model,
         modelParameters: {
           maxTokens: context.maxTokens,
-          streaming: "false",
+          streaming: context.streaming === true ? "true" : "false",
           ...(context.temperature === undefined ? {} : { temperature: context.temperature }),
           ...(context.toolChoice === undefined ? {} : { toolChoice: context.toolChoice }),
         },
@@ -359,7 +364,7 @@ export async function withLLMGeneration<T>(
           section_index: context.sectionIndex,
           repair_index: context.repairIndex,
           provider_retry_index: context.providerRetryIndex,
-          streaming: false,
+          streaming: context.streaming === true,
           temperature: context.temperature,
           tool_choice: context.toolChoice,
           prompt_bytes: requestBytes,

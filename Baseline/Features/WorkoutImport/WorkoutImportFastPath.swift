@@ -37,7 +37,6 @@ struct WorkoutImportFastPath: Sendable {
 
     /// Stream one import. `partial` is called after every delta that produced a new exercise.
     func run(
-        jobID: UUID,
         images: [ImportedWorkoutImage],
         text: String?,
         catalog: [ExerciseDefinition],
@@ -50,7 +49,6 @@ struct WorkoutImportFastPath: Sendable {
 
         do {
             let events = streamer.stream(
-                jobID: jobID,
                 images: images,
                 text: text,
                 catalogHints: WorkoutImportCoordinator.providerCatalogHints(catalog)

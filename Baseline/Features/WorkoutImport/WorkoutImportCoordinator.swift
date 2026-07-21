@@ -775,7 +775,6 @@ actor WorkoutImportCoordinator {
         let jobID = job.id
         let streamingBase = job
         let outcome = await WorkoutImportFastPath(streamer: streamer).run(
-            jobID: jobID,
             images: images,
             text: text.isEmpty ? nil : text,
             catalog: catalog
@@ -798,6 +797,11 @@ actor WorkoutImportCoordinator {
         job.diagnostics.parserMilliseconds += elapsed
 
         guard outcome.isWorthShowing, let build = outcome.build, let document = outcome.document else {
+            // Falling through here costs the athlete a second of their daily imports, because both
+            // endpoints charge one. That is a knowingly deferred decision, not an oversight: the
+            // per-import cost of this architecture is about to change enough that any limit
+            // calibrated against today's numbers would be calibrated against numbers that are
+            // about to stop being true.
             Self.logger.info(
                 "Import \(jobID.uuidString, privacy: .public) fast path yielded no usable structure (\(outcome.failureCode ?? "empty", privacy: .public)); handing off to the durable job"
             )

@@ -29,14 +29,11 @@ struct ImportExerciseMatch: Equatable, Sendable {
 /// because "barbell" is unaccounted for and the difference might matter.
 enum ImportExerciseMatcher {
 
-    /// `snapshot` is the search index over `catalog`. It is passed in rather than built here because
-    /// the streaming path re-converts the whole sketch after every delta, and rebuilding the index
-    /// per exercise per delta is thousands of full-catalog builds for one import.
-    static func match(
-        _ name: String,
-        in catalog: [ExerciseDefinition],
-        snapshot: ExerciseCatalogSnapshot
-    ) -> ImportExerciseMatch {
+    /// The catalog arrives as its own index rather than as an array, because the streaming path
+    /// re-converts the whole sketch after every delta and rebuilding that index per exercise per
+    /// delta is thousands of full-catalog builds for one import. Taking only the snapshot also
+    /// means the exact and ranked passes cannot disagree about which catalog they are matching in.
+    static func match(_ name: String, in snapshot: ExerciseCatalogSnapshot) -> ImportExerciseMatch {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return ImportExerciseMatch(sourceName: name, definition: nil, confidence: .uncertain)
@@ -44,7 +41,7 @@ enum ImportExerciseMatcher {
 
         // The existing exact matcher already folds case, punctuation, and context words such as
         // "warm-up", "400m", or "working set", so "Easy run" and "Run" reach the same definition.
-        if let exact = WorkoutImportDraftBuilder.exactMatch(trimmed, in: catalog) {
+        if let exact = WorkoutImportDraftBuilder.exactMatch(trimmed, in: snapshot.definitions) {
             return ImportExerciseMatch(sourceName: trimmed, definition: exact, confidence: .exact)
         }
 

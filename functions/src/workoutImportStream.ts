@@ -184,12 +184,6 @@ export interface WorkoutImportStreamImage {
 }
 
 export interface WorkoutImportStreamPayload {
-  /**
-   * The client's identity for the whole import. The same id is sent to `startWorkoutImportJob`, so
-   * a fast-path attempt and the durable retry that may follow it are one job for both the athlete's
-   * daily count and the per-job provider budget.
-   */
-  clientJobID: string;
   images: WorkoutImportStreamImage[];
   /** Recognized text, used when there are no images or alongside them as a reading aid. */
   text?: string;
@@ -249,10 +243,7 @@ export function parseWorkoutImportStreamPayload(raw: unknown): WorkoutImportStre
     ? source.catalogHints.filter((hint): hint is string => typeof hint === "string").slice(0, 500)
     : [];
 
-  const clientJobID = typeof source.clientJobID === "string" ? source.clientJobID.trim() : "";
-  if (!/^[A-Za-z0-9-]{8,64}$/.test(clientJobID)) return reject("malformed_payload", "bad clientJobID");
-
-  return { clientJobID, images, text, catalogHints };
+  return { images, text, catalogHints };
 }
 
 /**
@@ -309,4 +300,88 @@ export function buildWorkoutImportSketchRequest(
 /** One server-sent event. Kept separate from the handler so the wire format is testable. */
 export function serverSentEvent(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+/**
+ * What a streamed call reports back for cost, shaped like a non-streaming Anthropic message.
+ *
+ * Cost is derived from `response.usage` on whatever the traced operation returns, and a streaming
+ * operation has no single response to return. Accumulating the usage events into this shape means
+ * the fast path prices through the same managed table as the durable path rather than a parallel
+ * one - and per-import cost is exactly the number needed to set an import limit against the real
+ * architecture instead of against the one it replaced.
+ */
+export interface WorkoutImportStreamUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+export interface WorkoutImportStreamResult {
+  usage: WorkoutImportStreamUsage;
+  stop_reason?: string;
+}
+
+export function emptyWorkoutImportStreamResult(): WorkoutImportStreamResult {
+  return { usage: {} };
+}
+
+/**
+ * Fold one stream event into the running total. `message_start` carries the input side (including
+ * the cache tiers, which are priced differently); `message_delta` carries the running output count
+ * and the stop reason. Every other event type is irrelevant to cost and left alone.
+ */
+export function foldWorkoutImportStreamUsage(
+  into: WorkoutImportStreamResult,
+  event: unknown,
+): WorkoutImportStreamResult {
+  const record = asRecord(event);
+  if (!record) return into;
+  if (record.type === "message_start") {
+    const usage = asRecord(asRecord(record.message)?.usage);
+    assignToken(into.usage, "input_tokens", usage?.input_tokens);
+    assignToken(into.usage, "cache_read_input_tokens", usage?.cache_read_input_tokens);
+    assignToken(into.usage, "cache_creation_input_tokens", usage?.cache_creation_input_tokens);
+    assignToken(into.usage, "output_tokens", usage?.output_tokens);
+    return into;
+  }
+  if (record.type === "message_delta") {
+    assignToken(into.usage, "output_tokens", asRecord(record.usage)?.output_tokens);
+    const stopReason = asRecord(record.delta)?.stop_reason;
+    if (typeof stopReason === "string") into.stop_reason = stopReason;
+    return into;
+  }
+  return into;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function assignToken(
+  usage: WorkoutImportStreamUsage,
+  key: keyof WorkoutImportStreamUsage,
+  value: unknown,
+): void {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) usage[key] = value;
+}
+
+/**
+ * Abort `controller` when the client goes away.
+ *
+ * The signal has to come from the *response*, not the request: the Functions Framework body-parses
+ * the request to completion before the handler runs, so the request's own "close" has already fired
+ * by the time anything here could listen for it. The response emits "close" both on normal
+ * completion and when the connection is terminated early, so `writableFinished` separates them.
+ */
+export function abortWhenClientDisconnects(
+  response: { on: (event: string, listener: () => void) => unknown; writableFinished?: boolean },
+  controller: AbortController,
+): void {
+  response.on("close", () => {
+    if (response.writableFinished !== true) controller.abort();
+  });
 }

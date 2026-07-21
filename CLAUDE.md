@@ -99,9 +99,6 @@ Two transports, both wanted.
 A single photo takes the streaming single call (`streamWorkoutImport`, SSE), which shows real editable rows as exercises resolve and never rewrites one already on screen.
 Multi-image imports stay on the durable Cloud Tasks job, which is also the retry when the fast path fails.
 
-The daily import limit and cost control are two counters and must never become one.
-The limit counts distinct jobs, keyed on the client job id both endpoints receive, charged once when a job yields a usable result and never for a failure; cost is bounded separately by a per-job provider pool and an invisible per-day attempt ceiling whose exhaustion is never reported as "you hit your daily import limit" (`functions/src/workoutImportUsage.ts`).
-
 Exercise matching surfaces near-misses rather than resolving them: widening past an exact catalog hit reaches only different spellings of the same movement, and anything else stays unresolved for the athlete to choose.
 Ranges, paces, and RPE ("6-8 reps", "3-5km pace", "7RPE") stay coach text, never typed metrics - corroborated against a shipping competitor in `data/baseline-workout-structure-reference.md`.
 Add import regression cases by dropping a JSON file in `fixtures/workout-import/corpus/` and running `xcodegen generate`; no test code changes (see that directory's README).

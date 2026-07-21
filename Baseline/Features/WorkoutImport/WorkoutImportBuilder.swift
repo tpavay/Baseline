@@ -235,16 +235,55 @@ enum WorkoutImportDraftBuilder {
         }
     }
 
+    /// What Baseline offers the athlete for a name it could not place.
+    ///
+    /// Character similarity alone is the wrong instrument for choosing these. It scores "sled drag"
+    /// against "sled push" as a near miss, because the words that differ are short — but they are
+    /// different movements, and putting Sled Push in front of someone who wrote Sled Drag is the
+    /// captain's own example of the mistake this whole path exists to avoid. It is one tap safer
+    /// than resolving it silently, and that is all.
+    ///
+    /// So a candidate that spells out every word the source used wins outright: those are the
+    /// different spellings of the same movement. Raw similarity is kept only as the fallback for a
+    /// misread name, where no candidate accounts for the words and something is better than a blank
+    /// picker.
     static func candidates(for name: String, in catalog: [ExerciseDefinition], limit: Int = 4) -> [ExerciseDefinition] {
         let key = normalizeIdentity(name)
         guard !key.isEmpty else { return [] }
-        return catalog.map { definition in
+        let scored = catalog.map { definition -> (ExerciseDefinition, Double) in
             let aliases = [definition.name] + definition.aliases
             return (definition, aliases.map { similarity(key, normalizeIdentity($0)) }.max() ?? 0)
         }
+        let wanted = identityWords(key)
+        let sameMovement = wanted.isEmpty ? [] : scored.filter { accountsForEveryWord(wanted, $0.0) }
+        return (sameMovement.isEmpty ? scored : sameMovement)
             .filter { $0.1 >= 0.42 }
             .sorted { $0.1 > $1.1 }
             .prefix(limit).map(\.0)
+    }
+
+    /// The words of an already-normalized name that carry identity, with set and unit context
+    /// dropped and a trailing "s" folded so "Box Jumps" and "Box Jump" are one movement.
+    private static func identityWords(_ normalized: String) -> Set<String> {
+        Set(normalized.split(separator: " ")
+            .filter { !isIdentityContextToken($0) }
+            .map(singular)
+            .filter { $0.count > 1 })
+    }
+
+    private static func singular(_ word: some StringProtocol) -> String {
+        let value = String(word)
+        let dropped = value.hasSuffix("s") ? String(value.dropLast()) : value
+        return dropped.count > 1 ? dropped : value
+    }
+
+    /// True when one of the definition's spellings uses every word the source used. Each alias is
+    /// checked whole, since aliases that between them mention "sled" and "drag" have not shown that
+    /// any one of them means "sled drag".
+    private static func accountsForEveryWord(_ wanted: Set<String>, _ definition: ExerciseDefinition) -> Bool {
+        ([definition.name] + definition.aliases).contains {
+            wanted.isSubset(of: identityWords(normalizeIdentity($0)))
+        }
     }
 
     /// Produces a deliberately narrow set of safe identity variants. This lets parser output such

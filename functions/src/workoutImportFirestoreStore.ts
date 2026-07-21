@@ -31,13 +31,6 @@ import {
   WorkoutImportWorkerClaim,
   withinWorkoutImportJobBudget,
 } from "./workoutImportJobRuntime";
-import {
-  ImportUsageError,
-  admitImportAttemptIn,
-  chargeImportJobIn,
-  importJobProviderLedgerIn,
-  importUsageLimits,
-} from "./workoutImportUsage";
 
 const ROOT_COLLECTION = "workoutImportJobs";
 const SECTION_COLLECTION = "workoutImportJobSections";
@@ -52,8 +45,6 @@ type StoreErrorCode =
   | "permission-denied"
   | "already-exists"
   | "resource-exhausted"
-  /** The invisible daily cost guard, deliberately distinct from the athlete's import limit. */
-  | "cost-guard"
   | "failed-precondition";
 
 export class WorkoutImportStoreError extends Error {
@@ -87,10 +78,12 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
   ): Promise<{ job: StoredWorkoutImportJob; created: boolean }> {
     const rootRef = this.root(payload.clientJobID);
     const tombstoneRef = this.cancellation(uid, payload.clientJobID);
+    const usageRef = this.database.doc(`users/${uid}/usage/${this.day()}`);
     return this.database.runTransaction(async (transaction) => {
-      const [rootSnapshot, tombstoneSnapshot] = await Promise.all([
+      const [rootSnapshot, tombstoneSnapshot, usageSnapshot] = await Promise.all([
         transaction.get(rootRef),
         transaction.get(tombstoneRef),
+        transaction.get(usageRef),
       ]);
       if (rootSnapshot.exists) {
         const raw = rootSnapshot.data();
@@ -112,18 +105,8 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
         }
       }
 
-      // The athlete's daily count is charged when this job yields a document, not here — see
-      // `completeJob`. Admission only checks that they have an import left and that the invisible
-      // cost guard has not tripped, and it records the attempt against that guard.
-      const ledger = await importJobProviderLedgerIn(transaction, this.database, uid, payload.clientJobID);
-      try {
-        await admitImportAttemptIn(
-          transaction, this.database, uid, payload.clientJobID, this.now(),
-          importUsageLimits(this.dailyLimit),
-        );
-      } catch (error) {
-        throw storeErrorForUsage(error);
-      }
+      const nextUsage = ((usageSnapshot.data()?.workoutImports as number) ?? 0) + 1;
+      if (nextUsage > this.dailyLimit) throw new WorkoutImportStoreError("resource-exhausted");
       const timestamp = this.timestamp();
       const expiresAt = Timestamp.fromMillis(timestamp.toMillis() + RETENTION_MS);
       const sectionIDs = payload.sections.map((section) => section.id);
@@ -142,12 +125,10 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
         catalogHints: payload.catalogHints,
         completedSections: 0,
         totalSections: sectionIDs.length,
-        // Seeded from the shared per-job ledger so a fast-path attempt for this same job and the
-        // durable fall-through draw from one bounded pool rather than two.
-        providerCalls: ledger.providerCalls,
+        providerCalls: 0,
         initialOutputTokenBudget: initialBudget,
         outputTokenBudget: outputTokenBudget(payload),
-        outputTokensReserved: ledger.outputTokensReserved,
+        outputTokensReserved: 0,
         appliedRequestIDs: [payload.requestID],
         cancelled: false,
         model,
@@ -178,6 +159,7 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
       });
       transaction.create(rootRef, root);
       sections.forEach((section) => transaction.create(this.section(payload.clientJobID, section.id), section));
+      transaction.set(usageRef, { workoutImports: nextUsage, updatedAt: timestamp }, { merge: true });
       return { job: root, created: true };
     });
   }
@@ -721,10 +703,6 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
       if (!snapshot.exists) return false;
       const root = this.job(snapshot.data());
       if (!this.activeWorker(root, generation, workerLeaseToken)) return false;
-      // The job produced a document, so this is where the athlete's daily count is charged.
-      // Idempotent on the client job id, so a fast-path attempt that already charged it is not
-      // charged twice, and a job that never got here was never charged at all.
-      await chargeImportJobIn(transaction, this.database, root.uid, root.clientJobID, this.now());
       const timestamp = this.timestamp();
       const updated = {
         ...root,
@@ -925,12 +903,9 @@ export class FirestoreWorkoutImportJobStore implements WorkoutImportJobStore {
     return Timestamp.fromMillis(timestamp.toMillis() + duration);
   }
 
-}
-
-/** A usage refusal keeps its own identity, so the cost guard is never reported as the import limit. */
-function storeErrorForUsage(error: unknown): unknown {
-  if (!(error instanceof ImportUsageError)) return error;
-  return new WorkoutImportStoreError(error.reason === "cost_guard" ? "cost-guard" : "resource-exhausted");
+  private day(): string {
+    return new Date(this.now()).toISOString().slice(0, 10);
+  }
 }
 
 function millis(value: unknown): number {

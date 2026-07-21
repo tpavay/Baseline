@@ -94,15 +94,15 @@ struct WorkoutImportConversionTests {
     // MARK: - Exercise matching surfaces near-misses instead of resolving them
 
     @Test func exactNamesAndCasualAliasesResolveConfidently() {
-        let run = ImportExerciseMatcher.match("Run", in: catalog, snapshot: snapshot)
+        let run = ImportExerciseMatcher.match("Run", in: snapshot)
         #expect(run.confidence == .exact)
         #expect(run.definition?.id == "run")
 
-        let strides = ImportExerciseMatcher.match("Strides", in: catalog, snapshot: snapshot)
+        let strides = ImportExerciseMatcher.match("Strides", in: snapshot)
         #expect(strides.confidence == .exact)
         #expect(strides.definition?.id == "run")
 
-        let echo = ImportExerciseMatcher.match("Assault Bike", in: catalog, snapshot: snapshot)
+        let echo = ImportExerciseMatcher.match("Assault Bike", in: snapshot)
         #expect(echo.confidence == .exact)
         #expect(echo.definition?.id == "echo_bike")
     }
@@ -112,26 +112,32 @@ struct WorkoutImportConversionTests {
     /// was decided. The catalog has no plain "Sled Drag", and the neighbours it does have either add
     /// a qualifier the source never said or are a different movement entirely.
     @Test func sledDragIsSurfacedAsUncertainAndNeverBecomesSledPush() throws {
-        let match = ImportExerciseMatcher.match("Sled Drag", in: catalog, snapshot: snapshot)
+        let match = ImportExerciseMatcher.match("Sled Drag", in: snapshot)
 
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
 
-        // And it survives conversion as an honest unknown: the source's own words, reported as
-        // unresolved, so the draft builder raises its blocking question rather than anything
-        // downstream quietly settling on a different movement.
+        // And it survives all the way to the surface the athlete actually sees: conversion passes
+        // the source's own words through unresolved, and the draft builder raises its blocking
+        // question. The list it offers is the one place a wrong movement could still reach them,
+        // so that is where the rule is asserted.
         let sketch = WorkoutImportSketch(blocks: [.init(items: [.init(name: "Sled Drag", prescription: "12.5m")])])
         let converted = WorkoutImportSketchConverter.convert(sketch, catalog: catalog)
         let exercise = try #require(converted.document.blocks.first?.exercises.first)
-
         #expect(exercise.name == "Sled Drag")
         #expect(converted.unresolvedNames == ["Sled Drag"])
-        #expect(!catalog.contains { $0.id == "sled_push" && $0.name == exercise.name })
+
+        let build = WorkoutImportDraftBuilder.build(converted.document, catalog: catalog)
+        let unknown = try #require(build.issues.first { $0.code == .unknownExercise })
+        #expect(unknown.severity == .blocking)
+        #expect(unknown.message.contains("Sled Drag"))
+        #expect(!unknown.candidates.isEmpty)
+        #expect(!unknown.candidates.contains("sled_push"))
     }
 
     /// A qualifier the source *did* say is not thrown away to reach a shorter catalog name.
     @Test func aQualifierTheSourceStatedIsNotDiscardedToReachAMatch() {
-        let match = ImportExerciseMatcher.match("Kettlebell Farmers Walk", in: catalog, snapshot: snapshot)
+        let match = ImportExerciseMatcher.match("Kettlebell Farmers Walk", in: snapshot)
 
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
@@ -140,18 +146,18 @@ struct WorkoutImportConversionTests {
     /// The widening that *is* allowed: the same movement spelled differently. Singular versus
     /// plural is spelling, not a different exercise.
     @Test func aPluralSpellingOfTheSameMovementStillResolves() {
-        let plural = ImportExerciseMatcher.match("Box Jumps", in: catalog, snapshot: snapshot)
+        let plural = ImportExerciseMatcher.match("Box Jumps", in: snapshot)
         #expect(plural.definition?.id == "box_jump")
     }
 
     @Test func anUnknownMovementResolvesToNothingAndOffersCandidates() {
-        let match = ImportExerciseMatcher.match("Zercher Sandbag Yoke Carry Thing", in: catalog, snapshot: snapshot)
+        let match = ImportExerciseMatcher.match("Zercher Sandbag Yoke Carry Thing", in: snapshot)
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
     }
 
     @Test func anEmptyNameIsUncertainRatherThanMatchingTheFirstDefinition() {
-        let match = ImportExerciseMatcher.match("   ", in: catalog, snapshot: snapshot)
+        let match = ImportExerciseMatcher.match("   ", in: snapshot)
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
     }
