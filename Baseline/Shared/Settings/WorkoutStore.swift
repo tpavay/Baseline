@@ -341,18 +341,38 @@ final class WorkoutStore {
             unit.flatMap { metric.displayUnits.contains($0) ? $0 : nil }
         }
         if let u = offered(ex.displayUnits[metric]) { return u }
+        let definition = resolvedDefinition(for: ex)
         if let id = ex.definitionId {
             if let u = offered(preferences.unitsByExercise[id]?[metric]) { return u }
-            if let cat = ExerciseCatalog.definition(id: id)?.category.rawValue,
-               let u = offered(preferences.unitsByCategory[cat]?[metric]) { return u }
+            if let u = offered(preferences.unitsByCategory[definition.category.rawValue]?[metric]) { return u }
         }
-        return unitSystem.displayUnit(metric: metric, exercise: ex.definition)
+        return unitSystem.displayUnit(metric: metric, exercise: definition)
     }
 
-    /// The display unit for a quantity with no exercise to hang an override on — group totals,
-    /// weekly aggregates, agent prose about the plan.
+    /// The definition backing a planned exercise, resolved against the athlete's **own** catalog.
+    /// `PlannedExercise.definition` only consults the curated catalog, so a custom movement would
+    /// fall through to the generic definition and lose the category the unit rule depends on.
+    private func resolvedDefinition(for ex: PlannedExercise) -> ExerciseDefinition {
+        ex.definitionId.flatMap { id in allDefinitions.first { $0.id == id } } ?? ex.definition
+    }
+
+    /// The display unit for a quantity with no exercise to hang an override on — weekly aggregates,
+    /// agent prose about the plan.
     func displayUnit(_ metric: MetricType) -> MetricUnit {
         unitSystem.displayUnit(metric: metric, exercise: nil)
+    }
+
+    /// The display unit for a group's **total** target. A total is a single number with room for one
+    /// unit, so the group's composition decides it and nothing about the values does: a group whose
+    /// distance-bearing movements are all endurance reads in the athlete's endurance unit, and any
+    /// floor work in the mix puts the whole total back in meters.
+    func displayUnit(_ metric: MetricType, forTotalsIn group: WorkoutGroup) -> MetricUnit {
+        guard metric == .distance else { return displayUnit(metric) }
+        let distanceMovements = group.children.flatMap(\.exercises)
+            .filter { $0.selectedMetrics.contains(.distance) || resolvedDefinition(for: $0).supported.contains(.distance) }
+            .map(resolvedDefinition(for:))
+        guard distanceMovements.allSatisfy({ $0.category.distanceContext == .endurance }) else { return .meters }
+        return displayUnit(metric)
     }
 
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
@@ -1004,12 +1024,12 @@ final class WorkoutStore {
             if !group.execution.totalTargets.isEmpty {
                 let totals = group.execution.totalTargets.present.compactMap { metric -> String? in
                     guard let value = group.execution.totalTargets[metric] else { return nil }
-                    return "\(metric.label)=\(MetricFormat.value(value, metric, unit: displayUnit(metric)))"
+                    return "\(metric.label)=\(MetricFormat.value(value, metric, unit: displayUnit(metric, forTotalsIn: group)))"
                 }
                 lines.append("\(indent)  Total targets: \(totals.joined(separator: ", "))")
             }
             for adjustment in group.execution.adjustments {
-                let unit = displayUnit(adjustment.metric)
+                let unit = displayUnit(adjustment.metric, forTotalsIn: group)
                 func shown(_ v: Double) -> String { MetricFormat.value(v, adjustment.metric, unit: unit) }
                 var detail = "\(adjustment.metric.label) step \(shown(adjustment.step))"
                 if let minimum = adjustment.minimum { detail += ", minimum \(shown(minimum))" }

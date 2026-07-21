@@ -148,6 +148,39 @@ struct UnitSystemReachTests {
         #expect(store.displayUnit(.distance, for: run) == .meters)
     }
 
+    /// A custom movement carries its category too, and the unit rule has to see it. Resolving only
+    /// against the curated catalog left every `custom_…` id falling through to the generic
+    /// definition, i.e. floor, i.e. the reported metres-for-an-imperial-athlete symptom again.
+    @Test func aCustomExercisesCategoryReachesTheUnitRule() {
+        let units = StubUnitSystem(.imperial)
+        let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
+        let trail = store.createCustomDefinition(name: "Trail Run", category: .running, supported: [.distance, .duration])
+        let ex = PlannedExercise(exerciseName: "Trail Run", definitionId: trail.id, selectedMetrics: [.distance])
+
+        #expect(store.displayUnit(.distance, for: ex) == .miles)
+
+        // And the per-category preference tier keys off the same resolved category.
+        #expect(store.setExercisePreference(exerciseNamed: "Run", scope: .category, units: [.distance: .meters]).succeeded)
+        #expect(store.displayUnit(.distance, for: ex) == .meters)
+    }
+
+    /// A group total is one number with room for one unit, so the group's composition decides it —
+    /// never the size of the number. Any floor work in the mix puts the whole total in metres.
+    @Test func aGroupTotalTakesItsUnitFromTheGroupsComposition() {
+        let units = StubUnitSystem(.imperial)
+        let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
+        let run = PlannedExercise(exerciseName: "Run", definitionId: "run", selectedMetrics: [.distance])
+        let sled = PlannedExercise(exerciseName: "Sled Push", definitionId: "sled_push", selectedMetrics: [.distance])
+
+        let endurance = WorkoutGroup(label: "Intervals", children: [.exercise(run)])
+        let mixed = WorkoutGroup(label: "Hybrid", children: [.exercise(run), .exercise(sled)])
+
+        #expect(store.displayUnit(.distance, forTotalsIn: endurance) == .miles)
+        #expect(store.displayUnit(.distance, forTotalsIn: mixed) == .meters)
+        // Load is not a distance question and stays on the athlete's system either way.
+        #expect(store.displayUnit(.load, forTotalsIn: mixed) == .pounds)
+    }
+
     /// Retiring a unit must not be undone by state written before it was retired: pace no longer
     /// offers raw `s/m`, so a stored `s/m` falls through to the default instead of rendering "0:00".
     @Test func aStoredUnitThatIsNoLongerOfferedFallsThrough() {
@@ -167,6 +200,20 @@ struct UnitSystemReachTests {
         // Typed in the display unit, stored per meter — and round-trips.
         let canonical = try? #require(MetricFormat.parse("4:35", .pace, unit: .secondsPerKilometer))
         #expect(abs((canonical ?? 0) - 0.275) < 0.0001)
+    }
+
+    /// Pace gained units; duration never had any. An imported "3 min" cell stores `.minutes` as its
+    /// display unit, and the cascade must still read `3:00` as 180 seconds rather than 60× that.
+    @Test func durationCascadeEntryStaysUnitFree() {
+        let typed = MetricFormat.cascadeSeconds("300")   // digits shifted in for "3:00"
+        #expect(MetricField.canonical(fromCascadeSeconds: typed, .duration, unit: .minutes) == 180)
+        #expect(MetricField.canonical(fromCascadeSeconds: typed, .duration, unit: .seconds) == 180)
+        #expect(MetricField.cascadeSeconds(fromCanonical: 180, .duration, unit: .minutes) == 180)
+
+        // Pace is the metric that genuinely counts in the displayed unit: 4:35/km is 0.275 s/m.
+        let pace = MetricField.canonical(fromCascadeSeconds: 275, .pace, unit: .secondsPerKilometer)
+        #expect(abs(pace - 0.275) < 0.0001)
+        #expect(abs(MetricField.cascadeSeconds(fromCanonical: 0.275, .pace, unit: .secondsPerKilometer) - 275) < 0.01)
     }
 
     /// The reported bug in one assertion: the store must follow a live change of the setting, not a
