@@ -262,18 +262,18 @@ struct ImportSession: Identifiable, Sendable {
     var lastUpdated = Date()
 }
 
-enum WorkoutImportStatus: Sendable, Equatable {
+enum WorkoutImportStatus: Equatable, Sendable {
     case selecting
     case loadingImages(completed: Int, total: Int)
-    case readingWorkout
-    case organizingExercises
-    case preparingEditor
-    case readyForHandoff
-    case handedOff(draftID: UUID)
-    case failed(code: WorkoutImportFailureCode)
-    case cancelled
-    case expired
-    case disposed
+    case recognizing(completed: Int, total: Int)
+    case preparingSections
+    case waitingForHandoff
+    case retryingSections(completed: Int, total: Int)
+    case processingSections(completed: Int, total: Int)
+    case reviewing
+    case saving
+    case saved(templateID: UUID)
+    case failed(message: String)
 }
 ```
 
@@ -283,8 +283,8 @@ Session rules:
 - Every accepted transaction, checkpoint, or state transition updates `lastUpdated`.
 - `sourceImages` contains the bounded, normalized images in user-selected order while review is active. Each source is also written to the session's protected temporary directory before OCR.
 - Candidate nodes, confidence, evidence spans, provider results, and transaction history never become editor content.
-- Handoff atomically creates or installs one user-owned `WorkoutDraft`, records its initial revision, and changes the session to `.handedOff`.
-- The session cannot apply content transactions after `.handedOff`.
+- Handoff atomically creates or installs one user-owned `WorkoutDraft`, records its initial revision, and changes the session to `.reviewing`.
+- The session cannot apply content transactions after it reaches `.reviewing`.
 - Closing the editor does not cancel or delete the user-owned draft.
 - The protected file batch and all image, OCR, evidence, candidate, and checkpoint data are removed on Save, Discard, Cancel, or expiry.
 - No source photo or import evidence is persisted in the template.
@@ -734,17 +734,16 @@ Concurrency rules:
 ImportSession
 selecting
 → loadingImages
-→ readingWorkout
-→ organizingExercises
-→ preparingEditor
-→ readyForHandoff
-→ handedOff
-→ disposed
+→ recognizing
+→ preparingSections
+→ waitingForHandoff
+→ processingSections (retryingSections while a section is re-sent)
+→ reviewing
+→ saving
+→ saved
 
-Any pre-handoff state
-├── failed
-├── cancelled
-└── expired
+Any state
+└── failed
 
 WorkoutDraft
 pipelineOwned
