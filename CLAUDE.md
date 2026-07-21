@@ -206,6 +206,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
   A `changes` job path-gates the expensive macOS jobs, and the always-running `ci` job is the single status check to mark required - protect that name, not the conditional job names, or a docs-only PR would wait forever on a check that never reports.
   A green `CI` does **not** prove signing, archiving, the Firebase deploy, or Release-configuration compile; those first run in `deploy-staging.yml` after merge.
   Nothing lints Swift - the repo has no SwiftLint or swift-format - so `tsc` (`strict` + `noUnusedLocals`) on `functions/` is the only static analysis in CI.
+  The macOS jobs decode their gitignored plist from the `GOOGLE_SERVICE_INFO_DEV_BASE64` (Debug tests) and `GOOGLE_SERVICE_INFO_STAGING_BASE64` (Staging compile) repository secrets, so a new build config needs its own secret before CI can build it.
 - **Distribution:** `.github/workflows/deploy-staging.yml` is the staging tier - push to `develop` builds the IPA (Fastlane `build_staging`), deploys Firebase to `baseline-app-staging`, and uploads to TestFlight (`upload_testflight`).
   Staging uses bundle id `com.tylerpavay.Baseline.staging` via the `Staging` build config in `project.yml`.
   `match` for signing (CI readonly) **reuses Ascend's `ascend-match-signing` repo**.
