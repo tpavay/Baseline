@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Instrument design-system primitives — the chosen "recovery instrument, not a dashboard"
-/// direction. Mono numerals for data, hairlines over fills, restrained color, the
+/// Instrument design-system primitives for the established calm-precision direction.
+/// Mono numerals for data, hairlines over fills, restrained color, and the
 /// baseline-meter motif. Numerals use SF Mono (`.monospaced`); prose stays SF Pro.
 /// Full spec + rationale: docs/design-system/instrument.md.
 
 extension Font {
-    /// Monospaced numerals / labels — the instrument voice.
+    /// Compatibility API for older call sites that still require an explicit size.
+    /// New shared components should use `BaselineTypography` so Dynamic Type scales semantically.
     static func bMono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight, design: .monospaced)
     }
@@ -24,7 +25,7 @@ struct InstrumentLabel: View {
     }
     var body: some View {
         Text(text.uppercased())
-            .font(.bMono(11, .medium))
+            .font(BaselineTypography.instrumentLabel.font)
             .tracking(tracking)
             .foregroundStyle(color)
     }
@@ -33,10 +34,10 @@ struct InstrumentLabel: View {
 /// 1px hairline rule.
 struct Hairline: View {
     var color: Color = BaselineColor.line
-    var body: some View { Rectangle().fill(color).frame(height: 1) }
+    var body: some View { Rectangle().fill(color).frame(height: BaselineSize.hairline) }
 }
 
-/// A labeled mono readout (big value + caps label), left-aligned.
+/// A labeled mono readout with a large value and caps label.
 struct InstrumentStat: View {
     let value: String
     let label: String
@@ -53,35 +54,38 @@ struct InstrumentStat: View {
     }
 }
 
-/// Primary action — accent fill, mono label, soft glow.
+/// Primary action with an accent fill, mono label, and soft glow.
 struct InstrumentButtonStyle: ButtonStyle {
     var tint: Color = BaselineColor.accent
     var textColor: Color = BaselineColor.base
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.bMono(15, .bold))
-            .tracking(1)
+            .baselineTypography(.button)
             .foregroundStyle(textColor)
             .frame(maxWidth: .infinity)
-            .frame(height: 54)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tint))
+            .frame(minHeight: BaselineSize.minimumTapTarget)
+            .padding(.vertical, BaselineSpacing.medium)
+            .background(RoundedRectangle(cornerRadius: BaselineRadius.control).fill(tint))
             .shadow(color: tint.opacity(0.4), radius: 18, y: 6)
             .opacity(configuration.isPressed ? 0.85 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
-/// Secondary action — hairline outline, mono label.
+/// Secondary action with a hairline outline and mono label.
 struct InstrumentOutlineButtonStyle: ButtonStyle {
     var color: Color = BaselineColor.textMid
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.bMono(13, .bold))
-            .tracking(1)
+            .baselineTypography(.button)
             .foregroundStyle(color)
             .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(BaselineColor.line, lineWidth: 1))
+            .frame(minHeight: BaselineSize.minimumTapTarget)
+            .padding(.vertical, BaselineSpacing.small)
+            .background(
+                RoundedRectangle(cornerRadius: BaselineRadius.control)
+                    .stroke(BaselineColor.line, lineWidth: BaselineSize.hairline)
+            )
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
@@ -92,12 +96,14 @@ struct BaselineMeter: View {
     let score: Int
     var band: ClosedRange<Int>? = nil
 
-    private func frac(_ v: Int) -> CGFloat { CGFloat(min(max(v, 0), 100)) / 100 }
+    private func fraction(_ value: Int) -> CGFloat {
+        CGFloat(min(max(value, 0), 100)) / 100
+    }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let sx = frac(score) * w
+            let sx = fraction(score) * w
             ZStack(alignment: .topLeading) {
                 HStack(spacing: 0) {
                     Rectangle().fill(BaselineColor.zoneRed.opacity(0.4)).frame(width: 0.6 * w)
@@ -110,12 +116,12 @@ struct BaselineMeter: View {
                 ForEach([0, 20, 40, 60, 80, 100], id: \.self) { v in
                     Rectangle().fill(BaselineColor.line)
                         .frame(width: 1, height: 6)
-                        .offset(x: frac(v) * w - 0.5, y: 58)
+                        .offset(x: fraction(v) * w - 0.5, y: 58)
                 }
 
                 if let band {
-                    let bx = frac(band.lowerBound) * w
-                    let bw = (frac(band.upperBound) - frac(band.lowerBound)) * w
+                    let bx = fraction(band.lowerBound) * w
+                    let bw = (fraction(band.upperBound) - fraction(band.lowerBound)) * w
                     RoundedRectangle(cornerRadius: 2)
                         .fill(BaselineColor.textHi.opacity(0.08))
                         .overlay(RoundedRectangle(cornerRadius: 2).stroke(BaselineColor.textFaint.opacity(0.5), lineWidth: 1))
