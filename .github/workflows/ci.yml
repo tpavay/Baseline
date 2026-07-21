@@ -283,6 +283,25 @@ jobs:
           echo "Using simulator $simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
 
+      # The render suites read the screen through the accessibility tree. UIKit
+      # only publishes that tree when the device has application accessibility
+      # switched on, which a developer's long-lived simulator picked up years
+      # ago and a runner's simulator has never had: without it every view - even
+      # a plain UILabel - reports zero accessibility elements, so all seven
+      # render suites see a blank screen and fail. The preference is read at app
+      # launch, so it has to be written before xcodebuild starts the host app.
+      - name: Enable simulator accessibility
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool true
+          xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.Accessibility AccessibilityEnabled -bool true
+          xcrun simctl spawn "$SIMULATOR_ID" defaults read com.apple.Accessibility
+
       - name: Build and test
         run: |
           xcodebuild \

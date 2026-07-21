@@ -138,6 +138,9 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - Sign-in gates the app at launch, so a plain simulator run reaches the auth screen and no further; there is no bypass.
   To look at a screen, host it in an app-hosted test: attach a `UIWindow` to the window scene from `UIApplication.shared.connectedScenes`, give it a `UIHostingController` root, then `drawHierarchy` into a `UIGraphicsImageRenderer`.
   An unattached window renders blank, and `ImageRenderer` is not a substitute: it cannot rasterize `ScrollView` content or `TextField`.
+  Those suites read the screen through the accessibility tree, which UIKit only publishes on a simulator that has application accessibility switched on.
+  A freshly created simulator does not, and every render suite then finds zero elements, so run
+  `xcrun simctl spawn <device> defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool true` (and `AccessibilityEnabled`) before the app launches; CI does this in `ci.yml`.
 
 ---
 
