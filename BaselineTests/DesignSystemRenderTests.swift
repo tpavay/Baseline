@@ -50,6 +50,42 @@ struct DesignSystemRenderTests {
 
         harness.capture(image, named: "design-system-picker-accessibility3")
     }
+
+    @Test func instrumentButtonsMeetTapTargetWithoutStackingPaddingOnMinHeight() throws {
+        let harness = try DesignSystemRenderHarness(
+            root: InstrumentButtonFixture()
+                .preferredColorScheme(.dark)
+        )
+        defer { harness.tearDown() }
+
+        _ = harness.renderedImage()
+
+        let primary = try #require(
+            harness.accessibilityElements.first { $0.accessibilityLabel == "Primary action" }
+        )
+        #expect(primary.accessibilityFrame.height >= BaselineSize.minimumTapTarget)
+        #expect(primary.accessibilityFrame.height < 60)
+
+        let outline = try #require(
+            harness.accessibilityElements.first { $0.accessibilityLabel == "Outline action" }
+        )
+        #expect(outline.accessibilityFrame.height >= BaselineSize.minimumTapTarget)
+        #expect(outline.accessibilityFrame.height < 60)
+    }
+}
+
+private struct InstrumentButtonFixture: View {
+    var body: some View {
+        VStack(spacing: BaselineSpacing.large) {
+            Button("Primary action") {}
+                .buttonStyle(InstrumentButtonStyle())
+            Button("Outline action") {}
+                .buttonStyle(InstrumentOutlineButtonStyle())
+        }
+        .padding(BaselineSpacing.screen)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(BaselineColor.base)
+    }
 }
 
 private struct RingFixture: View {

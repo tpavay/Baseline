@@ -16,7 +16,7 @@ enum BaselineColor {
     static let line      = Color(hex: 0x272231)
 
     // Semantic status and heart-rate-zone colors. The brand accent stays separate.
-    static let zoneBlue  = Color(hex: 0x5B9DFF)
+    static let zoneBlue  = Color(hex: 0x4C8DFF)
     static let zoneGreen = Color(hex: 0x34D27B)
     static let zoneAmber = Color(hex: 0xF5A623)
     // Z4 of the existing live heart-rate spectrum: a deep orange seated deliberately between amber

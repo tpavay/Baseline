@@ -39,7 +39,7 @@ Use status colors only when they communicate an actual semantic state.
 | Text middle | `BaselineColor.textMid` | `#9B94A8` | Supporting text |
 | Text faint | `BaselineColor.textFaint` | `#6A6478` | Labels and tertiary text |
 | Hairline | `BaselineColor.line` | `#272231` | Rules, outlines, tracks, and separators |
-| Zone blue | `BaselineColor.zoneBlue` | `#5B9DFF` | Zone 1 and approved blue emphasis |
+| Zone blue | `BaselineColor.zoneBlue` | `#4C8DFF` | Zone 1 and approved blue emphasis |
 | Zone green | `BaselineColor.zoneGreen` | `#34D27B` | Zone 2 and positive semantic state |
 | Zone amber | `BaselineColor.zoneAmber` | `#F5A623` | Zone 4 and caution semantic state |
 | Zone red | `BaselineColor.zoneRed` | `#FF5247` | Zone 5 and high-risk semantic state |
