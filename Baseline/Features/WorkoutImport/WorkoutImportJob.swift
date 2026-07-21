@@ -4,6 +4,9 @@ enum WorkoutImportJobStage: String, Codable, Equatable, Sendable {
     case loadingImages
     case recognizingText
     case preparingSections
+    /// The fast path is streaming: exercises are resolving one at a time into `draft`, which is
+    /// already real, editable content rather than a placeholder to be replaced.
+    case assembling
     case waitingForHandoff
     case processingSections
     case reviewing

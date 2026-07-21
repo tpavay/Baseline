@@ -121,6 +121,7 @@ final class WorkoutImportViewModel {
          parser: (any WorkoutParsing)? = nil,
          jobParser: (any WorkoutImportJobParsing)? = nil,
          repository: any WorkoutImportJobStoring = FileWorkoutImportJobRepository(),
+         streamer: (any WorkoutImportStreaming)? = FirebaseWorkoutImportStreamingParser(),
          coordinatorConfiguration: WorkoutImportCoordinatorConfiguration = .init(),
          initialSession: ImportSession? = nil,
          initialJob: WorkoutImportJob? = nil) {
@@ -138,6 +139,7 @@ final class WorkoutImportViewModel {
             normalizer: normalizer,
             recognizer: recognizer,
             parser: selectedParser,
+            streamer: streamer,
             configuration: coordinatorConfiguration
         )
         session = initialSession ?? ImportSession()
@@ -558,6 +560,15 @@ final class WorkoutImportViewModel {
             session.status = .preparingSections
         case .waitingForHandoff:
             session.status = .waitingForHandoff
+        case .assembling:
+            // The partial draft is real content, so it is published as it arrives rather than held
+            // back. Saving stays unavailable until the stream finishes.
+            session.draft = job.draft
+            session.issues = job.issues
+            reviewDraftIsPersisted = false
+            session.status = .assembling(
+                exerciseCount: job.draft?.workout.allExercises.count ?? 0
+            )
         case .processingSections:
             let progress = job.serverProgress
             session.status = .processingSections(

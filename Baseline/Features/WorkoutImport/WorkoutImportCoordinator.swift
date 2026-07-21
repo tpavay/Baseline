@@ -21,6 +21,9 @@ actor WorkoutImportCoordinator {
     private let normalizer: any WorkoutImageNormalizing
     private let recognizer: any WorkoutTextRecognizing
     private let parser: any WorkoutImportJobParsing
+    /// The fast path. Nil disables it entirely and every import goes straight to the durable job,
+    /// which is what the offline and test paths want.
+    private let streamer: (any WorkoutImportStreaming)?
     private let configuration: WorkoutImportCoordinatorConfiguration
     private var cancelledJobIDs: Set<UUID> = []
     private static let logger = Logger(subsystem: "com.tylerpavay.Baseline", category: "WorkoutImport")
@@ -30,12 +33,14 @@ actor WorkoutImportCoordinator {
         normalizer: any WorkoutImageNormalizing = WorkoutImageNormalizer(),
         recognizer: any WorkoutTextRecognizing = VisionWorkoutTextRecognizer(),
         parser: any WorkoutImportJobParsing = FirebaseWorkoutImportJobParser(),
+        streamer: (any WorkoutImportStreaming)? = FirebaseWorkoutImportStreamingParser(),
         configuration: WorkoutImportCoordinatorConfiguration = .init()
     ) {
         self.repository = repository
         self.normalizer = normalizer
         self.recognizer = recognizer
         self.parser = parser
+        self.streamer = streamer
         self.configuration = configuration
     }
 
@@ -76,6 +81,9 @@ actor WorkoutImportCoordinator {
                 loadImage: loadImage,
                 progress: progress
             )
+            if let assembled = await assembleOnFastPath(job, catalog: catalog, progress: progress) {
+                return assembled
+            }
             return await handOffAndWait(job, catalog: catalog, progress: progress)
         } catch is CancellationError {
             if cancelledJobIDs.contains(job.id) {
@@ -147,6 +155,11 @@ actor WorkoutImportCoordinator {
         if !hasInvalidReviewDraft { await progress(job) }
         switch job.stage {
         case .waitingForHandoff, .processingSections:
+                job = await handOffAndWait(job, catalog: catalog, progress: progress)
+            case .assembling:
+                // The fast path streams to this process and nothing on a server owns it, so a job
+                // killed mid-stream cannot be resumed. The sections are already prepared, so the
+                // durable job picks it up — which is exactly its role as the retry.
                 job = await handOffAndWait(job, catalog: catalog, progress: progress)
             case .reviewing:
                 if hasInvalidReviewDraft {
@@ -714,6 +727,115 @@ actor WorkoutImportCoordinator {
         )
         await progress(job)
         return job
+    }
+
+
+    /// Try the fast path, returning a reviewable job when it produced one and nil when the durable
+    /// job should take over.
+    ///
+    /// Routing follows the latency report's recommendation. A single photo goes here, because that
+    /// is the case where the durable job bought about six seconds of queueing and cost the rest of
+    /// the failure. Multi-image imports stay durable: they are the case the queue genuinely earns,
+    /// since they are long enough that an athlete may well leave the app mid-import. Anything this
+    /// path cannot finish falls through to the durable job, which is the retry.
+    private func assembleOnFastPath(
+        _ initialJob: WorkoutImportJob,
+        catalog: [ExerciseDefinition],
+        progress: @escaping ProgressHandler
+    ) async -> WorkoutImportJob? {
+        guard let streamer, initialJob.pages.count == 1 else { return nil }
+        guard (try? ensureActive(initialJob.id)) != nil, !Task.isCancelled else { return nil }
+
+        var job = initialJob
+        let images = await fastPathImages(for: job)
+        let text = job.sections
+            .sorted { $0.order < $1.order }
+            .flatMap(\.observations)
+            .map(\.text)
+            .joined(separator: "\n")
+        guard !images.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        job.stage = .assembling
+        job.lastUpdated = Date()
+        try? await repository.save(job)
+        await progress(job)
+
+        let started = ContinuousClock.now
+        let jobID = job.id
+        let streamingBase = job
+        let outcome = await WorkoutImportFastPath(streamer: streamer).run(
+            images: images,
+            text: text.isEmpty ? nil : text,
+            catalog: catalog
+        ) { [weak self] build, document in
+            guard let self, await self.isActive(jobID) else { return }
+            var streaming = streamingBase
+            streaming.stage = .assembling
+            streaming.parsedDocument = document
+            streaming.draft = build.draft
+            streaming.issues = build.issues
+            streaming.evidence = build.evidence
+            streaming.lastUpdated = Date()
+            await progress(streaming)
+        }
+
+        guard (try? ensureActive(jobID)) != nil, !Task.isCancelled else { return nil }
+        job.diagnostics.parserMilliseconds += milliseconds(since: started)
+
+        guard outcome.isWorthShowing, let build = outcome.build, let document = outcome.document else {
+            Self.logger.info(
+                "Import \(jobID.uuidString, privacy: .public) fast path yielded no usable structure (\(outcome.failureCode ?? "empty", privacy: .public)); handing off to the durable job"
+            )
+            return nil
+        }
+
+        job.stage = .reviewing
+        job.parsedDocument = document
+        job.draft = build.draft
+        job.issues = build.issues
+        job.evidence = build.evidence
+        job.diagnostics.parserModel = outcome.model
+        job.failure = nil
+        if let failureCode = outcome.failureCode {
+            // The skeleton is right but the stream ended early, so the athlete is told the workout
+            // may be short rather than being left to notice a missing exercise themselves.
+            job.issues.append(WorkoutImportIssue(
+                code: .ambiguousStructure,
+                severity: .warning,
+                message: "Reading stopped early, so the end of this workout may be missing. Check it against your photo."
+            ))
+            Self.logger.warning(
+                "Import \(jobID.uuidString, privacy: .public) fast path ended with \(failureCode, privacy: .public) but kept a usable skeleton"
+            )
+        }
+        job.lastUpdated = Date()
+        do {
+            try await repository.save(job)
+        } catch {
+            return nil
+        }
+        await progress(job)
+        return job
+    }
+
+    private func isActive(_ id: UUID) -> Bool { !cancelledJobIDs.contains(id) }
+
+    /// The normalized pages, if they are still on disk. A missing file is not an error here — the
+    /// recognized text alone is a valid source, and the fast path simply reads with less context.
+    private func fastPathImages(for job: WorkoutImportJob) async -> [ImportedWorkoutImage] {
+        var images: [ImportedWorkoutImage] = []
+        for page in job.pages.sorted(by: { $0.index < $1.index }) where !page.relativeFilename.isEmpty {
+            guard let data = try? await repository.imageData(
+                jobID: job.id,
+                relativeFilename: page.relativeFilename
+            ) else { continue }
+            images.append(ImportedWorkoutImage(
+                data: data,
+                pixelWidth: page.pixelWidth,
+                pixelHeight: page.pixelHeight
+            ))
+        }
+        return images
     }
 
     private func handOffAndWait(

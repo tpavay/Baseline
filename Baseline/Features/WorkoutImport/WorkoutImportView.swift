@@ -226,6 +226,9 @@ struct WorkoutImportView: View {
 
     @State private var model: WorkoutImportViewModel
     @State private var reviewStore: WorkoutStore?
+    /// Rebuilt as the fast path appends exercises; separate from `reviewStore` so the editor the
+    /// athlete finally edits is built once, from the finished draft.
+    @State private var assemblingStore: WorkoutStore?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var selectedScheduleDate: Date
     @State private var showCancelConfirmation = false
@@ -447,7 +450,7 @@ struct WorkoutImportView: View {
     static func shouldKeepScreenAwake(for status: WorkoutImportStatus) -> Bool {
         switch status {
         case .loadingImages, .recognizing, .preparingSections, .waitingForHandoff,
-             .retryingSections, .processingSections:
+             .assembling, .retryingSections, .processingSections:
             true
         case .selecting, .reviewing, .saving, .saved, .failed:
             false
@@ -549,6 +552,7 @@ struct WorkoutImportView: View {
         case .selecting: target = .selection
         case .loadingImages, .recognizing, .preparingSections, .waitingForHandoff,
              .retryingSections, .processingSections, .saving: target = .progress
+        case .assembling: target = .review
         case .reviewing: target = .review
         case .saved: target = .saved
         case .failed: target = .failure
@@ -615,6 +619,9 @@ struct WorkoutImportView: View {
                 // A queued job has no section underway, so an empty determinate bar would overstate it.
                 steps: model.isQueuedOnServer ? nil : (completed, total)
             )
+        case .assembling(let exerciseCount):
+            assembling(exerciseCount: exerciseCount)
+                .accessibilityFocused($focusTarget, equals: .review)
         case .reviewing:
             review.accessibilityFocused($focusTarget, equals: .review)
         case .saving:
@@ -713,6 +720,58 @@ struct WorkoutImportView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
         .accessibilityFocused($focusTarget, equals: .progress)
+    }
+
+    /// The workout as it arrives. These are the editor's own rows over the real parsed draft, not a
+    /// text preview that gets swapped for the real thing later — a screen where everything jumps
+    /// once the "real" answer lands teaches the athlete not to trust what they are looking at.
+    ///
+    /// Rows are shown rather than edited while the stream is open. The parse only ever appends whole
+    /// exercises, so the store is rebuilt as rows land; accepting edits into a store that is about
+    /// to be rebuilt would silently drop them. Editing opens the moment reading finishes, on exactly
+    /// the rows already on screen.
+    @ViewBuilder private func assembling(exerciseCount: Int) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                ProgressView().tint(BaselineColor.accent)
+                Text(exerciseCount == 0
+                     ? "Reading your workout"
+                     : "Reading your workout — \(exerciseCount) exercise\(exerciseCount == 1 ? "" : "s") so far")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BaselineColor.textMid)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.updatesFrequently)
+
+            if let workout = model.session.draft?.workout, let store = assemblingStore {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        Text(workout.title)
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(BaselineColor.textHi)
+                        ForEach(workout.blocks) { block in
+                            if !block.name.isEmpty {
+                                Text(block.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(BaselineColor.textMid)
+                            }
+                            StructuredWorkoutBlockView(block: block, mode: .view)
+                        }
+                    }
+                    .padding(20)
+                }
+                .environment(store)
+            } else {
+                Spacer()
+            }
+        }
+        .onChange(of: exerciseCount, initial: true) { _, _ in
+            guard let workout = model.session.draft?.workout, !workout.allExercises.isEmpty else { return }
+            assemblingStore = WorkoutStore(transientWorkout: workout, configurationFrom: workouts)
+        }
     }
 
     @ViewBuilder private var review: some View {
