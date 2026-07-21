@@ -208,6 +208,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - Keep `PrivacyInfo.xcprivacy`, the privacy policy, the App Store privacy questionnaire, and `NS*UsageDescription` strings in sync.
 - App Store upload validation rejects binaries on two things Xcode never warns about: an app icon carrying an alpha channel (the 1024 source in `AppIcon.appiconset` must be fully opaque), and a missing purpose string for anything the **entitlements** permit, not just what the code calls.
   `com.apple.developer.healthkit` cannot be scoped to reads, so `NSHealthUpdateUsageDescription` is required even though `HealthService` is read-only.
+  `BaselineTests/AppStoreValidationTests.swift` guards both.
 - Because Baseline prescribes training **intensity**: keep risk language lightweight but present — an assumption-of-risk / not-medical-advice clause lives in the ToS, accepted via a one-line footnote at the onboarding commitment step, plus a contextual "training guidance, not medical advice — stop if you feel unwell" line on prescription surfaces. **No standalone disclaimer screen and no PAR-Q** (decided 2026-07: cut for onboarding friction). Keep the **HYROX® trademark disclaimer** ("registered trademark of its owner; not affiliated with / endorsed by HYROX"). Get a lawyer to review the ToS.
 
 ---
