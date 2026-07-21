@@ -202,7 +202,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 # CI/CD & Deployment
 - **Branches:** `main` (production-ready), `develop` (integration / default base), `feature/*` · `fix/*` · `chore/*` off `develop`.
 - **Issue-first:** resolve work to a GitHub issue before coding; branch names include the issue number (`feature/issue-<n>-<slug>`); PRs target `develop` and include `Closes #<n>`.
-- **CI:** `.github/workflows/ci.yml` runs on every PR to `develop`: Debug simulator build + full Swift test suite, an unsigned Staging device compile, and the Cloud Functions type-check + test suite.
+- **CI:** `.github/workflows/ci.yml` runs on every PR, to any base branch (no `paths:` or `branches:` filter, so no PR can ever be stuck on a required check that never reports): Debug simulator build + full Swift test suite, an unsigned Staging device compile, and the Cloud Functions type-check + test suite.
   A `changes` job path-gates the expensive macOS jobs, and the always-running `ci` job is the single status check to mark required - protect that name, not the conditional job names, or a docs-only PR would wait forever on a check that never reports.
   A green `CI` does **not** prove signing, archiving, the Firebase deploy, or Release-configuration compile; those first run in `deploy-staging.yml` after merge.
   Nothing lints Swift - the repo has no SwiftLint or swift-format - so `tsc` (`strict` + `noUnusedLocals`) on `functions/` is the only static analysis in CI.

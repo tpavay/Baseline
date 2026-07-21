@@ -3,16 +3,18 @@ name: CI
 # Baseline's pull-request gate. Before this existed a PR reported "no checks
 # configured", so every merge rode on whatever the author ran locally.
 #
-# Deliberately NOT path-filtered at the `on:` level. A workflow that never
-# triggers produces no check run at all, which leaves a PR touching only docs
-# permanently pending against a required status check (the problem Ascend has).
-# Instead this workflow always runs, a `changes` job decides which expensive
-# jobs are relevant, and the always-running `ci` job is the single required
-# check. A docs-only PR therefore reports a green required check having
-# correctly skipped the build.
+# Deliberately NOT filtered at the `on:` level, by path or by branch. A
+# workflow that never triggers produces no check run at all, which leaves the
+# PR permanently pending against a required status check (the problem Ascend
+# has). A `paths:` filter does that to a docs-only PR; a `branches:` filter
+# does the same thing to any PR whose base is not listed - a develop -> main
+# release PR, or a stacked feature -> feature PR. Both holes are the same bug,
+# so this workflow triggers on every pull request unconditionally. A `changes`
+# job then decides which expensive jobs are relevant, and the always-running
+# `ci` job is the single required check, so a docs-only PR still reports a
+# green required check having correctly skipped the build.
 on:
   pull_request:
-    branches: [develop]
   workflow_dispatch:
 
 concurrency:
@@ -55,8 +57,11 @@ jobs:
             exit 0
           fi
 
-          if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
-            echo "::warning::Could not diff $BASE_SHA..$HEAD_SHA — running everything."
+          # Three-dot: the branch's own changes, measured from the merge base,
+          # so commits landed on the base branch after this PR forked do not
+          # count as changed here and drag in the macOS jobs.
+          if ! changed="$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA")"; then
+            echo "::warning::Could not diff $BASE_SHA...$HEAD_SHA - running everything."
             echo "ios=true" >> "$GITHUB_OUTPUT"
             echo "functions=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -71,10 +76,14 @@ jobs:
 
           # Anything that feeds the Xcode build: app sources, tests, the
           # XcodeGen spec, test fixtures compiled into the test bundle, the
-          # build-phase script, the Ruby toolchain, and this workflow.
-          ios_pattern='^(Baseline/|BaselineTests/|fixtures/|project\.yml$|scripts/select-firebase-plist\.sh$|Gemfile(\.lock)?$|\.github/workflows/ci\.yml$)'
+          # build-phase script, and this workflow. Deliberately no Gemfile:
+          # neither macOS job here sets up Ruby or invokes Fastlane, so a
+          # Gemfile-only PR has nothing to prove on a 10x-billed runner.
+          ios_pattern='^(Baseline/|BaselineTests/|fixtures/|project\.yml$|scripts/select-firebase-plist\.sh$|\.github/workflows/ci\.yml$)'
           # Anything that feeds the Cloud Functions type-check and test suite.
-          functions_pattern='^(functions/|firebase\.json$|\.github/workflows/ci\.yml$)'
+          # `fixtures/` is in here because the node suite reads it directly
+          # (functions/test/*.test.js resolve ../../fixtures/workout-import/).
+          functions_pattern='^(functions/|fixtures/|firebase\.json$|\.github/workflows/ci\.yml$)'
 
           if matches "$ios_pattern"; then echo "ios=true" >> "$GITHUB_OUTPUT"; else echo "ios=false" >> "$GITHUB_OUTPUT"; fi
           if matches "$functions_pattern"; then echo "functions=true" >> "$GITHUB_OUTPUT"; else echo "functions=false" >> "$GITHUB_OUTPUT"; fi
@@ -107,26 +116,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$GOOGLE_SERVICE_INFO_DEV_BASE64" ]; then
-            echo "::error::Required secret GOOGLE_SERVICE_INFO_DEV_BASE64 is missing or empty."
-            exit 1
-          fi
+          # Same shape as deploy-staging.yml's decoder; keep the copies in step.
+          decode_base64_required() {
+            local secret_name="$1"
+            local encoded="$2"
+            local output_path="$3"
+
+            if [ -z "$encoded" ]; then
+              echo "::error::Required secret ${secret_name} is missing or empty."
+              exit 1
+            fi
+
+            if ! (printf "%s" "$encoded" | base64 --decode > "$output_path" 2>/dev/null || printf "%s" "$encoded" | base64 -D > "$output_path" 2>/dev/null); then
+              echo "::error::Failed to decode secret ${secret_name} as base64."
+              exit 1
+            fi
+
+            if [ ! -s "$output_path" ]; then
+              echo "::error::Decoded file for ${secret_name} is empty."
+              exit 1
+            fi
+
+            if ! plutil -lint "$output_path" >/dev/null; then
+              echo "::error::Decoded file for ${secret_name} is not a valid plist."
+              exit 1
+            fi
+          }
 
           mkdir -p Baseline/App/Firebase
           rm -f Baseline/App/Firebase/GoogleService-Info-Dev.plist
-
-          if ! (printf "%s" "$GOOGLE_SERVICE_INFO_DEV_BASE64" | base64 --decode > Baseline/App/Firebase/GoogleService-Info-Dev.plist 2>/dev/null \
-             || printf "%s" "$GOOGLE_SERVICE_INFO_DEV_BASE64" | base64 -D > Baseline/App/Firebase/GoogleService-Info-Dev.plist 2>/dev/null); then
-            echo "::error::Failed to decode secret GOOGLE_SERVICE_INFO_DEV_BASE64 as base64."
-            exit 1
-          fi
-
-          if [ ! -s Baseline/App/Firebase/GoogleService-Info-Dev.plist ]; then
-            echo "::error::Decoded file for GOOGLE_SERVICE_INFO_DEV_BASE64 is empty."
-            exit 1
-          fi
-
-          plutil -lint Baseline/App/Firebase/GoogleService-Info-Dev.plist
+          decode_base64_required "GOOGLE_SERVICE_INFO_DEV_BASE64" "$GOOGLE_SERVICE_INFO_DEV_BASE64" "Baseline/App/Firebase/GoogleService-Info-Dev.plist"
 
       # Baseline's .xcodeproj is gitignored and generated, so this doubles as
       # the project.yml validity check: a malformed spec fails the PR here.
@@ -261,26 +280,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$GOOGLE_SERVICE_INFO_STAGING_BASE64" ]; then
-            echo "::error::Required secret GOOGLE_SERVICE_INFO_STAGING_BASE64 is missing or empty."
-            exit 1
-          fi
+          # Same shape as deploy-staging.yml's decoder; keep the copies in step.
+          decode_base64_required() {
+            local secret_name="$1"
+            local encoded="$2"
+            local output_path="$3"
+
+            if [ -z "$encoded" ]; then
+              echo "::error::Required secret ${secret_name} is missing or empty."
+              exit 1
+            fi
+
+            if ! (printf "%s" "$encoded" | base64 --decode > "$output_path" 2>/dev/null || printf "%s" "$encoded" | base64 -D > "$output_path" 2>/dev/null); then
+              echo "::error::Failed to decode secret ${secret_name} as base64."
+              exit 1
+            fi
+
+            if [ ! -s "$output_path" ]; then
+              echo "::error::Decoded file for ${secret_name} is empty."
+              exit 1
+            fi
+
+            if ! plutil -lint "$output_path" >/dev/null; then
+              echo "::error::Decoded file for ${secret_name} is not a valid plist."
+              exit 1
+            fi
+          }
 
           mkdir -p Baseline/App/Firebase
           rm -f Baseline/App/Firebase/GoogleService-Info-Staging.plist
-
-          if ! (printf "%s" "$GOOGLE_SERVICE_INFO_STAGING_BASE64" | base64 --decode > Baseline/App/Firebase/GoogleService-Info-Staging.plist 2>/dev/null \
-             || printf "%s" "$GOOGLE_SERVICE_INFO_STAGING_BASE64" | base64 -D > Baseline/App/Firebase/GoogleService-Info-Staging.plist 2>/dev/null); then
-            echo "::error::Failed to decode secret GOOGLE_SERVICE_INFO_STAGING_BASE64 as base64."
-            exit 1
-          fi
-
-          if [ ! -s Baseline/App/Firebase/GoogleService-Info-Staging.plist ]; then
-            echo "::error::Decoded file for GOOGLE_SERVICE_INFO_STAGING_BASE64 is empty."
-            exit 1
-          fi
-
-          plutil -lint Baseline/App/Firebase/GoogleService-Info-Staging.plist
+          decode_base64_required "GOOGLE_SERVICE_INFO_STAGING_BASE64" "$GOOGLE_SERVICE_INFO_STAGING_BASE64" "Baseline/App/Firebase/GoogleService-Info-Staging.plist"
 
       - name: Generate Xcode project
         shell: bash
@@ -346,9 +375,12 @@ jobs:
       - name: Run tests
         run: npm --prefix functions test
 
-  # The single required status check. It always runs, including on PRs where
-  # every other job was correctly skipped, so a docs-only PR is mergeable
-  # rather than stuck waiting on a check that never reports.
+  # The single required status check. `if: always()` with no other condition,
+  # so it reports on every pull request regardless of base branch, including
+  # ones where every other job was correctly skipped and ones where `changes`
+  # itself failed (a failed upstream result is not success/skipped, so this
+  # fails rather than silently passing). Nothing here can leave a PR stuck
+  # waiting on a check that never reports.
   #
   # Set branch protection on this job's name ("CI"), not on the job names
   # above — those are conditional by design.
