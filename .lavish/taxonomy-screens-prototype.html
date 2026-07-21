@@ -54,6 +54,7 @@
     /* custom form (Hevy-style rows) */
     .asset-wrap { text-align: center; padding: 8px 0 6px; }
     .asset { width: 92px; height: 92px; border-radius: 50%; border: 1px dashed var(--line); display: grid; place-items: center; margin: 0 auto; color: var(--faint); font-size: 26px; }
+    .asset svg { width: 32px; height: 32px; display: block; }
     .asset-wrap a { color: var(--accent); font-size: 13px; display: inline-block; margin-top: 8px; }
     .name-field { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--hi); padding: 16px 2px 12px; font-size: 20px; font-weight: 600; margin-top: 8px; }
     .name-field::placeholder { color: var(--faint); }
@@ -72,7 +73,7 @@
     .search { width: 100%; height: 40px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--hi); padding: 0 12px; margin-bottom: 10px; }
     .search::placeholder { color: var(--faint); }
     .pick-note { color: var(--faint); font-size: 12px; margin: 0 2px 10px; }
-    .pick-row { width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--line); padding: 15px 4px; display: grid; grid-template-columns: 34px 1fr 22px; gap: 12px; align-items: center; color: var(--hi); }
+    .pick-row { width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent); padding: 15px 4px; display: grid; grid-template-columns: 34px 1fr 22px; gap: 12px; align-items: center; color: var(--hi); }
     .pick-row .ic { width: 32px; height: 32px; border-radius: 9px; background: var(--surface); display: grid; place-items: center; font-size: 15px; color: var(--mid); }
     .pick-row .nm { font-size: 15px; }
     .pick-row .nm small { display: block; color: var(--faint); font-size: 11px; margin-top: 2px; }
@@ -89,10 +90,12 @@
     .greeting { font-size: 22px; font-weight: 700; margin: 4px 0 2px; }
     .greeting-sub { color: var(--mid); font-size: 13px; margin: 0 0 18px; }
     .card { border: 1px solid var(--line); border-radius: 14px; background: rgba(28,24,34,.55); padding: 15px; margin-bottom: 14px; }
-    .card.plan { border-color: rgba(155,109,255,.3); background: linear-gradient(120deg, rgba(51,32,62,.5), rgba(28,24,34,.6)); }
+    .card.plan { border-color: rgba(155,109,255,.3); background: linear-gradient(120deg, rgba(51,32,62,.5), rgba(28,24,34,.6));
+      display: grid; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto auto auto; column-gap: 10px; align-items: center; }
+    .card.plan > .lab, .card.plan > h4, .card.plan > p { grid-column: 1; min-width: 0; }
+    .card.plan > .chev { grid-column: 2; grid-row: 1 / -1; align-self: center; color: var(--faint); font-size: 18px; line-height: 1; }
     .card h4 { margin: 0 0 4px; font-size: 15px; }
     .card .lab { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .1em; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-    .card .lab a { color: var(--accent); font-size: 10px; }
     .plan p { margin: 0; color: var(--mid); font-size: 13px; line-height: 1.5; }
     .weekstats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 14px; }
     .wstat { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: rgba(28,24,34,.5); text-align: center; }
@@ -107,18 +110,94 @@
     .heat-legend { display: flex; align-items: center; gap: 8px; justify-content: center; color: var(--faint); font-size: 10px; margin-top: 4px; }
     .heat-legend i { width: 34px; height: 7px; border-radius: 4px; background: linear-gradient(90deg, rgba(155,109,255,.18), var(--accent)); display: inline-block; }
     .balance { display: grid; gap: 8px; }
-    .brow { display: grid; grid-template-columns: 74px 1fr 30px; gap: 9px; align-items: center; font-size: 12px; }
+    .brow { display: grid; grid-template-columns: 74px minmax(0,1fr) 56px; gap: 9px; align-items: center; font-size: 12px; }
     .brow .m { color: var(--mid); }
     .brow .bar { height: 8px; border-radius: 5px; background: var(--line); overflow: hidden; }
     .brow .bar i { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
-    .brow .v { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; text-align: right; }
+    .brow .v { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; text-align: right; white-space: nowrap; }
+
+    /* sleep + HRV */
+    .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 14px; }
+    .vital { border: 1px solid var(--line); border-radius: 10px; background: rgba(28,24,34,.5); padding: 12px 12px 13px; display: flex; flex-direction: column; min-width: 0; }
+    .vital .vk { display: block; color: var(--faint); font: 600 9px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; }
+    .vital .vv { display: flex; align-items: baseline; gap: 4px; margin-top: auto; padding-top: 8px; }
+    .vital .vv b { font: 700 27px "SFMono-Regular", ui-monospace, monospace; color: var(--hi); line-height: 1; }
+    .vital .vv i { font-style: normal; color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .06em; }
+    .vital .vm { margin-top: 9px; color: var(--mid); font: 600 11px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .02em; }
+    .vital .vm.good { color: var(--green); } .vital .vm.warn { color: var(--amber); }
+    /* a vital with no reading is omitted, not emptied; when only one remains the row
+       goes single-column and the tile turns horizontal so it reads as a deliberate
+       full-width card rather than the surviving half of a two-up grid */
+    .vitals.solo { grid-template-columns: minmax(0,1fr); }
+    .vitals.solo .vital { padding: 13px 15px 14px; }
+    .vitals.solo .vital .sleepbody,
+    .vitals.solo .vital .hrvbody { flex-direction: row; align-items: center; justify-content: flex-start; gap: 16px; text-align: left; padding-top: 10px; }
+    .vitals.solo .vital .hrvbody > div { display: flex; align-items: baseline; gap: 12px; }
+    .vitals.solo .vital .hrvbody .vm { margin-top: 0; }
+    /* sleep — three-band dial above, rating word below */
+    .vital .sleepbody { display: flex; flex-direction: column; align-items: center; gap: 9px; text-align: center; margin-top: auto; padding-top: 9px; }
+    .vital .sleepbody .vm { margin-top: 5px; }
+    /* HRV — same centred, bottom-anchored column as sleep so the pair reads as one row */
+    .vital .hrvbody { display: flex; flex-direction: column; align-items: center; gap: 9px; text-align: center; margin-top: auto; padding-top: 9px; }
+    .vital .hrvbody .vv { justify-content: center; margin-top: 0; padding-top: 0; }
+    .vital .hrvbody .vm { margin-top: 5px; }
+    .vital .drate { color: var(--accent); font-size: 24px; font-weight: 700; line-height: 1.05; letter-spacing: -.01em; }
+    .vital .drate.r-verylow { color: var(--red); } .vital .drate.r-low { color: var(--amber); }
+    .vital .drate.r-ok { color: var(--accent); } .vital .drate.r-high, .vital .drate.r-veryhigh { color: var(--green); }
+    .vital .dial { position: relative; width: 84px; height: 84px; flex: none; }
+    .vital .dial svg { display: block; width: 84px; height: 84px; }
+    .vital .dial .strk { fill: none; stroke: var(--line); stroke-width: 5; }
+    .vital .dial .sfil { fill: none; stroke: var(--accent); stroke-width: 5; }
+    .vital .dial .sfil.s-duration { stroke: var(--blue); }
+    .vital .dial .sfil.s-bedtime { stroke: var(--accent); }
+    .vital .dial .sfil.s-interrupt { stroke: var(--green); }
+    .vital .dnum { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    .vital .dnum b { font: 600 20px "SFMono-Regular", ui-monospace, monospace; color: var(--mid); line-height: 1; }
+
+    /* heart-rate zones */
+    .zones { display: grid; gap: 11px; margin-top: 2px; }
+    /* time-in-zone donut — same ring language as the sleep dial, one weight heavier */
+    .zdonut { display: grid; grid-template-columns: 118px minmax(0,1fr); gap: 15px; align-items: center; margin-top: 4px; }
+    .zdonut .ring { position: relative; width: 118px; height: 118px; flex: none; }
+    .zdonut .ring svg { display: block; width: 118px; height: 118px; }
+    .zdonut .ring .track { fill: none; stroke: rgba(39,34,49,.9); stroke-width: 11; }
+    .zdonut .ring .seg { fill: none; stroke-width: 11; }
+    .zdonut .ring .seg.z1 { stroke: var(--blue); } .zdonut .ring .seg.z2 { stroke: var(--green); }
+    .zdonut .ring .seg.z3 { stroke: var(--accent); } .zdonut .ring .seg.z4 { stroke: var(--amber); }
+    .zdonut .ring .seg.z5 { stroke: var(--red); }
+    .zdonut .rnum { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+    .zdonut .rnum b { font: 700 21px "SFMono-Regular", ui-monospace, monospace; line-height: 1; letter-spacing: .02em; }
+    .zdonut .rnum b.z2 { color: var(--green); }
+    .zdonut .rnum small { color: var(--faint); font: 600 8px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .1em; }
+    .zlegend { display: grid; gap: 8px; min-width: 0; }
+    .zleg { display: grid; grid-template-columns: 3px 17px 32px minmax(0,1fr); gap: 8px; align-items: center; }
+    .zleg i { width: 3px; height: 15px; border-radius: 2px; display: block; }
+    .zleg .z { font: 700 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .06em; }
+    .zleg .t { color: var(--hi); font: 600 12px "SFMono-Regular", ui-monospace, monospace; }
+    .zleg .bpm { color: var(--faint); font: 600 9px "SFMono-Regular", ui-monospace, monospace; text-align: right; white-space: nowrap; }
+    .zleg.z1 i { background: var(--blue); } .zleg.z1 .z { color: var(--blue); }
+    .zleg.z2 i { background: var(--green); } .zleg.z2 .z { color: var(--green); }
+    .zleg.z3 i { background: var(--accent); } .zleg.z3 .z { color: var(--accent); }
+    .zleg.z4 i { background: var(--amber); } .zleg.z4 .z { color: var(--amber); }
+    .zleg.z5 i { background: var(--red); } .zleg.z5 .z { color: var(--red); }
+    .zrow { display: grid; grid-template-columns: 24px 1fr 32px 80px; gap: 9px; align-items: center; font-size: 12px; }
+    .zrow .z { color: var(--mid); font: 700 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .06em; }
+    .zrow .blk { height: 2px; border-radius: 2px; background: rgba(39,34,49,.9); overflow: hidden; }
+    .zrow .blk i { display: block; height: 100%; min-width: 6px; border-radius: 2px; background: var(--accent); }
+    .zrow .t { color: var(--hi); font: 600 11px "SFMono-Regular", ui-monospace, monospace; }
+    .zrow .bpm { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; text-align: right; }
+    .zrow.z1 .z { color: var(--blue); } .zrow.z1 .blk i { background: var(--blue); }
+    .zrow.z2 .z { color: var(--green); } .zrow.z2 .blk i { background: var(--green); }
+    .zrow.z3 .z { color: var(--accent); } .zrow.z3 .blk i { background: var(--accent); }
+    .zrow.z4 .z { color: var(--amber); } .zrow.z4 .blk i { background: var(--amber); }
+    .zrow.z5 .z { color: var(--red); } .zrow.z5 .blk i { background: var(--red); }
 
     /* profile */
     .prof-head { display: flex; align-items: center; gap: 13px; padding: 6px 0 16px; }
     .avatar { width: 58px; height: 58px; border-radius: 30px; background: linear-gradient(135deg, var(--accent), #5b3fb0); display: grid; place-items: center; font-weight: 800; font-size: 22px; color: #100b16; }
     .prof-head .who b { font-size: 18px; display: block; }
     .prof-head .who small { color: var(--mid); font-size: 12px; }
-    .gear { margin-left: auto; width: 40px; height: 40px; border-radius: 20px; border: 1px solid var(--line); background: var(--surface); color: var(--mid); font-size: 17px; }
+    .gear { margin-left: auto; width: 40px; height: 40px; border: 0; background: transparent; color: var(--mid); font-size: 27px; line-height: 1; padding: 0; }
     .seg-tabs { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; padding: 3px; margin-bottom: 16px; }
     .seg-tabs button { flex: 1; border: 0; background: transparent; color: var(--mid); padding: 9px; font-size: 13px; border-radius: 8px; }
     .seg-tabs button.on { background: rgba(155,109,255,.16); color: var(--hi); font-weight: 600; }
@@ -131,17 +210,74 @@
     .wo-date { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; margin: 14px 0 8px; }
 
     /* workout detail */
+    .dhead { margin: 2px 0 0; }
+    .dhead .dt { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .dhead h4 { margin: 5px 0 0; font-size: 19px; font-weight: 600; }
+    .dstats { display: flex; gap: 26px; margin: 14px 0 16px; }
+    .dstat small { display: block; color: var(--faint); font: 600 9px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; margin-bottom: 4px; }
+    .dstat b { font: 700 17px "SFMono-Regular", ui-monospace, monospace; color: var(--hi); }
+    .hrchart { width: 100%; height: auto; display: block; margin-top: 2px; }
+    .hrchart .grid { stroke: var(--line); stroke-width: 1; }
+    .hrchart .axis { stroke: var(--line); stroke-width: 1; }
+    .hrchart .tick { fill: var(--faint); font: 600 9px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .06em; }
+    .hrchart .unit { fill: var(--faint); font: 600 8px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .1em; }
+    .hrchart .ln { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
     .exline { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid rgba(39,34,49,.7); }
     .exline .ic { width: 28px; height: 28px; border-radius: 8px; background: var(--surface); display: grid; place-items: center; color: var(--accent); font-size: 13px; flex: none; }
     .exline b { font-size: 14px; display: block; }
-    .exline small { color: var(--mid); font-size: 11px; }
+    .exline .nm { display: flex; align-items: center; min-height: 28px; }
     .exline .mus { margin-left: auto; color: var(--faint); font-size: 10px; text-align: right; }
+    .exitem { border-bottom: 1px solid rgba(39,34,49,.7); }
+    .exitem .exline { border-bottom: 0; padding: 11px 0 5px; }
+    .setlist { display: grid; grid-template-columns: repeat(4, max-content); justify-content: start; column-gap: 20px; row-gap: 3px; align-items: baseline; padding: 0 0 11px; }
+    .setrow, .sethead { display: contents; }
+    .sethead > span { color: var(--faint); font: 600 9px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; padding-bottom: 3px; white-space: nowrap; }
+    .setrow .n { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; white-space: nowrap; }
+    .setrow .val { color: var(--hi); font: 600 12px "SFMono-Regular", ui-monospace, monospace; white-space: nowrap; }
+    .setrow .sub { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .04em; white-space: nowrap; }
     .sect { color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .12em; margin: 22px 0 6px; }
+
+    /* bottom sheet */
+    .appbar .dots { color: var(--mid); font-size: 21px; font-weight: 400; line-height: 1; padding: 0 3px; }
+    .sheet-wrap { position: absolute; inset: 0; z-index: 30; pointer-events: none; }
+    .sheet-wrap.open { pointer-events: auto; }
+    .sheet-scrim { position: absolute; inset: 0; background: rgba(5,4,8,.6); opacity: 0; transition: opacity .22s ease; }
+    .sheet-wrap.open .sheet-scrim { opacity: 1; }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); border-radius: 20px 20px 0 0; padding: 8px 16px 22px; transform: translateY(103%); transition: transform .26s cubic-bezier(.32,.72,0,1); }
+    .sheet-wrap.open .sheet { transform: none; }
+    .sheet .grab { width: 36px; height: 4px; border-radius: 3px; background: var(--line); margin: 2px auto 8px; }
+    .sheet-row { width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid rgba(39,34,49,.7); color: var(--hi); font-size: 16px; padding: 15px 2px; display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: center; }
+    .sheet-row .ic { color: var(--faint); font-size: 14px; justify-self: center; }
+    .sheet-row.danger, .sheet-row.danger .ic { color: var(--red); }
+    .sheet-row:last-of-type { border-bottom: 0; }
+    .sheet-cancel { width: 100%; height: 48px; margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(28,24,34,.55); color: var(--mid); font-size: 15px; font-weight: 600; }
 
     .bottom-nav { position: absolute; z-index: 12; left: 40px; right: 40px; bottom: 15px; height: 60px; background: rgba(28,24,34,.97); border: 1px solid #312b39; border-radius: 30px; display: grid; grid-template-columns: repeat(4,1fr); align-items: center; padding: 6px; }
     .bottom-nav button { border: 0; background: transparent; color: var(--mid); font-size: 10px; display: grid; gap: 2px; place-items: center; }
     .bottom-nav button.active { color: var(--accent); background: rgba(155,109,255,.12); border-radius: 22px; height: 46px; }
     .bottom-nav .ic { font-size: 15px; }
+
+    /* calendar */
+    .cal-scroll { position: relative; height: calc(100% - 122px); overflow-y: auto; padding: 0 16px 90px; scrollbar-width: none; overscroll-behavior: contain; }
+    .cal-scroll::-webkit-scrollbar { display: none; }
+    .cal-mhead { position: sticky; top: 0; z-index: 6; pointer-events: none; background: var(--base); color: var(--faint); font: 600 10px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .12em; padding: 13px 2px 7px; border-bottom: 1px solid var(--line); }
+    .cal-day { width: 100%; text-align: left; background: transparent; border: 0; border-bottom: 1px solid rgba(39,34,49,.7); color: var(--hi); padding: 12px 2px; display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; }
+    .cal-day .d { text-align: center; }
+    .cal-day .d b { display: block; font: 700 17px "SFMono-Regular", ui-monospace, monospace; line-height: 1.1; }
+    .cal-day .d small { display: block; color: var(--faint); font: 600 9px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; margin-top: 3px; }
+    .cal-day .body h4 { margin: 0 0 3px; font-size: 14px; font-weight: 600; }
+    .cal-day .body p { margin: 0; color: var(--mid); font-size: 11px; }
+    .cal-day .dot { font-size: 13px; color: var(--accent); }
+    .cal-day .dot.cardio { color: var(--blue); }
+    .cal-day.rest .body h4 { color: var(--faint); font-weight: 500; }
+    .cal-day.rest .d b { color: var(--mid); }
+    .cal-day.future .body { opacity: .6; }
+    .cal-day.future .d, .cal-day.future .dot { opacity: .7; }
+    .cal-day.today { border-bottom-color: rgba(155,109,255,.4); background: linear-gradient(120deg, rgba(51,32,62,.5), rgba(28,24,34,.35)); border-radius: 12px; padding-left: 6px; padding-right: 8px; }
+    .cal-day.today .d b { color: var(--accent); }
+    .cal-day.today .d small { color: var(--accent); }
+    .cal-appbar h3 { font: 600 16px Inter, ui-sans-serif, -apple-system, sans-serif; }
+    .cal-appbar .left { font: 600 11px "SFMono-Regular", ui-monospace, monospace; letter-spacing: .08em; color: var(--faint); }
 
     @media (max-width: 760px) { .workspace { display: block; } .rail { border-right: 0; border-bottom: 1px solid var(--line); } .screen-nav { grid-template-columns: repeat(2,minmax(0,1fr)); } .stage { padding: 18px 0; } .phone { border-radius: 0; } }
   </style>
@@ -163,11 +299,20 @@
         <nav class="screen-nav">
           <button class="active" data-show="custom"><span class="number">01</span><span>Custom exercise form</span></button>
           <button class="sub" data-show="pick-equip"><span class="number">·</span><span>↳ Equipment picker</span></button>
+          <button class="sub" data-show="pick-muscle"><span class="number">·</span><span>↳ Primary muscle</span></button>
+          <button class="sub" data-show="pick-other"><span class="number">·</span><span>↳ Other muscles</span></button>
           <button class="sub" data-show="pick-type"><span class="number">·</span><span>↳ Metrics picker</span></button>
-          <button class="sub" data-show="pick-pattern"><span class="number">·</span><span>↳ Movement pattern (1–2)</span></button>
+          <button class="sub" data-show="pick-pattern"><span class="number">·</span><span>↳ Movement pattern</span></button>
+          <button class="sub" data-show="pick-tags"><span class="number">·</span><span>↳ Tags</span></button>
+          <button class="sub" data-show="pick-level"><span class="number">·</span><span>↳ Level</span></button>
           <button data-show="today"><span class="number">02</span><span>Today · weekly</span></button>
+          <button class="sub" data-show="today-full"><span class="number">·</span><span>↳ Sleep + HRV</span></button>
+          <button class="sub" data-show="today-sleep"><span class="number">·</span><span>↳ Sleep, no HRV</span></button>
+          <button class="sub" data-show="today-hrv"><span class="number">·</span><span>↳ HRV, no sleep</span></button>
+          <button class="sub" data-show="today-none"><span class="number">·</span><span>↳ No readings</span></button>
           <button data-show="profile"><span class="number">03</span><span>Profile</span></button>
           <button data-show="detail"><span class="number">04</span><span>Workout · muscle map</span></button>
+          <button data-show="calendar"><span class="number">05</span><span>Calendar</span></button>
         </nav>
         <p class="rail-note">Required: name · equipment · primary muscle · &ge;1 metric (Save validates these). Everything else optional. Mechanic dropped; level defaults to Intermediate. Muscle maps use real regions traced to the figures (v1 — refinable), recolored by weekly intensity.</p>
       </aside>
@@ -183,7 +328,7 @@
               <div class="appbar"><button class="left" data-jump="today">Cancel</button><h3>Create exercise</h3><button class="right">Save</button></div>
               <div class="scroll">
                 <div class="asset-wrap">
-                  <div class="asset">▣</div>
+                  <div class="asset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.8a2 2 0 0 1 2-2h2l1.3-2.1h6.4l1.3 2.1h2a2 2 0 0 1 2 2v8.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/><path d="M17.4 10.1h.01"/></svg></div>
                   <a>Add image (optional)</a>
                 </div>
                 <input class="name-field" placeholder="Exercise name" value="Single-Arm Sled Drag">
@@ -192,11 +337,11 @@
                   <div><div class="fr-label">Equipment <span class="req">*</span></div><div class="fr-val set">Sled</div></div>
                   <span class="chev">›</span>
                 </button>
-                <button class="form-row" data-jump="pick-equip">
+                <button class="form-row" data-jump="pick-muscle">
                   <div><div class="fr-label">Primary muscle <span class="req">*</span></div><div class="fr-val set">Lats</div></div>
                   <span class="chev">›</span>
                 </button>
-                <button class="form-row" data-jump="pick-equip">
+                <button class="form-row" data-jump="pick-other">
                   <div><div class="fr-label">Other muscles</div><div class="fr-val set">Quadriceps, Biceps, Forearms</div></div>
                   <span class="chev">›</span>
                 </button>
@@ -208,16 +353,14 @@
                   <div><div class="fr-label">Movement pattern</div><div class="fr-val set">Pull, Gait</div></div>
                   <span class="chev">›</span>
                 </button>
-                <button class="form-row" data-jump="pick-equip">
+                <button class="form-row" data-jump="pick-tags">
                   <div><div class="fr-label">Tags</div><div class="fr-val set">HYROX</div></div>
                   <span class="chev">›</span>
                 </button>
-                <button class="form-row" data-jump="pick-equip">
+                <button class="form-row" data-jump="pick-level">
                   <div><div class="fr-label">Level</div><div class="fr-val"><span class="opt">Intermediate · default</span></div></div>
                   <span class="chev">›</span>
                 </button>
-
-                <p class="req-note"><b style="color:var(--mid);">*</b> Name, equipment, primary muscle and at least one metric are required — Save stays disabled until they're set. Everything else is optional; level defaults to Intermediate. We don't guess metrics for you — you pick which metrics it can log (and change what you actually log per workout).</p>
                 <div style="height:70px;"></div>
               </div>
               <div class="save-bar"><button data-jump="today">Save exercise</button></div>
@@ -228,41 +371,95 @@
               <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
               <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Select equipment</h3><span class="right" style="opacity:0;">·</span></div>
               <div class="scroll">
-                <input class="search" placeholder="Search equipment…">
-                <p class="pick-note">Pick one.</p>
-                <div class="picklist" data-single>
+                                <div class="picklist" data-single>
                   <button class="pick-row"><span class="ic">🚫</span><span class="nm">None / bodyweight</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🏋️</span><span class="nm">Barbell</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">💿</span><span class="nm">Barbell plates</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">💪</span><span class="nm">Dumbbell</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🔔</span><span class="nm">Kettlebell</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">🏐</span><span class="nm">Medicine ball</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">⚙</span><span class="nm">Machine</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🎗</span><span class="nm">Cable</span><span class="check">✓</span></button>
                   <button class="pick-row on"><span class="ic">🛷</span><span class="nm">Sled</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🎒</span><span class="nm">Sandbag</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">📦</span><span class="nm">Box</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">〰</span><span class="nm">Bands</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">🪢</span><span class="nm">Rope</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">🔵</span><span class="nm">Exercise ball</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">🌗</span><span class="nm">Bosu ball</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">🧗</span><span class="nm">Hangboard</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🚴</span><span class="nm">Bike</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🚣</span><span class="nm">Rower</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🎿</span><span class="nm">Ski erg</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🏃</span><span class="nm">Treadmill</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">✳</span><span class="nm">Other</span><span class="check">✓</span></button>
                 </div>
               </div>
             </section>
 
-            <!-- 01c METRICS PICKER (flexible multi-select, Baseline's way) -->
+            <!-- 01c PRIMARY MUSCLE PICKER (single-select) -->
+            <section class="screen" data-screen="pick-muscle">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Primary muscle</h3><span class="right" style="opacity:0;">·</span></div>
+              <div class="scroll">
+                <div class="picklist" data-single>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Chest <small>chest</small></span><span class="check">✓</span></button>
+                  <button class="pick-row on"><span class="ic">▪</span><span class="nm">Lats <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Upper back <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Traps <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Lower back <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Front delts <small>shoulders</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Side delts <small>shoulders</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Rear delts <small>shoulders</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Biceps <small>arms</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Triceps <small>arms</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Forearms <small>arms</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Abs <small>core</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Obliques <small>core</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Glutes <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Quadriceps <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Hamstrings <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Adductors <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Abductors <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Calves <small>legs</small></span><span class="check">✓</span></button>
+                </div>
+              </div>
+            </section>
+
+            <!-- 01d OTHER MUSCLES PICKER (multi-select; primary locked out) -->
+            <section class="screen" data-screen="pick-other">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Other muscles</h3><span class="right">Done</span></div>
+              <div class="scroll">
+                <div class="picklist" data-multi>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Chest <small>chest</small></span><span class="check">✓</span></button>
+                  <button class="pick-row disabled"><span class="ic">▪</span><span class="nm">Lats <small>primary</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Upper back <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Traps <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Lower back <small>back</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Front delts <small>shoulders</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Side delts <small>shoulders</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Rear delts <small>shoulders</small></span><span class="check">✓</span></button>
+                  <button class="pick-row on"><span class="ic">▪</span><span class="nm">Biceps <small>arms</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Triceps <small>arms</small></span><span class="check">✓</span></button>
+                  <button class="pick-row on"><span class="ic">▪</span><span class="nm">Forearms <small>arms</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Abs <small>core</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Obliques <small>core</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Glutes <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row on"><span class="ic">▪</span><span class="nm">Quadriceps <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Hamstrings <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Adductors <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Abductors <small>legs</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▪</span><span class="nm">Calves <small>legs</small></span><span class="check">✓</span></button>
+                </div>
+              </div>
+            </section>
+
+            <!-- 01e METRICS PICKER (flexible multi-select, Baseline's way) -->
             <section class="screen" data-screen="pick-type">
               <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
               <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Metrics</h3><span class="right">Done</span></div>
               <div class="scroll">
-                <p class="pick-note">Pick everything this exercise <i>can</i> track. You'll still choose which of these to actually log <b style="color:var(--mid);">per workout</b> — this is just the menu, so you can log pace on one run and skip it on the next.</p>
-                <div class="sect" style="margin-top:2px;">QUICK START <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0;">— pre-fills the list, still editable</span></div>
-                <div class="preset-row">
-                  <button class="preset">Strength</button>
-                  <button class="preset">Bodyweight</button>
-                  <button class="preset on">Cardio</button>
-                  <button class="preset">Carry</button>
-                  <button class="preset">Time hold</button>
-                </div>
-                <div class="sect">METRICS</div>
                 <div class="picklist" data-multi>
                   <button class="pick-row"><span class="ic">#</span><span class="nm">Reps</span><span class="check">✓</span></button>
                   <button class="pick-row"><span class="ic">🏋️</span><span class="nm">Load <small>lb</small></span><span class="check">✓</span></button>
@@ -278,22 +475,58 @@
               </div>
             </section>
 
-            <!-- 01d MOVEMENT PATTERN PICKER (multi, cap 2) -->
+            <!-- 01f MOVEMENT PATTERN PICKER (unlimited multi-select) -->
             <section class="screen" data-screen="pick-pattern">
               <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
               <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Movement pattern</h3><span class="right">Done</span></div>
               <div class="scroll">
-                <p class="pick-note">Pick up to 2. Most exercises are one; compounds (thruster = squat + push) are two. <span style="color:var(--accent);">2 of 2 selected</span> — the rest are locked.</p>
-                <div class="picklist" data-cap="2">
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Squat</span><span class="check">✓</span></button>
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Hinge</span><span class="check">✓</span></button>
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Lunge</span><span class="check">✓</span></button>
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Push</span><span class="check">✓</span></button>
+                <div class="picklist" data-multi>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Squat</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Hinge</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Lunge</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Push</span><span class="check">✓</span></button>
                   <button class="pick-row on"><span class="ic">▾</span><span class="nm">Pull</span><span class="check">✓</span></button>
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Carry</span><span class="check">✓</span></button>
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Rotation</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Carry</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Rotation</span><span class="check">✓</span></button>
                   <button class="pick-row on"><span class="ic">▾</span><span class="nm">Gait</span><span class="check">✓</span></button>
-                  <button class="pick-row disabled"><span class="ic">▾</span><span class="nm">Hold / isometric</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">▾</span><span class="nm">Hold / isometric</span><span class="check">✓</span></button>
+                </div>
+              </div>
+            </section>
+
+            <!-- 01g TAGS PICKER (multi-select) -->
+            <section class="screen" data-screen="pick-tags">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Tags</h3><span class="right">Done</span></div>
+              <div class="scroll">
+                <div class="picklist" data-multi>
+                  <button class="pick-row on"><span class="ic">#</span><span class="nm">HYROX</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">CrossFit</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Powerlifting</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Olympic lifting</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Strongman</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Running</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Cycling</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Rowing</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Conditioning</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Warm-up</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Cool-down</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Mobility</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Rehab</span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">#</span><span class="nm">Unilateral</span><span class="check">✓</span></button>
+                </div>
+              </div>
+            </section>
+
+            <!-- 01h LEVEL PICKER (single-select) -->
+            <section class="screen" data-screen="pick-level">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="appbar"><button class="left" data-jump="custom">‹</button><h3>Level</h3><span class="right" style="opacity:0;">·</span></div>
+              <div class="scroll">
+                <div class="picklist" data-single>
+                  <button class="pick-row"><span class="ic">▁</span><span class="nm">Beginner</span><span class="check">✓</span></button>
+                  <button class="pick-row on"><span class="ic">▄</span><span class="nm">Intermediate <small>default</small></span><span class="check">✓</span></button>
+                  <button class="pick-row"><span class="ic">█</span><span class="nm">Advanced</span><span class="check">✓</span></button>
                 </div>
               </div>
             </section>
@@ -303,14 +536,14 @@
               <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
               <div class="scroll tabbed">
                 <p class="greeting">Good morning, Tyler</p>
-                <p class="greeting-sub">Wednesday · continue where you left off</p>
                 <div class="card plan">
                   <div class="lab">TODAY'S PLAN</div>
                   <h4>Intensity — Block 12</h4>
                   <p>45 min · intervals + sled work. Certainty medium — HRV steady, legs a touch sore.</p>
+                  <span class="chev">›</span>
                 </div>
                 <div class="card">
-                  <div class="lab">THIS WEEK <a>Details ›</a></div>
+                  <div class="lab">THIS WEEK</div>
                   <div class="weekstats">
                     <div class="wstat"><b>4</b><small>SESSIONS</small></div>
                     <div class="wstat"><b>2h 23m</b><small>TRAINING</small></div>
@@ -325,11 +558,36 @@
                 <div class="card">
                   <div class="lab">MOVEMENT BALANCE</div>
                   <div class="balance">
-                    <div class="brow"><span class="m">Squat</span><div class="bar"><i style="width:82%;"></i></div><span class="v">high</span></div>
-                    <div class="brow"><span class="m">Push</span><div class="bar"><i style="width:66%;"></i></div><span class="v"></span></div>
-                    <div class="brow"><span class="m">Pull</span><div class="bar"><i style="width:30%; background:var(--amber);"></i></div><span class="v" style="color:var(--amber);">low</span></div>
-                    <div class="brow"><span class="m">Hinge</span><div class="bar"><i style="width:44%;"></i></div><span class="v"></span></div>
-                    <div class="brow"><span class="m">Carry / gait</span><div class="bar"><i style="width:58%;"></i></div><span class="v"></span></div>
+                    <div class="brow"><span class="m">Squat</span><div class="bar"><i style="width:82%;"></i></div><span class="v">27 sets</span></div>
+                    <div class="brow"><span class="m">Push</span><div class="bar"><i style="width:66%;"></i></div><span class="v">22 sets</span></div>
+                    <div class="brow"><span class="m">Pull</span><div class="bar"><i style="width:30%; background:var(--amber);"></i></div><span class="v" style="color:var(--amber);">10 sets</span></div>
+                    <div class="brow"><span class="m">Hinge</span><div class="bar"><i style="width:44%;"></i></div><span class="v">15 sets</span></div>
+                    <div class="brow"><span class="m">Carry / gait</span><div class="bar"><i style="width:58%;"></i></div><span class="v">19 sets</span></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="lab">HEART RATE ZONES <span>2H 23M · AVG 141 BPM</span></div>
+                  <div class="zdonut">
+                    <div class="ring">
+                      <svg viewBox="0 0 100 100" role="img" aria-label="Time in heart-rate zones: zone 1 34 minutes, zone 2 41 minutes, zone 3 38 minutes, zone 4 22 minutes, zone 5 8 minutes, 143 minutes total">
+                        <g transform="rotate(-90 50 50)">
+                          <circle class="track" cx="50" cy="50" r="40"></circle>
+                          <circle class="seg z1" cx="50" cy="50" r="40" stroke-dasharray="56.75 194.58" stroke-dashoffset="0"></circle>
+                          <circle class="seg z2" cx="50" cy="50" r="40" stroke-dasharray="69.05 182.28" stroke-dashoffset="-59.75"></circle>
+                          <circle class="seg z3" cx="50" cy="50" r="40" stroke-dasharray="63.78 187.55" stroke-dashoffset="-131.80"></circle>
+                          <circle class="seg z4" cx="50" cy="50" r="40" stroke-dasharray="35.67 215.66" stroke-dashoffset="-198.58"></circle>
+                          <circle class="seg z5" cx="50" cy="50" r="40" stroke-dasharray="11.07 240.26" stroke-dashoffset="-237.25"></circle>
+                        </g>
+                      </svg>
+                      <div class="rnum"><b class="z2">Z2</b><small>MOST TIME</small></div>
+                    </div>
+                    <div class="zlegend">
+                      <div class="zleg z1"><i></i><span class="z">Z1</span><span class="t">34m</span><span class="bpm">95-121 BPM</span></div>
+                      <div class="zleg z2"><i></i><span class="z">Z2</span><span class="t">41m</span><span class="bpm">122-140 BPM</span></div>
+                      <div class="zleg z3"><i></i><span class="z">Z3</span><span class="t">38m</span><span class="bpm">141-158 BPM</span></div>
+                      <div class="zleg z4"><i></i><span class="z">Z4</span><span class="t">22m</span><span class="bpm">159-172 BPM</span></div>
+                      <div class="zleg z5"><i></i><span class="z">Z5</span><span class="t">8m</span><span class="bpm">173-195 BPM</span></div>
+                    </div>
                   </div>
                 </div>
                 <div style="height:20px;"></div>
@@ -342,14 +600,354 @@
               </div>
             </section>
 
+            <!-- 02a TODAY WEEKLY — Both readings -->
+            <section class="screen" data-screen="today-full">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="scroll tabbed">
+                <p class="greeting">Good morning, Tyler</p>
+                <div class="vitals">
+                  <div class="vital">
+                    <span class="vk">SLEEP</span>
+                    <div class="sleepbody">
+                      <div class="dial">
+                        <svg viewBox="0 0 100 100" aria-hidden="true">
+                          <path class="strk" d="M 50 5 A 45 45 0 0 1 60.51 93.76"></path>
+                          <path class="strk" d="M 53.53 94.86 A 45 45 0 0 1 5.2 45.77"></path>
+                          <path class="strk" d="M 6.41 38.81 A 45 45 0 0 1 42.96 5.55"></path>
+                          <path class="sfil s-duration" d="M 50 5 A 45 45 0 0 1 74.82 87.53"></path>
+                          <path class="sfil s-bedtime" d="M 53.53 94.86 A 45 45 0 0 1 9.07 68.71"></path>
+                          <path class="sfil s-interrupt" d="M 6.41 38.81 A 45 45 0 0 1 35.36 7.45"></path>
+                        </svg>
+                        <div class="dnum"><b>82</b></div>
+                      </div>
+                      <div>
+                        <div class="drate r-high">High</div>
+                        <div class="vm good">7H 41M IN BED</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="vital">
+                    <span class="vk">HRV</span>
+                    <div class="hrvbody">
+                      <div>
+                        <div class="vv"><b>68</b><i>MS</i></div>
+                        <div class="vm good">+6 MS VS 30-DAY</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card plan">
+                  <div class="lab">TODAY'S PLAN</div>
+                  <h4>Intensity — Block 12</h4>
+                  <p>45 min &middot; intervals + sled work. Certainty high &mdash; sleep 82, HRV +6 ms.</p>
+                  <span class="chev">›</span>
+                </div>
+                <div class="card">
+                  <div class="lab">THIS WEEK</div>
+                  <div class="weekstats">
+                    <div class="wstat"><b>4</b><small>SESSIONS</small></div>
+                    <div class="wstat"><b>2h 23m</b><small>TRAINING</small></div>
+                    <div class="wstat" style="border-color:rgba(91,157,255,.35);"><b style="color:var(--blue);">1h 08m</b><small style="color:var(--blue);">CARDIO</small></div>
+                  </div>
+                  <div class="bodymap">
+                    <div class="fig"><div class="cap">FRONT</div>__FIG_FRONT__</div>
+                    <div class="fig"><div class="cap">BACK</div>__FIG_BACK__</div>
+                  </div>
+                  <div class="heat-legend"><span>less</span><i></i><span>more this week</span></div>
+                </div>
+                <div class="card">
+                  <div class="lab">MOVEMENT BALANCE</div>
+                  <div class="balance">
+                    <div class="brow"><span class="m">Squat</span><div class="bar"><i style="width:82%;"></i></div><span class="v">27 sets</span></div>
+                    <div class="brow"><span class="m">Push</span><div class="bar"><i style="width:66%;"></i></div><span class="v">22 sets</span></div>
+                    <div class="brow"><span class="m">Pull</span><div class="bar"><i style="width:30%; background:var(--amber);"></i></div><span class="v" style="color:var(--amber);">10 sets</span></div>
+                    <div class="brow"><span class="m">Hinge</span><div class="bar"><i style="width:44%;"></i></div><span class="v">15 sets</span></div>
+                    <div class="brow"><span class="m">Carry / gait</span><div class="bar"><i style="width:58%;"></i></div><span class="v">19 sets</span></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="lab">HEART RATE ZONES <span>2H 23M · AVG 141 BPM</span></div>
+                  <div class="zdonut">
+                    <div class="ring">
+                      <svg viewBox="0 0 100 100" role="img" aria-label="Time in heart-rate zones: zone 1 34 minutes, zone 2 41 minutes, zone 3 38 minutes, zone 4 22 minutes, zone 5 8 minutes, 143 minutes total">
+                        <g transform="rotate(-90 50 50)">
+                          <circle class="track" cx="50" cy="50" r="40"></circle>
+                          <circle class="seg z1" cx="50" cy="50" r="40" stroke-dasharray="56.75 194.58" stroke-dashoffset="0"></circle>
+                          <circle class="seg z2" cx="50" cy="50" r="40" stroke-dasharray="69.05 182.28" stroke-dashoffset="-59.75"></circle>
+                          <circle class="seg z3" cx="50" cy="50" r="40" stroke-dasharray="63.78 187.55" stroke-dashoffset="-131.80"></circle>
+                          <circle class="seg z4" cx="50" cy="50" r="40" stroke-dasharray="35.67 215.66" stroke-dashoffset="-198.58"></circle>
+                          <circle class="seg z5" cx="50" cy="50" r="40" stroke-dasharray="11.07 240.26" stroke-dashoffset="-237.25"></circle>
+                        </g>
+                      </svg>
+                      <div class="rnum"><b class="z2">Z2</b><small>MOST TIME</small></div>
+                    </div>
+                    <div class="zlegend">
+                      <div class="zleg z1"><i></i><span class="z">Z1</span><span class="t">34m</span><span class="bpm">95-121 BPM</span></div>
+                      <div class="zleg z2"><i></i><span class="z">Z2</span><span class="t">41m</span><span class="bpm">122-140 BPM</span></div>
+                      <div class="zleg z3"><i></i><span class="z">Z3</span><span class="t">38m</span><span class="bpm">141-158 BPM</span></div>
+                      <div class="zleg z4"><i></i><span class="z">Z4</span><span class="t">22m</span><span class="bpm">159-172 BPM</span></div>
+                      <div class="zleg z5"><i></i><span class="z">Z5</span><span class="t">8m</span><span class="bpm">173-195 BPM</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div style="height:20px;"></div>
+              </div>
+              <div class="bottom-nav">
+                <button class="active"><span class="ic">◵</span>Today</button>
+                <button data-jump="today-full"><span class="ic">▤</span>Plan</button>
+                <button data-jump="today-full"><span class="ic">◆</span>Train</button>
+                <button data-jump="profile"><span class="ic">◉</span>Profile</button>
+              </div>
+            </section>
+
+            <!-- 02b TODAY WEEKLY — Sleep only -->
+            <section class="screen" data-screen="today-sleep">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="scroll tabbed">
+                <p class="greeting">Good morning, Tyler</p>
+                <div class="vitals solo">
+                  <div class="vital">
+                    <span class="vk">SLEEP</span>
+                    <div class="sleepbody">
+                      <div class="dial">
+                        <svg viewBox="0 0 100 100" aria-hidden="true">
+                          <path class="strk" d="M 50 5 A 45 45 0 0 1 60.51 93.76"></path>
+                          <path class="strk" d="M 53.53 94.86 A 45 45 0 0 1 5.2 45.77"></path>
+                          <path class="strk" d="M 6.41 38.81 A 45 45 0 0 1 42.96 5.55"></path>
+                          <path class="sfil s-duration" d="M 50 5 A 45 45 0 0 1 74.82 87.53"></path>
+                          <path class="sfil s-bedtime" d="M 53.53 94.86 A 45 45 0 0 1 9.07 68.71"></path>
+                          <path class="sfil s-interrupt" d="M 6.41 38.81 A 45 45 0 0 1 35.36 7.45"></path>
+                        </svg>
+                        <div class="dnum"><b>82</b></div>
+                      </div>
+                      <div>
+                        <div class="drate r-high">High</div>
+                        <div class="vm good">7H 41M IN BED</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card plan">
+                  <div class="lab">TODAY'S PLAN</div>
+                  <h4>Intensity — Block 12</h4>
+                  <p>45 min &middot; intervals + sled work. Certainty medium &mdash; sleep 82, no HRV reading.</p>
+                  <span class="chev">›</span>
+                </div>
+                <div class="card">
+                  <div class="lab">THIS WEEK</div>
+                  <div class="weekstats">
+                    <div class="wstat"><b>4</b><small>SESSIONS</small></div>
+                    <div class="wstat"><b>2h 23m</b><small>TRAINING</small></div>
+                    <div class="wstat" style="border-color:rgba(91,157,255,.35);"><b style="color:var(--blue);">1h 08m</b><small style="color:var(--blue);">CARDIO</small></div>
+                  </div>
+                  <div class="bodymap">
+                    <div class="fig"><div class="cap">FRONT</div>__FIG_FRONT__</div>
+                    <div class="fig"><div class="cap">BACK</div>__FIG_BACK__</div>
+                  </div>
+                  <div class="heat-legend"><span>less</span><i></i><span>more this week</span></div>
+                </div>
+                <div class="card">
+                  <div class="lab">MOVEMENT BALANCE</div>
+                  <div class="balance">
+                    <div class="brow"><span class="m">Squat</span><div class="bar"><i style="width:82%;"></i></div><span class="v">27 sets</span></div>
+                    <div class="brow"><span class="m">Push</span><div class="bar"><i style="width:66%;"></i></div><span class="v">22 sets</span></div>
+                    <div class="brow"><span class="m">Pull</span><div class="bar"><i style="width:30%; background:var(--amber);"></i></div><span class="v" style="color:var(--amber);">10 sets</span></div>
+                    <div class="brow"><span class="m">Hinge</span><div class="bar"><i style="width:44%;"></i></div><span class="v">15 sets</span></div>
+                    <div class="brow"><span class="m">Carry / gait</span><div class="bar"><i style="width:58%;"></i></div><span class="v">19 sets</span></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="lab">HEART RATE ZONES <span>2H 23M · AVG 141 BPM</span></div>
+                  <div class="zdonut">
+                    <div class="ring">
+                      <svg viewBox="0 0 100 100" role="img" aria-label="Time in heart-rate zones: zone 1 34 minutes, zone 2 41 minutes, zone 3 38 minutes, zone 4 22 minutes, zone 5 8 minutes, 143 minutes total">
+                        <g transform="rotate(-90 50 50)">
+                          <circle class="track" cx="50" cy="50" r="40"></circle>
+                          <circle class="seg z1" cx="50" cy="50" r="40" stroke-dasharray="56.75 194.58" stroke-dashoffset="0"></circle>
+                          <circle class="seg z2" cx="50" cy="50" r="40" stroke-dasharray="69.05 182.28" stroke-dashoffset="-59.75"></circle>
+                          <circle class="seg z3" cx="50" cy="50" r="40" stroke-dasharray="63.78 187.55" stroke-dashoffset="-131.80"></circle>
+                          <circle class="seg z4" cx="50" cy="50" r="40" stroke-dasharray="35.67 215.66" stroke-dashoffset="-198.58"></circle>
+                          <circle class="seg z5" cx="50" cy="50" r="40" stroke-dasharray="11.07 240.26" stroke-dashoffset="-237.25"></circle>
+                        </g>
+                      </svg>
+                      <div class="rnum"><b class="z2">Z2</b><small>MOST TIME</small></div>
+                    </div>
+                    <div class="zlegend">
+                      <div class="zleg z1"><i></i><span class="z">Z1</span><span class="t">34m</span><span class="bpm">95-121 BPM</span></div>
+                      <div class="zleg z2"><i></i><span class="z">Z2</span><span class="t">41m</span><span class="bpm">122-140 BPM</span></div>
+                      <div class="zleg z3"><i></i><span class="z">Z3</span><span class="t">38m</span><span class="bpm">141-158 BPM</span></div>
+                      <div class="zleg z4"><i></i><span class="z">Z4</span><span class="t">22m</span><span class="bpm">159-172 BPM</span></div>
+                      <div class="zleg z5"><i></i><span class="z">Z5</span><span class="t">8m</span><span class="bpm">173-195 BPM</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div style="height:20px;"></div>
+              </div>
+              <div class="bottom-nav">
+                <button class="active"><span class="ic">◵</span>Today</button>
+                <button data-jump="today-sleep"><span class="ic">▤</span>Plan</button>
+                <button data-jump="today-sleep"><span class="ic">◆</span>Train</button>
+                <button data-jump="profile"><span class="ic">◉</span>Profile</button>
+              </div>
+            </section>
+
+            <!-- 02c TODAY WEEKLY — HRV only -->
+            <section class="screen" data-screen="today-hrv">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="scroll tabbed">
+                <p class="greeting">Good morning, Tyler</p>
+                <div class="vitals solo">
+                  <div class="vital">
+                    <span class="vk">HRV</span>
+                    <div class="hrvbody">
+                      <div>
+                        <div class="vv"><b>68</b><i>MS</i></div>
+                        <div class="vm good">+6 MS VS 30-DAY</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card plan">
+                  <div class="lab">TODAY'S PLAN</div>
+                  <h4>Intensity — Block 12</h4>
+                  <p>45 min &middot; intervals + sled work. Certainty medium &mdash; HRV +6 ms, no sleep data.</p>
+                  <span class="chev">›</span>
+                </div>
+                <div class="card">
+                  <div class="lab">THIS WEEK</div>
+                  <div class="weekstats">
+                    <div class="wstat"><b>4</b><small>SESSIONS</small></div>
+                    <div class="wstat"><b>2h 23m</b><small>TRAINING</small></div>
+                    <div class="wstat" style="border-color:rgba(91,157,255,.35);"><b style="color:var(--blue);">1h 08m</b><small style="color:var(--blue);">CARDIO</small></div>
+                  </div>
+                  <div class="bodymap">
+                    <div class="fig"><div class="cap">FRONT</div>__FIG_FRONT__</div>
+                    <div class="fig"><div class="cap">BACK</div>__FIG_BACK__</div>
+                  </div>
+                  <div class="heat-legend"><span>less</span><i></i><span>more this week</span></div>
+                </div>
+                <div class="card">
+                  <div class="lab">MOVEMENT BALANCE</div>
+                  <div class="balance">
+                    <div class="brow"><span class="m">Squat</span><div class="bar"><i style="width:82%;"></i></div><span class="v">27 sets</span></div>
+                    <div class="brow"><span class="m">Push</span><div class="bar"><i style="width:66%;"></i></div><span class="v">22 sets</span></div>
+                    <div class="brow"><span class="m">Pull</span><div class="bar"><i style="width:30%; background:var(--amber);"></i></div><span class="v" style="color:var(--amber);">10 sets</span></div>
+                    <div class="brow"><span class="m">Hinge</span><div class="bar"><i style="width:44%;"></i></div><span class="v">15 sets</span></div>
+                    <div class="brow"><span class="m">Carry / gait</span><div class="bar"><i style="width:58%;"></i></div><span class="v">19 sets</span></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="lab">HEART RATE ZONES <span>2H 23M · AVG 141 BPM</span></div>
+                  <div class="zdonut">
+                    <div class="ring">
+                      <svg viewBox="0 0 100 100" role="img" aria-label="Time in heart-rate zones: zone 1 34 minutes, zone 2 41 minutes, zone 3 38 minutes, zone 4 22 minutes, zone 5 8 minutes, 143 minutes total">
+                        <g transform="rotate(-90 50 50)">
+                          <circle class="track" cx="50" cy="50" r="40"></circle>
+                          <circle class="seg z1" cx="50" cy="50" r="40" stroke-dasharray="56.75 194.58" stroke-dashoffset="0"></circle>
+                          <circle class="seg z2" cx="50" cy="50" r="40" stroke-dasharray="69.05 182.28" stroke-dashoffset="-59.75"></circle>
+                          <circle class="seg z3" cx="50" cy="50" r="40" stroke-dasharray="63.78 187.55" stroke-dashoffset="-131.80"></circle>
+                          <circle class="seg z4" cx="50" cy="50" r="40" stroke-dasharray="35.67 215.66" stroke-dashoffset="-198.58"></circle>
+                          <circle class="seg z5" cx="50" cy="50" r="40" stroke-dasharray="11.07 240.26" stroke-dashoffset="-237.25"></circle>
+                        </g>
+                      </svg>
+                      <div class="rnum"><b class="z2">Z2</b><small>MOST TIME</small></div>
+                    </div>
+                    <div class="zlegend">
+                      <div class="zleg z1"><i></i><span class="z">Z1</span><span class="t">34m</span><span class="bpm">95-121 BPM</span></div>
+                      <div class="zleg z2"><i></i><span class="z">Z2</span><span class="t">41m</span><span class="bpm">122-140 BPM</span></div>
+                      <div class="zleg z3"><i></i><span class="z">Z3</span><span class="t">38m</span><span class="bpm">141-158 BPM</span></div>
+                      <div class="zleg z4"><i></i><span class="z">Z4</span><span class="t">22m</span><span class="bpm">159-172 BPM</span></div>
+                      <div class="zleg z5"><i></i><span class="z">Z5</span><span class="t">8m</span><span class="bpm">173-195 BPM</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div style="height:20px;"></div>
+              </div>
+              <div class="bottom-nav">
+                <button class="active"><span class="ic">◵</span>Today</button>
+                <button data-jump="today-hrv"><span class="ic">▤</span>Plan</button>
+                <button data-jump="today-hrv"><span class="ic">◆</span>Train</button>
+                <button data-jump="profile"><span class="ic">◉</span>Profile</button>
+              </div>
+            </section>
+
+            <!-- 02d TODAY WEEKLY — No readings -->
+            <section class="screen" data-screen="today-none">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="scroll tabbed">
+                <p class="greeting">Good morning, Tyler</p>
+                <div class="card plan">
+                  <div class="lab">TODAY'S PLAN</div>
+                  <h4>Intensity — Block 12</h4>
+                  <p>45 min &middot; intervals + sled work. Certainty low &mdash; no readings this morning.</p>
+                  <span class="chev">›</span>
+                </div>
+                <div class="card">
+                  <div class="lab">THIS WEEK</div>
+                  <div class="weekstats">
+                    <div class="wstat"><b>4</b><small>SESSIONS</small></div>
+                    <div class="wstat"><b>2h 23m</b><small>TRAINING</small></div>
+                    <div class="wstat" style="border-color:rgba(91,157,255,.35);"><b style="color:var(--blue);">1h 08m</b><small style="color:var(--blue);">CARDIO</small></div>
+                  </div>
+                  <div class="bodymap">
+                    <div class="fig"><div class="cap">FRONT</div>__FIG_FRONT__</div>
+                    <div class="fig"><div class="cap">BACK</div>__FIG_BACK__</div>
+                  </div>
+                  <div class="heat-legend"><span>less</span><i></i><span>more this week</span></div>
+                </div>
+                <div class="card">
+                  <div class="lab">MOVEMENT BALANCE</div>
+                  <div class="balance">
+                    <div class="brow"><span class="m">Squat</span><div class="bar"><i style="width:82%;"></i></div><span class="v">27 sets</span></div>
+                    <div class="brow"><span class="m">Push</span><div class="bar"><i style="width:66%;"></i></div><span class="v">22 sets</span></div>
+                    <div class="brow"><span class="m">Pull</span><div class="bar"><i style="width:30%; background:var(--amber);"></i></div><span class="v" style="color:var(--amber);">10 sets</span></div>
+                    <div class="brow"><span class="m">Hinge</span><div class="bar"><i style="width:44%;"></i></div><span class="v">15 sets</span></div>
+                    <div class="brow"><span class="m">Carry / gait</span><div class="bar"><i style="width:58%;"></i></div><span class="v">19 sets</span></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="lab">HEART RATE ZONES <span>2H 23M · AVG 141 BPM</span></div>
+                  <div class="zdonut">
+                    <div class="ring">
+                      <svg viewBox="0 0 100 100" role="img" aria-label="Time in heart-rate zones: zone 1 34 minutes, zone 2 41 minutes, zone 3 38 minutes, zone 4 22 minutes, zone 5 8 minutes, 143 minutes total">
+                        <g transform="rotate(-90 50 50)">
+                          <circle class="track" cx="50" cy="50" r="40"></circle>
+                          <circle class="seg z1" cx="50" cy="50" r="40" stroke-dasharray="56.75 194.58" stroke-dashoffset="0"></circle>
+                          <circle class="seg z2" cx="50" cy="50" r="40" stroke-dasharray="69.05 182.28" stroke-dashoffset="-59.75"></circle>
+                          <circle class="seg z3" cx="50" cy="50" r="40" stroke-dasharray="63.78 187.55" stroke-dashoffset="-131.80"></circle>
+                          <circle class="seg z4" cx="50" cy="50" r="40" stroke-dasharray="35.67 215.66" stroke-dashoffset="-198.58"></circle>
+                          <circle class="seg z5" cx="50" cy="50" r="40" stroke-dasharray="11.07 240.26" stroke-dashoffset="-237.25"></circle>
+                        </g>
+                      </svg>
+                      <div class="rnum"><b class="z2">Z2</b><small>MOST TIME</small></div>
+                    </div>
+                    <div class="zlegend">
+                      <div class="zleg z1"><i></i><span class="z">Z1</span><span class="t">34m</span><span class="bpm">95-121 BPM</span></div>
+                      <div class="zleg z2"><i></i><span class="z">Z2</span><span class="t">41m</span><span class="bpm">122-140 BPM</span></div>
+                      <div class="zleg z3"><i></i><span class="z">Z3</span><span class="t">38m</span><span class="bpm">141-158 BPM</span></div>
+                      <div class="zleg z4"><i></i><span class="z">Z4</span><span class="t">22m</span><span class="bpm">159-172 BPM</span></div>
+                      <div class="zleg z5"><i></i><span class="z">Z5</span><span class="t">8m</span><span class="bpm">173-195 BPM</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div style="height:20px;"></div>
+              </div>
+              <div class="bottom-nav">
+                <button class="active"><span class="ic">◵</span>Today</button>
+                <button data-jump="today-none"><span class="ic">▤</span>Plan</button>
+                <button data-jump="today-none"><span class="ic">◆</span>Train</button>
+                <button data-jump="profile"><span class="ic">◉</span>Profile</button>
+              </div>
+            </section>
+
             <!-- 03 PROFILE -->
             <section class="screen" data-screen="profile">
               <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
               <div class="scroll tabbed">
                 <div class="prof-head">
                   <div class="avatar">T</div>
-                  <div class="who"><b>Tyler Pavay</b><small>HYROX · 3 programs · joined 2026</small></div>
-                  <button class="gear" data-jump="today">⚙</button>
+                  <div class="who"><b>Tyler Pavay</b></div>
+                  <button class="gear" aria-label="Settings">⚙</button>
                 </div>
                 <div class="weekstats" style="margin-bottom:18px;">
                   <div class="wstat"><b>128</b><small>WORKOUTS</small></div>
@@ -388,10 +986,17 @@
             <!-- 04 WORKOUT DETAIL / MUSCLE MAP -->
             <section class="screen" data-screen="detail">
               <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
-              <div class="appbar"><button class="left" data-jump="profile">‹ Profile</button><h3>Workout</h3><span class="right" style="opacity:0;">·</span></div>
+              <div class="appbar"><button class="left" data-jump="profile">‹ Profile</button><h3>Workout</h3><button class="right dots" data-sheet-open="detail-sheet" aria-label="More">⋯</button></div>
               <div class="scroll">
-                <h4 style="font-size:19px;margin:2px 0 3px;">Intensity — Block 12</h4>
-                <p style="color:var(--mid);font-size:12px;margin:0 0 16px;">Wed, Jul 15 · 48m · 6 exercises · 24 sets</p>
+                <div class="dhead">
+                  <div class="dt">Wed, Jul 15</div>
+                  <h4>Intensity — Block 12</h4>
+                </div>
+                <div class="dstats">
+                  <div class="dstat"><small>DURATION</small><b>48 min</b></div>
+                  <div class="dstat"><small>EXERCISES</small><b>5</b></div>
+                  <div class="dstat"><small>SETS</small><b>21</b></div>
+                </div>
                 <div class="card" style="margin-bottom:16px;">
                   <div class="lab">MUSCLE MAP</div>
                   <div class="bodymap">
@@ -400,13 +1005,123 @@
                   </div>
                   <div class="heat-legend"><span>touched</span><i></i><span>worked hard</span></div>
                 </div>
+                <div class="card" style="margin-bottom:16px;">
+                  <div class="lab">HEART RATE <span>AVG 152 · MAX 181 BPM</span></div>
+                  <svg class="hrchart" viewBox="-28 -8 350 110" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <defs>
+                      <linearGradient id="hrfill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#9b6dff" stop-opacity=".34"></stop>
+                        <stop offset="100%" stop-color="#9b6dff" stop-opacity="0"></stop>
+                      </linearGradient>
+                    </defs>
+                    <text class="unit" x="1" y="1" text-anchor="end">BPM</text>
+                    <line class="grid" x1="6" y1="12.6" x2="314" y2="12.6"></line>
+                    <line class="grid" x1="6" y1="40.1" x2="314" y2="40.1"></line>
+                    <line class="grid" x1="6" y1="67.6" x2="314" y2="67.6"></line>
+                    <text class="tick" x="1" y="15.6" text-anchor="end">180</text>
+                    <text class="tick" x="1" y="43.1" text-anchor="end">150</text>
+                    <text class="tick" x="1" y="70.6" text-anchor="end">120</text>
+                    <line class="axis" x1="6" y1="86" x2="314" y2="86"></line>
+                    <line class="axis" x1="6" y1="86" x2="6" y2="89.5"></line>
+                    <line class="axis" x1="83" y1="86" x2="83" y2="89.5"></line>
+                    <line class="axis" x1="160" y1="86" x2="160" y2="89.5"></line>
+                    <line class="axis" x1="237" y1="86" x2="237" y2="89.5"></line>
+                    <line class="axis" x1="314" y1="86" x2="314" y2="89.5"></line>
+                    <text class="tick" x="6" y="98" text-anchor="start">0</text>
+                    <text class="tick" x="83" y="98" text-anchor="middle">12</text>
+                    <text class="tick" x="160" y="98" text-anchor="middle">24</text>
+                    <text class="tick" x="237" y="98" text-anchor="middle">36</text>
+                    <text class="tick" x="314" y="98" text-anchor="end">48 MIN</text>
+                    <path fill="url(#hrfill)" d="M6.0,86 L 6.0,74.1 L 12.4,68.2 L 18.8,62.4 L 25.2,58.0 L 31.7,53.6 L 38.1,50.6 L 44.5,41.8 L 50.9,28.6 L 57.3,22.7 L 63.8,18.3 L 70.2,13.9 L 76.6,11.7 L 83.0,21.2 L 89.4,35.9 L 95.8,44.7 L 102.2,34.4 L 108.7,21.2 L 115.1,33.0 L 121.5,18.3 L 127.9,30.8 L 134.3,16.1 L 140.8,28.6 L 147.2,14.6 L 153.6,34.4 L 160.0,43.3 L 166.4,33.0 L 172.8,19.8 L 179.2,31.5 L 185.7,17.6 L 192.1,30.0 L 198.5,15.3 L 204.9,34.4 L 211.3,40.3 L 217.8,47.7 L 224.2,35.9 L 230.6,23.4 L 237.0,34.4 L 243.4,21.2 L 249.8,33.0 L 256.2,19.8 L 262.7,30.8 L 269.1,38.1 L 275.5,46.2 L 281.9,40.3 L 288.3,28.6 L 294.8,38.9 L 301.2,27.1 L 307.6,52.1 L 314.0,65.3 L 314.0,86 Z"></path>
+                    <polyline class="ln" points="6.0,74.1 12.4,68.2 18.8,62.4 25.2,58.0 31.7,53.6 38.1,50.6 44.5,41.8 50.9,28.6 57.3,22.7 63.8,18.3 70.2,13.9 76.6,11.7 83.0,21.2 89.4,35.9 95.8,44.7 102.2,34.4 108.7,21.2 115.1,33.0 121.5,18.3 127.9,30.8 134.3,16.1 140.8,28.6 147.2,14.6 153.6,34.4 160.0,43.3 166.4,33.0 172.8,19.8 179.2,31.5 185.7,17.6 192.1,30.0 198.5,15.3 204.9,34.4 211.3,40.3 217.8,47.7 224.2,35.9 230.6,23.4 237.0,34.4 243.4,21.2 249.8,33.0 256.2,19.8 262.7,30.8 269.1,38.1 275.5,46.2 281.9,40.3 288.3,28.6 294.8,38.9 301.2,27.1 307.6,52.1 314.0,65.3"></polyline>
+                  </svg>
+                </div>
+                <div class="card" style="margin-bottom:16px;">
+                  <div class="lab">HEART RATE ZONES</div>
+                  <div class="zones">
+                    <div class="zrow z5"><span class="z">Z5</span><div class="blk"><i style="width:40%;"></i></div><span class="t">6m</span><span class="bpm">173-195 bpm</span></div>
+                    <div class="zrow z4"><span class="z">Z4</span><div class="blk"><i style="width:100%;"></i></div><span class="t">15m</span><span class="bpm">159-172 bpm</span></div>
+                    <div class="zrow z3"><span class="z">Z3</span><div class="blk"><i style="width:93%;"></i></div><span class="t">14m</span><span class="bpm">141-158 bpm</span></div>
+                    <div class="zrow z2"><span class="z">Z2</span><div class="blk"><i style="width:60%;"></i></div><span class="t">9m</span><span class="bpm">122-140 bpm</span></div>
+                    <div class="zrow z1"><span class="z">Z1</span><div class="blk"><i style="width:27%;"></i></div><span class="t">4m</span><span class="bpm">95-121 bpm</span></div>
+                  </div>
+                </div>
                 <div class="sect" style="margin-top:4px;">EXERCISES</div>
-                <div class="exline"><span class="ic">🏃</span><div><b>Assault Bike</b><small>5 × :30 / :30</small></div><span class="mus">cardio</span></div>
-                <div class="exline"><span class="ic">▸</span><div><b>Sled Push</b><small>4 × 20 m</small></div><span class="mus">quads · glutes</span></div>
-                <div class="exline"><span class="ic">▸</span><div><b>Sled Pull</b><small>4 × 20 m</small></div><span class="mus">lats · hams</span></div>
-                <div class="exline"><span class="ic">▸</span><div><b>Wall Balls</b><small>4 × 15</small></div><span class="mus">quads · delts</span></div>
-                <div class="exline"><span class="ic">▸</span><div><b>Pull-Up</b><small>4 × 8</small></div><span class="mus">lats · biceps</span></div>
+                <div class="exitem">
+                  <div class="exline"><span class="ic">🏃</span><div class="nm"><b>Assault Bike</b></div><span class="mus">cardio</span></div>
+                  <div class="setlist">
+                    <div class="sethead"><span>SET</span><span>DURATION</span><span>WATTS</span><span>CAL</span></div>
+                    <div class="setrow"><span class="n">1</span><span class="val">:30</span><span class="val">142</span><span class="sub">9</span></div>
+                    <div class="setrow"><span class="n">2</span><span class="val">:30</span><span class="val">139</span><span class="sub">9</span></div>
+                    <div class="setrow"><span class="n">3</span><span class="val">:30</span><span class="val">144</span><span class="sub">10</span></div>
+                    <div class="setrow"><span class="n">4</span><span class="val">:30</span><span class="val">136</span><span class="sub">8</span></div>
+                    <div class="setrow"><span class="n">5</span><span class="val">:30</span><span class="val">148</span><span class="sub">10</span></div>
+                  </div>
+                </div>
+                <div class="exitem">
+                  <div class="exline"><span class="ic">▸</span><div class="nm"><b>Sled Push</b></div><span class="mus">quads · glutes</span></div>
+                  <div class="setlist">
+                    <div class="sethead"><span>SET</span><span>WEIGHT</span><span>DISTANCE</span><span>TIME</span></div>
+                    <div class="setrow"><span class="n">1</span><span class="val">90 lb</span><span class="val">20 m</span><span class="sub">:22</span></div>
+                    <div class="setrow"><span class="n">2</span><span class="val">90 lb</span><span class="val">20 m</span><span class="sub">:23</span></div>
+                    <div class="setrow"><span class="n">3</span><span class="val">90 lb</span><span class="val">20 m</span><span class="sub">:24</span></div>
+                    <div class="setrow"><span class="n">4</span><span class="val">90 lb</span><span class="val">20 m</span><span class="sub">:26</span></div>
+                  </div>
+                </div>
+                <div class="exitem">
+                  <div class="exline"><span class="ic">▸</span><div class="nm"><b>Sled Pull</b></div><span class="mus">lats · hams</span></div>
+                  <div class="setlist">
+                    <div class="sethead"><span>SET</span><span>WEIGHT</span><span>DISTANCE</span><span>TIME</span></div>
+                    <div class="setrow"><span class="n">1</span><span class="val">70 lb</span><span class="val">20 m</span><span class="sub">:19</span></div>
+                    <div class="setrow"><span class="n">2</span><span class="val">70 lb</span><span class="val">20 m</span><span class="sub">:20</span></div>
+                    <div class="setrow"><span class="n">3</span><span class="val">70 lb</span><span class="val">20 m</span><span class="sub">:21</span></div>
+                    <div class="setrow"><span class="n">4</span><span class="val">70 lb</span><span class="val">20 m</span><span class="sub">:23</span></div>
+                  </div>
+                </div>
+                <div class="exitem">
+                  <div class="exline"><span class="ic">▸</span><div class="nm"><b>Wall Balls</b></div><span class="mus">quads · delts</span></div>
+                  <div class="setlist">
+                    <div class="sethead"><span>SET</span><span>WEIGHT</span><span>REPS</span><span>RPE</span></div>
+                    <div class="setrow"><span class="n">1</span><span class="val">20 lb</span><span class="val">15</span><span class="sub">7</span></div>
+                    <div class="setrow"><span class="n">2</span><span class="val">20 lb</span><span class="val">15</span><span class="sub">7</span></div>
+                    <div class="setrow"><span class="n">3</span><span class="val">20 lb</span><span class="val">15</span><span class="sub">8</span></div>
+                    <div class="setrow"><span class="n">4</span><span class="val">20 lb</span><span class="val">13</span><span class="sub">9</span></div>
+                  </div>
+                </div>
+                <div class="exitem">
+                  <div class="exline"><span class="ic">▸</span><div class="nm"><b>Pull-Up</b></div><span class="mus">lats · biceps</span></div>
+                  <div class="setlist">
+                    <div class="sethead"><span>SET</span><span>WEIGHT</span><span>REPS</span><span>RPE</span></div>
+                    <div class="setrow"><span class="n">1</span><span class="val">BW</span><span class="val">8</span><span class="sub">7</span></div>
+                    <div class="setrow"><span class="n">2</span><span class="val">BW</span><span class="val">8</span><span class="sub">8</span></div>
+                    <div class="setrow"><span class="n">3</span><span class="val">BW</span><span class="val">7</span><span class="sub">9</span></div>
+                    <div class="setrow"><span class="n">4</span><span class="val">BW + 10 lb</span><span class="val">6</span><span class="sub">9</span></div>
+                  </div>
+                </div>
                 <div style="height:30px;"></div>
+              </div>
+              <div class="sheet-wrap" id="detail-sheet">
+                <div class="sheet-scrim" data-sheet-close></div>
+                <div class="sheet">
+                  <div class="grab"></div>
+                  <button class="sheet-row" data-sheet-close><span class="ic">✎</span><span>Edit workout</span></button>
+                  <button class="sheet-row" data-sheet-close><span class="ic">▤</span><span>Save as template</span></button>
+                  <button class="sheet-row danger" data-sheet-close><span class="ic">✕</span><span>Delete workout</span></button>
+                  <button class="sheet-cancel" data-sheet-close>Cancel</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- 05 CALENDAR -->
+            <section class="screen" data-screen="calendar">
+              <div class="statusbar"><span>7:09</span><span>▮▮ 5G 79%</span></div>
+              <div class="appbar cal-appbar"><span class="left" id="cal-daylabel">WED 15</span><h3 id="cal-monthlabel">July 2026</h3><button class="right" id="cal-jump-today">Today</button></div>
+              <div class="cal-scroll" id="cal-scroll"></div>
+              <div class="bottom-nav">
+                <button data-jump="today"><span class="ic">◵</span>Today</button>
+                <button class="active"><span class="ic">▤</span>Plan</button>
+                <button data-jump="today"><span class="ic">◆</span>Train</button>
+                <button data-jump="profile"><span class="ic">◉</span>Profile</button>
               </div>
             </section>
 
@@ -430,24 +1145,40 @@
       p.innerHTML = p.innerHTML.split('__FIG_FRONT__').join(FRONT).split('__FIG_BACK__').join(BACK).split('__MINI__').join(MINI);
     });
 
-    const titles = { custom:'Custom exercise form', 'pick-equip':'Equipment picker', 'pick-type':'Metrics picker', 'pick-pattern':'Movement pattern (1–2)', today:'Today · weekly', profile:'Profile', detail:'Workout · muscle map' };
+    const titles = { custom:'Custom exercise form', 'pick-equip':'Equipment picker', 'pick-muscle':'Primary muscle picker', 'pick-other':'Other muscles picker', 'pick-type':'Metrics picker', 'pick-pattern':'Movement pattern', 'pick-tags':'Tags picker', 'pick-level':'Level picker', today:'Today · weekly', 'today-full':'Today · sleep + HRV', 'today-sleep':'Today · sleep, no HRV', 'today-hrv':'Today · HRV, no sleep', 'today-none':'Today · no readings', profile:'Profile', detail:'Workout · muscle map', calendar:'Calendar' };
     function show(name){
+      document.querySelectorAll('.sheet-wrap').forEach(w => w.classList.remove('open'));
       document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.dataset.screen === name));
       document.querySelectorAll('.screen-nav button').forEach(b => b.classList.toggle('active', b.dataset.show === name));
       if (titles[name]) document.getElementById('title').textContent = titles[name];
+      if (name === 'calendar' && window.__calReveal) window.__calReveal();
     }
     document.querySelectorAll('.screen-nav button').forEach(b => b.addEventListener('click', () => show(b.dataset.show)));
     document.querySelectorAll('[data-jump]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); show(b.dataset.jump); }));
 
+    // bottom sheets
+    document.querySelectorAll('[data-sheet-open]').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation();
+      const w = document.getElementById(b.dataset.sheetOpen);
+      if (w) w.classList.add('open');
+    }));
+    document.querySelectorAll('[data-sheet-close]').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation();
+      b.closest('.sheet-wrap').classList.remove('open');
+    }));
+
     // single-select pickers: tapping selects one
     document.querySelectorAll('.picklist[data-single] .pick-row').forEach(row => row.addEventListener('click', e => {
       e.stopPropagation();
+      if (row.classList.contains('disabled')) return;
       row.parentElement.querySelectorAll('.pick-row').forEach(r => r.classList.remove('on'));
       row.classList.add('on');
     }));
-    // unlimited multi-select (metrics)
+    // unlimited multi-select (metrics, movement pattern, other muscles, tags)
     document.querySelectorAll('.picklist[data-multi] .pick-row').forEach(row => row.addEventListener('click', e => {
-      e.stopPropagation(); row.classList.toggle('on');
+      e.stopPropagation();
+      if (row.classList.contains('disabled')) return;
+      row.classList.toggle('on');
     }));
     // quick-start presets: single-select visual
     document.querySelectorAll('.preset-row').forEach(list => {
@@ -468,6 +1199,119 @@
         list.querySelectorAll('.pick-row').forEach(r => r.classList.toggle('disabled', full && !r.classList.contains('on')));
       }));
     });
+
+    // calendar — endless day list, grown in both directions on scroll; the app bar
+    // reflects whichever day sits at the top of the viewport.
+    (function () {
+      const scroll = document.getElementById('cal-scroll');
+      if (!scroll) return;
+      const monthLabel = document.getElementById('cal-monthlabel');
+      const dayLabel = document.getElementById('cal-daylabel');
+      const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      const WD = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+      const DAY_MS = 86400000;
+
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const todayNum = Math.round(today.getTime() / DAY_MS);
+
+      function session(d) {
+        const delta = Math.round(d.getTime() / DAY_MS) - todayNum;
+        const k = ((delta % 7) + 7) % 7;
+        const block = ((Math.floor(delta / 7) + 11) % 16 + 16) % 16 + 1;
+        if (k === 0) return { t: 'Intensity — Block ' + block, m: 'Intervals · sled · 48m' };
+        if (k === 1) return { t: 'Push A — Heavy', m: 'Bench · OHP · dips · 55m' };
+        if (k === 3) return { t: 'Zone 2 Bike', m: 'Cardio · 45m', cardio: true };
+        if (k === 5) return { t: 'Aerobic Capacity #1', m: 'Run + strength · 1h 35m' };
+        return null;
+      }
+
+      function dayNode(d) {
+        const frag = document.createDocumentFragment();
+        if (d.getDate() === 1) {
+          const h = document.createElement('div');
+          h.className = 'cal-mhead';
+          h.textContent = (MONTHS[d.getMonth()] + ' ' + d.getFullYear()).toUpperCase();
+          frag.appendChild(h);
+        }
+        const s = session(d);
+        const num = Math.round(d.getTime() / DAY_MS);
+        const row = document.createElement('button');
+        row.className = 'cal-day' + (s ? '' : ' rest') + (num === todayNum ? ' today' : '') + (num > todayNum ? ' future' : '');
+        row.dataset.y = d.getFullYear(); row.dataset.m = d.getMonth(); row.dataset.d = d.getDate(); row.dataset.wd = d.getDay();
+        const left = document.createElement('span');
+        left.className = 'd';
+        left.innerHTML = '<b>' + d.getDate() + '</b><small>' + WD[d.getDay()] + '</small>';
+        const body = document.createElement('span');
+        body.className = 'body';
+        body.innerHTML = s
+          ? '<h4>' + s.t + '</h4><p>' + s.m + '</p>'
+          : '<h4>Rest day</h4>';
+        const dot = document.createElement('span');
+        dot.className = 'dot' + (s && s.cardio ? ' cardio' : '');
+        dot.textContent = s ? (s.cardio ? '◵' : '◆') : '';
+        row.appendChild(left); row.appendChild(body); row.appendChild(dot);
+        if (s) row.addEventListener('click', e => { e.stopPropagation(); show('detail'); });
+        frag.appendChild(row);
+        return frag;
+      }
+
+      let first = new Date(today), last = new Date(today);
+      function grow(after, n) {
+        if (after) {
+          for (let i = 0; i < n; i++) { last = new Date(last.getTime() + DAY_MS); last.setHours(0,0,0,0); scroll.appendChild(dayNode(last)); }
+        } else {
+          const before = scroll.scrollHeight;
+          for (let i = 0; i < n; i++) {
+            first = new Date(first.getTime() - DAY_MS); first.setHours(0,0,0,0);
+            scroll.insertBefore(dayNode(first), scroll.firstChild);
+          }
+          scroll.scrollTop += scroll.scrollHeight - before;
+        }
+      }
+
+      scroll.appendChild(dayNode(today));
+      grow(true, 60);
+      grow(false, 45);
+
+      function topDay() {
+        const kids = scroll.children, y = scroll.scrollTop + 40;
+        let lo = 0, hi = kids.length - 1, ans = 0;
+        while (lo <= hi) { const mid = (lo + hi) >> 1; if (kids[mid].offsetTop <= y) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+        for (let i = ans; i < kids.length; i++) if (kids[i].classList.contains('cal-day')) return kids[i];
+        return null;
+      }
+
+      function syncBar() {
+        const el = topDay();
+        if (!el) return;
+        monthLabel.textContent = MONTHS[+el.dataset.m] + ' ' + el.dataset.y;
+        dayLabel.textContent = WD[+el.dataset.wd] + ' ' + el.dataset.d;
+      }
+
+      let ticking = false;
+      scroll.addEventListener('scroll', () => {
+        for (let i = 0; i < 6 && scroll.scrollTop < 600; i++) grow(false, 30);
+        for (let i = 0; i < 6 && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 900; i++) grow(true, 30);
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => { ticking = false; syncBar(); });
+      });
+
+      let placed = false;
+      window.__calReveal = function () {
+        if (!placed) {
+          const t = scroll.querySelector('.cal-day.today');
+          if (t) { scroll.scrollTop = t.offsetTop - 36; placed = true; }
+        }
+        syncBar();
+      };
+      document.getElementById('cal-jump-today').addEventListener('click', e => {
+        e.stopPropagation();
+        const t = scroll.querySelector('.cal-day.today');
+        if (t) scroll.scrollTop = t.offsetTop - 36;
+        syncBar();
+      });
+    })();
   </script>
 </body>
 </html>
