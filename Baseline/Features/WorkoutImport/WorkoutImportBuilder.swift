@@ -247,17 +247,31 @@ enum WorkoutImportDraftBuilder {
     /// different spellings of the same movement. Raw similarity is kept only as the fallback for a
     /// misread name, where no candidate accounts for the words and something is better than a blank
     /// picker.
+    ///
+    /// Hence filter, then choose. The threshold decides who is close enough to offer at all; only
+    /// among those does spelling out every word win. Choosing first would let a word-complete
+    /// candidate that is itself too far away suppress the fallback and then be dropped, which is
+    /// how "we were not sure, here are the close ones" becomes "search 900 entries yourself".
     static func candidates(for name: String, in catalog: [ExerciseDefinition], limit: Int = 4) -> [ExerciseDefinition] {
         let key = normalizeIdentity(name)
         guard !key.isEmpty else { return [] }
-        let scored = catalog.map { definition -> (ExerciseDefinition, Double) in
-            let aliases = [definition.name] + definition.aliases
-            return (definition, aliases.map { similarity(key, normalizeIdentity($0)) }.max() ?? 0)
-        }
         let wanted = identityWords(key)
-        let sameMovement = wanted.isEmpty ? [] : scored.filter { accountsForEveryWord(wanted, $0.0) }
-        return (sameMovement.isEmpty ? scored : sameMovement)
-            .filter { $0.1 >= 0.42 }
+        // One pass over each definition's spellings: `build` runs per streamed delta and calls this
+        // for every unresolved name, so walking the catalog twice here is felt on the hot path.
+        let eligible = catalog.compactMap { definition -> (ExerciseDefinition, Double, Bool)? in
+            var best = 0.0
+            var spellsOutEveryWord = false
+            for spelling in [definition.name] + definition.aliases {
+                let normalized = normalizeIdentity(spelling)
+                best = max(best, similarity(key, normalized))
+                if !wanted.isEmpty, !spellsOutEveryWord {
+                    spellsOutEveryWord = wanted.isSubset(of: identityWords(normalized))
+                }
+            }
+            return best >= 0.42 ? (definition, best, spellsOutEveryWord) : nil
+        }
+        let sameMovement = eligible.filter(\.2)
+        return (sameMovement.isEmpty ? eligible : sameMovement)
             .sorted { $0.1 > $1.1 }
             .prefix(limit).map(\.0)
     }
@@ -275,15 +289,6 @@ enum WorkoutImportDraftBuilder {
         let value = String(word)
         let dropped = value.hasSuffix("s") ? String(value.dropLast()) : value
         return dropped.count > 1 ? dropped : value
-    }
-
-    /// True when one of the definition's spellings uses every word the source used. Each alias is
-    /// checked whole, since aliases that between them mention "sled" and "drag" have not shown that
-    /// any one of them means "sled drag".
-    private static func accountsForEveryWord(_ wanted: Set<String>, _ definition: ExerciseDefinition) -> Bool {
-        ([definition.name] + definition.aliases).contains {
-            wanted.isSubset(of: identityWords(normalizeIdentity($0)))
-        }
     }
 
     /// Produces a deliberately narrow set of safe identity variants. This lets parser output such

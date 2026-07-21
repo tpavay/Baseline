@@ -377,6 +377,26 @@ function assignToken(
  * by the time anything here could listen for it. The response emits "close" both on normal
  * completion and when the connection is terminated early, so `writableFinished` separates them.
  */
+/** The reason recorded when nobody is waiting for the import any more. */
+export const WORKOUT_IMPORT_ABANDONED_REASON = "client_disconnected";
+
+/**
+ * How one streamed import ends, as a single decision.
+ *
+ * An import the athlete walked away from is a third thing, neither a success nor a provider
+ * failure, and telling it apart is most of why this path is traced at all. It also arrives two
+ * ways - the loop notices the response is dead and breaks, or the SDK throws `AbortError` first -
+ * and which one wins is a race. Both come through here so they land on the same outcome either way.
+ */
+export function workoutImportStreamTerminalOutcome(
+  clientLeft: boolean,
+  failureCode?: string,
+): { outcome: string; reason?: string } {
+  if (clientLeft) return { outcome: "abandoned", reason: WORKOUT_IMPORT_ABANDONED_REASON };
+  if (failureCode !== undefined) return { outcome: "provider_failed", reason: failureCode };
+  return { outcome: "success" };
+}
+
 export function abortWhenClientDisconnects(
   response: { on: (event: string, listener: () => void) => unknown; writableFinished?: boolean },
   controller: AbortController,

@@ -36,6 +36,7 @@ import {
   abortWhenClientDisconnects,
   emptyWorkoutImportStreamResult,
   foldWorkoutImportStreamUsage,
+  workoutImportStreamTerminalOutcome,
 } from "./workoutImportStream";
 import {
   parseStartWorkoutImportJobPayload,
@@ -408,7 +409,10 @@ export const streamWorkoutImport = onRequest(
     // it the model keeps writing, at full output-token cost, into a response that is already gone.
     const abandoned = new AbortController();
     abortWhenClientDisconnects(res, abandoned);
-    const writable = () => !abandoned.signal.aborted && !res.writableEnded && !res.destroyed;
+    // Both halves of the race read this: the loop that notices and breaks, and the AbortError the
+    // SDK throws when the signal fires first.
+    const clientLeft = () => abandoned.signal.aborted || res.destroyed;
+    const writable = () => !clientLeft() && !res.writableEnded;
     const usage = emptyWorkoutImportStreamResult();
 
     try {
@@ -440,6 +444,9 @@ export const streamWorkoutImport = onRequest(
           toolSchemaBytes: Buffer.byteLength(JSON.stringify([WORKOUT_IMPORT_SKETCH_TOOL]), "utf8"),
           callIndex: 0,
           streaming: true,
+          // The provider bills a stream it never finished, so the tokens it did consume are
+          // attached even when this throws.
+          partialUsage: () => usage,
         }, async () => {
           const stream = await client.messages.create(request, { signal: abandoned.signal });
           for await (const event of stream as AsyncIterable<Record<string, unknown>>) {
@@ -457,14 +464,22 @@ export const streamWorkoutImport = onRequest(
         });
         // Inside the trace, like every other terminal outcome, so it rolls up with the generation
         // span rather than being emitted detached from the trace it belongs to.
-        await recordTerminalOutcome("success");
+        const ended = workoutImportStreamTerminalOutcome(clientLeft());
+        await recordTerminalOutcome(ended.outcome, ended.reason);
         } catch (error) {
-          await recordTerminalOutcome("provider_failed", workoutImportFailureCode(error));
+          const ended = workoutImportStreamTerminalOutcome(clientLeft(), workoutImportFailureCode(error));
+          await recordTerminalOutcome(ended.outcome, ended.reason);
           throw error;
         }
       });
       if (!writable()) {
-        logger.info("workout_import_stream.abandoned", { uid, deltas: deltaCount, latencyMs: Date.now() - started });
+        logger.info("workout_import_stream.abandoned", {
+          uid,
+          deltas: deltaCount,
+          inputTokens: usage.usage.input_tokens,
+          outputTokens: usage.usage.output_tokens,
+          latencyMs: Date.now() - started,
+        });
         return;
       }
       res.write(serverSentEvent({ type: "done", model: IMPORT_STREAM_MODEL }));
@@ -480,10 +495,22 @@ export const streamWorkoutImport = onRequest(
       });
     } catch (error) {
       const reasonCode = workoutImportFailureCode(error);
+      if (clientLeft()) {
+        logger.info("workout_import_stream.abandoned", {
+          uid,
+          deltas: deltaCount,
+          inputTokens: usage.usage.input_tokens,
+          outputTokens: usage.usage.output_tokens,
+          latencyMs: Date.now() - started,
+        });
+        return;
+      }
       logger.error("workout_import_stream.provider_error", {
         uid,
         model: IMPORT_STREAM_MODEL,
         deltas: deltaCount,
+        inputTokens: usage.usage.input_tokens,
+        outputTokens: usage.usage.output_tokens,
         latencyMs: Date.now() - started,
         reasonCode,
       });

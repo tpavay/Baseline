@@ -156,6 +156,48 @@ struct WorkoutImportConversionTests {
         #expect(match.definition == nil)
     }
 
+    /// The threshold decides who is close enough to offer; only then does spelling out every word
+    /// win. Choosing first let a word-complete candidate that was itself too far away suppress the
+    /// fallback and then be filtered out, handing the athlete a blank picker — which is worse than
+    /// the confident wrong guess this whole path exists to replace.
+    ///
+    /// A synthetic catalog, because the case needs one word-complete candidate scoring *under* the
+    /// threshold while a different candidate scores over it, and that is a property of the numbers
+    /// rather than of any real movement.
+    @Test func aWordCompleteCandidateBelowTheThresholdDoesNotSuppressTheOnesAboveIt() {
+        let verbose = definition(id: "verbose", name: "Kettlebell Swing American Style Overhead Full Range")
+        let neighbour = definition(id: "neighbour", name: "Kettlebell Snatch")
+        let offered = WorkoutImportDraftBuilder.candidates(
+            for: "Kettlebell Swing", in: [verbose, neighbour]
+        )
+
+        #expect(!offered.isEmpty, "a blank picker is worse than an approximate one")
+        #expect(offered.contains { $0.id == "neighbour" })
+        #expect(!offered.contains { $0.id == "verbose" })
+    }
+
+    /// KNOWN GAP, characterized rather than fixed: a verbose source name is offered nothing at all,
+    /// even when a catalog name sits inside it word for word.
+    ///
+    /// The cause is `similarity` being normalized Levenshtein — 1 - distance / max(count) — so a
+    /// long name is penalised purely for its length against a short catalog entry, landing under
+    /// the 0.42 threshold against every plausible match. It is not the filter-then-choose ordering
+    /// asserted above, which this test is deliberately separate from. Whether an unresolvable name
+    /// should still be offered low-confidence candidates is an open product decision; this test
+    /// exists so the answer changes visibly rather than silently.
+    @Test func aVerboseSourceNameIsOfferedNoCandidatesToday() {
+        let offered = WorkoutImportDraftBuilder.candidates(
+            for: "dumbbell romanian deadlift with a pause at the bottom", in: catalog
+        )
+        #expect(offered.isEmpty)
+    }
+
+    private func definition(id: String, name: String) -> ExerciseDefinition {
+        ExerciseDefinition(
+            id: id, name: name, category: .strength, supported: [.reps], defaults: [.reps], aliases: []
+        )
+    }
+
     @Test func anEmptyNameIsUncertainRatherThanMatchingTheFirstDefinition() {
         let match = ImportExerciseMatcher.match("   ", in: snapshot)
         #expect(match.confidence == .uncertain)

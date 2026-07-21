@@ -14,7 +14,10 @@ const {
   abortWhenClientDisconnects,
   emptyWorkoutImportStreamResult,
   foldWorkoutImportStreamUsage,
+  workoutImportStreamTerminalOutcome,
+  WORKOUT_IMPORT_ABANDONED_REASON,
 } = require("../lib/workoutImportStream");
+const { anthropicUsageDetails } = require("../lib/llmObservability");
 
 /** Asserts the *code* a client branches on, not the human-readable message beside it. */
 const rejects = (code, build) => {
@@ -238,4 +241,46 @@ test("a response that finished normally does not report itself as abandoned", ()
   response.writableFinished = true;
   listeners.close();
   assert.equal(controller.signal.aborted, false);
+});
+
+/// An import nobody is waiting for is neither a success nor a provider failure, and it arrives two
+/// ways - the loop notices the dead response and breaks, or the SDK throws AbortError first. Both
+/// must land on the same outcome, or the success rate used to judge this architecture is noise.
+test("an abandoned stream is its own terminal outcome, whichever half of the race wins", () => {
+  const broke = workoutImportStreamTerminalOutcome(true);
+  const threw = workoutImportStreamTerminalOutcome(true, "provider_connection");
+
+  assert.deepEqual(broke, { outcome: "abandoned", reason: WORKOUT_IMPORT_ABANDONED_REASON });
+  assert.deepEqual(threw, { outcome: "abandoned", reason: WORKOUT_IMPORT_ABANDONED_REASON });
+});
+
+test("a stream nobody left is still reported as success or as the provider failure it was", () => {
+  assert.deepEqual(workoutImportStreamTerminalOutcome(false), { outcome: "success" });
+  assert.deepEqual(
+    workoutImportStreamTerminalOutcome(false, "provider_timeout"),
+    { outcome: "provider_failed", reason: "provider_timeout" },
+  );
+});
+
+/// The provider bills a stream it never finished, so the tokens consumed before an abort or an
+/// error still have to be priceable. If this regresses, the expensive-and-invisible case - the
+/// import the athlete walked away from - silently reports $0 again.
+test("usage accumulated before a failure is still costable", () => {
+  const usage = emptyWorkoutImportStreamResult();
+  foldWorkoutImportStreamUsage(usage, {
+    type: "message_start",
+    message: { usage: { input_tokens: 2_431, cache_read_input_tokens: 1_024 } },
+  });
+  foldWorkoutImportStreamUsage(usage, { type: "message_delta", usage: { output_tokens: 412 } });
+
+  const details = anthropicUsageDetails(usage);
+  assert.equal(details.input, 2_431);
+  assert.equal(details.output, 412);
+  assert.equal(details.cache_read_input_tokens, 1_024);
+  assert.equal(details.total, 2_431 + 412 + 1_024);
+});
+
+test("a stream that consumed nothing reports no usage rather than a zeroed one", () => {
+  assert.equal(anthropicUsageDetails(emptyWorkoutImportStreamResult()), undefined);
+  assert.equal(anthropicUsageDetails(undefined), undefined);
 });
