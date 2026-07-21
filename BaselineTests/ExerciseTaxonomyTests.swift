@@ -4,6 +4,98 @@ import Testing
 
 @Suite("Exercise taxonomy")
 struct ExerciseTaxonomyTests {
+    @Test func taxonomyCanExpressEveryApprovedPickerOption() {
+        let approvedEquipmentRawValues = [
+            "bodyweight", "barbell", "barbellPlates", "dumbbell", "kettlebell", "medicineBall",
+            "machine", "cable", "sled", "sandbag", "box", "band", "rope", "exerciseBall",
+            "bosuBall", "hangboard", "bike", "rower", "skiErg", "treadmill", "other"
+        ]
+        #expect(Equipment.customCreationOptions.map(\.rawValue) == approvedEquipmentRawValues)
+        #expect(Equipment.customCreationOptions.map(\.customCreationDisplayName) == [
+            "None / bodyweight", "Barbell", "Barbell plates", "Dumbbell", "Kettlebell", "Medicine ball",
+            "Machine", "Cable", "Sled", "Sandbag", "Box", "Bands", "Rope", "Exercise ball", "Bosu ball",
+            "Hangboard", "Bike", "Rower", "Ski erg", "Treadmill", "Other"
+        ])
+
+        let approvedTagRawValues = [
+            "hyrox", "crossFit", "powerlifting", "olympicWeightlifting", "strongman", "running",
+            "cycling", "rowing", "conditioning", "warmUp", "coolDown", "mobility", "rehab", "unilateral"
+        ]
+        #expect(ExerciseTag.customCreationOptions.map(\.rawValue) == approvedTagRawValues)
+        #expect(ExerciseTag.customCreationOptions.map(\.displayName) == [
+            "HYROX", "CrossFit", "Powerlifting", "Olympic lifting", "Strongman", "Running", "Cycling",
+            "Rowing", "Conditioning", "Warm-up", "Cool-down", "Mobility", "Rehab", "Unilateral"
+        ])
+
+        #expect(Muscle.abdominals.displayName == "Abs")
+        #expect(MovementPattern.hold.displayName == "Hold / isometric")
+        #expect(ExerciseLevel.expert.displayName == "Advanced")
+        #expect(Equipment.bodyweight.customCreationDisplayName == "None / bodyweight")
+        #expect(MetricType.heartRate.customCreationDisplayName == "Heart rate")
+    }
+
+    @Test func approvedCreationOptionsStayOrderedAndExcludeModelOnlyCases() {
+        #expect(Muscle.customCreationOptions.map(\.rawValue) == [
+            "chest", "lats", "upperBack", "traps", "lowerBack", "frontDelts", "sideDelts", "rearDelts",
+            "biceps", "triceps", "forearms", "abdominals", "obliques", "glutes", "quadriceps",
+            "hamstrings", "adductors", "abductors", "calves"
+        ])
+        #expect(Muscle.customCreationOptions.map(\.displayName) == [
+            "Chest", "Lats", "Upper back", "Traps", "Lower back", "Front delts", "Side delts", "Rear delts",
+            "Biceps", "Triceps", "Forearms", "Abs", "Obliques", "Glutes", "Quadriceps", "Hamstrings",
+            "Adductors", "Abductors", "Calves"
+        ])
+        #expect(MetricType.customCreationOptions.map(\.rawValue) == [
+            "reps", "load", "duration", "distance", "pace", "power", "calories", "cadence", "heartRate", "rpe"
+        ])
+        #expect(MetricType.customCreationOptions.map(\.customCreationDisplayName) == [
+            "Reps", "Load", "Duration", "Distance", "Pace", "Power", "Calories", "Cadence", "Heart rate", "RPE"
+        ])
+        #expect(MovementPattern.customCreationOptions == [
+            .squat, .hinge, .lunge, .push, .pull, .carry, .rotation, .gait, .hold
+        ])
+        #expect(MovementPattern.customCreationOptions.map(\.displayName) == [
+            "Squat", "Hinge", "Lunge", "Push", "Pull", "Carry", "Rotation", "Gait", "Hold / isometric"
+        ])
+        #expect(ExerciseLevel.customCreationOptions == [.beginner, .intermediate, .expert])
+        #expect(ExerciseLevel.customCreationOptions.map(\.displayName) == ["Beginner", "Intermediate", "Advanced"])
+
+        #expect(Equipment.allCases.contains(.ezBar))
+        #expect(Equipment.customCreationOptions.contains(.ezBar) == false)
+        #expect(Muscle.allCases.contains(.fullBody))
+        #expect(Muscle.customCreationOptions.contains(.fullBody) == false)
+        #expect(MetricType.allCases.contains(.heartRateZoneTime))
+        #expect(MetricType.customCreationOptions.contains(.heartRateZoneTime) == false)
+        #expect(ExerciseTag.allCases.contains(.calisthenics))
+        #expect(ExerciseTag.customCreationOptions.contains(.calisthenics) == false)
+    }
+
+    @Test func everyPreviouslyPersistedTaxonomyRawValueStillDecodes() throws {
+        try expectRoundTrip(Muscle.self, rawValues: [
+            "abdominals", "abductors", "adductors", "biceps", "calves", "chest", "forearms", "frontDelts",
+            "fullBody", "glutes", "hamstrings", "hipFlexors", "lats", "lowerBack", "neck", "obliques",
+            "quadriceps", "rearDelts", "sideDelts", "traps", "triceps", "upperBack"
+        ])
+        try expectRoundTrip(MovementPattern.self, rawValues: [
+            "squat", "hinge", "lunge", "push", "pull", "carry", "rotation", "gait", "hold"
+        ])
+        try expectRoundTrip(Equipment.self, rawValues: [
+            "barbell", "dumbbell", "kettlebell", "cable", "machine", "bodyweight", "band", "medicineBall",
+            "ezBar", "bench", "sled", "sandbag", "box", "jumpRope", "trapBar", "pullUpBar", "bike", "rower",
+            "skiErg", "treadmill", "stairStepper", "elliptical", "other"
+        ])
+        try expectRoundTrip(Modality.self, rawValues: ["resistance", "cardio", "hold", "mobility"])
+        try expectRoundTrip(Mechanic.self, rawValues: ["compound", "isolation"])
+        try expectRoundTrip(ExerciseLevel.self, rawValues: ["beginner", "intermediate", "expert"])
+        try expectRoundTrip(ExerciseTag.self, rawValues: [
+            "hyrox", "olympicWeightlifting", "powerlifting", "calisthenics", "plyometric", "mobility", "strongman"
+        ])
+        try expectRoundTrip(MetricType.self, rawValues: [
+            "reps", "load", "duration", "distance", "calories", "heartRate", "heartRateZoneTime", "cadence",
+            "power", "pace", "rpe"
+        ])
+    }
+
     @Test func everyBuiltInExerciseIsClassifiedWithAModalityAndLevel() {
         // Equipment may legitimately be empty (running and swimming need none); modality and level are
         // the invariants that must hold for every built-in.
@@ -15,9 +107,9 @@ struct ExerciseTaxonomyTests {
 
     @Test func resistanceExercisesNameTheMusclesTheyWork() {
         let resistance = ExerciseCatalog.definitions.filter { $0.modality == .resistance }
-        #expect(!resistance.isEmpty)
+        #expect(resistance.isEmpty == false)
         for def in resistance {
-            #expect(!def.primaryMuscles.isEmpty, "\(def.id) is resistance but names no primary muscle")
+            #expect(def.primaryMuscles.isEmpty == false, "\(def.id) is resistance but names no primary muscle")
         }
     }
 
@@ -91,5 +183,21 @@ struct ExerciseTaxonomyTests {
         #expect(def.level == .intermediate)
         #expect(def.modality == .resistance) // .load present
         #expect(def.category == .strength)   // legacy value derived from modality
+    }
+
+    private func expectRoundTrip<Value>(
+        _ type: Value.Type,
+        rawValues: [String],
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws where Value: Codable & RawRepresentable, Value.RawValue == String {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+
+        for rawValue in rawValues {
+            let storedData = Data("\"\(rawValue)\"".utf8)
+            let decoded = try decoder.decode(Value.self, from: storedData)
+            #expect(decoded.rawValue == rawValue, sourceLocation: sourceLocation)
+            #expect(try encoder.encode(decoded) == storedData, sourceLocation: sourceLocation)
+        }
     }
 }

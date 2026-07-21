@@ -43,7 +43,7 @@ enum Muscle: String, Codable, Sendable, CaseIterable, Hashable {
 
     var displayName: String {
         switch self {
-        case .abdominals: "Abdominals"
+        case .abdominals: "Abs"
         case .abductors: "Abductors"
         case .adductors: "Adductors"
         case .biceps: "Biceps"
@@ -82,12 +82,36 @@ enum Muscle: String, Codable, Sendable, CaseIterable, Hashable {
             .systemic
         }
     }
+
+    /// Options offered when creating a custom exercise, in the captain-approved picker order.
+    /// `allCases` remains the persisted model superset so older definitions keep decoding.
+    static let customCreationOptions: [Muscle] = [
+        .chest,
+        .lats,
+        .upperBack,
+        .traps,
+        .lowerBack,
+        .frontDelts,
+        .sideDelts,
+        .rearDelts,
+        .biceps,
+        .triceps,
+        .forearms,
+        .abdominals,
+        .obliques,
+        .glutes,
+        .quadriceps,
+        .hamstrings,
+        .adductors,
+        .abductors,
+        .calves
+    ]
 }
 
 // MARK: - Movement pattern
 
-/// How the body organizes the effort — a richer replacement for the databases' push/pull/static "force."
-/// An exercise carries 1–2 (a thruster is `.squat` + `.push`); pure cyclic cardio (a bike) carries none.
+/// How the body organizes the effort - a richer replacement for the databases' push/pull/static "force."
+/// An exercise can carry multiple patterns (a thruster is `.squat` + `.push`); pure cyclic cardio carries none.
 enum MovementPattern: String, Codable, Sendable, CaseIterable {
     case squat
     case hinge
@@ -109,9 +133,22 @@ enum MovementPattern: String, Codable, Sendable, CaseIterable {
         case .carry: "Carry"
         case .rotation: "Rotation"
         case .gait: "Gait"
-        case .hold: "Hold"
+        case .hold: "Hold / isometric"
         }
     }
+
+    /// Options offered when creating a custom exercise, in the captain-approved picker order.
+    static let customCreationOptions: [MovementPattern] = [
+        .squat,
+        .hinge,
+        .lunge,
+        .push,
+        .pull,
+        .carry,
+        .rotation,
+        .gait,
+        .hold
+    ]
 }
 
 // MARK: - Equipment
@@ -144,6 +181,11 @@ enum Equipment: String, Codable, Sendable, CaseIterable {
     case stairStepper
     case elliptical
     case other
+    case barbellPlates
+    case rope
+    case exerciseBall
+    case bosuBall
+    case hangboard
 
     var displayName: String {
         switch self {
@@ -153,7 +195,7 @@ enum Equipment: String, Codable, Sendable, CaseIterable {
         case .cable: "Cable"
         case .machine: "Machine"
         case .bodyweight: "Bodyweight"
-        case .band: "Band"
+        case .band: "Bands"
         case .medicineBall: "Medicine ball"
         case .ezBar: "EZ-bar"
         case .bench: "Bench"
@@ -170,7 +212,43 @@ enum Equipment: String, Codable, Sendable, CaseIterable {
         case .stairStepper: "Stair stepper"
         case .elliptical: "Elliptical"
         case .other: "Other"
+        case .barbellPlates: "Barbell plates"
+        case .rope: "Rope"
+        case .exerciseBall: "Exercise ball"
+        case .bosuBall: "Bosu ball"
+        case .hangboard: "Hangboard"
         }
+    }
+
+    /// Options offered when creating a custom exercise, in the captain-approved picker order.
+    /// Existing catalog-only cases stay in `allCases` for decode compatibility.
+    static let customCreationOptions: [Equipment] = [
+        .bodyweight,
+        .barbell,
+        .barbellPlates,
+        .dumbbell,
+        .kettlebell,
+        .medicineBall,
+        .machine,
+        .cable,
+        .sled,
+        .sandbag,
+        .box,
+        .band,
+        .rope,
+        .exerciseBall,
+        .bosuBall,
+        .hangboard,
+        .bike,
+        .rower,
+        .skiErg,
+        .treadmill,
+        .other
+    ]
+
+    /// Picker-specific wording. The persisted `.bodyweight` raw value and its general display name stay stable.
+    var customCreationDisplayName: String {
+        self == .bodyweight ? "None / bodyweight" : displayName
     }
 }
 
@@ -222,8 +300,33 @@ enum ExerciseLevel: String, Codable, Sendable, CaseIterable {
         switch self {
         case .beginner: "Beginner"
         case .intermediate: "Intermediate"
-        case .expert: "Expert"
+        case .expert: "Advanced"
         }
+    }
+
+    /// Options offered when creating a custom exercise, in the captain-approved picker order.
+    static let customCreationOptions: [ExerciseLevel] = [.beginner, .intermediate, .expert]
+}
+
+extension MetricType {
+    /// Options offered when creating a custom exercise. Zone time remains decodable and usable on existing
+    /// definitions, but is intentionally not offered by the approved creation picker.
+    static let customCreationOptions: [MetricType] = [
+        .reps,
+        .load,
+        .duration,
+        .distance,
+        .pace,
+        .power,
+        .calories,
+        .cadence,
+        .heartRate,
+        .rpe
+    ]
+
+    /// Picker-specific wording. Elsewhere heart rate may retain the more specific "Avg HR" label.
+    var customCreationDisplayName: String {
+        self == .heartRate ? "Heart rate" : label
     }
 }
 
@@ -265,16 +368,53 @@ enum ExerciseTag: String, Codable, Sendable, CaseIterable {
     case plyometric
     case mobility
     case strongman
+    case crossFit
+    case running
+    case cycling
+    case rowing
+    case conditioning
+    case warmUp
+    case coolDown
+    case rehab
+    case unilateral
 
     var displayName: String {
         switch self {
         case .hyrox: "HYROX"
-        case .olympicWeightlifting: "Olympic weightlifting"
+        case .olympicWeightlifting: "Olympic lifting"
         case .powerlifting: "Powerlifting"
         case .calisthenics: "Calisthenics"
         case .plyometric: "Plyometric"
         case .mobility: "Mobility"
         case .strongman: "Strongman"
+        case .crossFit: "CrossFit"
+        case .running: "Running"
+        case .cycling: "Cycling"
+        case .rowing: "Rowing"
+        case .conditioning: "Conditioning"
+        case .warmUp: "Warm-up"
+        case .coolDown: "Cool-down"
+        case .rehab: "Rehab"
+        case .unilateral: "Unilateral"
         }
     }
+
+    /// Options offered when creating a custom exercise, in the captain-approved picker order.
+    /// Calisthenics and plyometric remain supported for existing and remotely published definitions.
+    static let customCreationOptions: [ExerciseTag] = [
+        .hyrox,
+        .crossFit,
+        .powerlifting,
+        .olympicWeightlifting,
+        .strongman,
+        .running,
+        .cycling,
+        .rowing,
+        .conditioning,
+        .warmUp,
+        .coolDown,
+        .mobility,
+        .rehab,
+        .unilateral
+    ]
 }
