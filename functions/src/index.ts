@@ -1,8 +1,10 @@
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
+import { getAppCheck } from "firebase-admin/app-check";
 import { getFunctions } from "firebase-admin/functions";
 import { onTaskDispatched } from "firebase-functions/v2/tasks";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
@@ -22,6 +24,20 @@ import {
   WORKOUT_IMPORT_TIMEOUT_SECONDS,
   WORKOUT_IMPORT_TOOL,
 } from "./workoutImport";
+import {
+  buildWorkoutImportSketchContent,
+  buildWorkoutImportSketchRequest,
+  parseWorkoutImportStreamPayload,
+  serverSentEvent,
+  WorkoutImportStreamPayloadError,
+  WORKOUT_IMPORT_SKETCH_TOOL,
+  WORKOUT_IMPORT_SKETCH_TOOL_NAME,
+  WORKOUT_IMPORT_SKETCH_VERSION,
+  abortWhenClientDisconnects,
+  emptyWorkoutImportStreamResult,
+  foldWorkoutImportStreamUsage,
+  workoutImportStreamTerminalOutcome,
+} from "./workoutImportStream";
 import {
   parseStartWorkoutImportJobPayload,
   StoredWorkoutImportJob,
@@ -67,6 +83,11 @@ const providerAndObservabilitySecrets = [
 const DAILY_LIMIT = 200; // per-user request cap; abuse guard, tune later
 const IMPORT_DAILY_LIMIT = 25;
 const IMPORT_MODEL = process.env.WORKOUT_IMPORT_MODEL || "claude-sonnet-4-5-20250929";
+// The fast path's model is separately overridable. It intentionally defaults to the same model as
+// the durable path: the measured latency win comes from one call and a permissive schema (~3x fewer
+// output tokens), not from the model tier, and switching tiers needs a corpus rather than the one
+// workout the report measured.
+const IMPORT_STREAM_MODEL = process.env.WORKOUT_IMPORT_STREAM_MODEL || IMPORT_MODEL;
 const ENFORCE_IMPORT_APP_CHECK = process.env.IMPORT_ENFORCE_APP_CHECK === "true";
 const IMPORT_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -306,6 +327,225 @@ export const parseWorkoutImport = onCall(
     }
   }
 );
+
+/**
+ * The **fast import path** — one streaming multimodal call, rendered on the device as it arrives.
+ *
+ * This is `onRequest` rather than `onCall` because a callable cannot stream, and streaming is the
+ * whole point: the measured pipeline took 122.8 s to show the athlete anything, while one streaming
+ * call put the first exercise on screen at ~4 s and finished at ~8 s. Being `onRequest` means auth
+ * and App Check are verified here by hand rather than by the callable wrapper.
+ *
+ * The durable job (`startWorkoutImportJob`) is deliberately kept. It owns multi-image imports and it
+ * is the retry when this path fails, because it survives the app being killed and it holds the
+ * transactional cost ceilings. What it stops being is the default for one photo, where it bought
+ * about six seconds of queueing and cost the rest of the failure.
+ *
+ * Wire format: newline-delimited SSE. `{"type":"delta","text":...}` carries raw JSON fragments of
+ * the tool input; `{"type":"done","model":...}` ends a good stream; `{"type":"error","code":...}`
+ * ends a bad one. The client assembles and converts - see WorkoutImportSketchStream.
+ */
+export const streamWorkoutImport = onRequest(
+  {
+    secrets: providerAndObservabilitySecrets,
+    region: "us-central1",
+    cors: true,
+    timeoutSeconds: WORKOUT_IMPORT_TIMEOUT_SECONDS,
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "method-not-allowed" });
+      return;
+    }
+    const uid = await verifiedUID(req.get("Authorization"));
+    if (!uid) {
+      res.status(401).json({ error: "unauthenticated" });
+      return;
+    }
+    if (!(await appCheckAccepted(req.get("X-Firebase-AppCheck")))) {
+      res.status(401).json({ error: "app-check-failed" });
+      return;
+    }
+
+    let payload: ReturnType<typeof parseWorkoutImportStreamPayload>;
+    try {
+      payload = parseWorkoutImportStreamPayload(req.body);
+    } catch (error) {
+      const code = error instanceof WorkoutImportStreamPayloadError ? error.code : "malformed_payload";
+      res.status(400).json({ error: code });
+      return;
+    }
+    try {
+      await enforceImportDailyLimit(uid);
+    } catch (error) {
+      // Only genuine quota exhaustion is a rate limit. A Firestore outage, a permission error, or
+      // transaction contention is a backend fault and is reported as one rather than being
+      // disguised as the athlete having used up their day.
+      if (error instanceof HttpsError && error.code === "resource-exhausted") {
+        res.status(429).json({ error: "rate_limited" });
+        return;
+      }
+      logger.error("workout_import_stream.limit_unavailable", { uid, error: `${error}` });
+      res.status(503).json({ error: "remote_unavailable" });
+      return;
+    }
+
+    // Past this point the response is a stream, so failures are reported inside it rather than as a
+    // status code: the client has already committed to reading events.
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    configureObservabilityFromSecrets();
+    const traceID = randomUUID();
+    const started = Date.now();
+    let deltaCount = 0;
+    let characters = 0;
+
+    // The client cancels its URLSession task when the athlete dismisses the import, so the socket
+    // closing means nobody is waiting. Aborting the provider call is the other half of that: without
+    // it the model keeps writing, at full output-token cost, into a response that is already gone.
+    const abandoned = new AbortController();
+    abortWhenClientDisconnects(res, abandoned);
+    // Both halves of the race read this: the loop that notices and breaks, and the AbortError the
+    // SDK throws when the signal fires first.
+    const clientLeft = () => abandoned.signal.aborted || res.destroyed;
+    const writable = () => !clientLeft() && !res.writableEnded;
+    const usage = emptyWorkoutImportStreamResult();
+
+    try {
+      await withLLMTrace("import-stream", {
+        traceID,
+        sessionID: traceID,
+        surface: "import.image.stream",
+        uid,
+        model: IMPORT_STREAM_MODEL,
+        promptVersion: WORKOUT_IMPORT_SKETCH_VERSION,
+        outputSchemaVersion: WORKOUT_IMPORT_SKETCH_VERSION,
+        validatorVersion: "workout-import-sketch-converter-v1",
+        catalogVersion: catalogFingerprint(payload.catalogHints),
+      }, async () => {
+        try {
+        const client = createWorkoutImportProviderClient(
+          (await import("@anthropic-ai/sdk")).default,
+          anthropicKey.value(),
+        );
+        const content = buildWorkoutImportSketchContent(payload);
+        const request = buildWorkoutImportSketchRequest(IMPORT_STREAM_MODEL, content);
+        await withLLMGeneration({
+          name: "llm.generation.sketch",
+          model: IMPORT_STREAM_MODEL,
+          maxTokens: request.max_tokens,
+          temperature: request.temperature,
+          toolChoice: WORKOUT_IMPORT_SKETCH_TOOL_NAME,
+          messageCount: request.messages.length,
+          toolSchemaBytes: Buffer.byteLength(JSON.stringify([WORKOUT_IMPORT_SKETCH_TOOL]), "utf8"),
+          callIndex: 0,
+          streaming: true,
+          // The provider bills a stream it never finished, so the tokens it did consume are
+          // attached even when this throws.
+          partialUsage: () => usage,
+        }, async () => {
+          const stream = await client.messages.create(request, { signal: abandoned.signal });
+          for await (const event of stream as AsyncIterable<Record<string, unknown>>) {
+            if (!writable()) break;
+            foldWorkoutImportStreamUsage(usage, event);
+            if (event.type !== "content_block_delta") continue;
+            const delta = event.delta as { type?: string; partial_json?: string } | undefined;
+            if (delta?.type !== "input_json_delta" || typeof delta.partial_json !== "string") continue;
+            deltaCount += 1;
+            characters += delta.partial_json.length;
+            if (writable()) res.write(serverSentEvent({ type: "delta", text: delta.partial_json }));
+          }
+          // Returned rather than discarded: this is the object the trace prices the import from.
+          return usage;
+        });
+        // Inside the trace, like every other terminal outcome, so it rolls up with the generation
+        // span rather than being emitted detached from the trace it belongs to.
+        const ended = workoutImportStreamTerminalOutcome(clientLeft());
+        await recordTerminalOutcome(ended.outcome, ended.reason);
+        } catch (error) {
+          const ended = workoutImportStreamTerminalOutcome(clientLeft(), workoutImportFailureCode(error));
+          await recordTerminalOutcome(ended.outcome, ended.reason);
+          throw error;
+        }
+      });
+      if (!writable()) {
+        logger.info("workout_import_stream.abandoned", {
+          uid,
+          deltas: deltaCount,
+          inputTokens: usage.usage.input_tokens,
+          outputTokens: usage.usage.output_tokens,
+          latencyMs: Date.now() - started,
+        });
+        return;
+      }
+      res.write(serverSentEvent({ type: "done", model: IMPORT_STREAM_MODEL }));
+      logger.info("workout_import_stream.ok", {
+        uid,
+        model: IMPORT_STREAM_MODEL,
+        images: payload.images.length,
+        deltas: deltaCount,
+        characters,
+        inputTokens: usage.usage.input_tokens,
+        outputTokens: usage.usage.output_tokens,
+        latencyMs: Date.now() - started,
+      });
+    } catch (error) {
+      const reasonCode = workoutImportFailureCode(error);
+      if (clientLeft()) {
+        logger.info("workout_import_stream.abandoned", {
+          uid,
+          deltas: deltaCount,
+          inputTokens: usage.usage.input_tokens,
+          outputTokens: usage.usage.output_tokens,
+          latencyMs: Date.now() - started,
+        });
+        return;
+      }
+      logger.error("workout_import_stream.provider_error", {
+        uid,
+        model: IMPORT_STREAM_MODEL,
+        deltas: deltaCount,
+        inputTokens: usage.usage.input_tokens,
+        outputTokens: usage.usage.output_tokens,
+        latencyMs: Date.now() - started,
+        reasonCode,
+      });
+      // Whatever already streamed stays valid; the client keeps the exercises it received and
+      // decides whether the skeleton is worth showing.
+      if (writable()) res.write(serverSentEvent({ type: "error", code: reasonCode }));
+    } finally {
+      await flushLLMObservability();
+      res.end();
+    }
+  },
+);
+
+/** The bearer token's uid, or null when it is missing, malformed, or not ours. */
+async function verifiedUID(authorization: string | undefined): Promise<string | null> {
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!token) return null;
+  try {
+    return (await getAuth().verifyIdToken(token)).uid;
+  } catch {
+    return null;
+  }
+}
+
+/** App Check is verified here by hand because `onRequest` has no `enforceAppCheck`. */
+async function appCheckAccepted(token: string | undefined): Promise<boolean> {
+  if (!ENFORCE_IMPORT_APP_CHECK) return true;
+  if (!token) return false;
+  try {
+    await getAppCheck().verifyToken(token);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const startWorkoutImportJob = onCall(
   {

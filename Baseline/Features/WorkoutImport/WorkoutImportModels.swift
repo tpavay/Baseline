@@ -383,6 +383,9 @@ enum WorkoutImportStatus: Equatable, Sendable {
     case loadingImages(completed: Int, total: Int)
     case recognizing(completed: Int, total: Int)
     case preparingSections
+    /// The fast path is streaming. `exerciseCount` is how many real, editable rows have resolved so
+    /// far; each one is final, so this number only ever grows.
+    case assembling(exerciseCount: Int)
     case waitingForHandoff
     case retryingSections(completed: Int, total: Int)
     case processingSections(completed: Int, total: Int)

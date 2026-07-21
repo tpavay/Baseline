@@ -129,13 +129,11 @@ enum WorkoutImportDraftBuilder {
                 let setID = UUID()
                 let built = buildMetrics(parsedSet.metrics, exerciseName: parsedExercise.name,
                                          exerciseID: exerciseID, setID: setID, selected: &selected,
-                                         displayUnits: &exercise.displayUnits,
                                          setNumber: setIndex + 1)
                 let alternatives = parsedSet.alternatives.map { alternative in
                     let alternativeID = UUID()
                     let alternate = buildMetrics(alternative.metrics, exerciseName: parsedExercise.name,
                                                  exerciseID: exerciseID, setID: setID, selected: &selected,
-                                                 displayUnits: &exercise.displayUnits,
                                                  setNumber: setIndex + 1,
                                                  alternativeID: alternativeID,
                                                  alternativeLabel: alternative.label)
@@ -168,7 +166,6 @@ enum WorkoutImportDraftBuilder {
 
         private mutating func buildMetrics(_ parsedMetrics: [ParsedWorkoutMetric], exerciseName: String,
                                            exerciseID: UUID, setID: UUID, selected: inout Set<MetricType>,
-                                           displayUnits: inout [MetricType: MetricUnit],
                                            setNumber: Int,
                                            alternativeID: UUID? = nil,
                                            alternativeLabel: String? = nil)
@@ -202,9 +199,13 @@ enum WorkoutImportDraftBuilder {
                                         alternativeID: alternativeID, metric: type))
                     continue
                 }
+                // The source's unit is read, converted, and then deliberately forgotten. Writing it
+                // back as a per-instance display override would show kilometres to an athlete who
+                // has chosen Imperial, because that override wins over every tier beneath it in
+                // `WorkoutStore.displayUnit(_:for:)`. Storage is canonical; display is the athlete's
+                // `AppSettings.unitSystem`, and an imported workout gets no say in it.
                 let canonical = MetricConvert.toCanonical(metric.value, type, from: unit)
                 values[type] = canonical
-                if unit != type.canonicalUnit { displayUnits[type] = unit }
                 if let upper = metric.upperValue, upper.isFinite, upper >= 0 {
                     ranges.append(MetricTargetRange(metric: type, lower: canonical,
                                                     upper: MetricConvert.toCanonical(upper, type, from: unit)))
@@ -234,16 +235,60 @@ enum WorkoutImportDraftBuilder {
         }
     }
 
+    /// What Baseline offers the athlete for a name it could not place.
+    ///
+    /// Character similarity alone is the wrong instrument for choosing these. It scores "sled drag"
+    /// against "sled push" as a near miss, because the words that differ are short — but they are
+    /// different movements, and putting Sled Push in front of someone who wrote Sled Drag is the
+    /// captain's own example of the mistake this whole path exists to avoid. It is one tap safer
+    /// than resolving it silently, and that is all.
+    ///
+    /// So a candidate that spells out every word the source used wins outright: those are the
+    /// different spellings of the same movement. Raw similarity is kept only as the fallback for a
+    /// misread name, where no candidate accounts for the words and something is better than a blank
+    /// picker.
+    ///
+    /// Hence filter, then choose. The threshold decides who is close enough to offer at all; only
+    /// among those does spelling out every word win. Choosing first would let a word-complete
+    /// candidate that is itself too far away suppress the fallback and then be dropped, which is
+    /// how "we were not sure, here are the close ones" becomes "search 900 entries yourself".
     static func candidates(for name: String, in catalog: [ExerciseDefinition], limit: Int = 4) -> [ExerciseDefinition] {
         let key = normalizeIdentity(name)
         guard !key.isEmpty else { return [] }
-        return catalog.map { definition in
-            let aliases = [definition.name] + definition.aliases
-            return (definition, aliases.map { similarity(key, normalizeIdentity($0)) }.max() ?? 0)
+        let wanted = identityWords(key)
+        // One pass over each definition's spellings: `build` runs per streamed delta and calls this
+        // for every unresolved name, so walking the catalog twice here is felt on the hot path.
+        let eligible = catalog.compactMap { definition -> (ExerciseDefinition, Double, Bool)? in
+            var best = 0.0
+            var spellsOutEveryWord = false
+            for spelling in [definition.name] + definition.aliases {
+                let normalized = normalizeIdentity(spelling)
+                best = max(best, similarity(key, normalized))
+                if !wanted.isEmpty, !spellsOutEveryWord {
+                    spellsOutEveryWord = wanted.isSubset(of: identityWords(normalized))
+                }
+            }
+            return best >= 0.42 ? (definition, best, spellsOutEveryWord) : nil
         }
-            .filter { $0.1 >= 0.42 }
+        let sameMovement = eligible.filter(\.2)
+        return (sameMovement.isEmpty ? eligible : sameMovement)
             .sorted { $0.1 > $1.1 }
             .prefix(limit).map(\.0)
+    }
+
+    /// The words of an already-normalized name that carry identity, with set and unit context
+    /// dropped and a trailing "s" folded so "Box Jumps" and "Box Jump" are one movement.
+    private static func identityWords(_ normalized: String) -> Set<String> {
+        Set(normalized.split(separator: " ")
+            .filter { !isIdentityContextToken($0) }
+            .map(singular)
+            .filter { $0.count > 1 })
+    }
+
+    private static func singular(_ word: some StringProtocol) -> String {
+        let value = String(word)
+        let dropped = value.hasSuffix("s") ? String(value.dropLast()) : value
+        return dropped.count > 1 ? dropped : value
     }
 
     /// Produces a deliberately narrow set of safe identity variants. This lets parser output such
