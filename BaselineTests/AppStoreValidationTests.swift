@@ -50,6 +50,27 @@ struct AppStoreValidationTests {
         )
     }
 
+    /// The 1024 is also consumed outside the build, where nothing supplies a default colour space,
+    /// so an untagged bitmap leaves the purple ramp unmanaged on wide-gamut displays. This is not a
+    /// theoretical risk: the rescale that produced the current artwork lost the profile on save,
+    /// because Pillow drops it unless it is passed back explicitly, and neither the build nor Xcode
+    /// warned. Reads the file rather than a decoded image for the same reason `appIconHasNoAlpha`
+    /// does - the file is what `actool` bakes into `Assets.car`.
+    @Test("The 1024 marketing app icon is tagged sRGB")
+    func appIconIsTaggedSRGB() throws {
+        let url = Self.repositoryRoot
+            .appendingPathComponent("Baseline/Assets.xcassets/AppIcon.appiconset/BaselineAppIcon_1024.png")
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let properties = try #require(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        )
+        let profile = properties[kCGImagePropertyProfileName] as? String
+        #expect(
+            profile?.contains("sRGB") == true,
+            "the app icon has no embedded sRGB profile (found \(profile ?? "none")); re-tag it as sRGB rather than converting, because the pixels are already sRGB"
+        )
+    }
+
     /// The icon is not a bundled resource of either target, so the test reaches the checked-in
     /// artwork through its own compile-time source location.
     private static var repositoryRoot: URL {
