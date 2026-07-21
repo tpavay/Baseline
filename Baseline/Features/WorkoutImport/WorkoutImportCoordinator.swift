@@ -21,6 +21,9 @@ actor WorkoutImportCoordinator {
     private let normalizer: any WorkoutImageNormalizing
     private let recognizer: any WorkoutTextRecognizing
     private let parser: any WorkoutImportJobParsing
+    /// The fast path. Nil disables it entirely and every import goes straight to the durable job,
+    /// which is what the offline and test paths want.
+    private let streamer: (any WorkoutImportStreaming)?
     private let configuration: WorkoutImportCoordinatorConfiguration
     private var cancelledJobIDs: Set<UUID> = []
     private static let logger = Logger(subsystem: "com.tylerpavay.Baseline", category: "WorkoutImport")
@@ -30,12 +33,14 @@ actor WorkoutImportCoordinator {
         normalizer: any WorkoutImageNormalizing = WorkoutImageNormalizer(),
         recognizer: any WorkoutTextRecognizing = VisionWorkoutTextRecognizer(),
         parser: any WorkoutImportJobParsing = FirebaseWorkoutImportJobParser(),
+        streamer: (any WorkoutImportStreaming)? = FirebaseWorkoutImportStreamingParser(),
         configuration: WorkoutImportCoordinatorConfiguration = .init()
     ) {
         self.repository = repository
         self.normalizer = normalizer
         self.recognizer = recognizer
         self.parser = parser
+        self.streamer = streamer
         self.configuration = configuration
     }
 
@@ -76,6 +81,11 @@ actor WorkoutImportCoordinator {
                 loadImage: loadImage,
                 progress: progress
             )
+            let attempt = await assembleOnFastPath(job, catalog: catalog, progress: progress)
+            if let assembled = attempt.assembled { return assembled }
+            // The fast path's own elapsed time is the number the latency work exists to track, so it
+            // survives the fall-through rather than being discarded exactly when it matters most.
+            job.diagnostics.parserMilliseconds += attempt.elapsedMilliseconds
             return await handOffAndWait(job, catalog: catalog, progress: progress)
         } catch is CancellationError {
             if cancelledJobIDs.contains(job.id) {
@@ -148,25 +158,25 @@ actor WorkoutImportCoordinator {
         switch job.stage {
         case .waitingForHandoff, .processingSections:
                 job = await handOffAndWait(job, catalog: catalog, progress: progress)
+            case .assembling:
+                // The fast path streams to this process and nothing on a server owns it, so a job
+                // killed mid-stream cannot be resumed. The sections are already prepared, so the
+                // durable job picks it up — which is exactly its role as the retry.
+                job = await handOffAndWait(job, catalog: catalog, progress: progress)
             case .reviewing:
                 if hasInvalidReviewDraft {
-                    job = await completeWithFallback(
+                    job = await fail(
                         job,
+                        stage: "restore",
                         reason: "unusable_saved_draft",
-                        catalog: catalog,
+                        retryable: isRetryableFailure("unusable_saved_draft", for: job),
                         progress: progress
                     )
                 }
             case .failed:
-                if !job.sections.isEmpty,
-                   Self.canUseRecognizedTextFallback(for: job.failure?.reasonCode) {
-                    job = await completeWithFallback(
-                        job,
-                        reason: job.failure?.reasonCode ?? "section_failed",
-                        catalog: catalog,
-                        progress: progress
-                    )
-                }
+                // A restored failure stays a failure. Synthesizing a draft out of recognized text
+                // here is what produced confidently wrong workouts; the athlete retries instead.
+                break
             case .loadingImages, .recognizingText, .preparingSections:
                 if job.pages.count == job.expectedPageCount,
                    job.pages.allSatisfy({ $0.stage == .recognized || $0.stage == .noText }) {
@@ -721,6 +731,132 @@ actor WorkoutImportCoordinator {
         return job
     }
 
+
+    /// What one fast-path attempt produced: a reviewable job when it worked, and either way the time
+    /// it spent, because that time is real whether or not the durable job ends up taking over.
+    private struct FastPathAttempt {
+        var assembled: WorkoutImportJob?
+        var elapsedMilliseconds = 0
+    }
+
+    /// Try the fast path, returning a reviewable job when it produced one and nil when the durable
+    /// job should take over.
+    ///
+    /// Routing follows the latency report's recommendation. A single photo goes here, because that
+    /// is the case where the durable job bought about six seconds of queueing and cost the rest of
+    /// the failure. Multi-image imports stay durable: they are the case the queue genuinely earns,
+    /// since they are long enough that an athlete may well leave the app mid-import. Anything this
+    /// path cannot finish falls through to the durable job, which is the retry.
+    private func assembleOnFastPath(
+        _ initialJob: WorkoutImportJob,
+        catalog: [ExerciseDefinition],
+        progress: @escaping ProgressHandler
+    ) async -> FastPathAttempt {
+        guard let streamer, initialJob.pages.count == 1 else { return FastPathAttempt() }
+        guard (try? ensureActive(initialJob.id)) != nil, !Task.isCancelled else { return FastPathAttempt() }
+
+        var job = initialJob
+        let images = await fastPathImages(for: job)
+        let text = job.sections
+            .sorted { $0.order < $1.order }
+            .flatMap(\.observations)
+            .map(\.text)
+            .joined(separator: "\n")
+        guard !images.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return FastPathAttempt()
+        }
+
+        job.stage = .assembling
+        job.lastUpdated = Date()
+        try? await repository.save(job)
+        await progress(job)
+
+        let started = ContinuousClock.now
+        let jobID = job.id
+        let streamingBase = job
+        let outcome = await WorkoutImportFastPath(streamer: streamer).run(
+            images: images,
+            text: text.isEmpty ? nil : text,
+            catalog: catalog
+        ) { [weak self] build, document in
+            guard let self, await self.isActive(jobID) else { return }
+            var streaming = streamingBase
+            streaming.stage = .assembling
+            streaming.parsedDocument = document
+            streaming.draft = build.draft
+            streaming.issues = build.issues
+            streaming.evidence = build.evidence
+            streaming.lastUpdated = Date()
+            await progress(streaming)
+        }
+
+        let elapsed = milliseconds(since: started)
+        guard (try? ensureActive(jobID)) != nil, !Task.isCancelled else {
+            return FastPathAttempt(elapsedMilliseconds: elapsed)
+        }
+        job.diagnostics.parserMilliseconds += elapsed
+
+        guard outcome.isWorthShowing, let build = outcome.build, let document = outcome.document else {
+            // Falling through here costs the athlete a second of their daily imports, because both
+            // endpoints charge one. That is a knowingly deferred decision, not an oversight: the
+            // per-import cost of this architecture is about to change enough that any limit
+            // calibrated against today's numbers would be calibrated against numbers that are
+            // about to stop being true.
+            Self.logger.info(
+                "Import \(jobID.uuidString, privacy: .public) fast path yielded no usable structure (\(outcome.failureCode ?? "empty", privacy: .public)); handing off to the durable job"
+            )
+            return FastPathAttempt(elapsedMilliseconds: elapsed)
+        }
+
+        job.stage = .reviewing
+        job.parsedDocument = document
+        job.draft = build.draft
+        job.issues = build.issues
+        job.evidence = build.evidence
+        job.diagnostics.parserModel = outcome.model
+        job.failure = nil
+        if let failureCode = outcome.failureCode {
+            // The skeleton is right but the stream ended early, so the athlete is told the workout
+            // may be short rather than being left to notice a missing exercise themselves.
+            job.issues.append(WorkoutImportIssue(
+                code: .ambiguousStructure,
+                severity: .warning,
+                message: "Reading stopped early, so the end of this workout may be missing. Check it against your photo."
+            ))
+            Self.logger.warning(
+                "Import \(jobID.uuidString, privacy: .public) fast path ended with \(failureCode, privacy: .public) but kept a usable skeleton"
+            )
+        }
+        job.lastUpdated = Date()
+        do {
+            try await repository.save(job)
+        } catch {
+            return FastPathAttempt(elapsedMilliseconds: elapsed)
+        }
+        await progress(job)
+        return FastPathAttempt(assembled: job, elapsedMilliseconds: elapsed)
+    }
+
+    private func isActive(_ id: UUID) -> Bool { !cancelledJobIDs.contains(id) }
+
+    /// The normalized pages, if they are still on disk. A missing file is not an error here — the
+    /// recognized text alone is a valid source, and the fast path simply reads with less context.
+    private func fastPathImages(for job: WorkoutImportJob) async -> [ImportedWorkoutImage] {
+        var images: [ImportedWorkoutImage] = []
+        for page in job.pages.sorted(by: { $0.index < $1.index }) where !page.relativeFilename.isEmpty {
+            guard let data = try? await repository.imageData(
+                jobID: job.id,
+                relativeFilename: page.relativeFilename
+            ) else { continue }
+            images.append(ImportedWorkoutImage(
+                data: data,
+                pixelWidth: page.pixelWidth,
+                pixelHeight: page.pixelHeight
+            ))
+        }
+        return images
+    }
+
     private func handOffAndWait(
         _ initialJob: WorkoutImportJob,
         catalog: [ExerciseDefinition],
@@ -765,13 +901,14 @@ actor WorkoutImportCoordinator {
             return job
         } catch {
             let reason = remoteFailureCode(error)
-            let fallback = await completeWithFallback(
+            let failed = await fail(
                 job,
+                stage: "server",
                 reason: reason,
-                catalog: catalog,
+                retryable: isRetryableFailure(reason, for: job),
                 progress: progress
             )
-            return await recordParserTime(fallback, since: started, progress: progress)
+            return await recordParserTime(failed, since: started, progress: progress)
         }
     }
 
@@ -813,10 +950,11 @@ actor WorkoutImportCoordinator {
             return job
         } catch {
             let reason = remoteFailureCode(error)
-            return await completeWithFallback(
+            return await fail(
                 job,
+                stage: "server",
                 reason: reason,
-                catalog: catalog,
+                retryable: isRetryableFailure(reason, for: job),
                 progress: progress
             )
         }
@@ -847,7 +985,7 @@ actor WorkoutImportCoordinator {
             job.stage = .processingSections
         case .completed:
             guard let document = remote.document else { throw WorkoutParserError.invalidResponse }
-            let normalized = WorkoutImportFallbackBuilder.removingImportArtifacts(from:
+            let normalized = WorkoutImportArtifactSanitizer.removingImportArtifacts(from:
                 WorkoutImportSemanticNormalizer.normalize(
                 document,
                 observations: job.pages.flatMap(\.observations)
@@ -855,10 +993,11 @@ actor WorkoutImportCoordinator {
             )
             let built = WorkoutImportDraftBuilder.build(normalized, catalog: catalog)
             guard !built.draft.workout.allExercises.isEmpty else {
-                return await completeWithFallback(
+                return await fail(
                     job,
+                    stage: "server",
                     reason: "unusable_structured_result",
-                    catalog: catalog,
+                    retryable: isRetryableFailure("unusable_structured_result", for: job),
                     progress: progress
                 )
             }
@@ -877,10 +1016,12 @@ actor WorkoutImportCoordinator {
             job.stage = .reviewing
             job.failure = nil
         case .failed:
-            return await completeWithFallback(
+            let reason = remote.failureCode ?? "section_failed"
+            return await fail(
                 job,
-                reason: remote.failureCode ?? "section_failed",
-                catalog: catalog,
+                stage: "server",
+                reason: reason,
+                retryable: isRetryableFailure(reason, for: job),
                 progress: progress
             )
         case .cancelled:
@@ -898,72 +1039,12 @@ actor WorkoutImportCoordinator {
         return job
     }
 
-    private func completeWithFallback(
-        _ initialJob: WorkoutImportJob,
-        reason: String,
-        catalog: [ExerciseDefinition],
-        progress: ProgressHandler
-    ) async -> WorkoutImportJob {
-        var job = initialJob
-        guard !job.sections.isEmpty else {
-            return await fail(
-                job,
-                stage: "fallback",
-                reason: reason,
-                retryable: false,
-                progress: progress
-            )
-        }
-        let document = WorkoutImportFallbackBuilder.build(sections: job.sections, catalog: catalog)
-        let built = WorkoutImportDraftBuilder.build(document, catalog: catalog)
-        guard !built.draft.workout.allExercises.isEmpty else {
-            return await fail(
-                job,
-                stage: "fallback",
-                reason: reason,
-                retryable: isRetryableFallbackFailure(reason),
-                progress: progress
-            )
-        }
-        job.parsedDocument = document
-        job.draft = built.draft
-        job.issues = built.issues
-        job.issues.append(WorkoutImportIssue(
-            code: .ambiguousStructure,
-            severity: .warning,
-            message: "Review the exercise order and details."
-        ))
-        if job.pages.contains(where: { $0.stage == .noText }) {
-            job.issues.append(WorkoutImportIssue(
-                code: .ambiguousStructure,
-                severity: .warning,
-                message: "One photo had no readable workout text. Review the imported workout against your photos."
-            ))
-        }
-        job.evidence = built.evidence
-        job.stage = .reviewing
-        job.failure = nil
-        job.lastUpdated = Date()
-        Self.logger.warning(
-            "Import \(job.id.uuidString, privacy: .public) recovered a catalog-backed draft after \(reason, privacy: .public)"
-        )
-        do {
-            try await repository.save(job)
-        } catch {
-            return await fail(
-                job,
-                stage: "fallback",
-                reason: "draft_persistence_failed",
-                retryable: true,
-                progress: progress
-            )
-        }
-        await progress(job)
-        return job
-    }
-
-    private func isRetryableFallbackFailure(_ reason: String) -> Bool {
-        ![
+    /// Whether re-running this saved import could plausibly succeed. Size, schema, and cancellation
+    /// failures are terminal for the job whatever it holds; and with no stored sections there is
+    /// nothing left to re-submit, so offering a retry would only fail the same way again.
+    private func isRetryableFailure(_ reason: String, for job: WorkoutImportJob) -> Bool {
+        guard !job.sections.isEmpty else { return false }
+        return ![
             "schema_incompatible", "manifest_schema_incompatible", "result_too_large",
             "workout_too_large", "semantic_unit_too_large", "server_cancelled",
         ].contains(reason)
@@ -1013,20 +1094,6 @@ actor WorkoutImportCoordinator {
         case .schemaIncompatible: "schema_incompatible"
         default: "remote_unavailable"
         }
-    }
-
-    nonisolated private static func canUseRecognizedTextFallback(for reason: String?) -> Bool {
-        guard let reason else { return false }
-        return [
-            "remote_timeout",
-            "remote_unavailable",
-            "section_invalid",
-            "cross_section_assembly",
-            "result_too_large",
-            "worker_budget_exhausted",
-            "schema_incompatible",
-            "section_failed",
-        ].contains(reason)
     }
 
     nonisolated static func providerCatalogHints(_ catalog: [ExerciseDefinition]) -> [String] {

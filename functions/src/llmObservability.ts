@@ -27,7 +27,8 @@ export type LLMSurface =
   | "chat.workout"
   | "chat.import_fix"
   | "import.image.durable"
-  | "import.image.legacy";
+  | "import.image.legacy"
+  | "import.image.stream";
 
 export interface AppTraceMetadata {
   appVersion?: string;
@@ -67,6 +68,20 @@ export interface GenerationContext {
   sectionIndex?: number;
   repairIndex?: number;
   providerRetryIndex?: number;
+  /**
+   * Whether this request streams. A streaming operation still has to return an Anthropic-shaped
+   * object carrying the accumulated `usage`, because that is what the cost derivation reads.
+   */
+  streaming?: boolean;
+  /**
+   * The usage accumulated so far, for an operation that may fail part way through.
+   *
+   * Cost is normally derived from what the operation returns, which a throwing operation never
+   * does - so a stream that dies mid-response, or one the athlete walked away from, would report
+   * zero tokens for work the provider has already billed. That is the expensive case this exists
+   * to measure, so when this is supplied the error path attaches it too.
+   */
+  partialUsage?: () => unknown;
 }
 
 export interface ValidatorObservation {
@@ -341,7 +356,7 @@ export async function withLLMGeneration<T>(
         model: context.model,
         modelParameters: {
           maxTokens: context.maxTokens,
-          streaming: "false",
+          streaming: context.streaming === true ? "true" : "false",
           ...(context.temperature === undefined ? {} : { temperature: context.temperature }),
           ...(context.toolChoice === undefined ? {} : { toolChoice: context.toolChoice }),
         },
@@ -358,7 +373,7 @@ export async function withLLMGeneration<T>(
           section_index: context.sectionIndex,
           repair_index: context.repairIndex,
           provider_retry_index: context.providerRetryIndex,
-          streaming: false,
+          streaming: context.streaming === true,
           temperature: context.temperature,
           tool_choice: context.toolChoice,
           prompt_bytes: requestBytes,
@@ -383,9 +398,11 @@ export async function withLLMGeneration<T>(
         operationFailed = true;
         operationError = error;
         try {
+          const partial = anthropicUsageDetails(context.partialUsage?.());
           generation.update({
             level: "ERROR",
             statusMessage: errorName(error),
+            ...(partial === undefined ? {} : { usageDetails: partial }),
             metadata: safeMetadata({
               error_type: errorName(error),
               http_status: errorStatus(error),
@@ -622,11 +639,11 @@ function traceMetadata(context: LLMTraceContext): Record<string, unknown> {
   });
 }
 
-function updateGenerationFromAnthropic(
-  generation: LangfuseGeneration,
-  response: unknown,
-  durationMilliseconds: number,
-): void {
+/**
+ * The token counts Langfuse prices from, or undefined when the value carries none. Shared by the
+ * success and failure branches so a partial stream is costed exactly like a complete one.
+ */
+export function anthropicUsageDetails(response: unknown): Record<string, number> | undefined {
   const candidate = isRecord(response) ? response : {};
   const usage = isRecord(candidate.usage) ? candidate.usage : {};
   const input = nonnegativeNumber(usage.input_tokens);
@@ -638,16 +655,25 @@ function updateGenerationFromAnthropic(
   if (output !== undefined) usageDetails.output = output;
   if (cacheRead !== undefined) usageDetails.cache_read_input_tokens = cacheRead;
   if (cacheCreation !== undefined) usageDetails.cache_creation_input_tokens = cacheCreation;
-  if (Object.keys(usageDetails).length > 0) {
-    usageDetails.total = Object.values(usageDetails).reduce((sum, value) => sum + value, 0);
-  }
+  if (Object.keys(usageDetails).length === 0) return undefined;
+  usageDetails.total = Object.values(usageDetails).reduce((sum, value) => sum + value, 0);
+  return usageDetails;
+}
+
+function updateGenerationFromAnthropic(
+  generation: LangfuseGeneration,
+  response: unknown,
+  durationMilliseconds: number,
+): void {
+  const candidate = isRecord(response) ? response : {};
+  const usageDetails = anthropicUsageDetails(response);
   // Langfuse derives USD cost from the exact model and usage details using its managed price table.
   // pricing_version on the observation makes that derived cost policy explicit and queryable.
   const encoded = safeJSONString(response);
   const summary = summarizeAnthropicResponse(candidate);
   generation.update({
     output: summary,
-    ...(Object.keys(usageDetails).length > 0 ? { usageDetails } : {}),
+    ...(usageDetails === undefined ? {} : { usageDetails }),
     metadata: safeMetadata({
       duration_ms: durationMilliseconds,
       response_bytes: Buffer.byteLength(encoded, "utf8"),

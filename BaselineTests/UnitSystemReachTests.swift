@@ -25,7 +25,8 @@ struct UnitSystemReachTests {
         let allowed: Set<String> = [
             "Metrics.swift",                 // defines the units, the systems, and the conversions
             "WorkoutImportBuilder.swift",    // parse-side: source text → MetricUnit
-            "WorkoutImportFallbackBuilder.swift", // parse-side: regex unit tokens
+            "ImportQuantityParser.swift",    // parse-side: source text → canonical quantity
+            "ImportExerciseMatcher.swift",   // parse-side: unit tokens stripped from source names
             "ToolCallMapper.swift",          // parse-side: agent unit argument → MetricUnit
             "OnboardingActFour.swift",       // body height/weight steps own explicit ft-in / lb toggles
         ]

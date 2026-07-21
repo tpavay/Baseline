@@ -144,6 +144,10 @@ targets:
         buildPhase: resources
       - path: fixtures/workout-import/realistic-five-page-response.json
         buildPhase: resources
+      # The import corpus is a directory on purpose: adding a workout is dropping a JSON file in
+      # and re-running xcodegen, with no test code and no project change. See its README.
+      - path: fixtures/workout-import/corpus
+        buildPhase: resources
     dependencies:
       - target: Baseline
     settings:

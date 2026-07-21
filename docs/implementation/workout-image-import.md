@@ -1,6 +1,6 @@
 # Baseline - Workout Image Import Implementation Plan
 
-*Status: v1 product and ownership contract approved. The current implementation must be reconciled with this contract before release. Firebase deployment, Firestore TTL rollout, and App Check console registration remain release steps.*
+*Status: v1 product and ownership contract approved. The single-photo path now runs on the streaming fast path described in [Fast path](#fast-path); the durable section job described throughout the rest of this document owns multi-image imports and every retry. Firebase deployment, Firestore TTL rollout, and App Check console registration remain release steps.*
 
 ## 1. Outcome
 
@@ -10,7 +10,7 @@ The provider returns semantic transactions for each bounded source section.
 Deterministic code validates every transaction, applies it to a temporary `CandidateGraph`, and materializes a structurally valid `WorkoutDraft` before the editor opens.
 Structural uncertainty becomes a targeted `ReviewIssue` instead of malformed workout content, raw OCR, or generic warning copy.
 
-The first shippable flow is:
+The flow below is the durable multi-image path. One photo now takes the streaming fast path instead; see [Fast path](#fast-path).
 
 ```text
 Select up to 10 ordered photos, or paste one image
@@ -51,6 +51,23 @@ If the pipeline preserves only OCR text or candidate data, it has not created a 
 Structural validity means that block, group, exercise, metric, ordering, identity, and reference invariants all pass deterministic validation.
 It does not mean that every semantic interpretation is certain.
 Any remaining semantic uncertainty must be represented by a targeted `ReviewIssue` on an otherwise valid draft.
+
+## Fast path
+
+A single photo takes one streaming multimodal call instead of the durable section job.
+The invariants above are unchanged: the model still only proposes, deterministic code still owns structure, and the editor still opens only on a structurally valid draft.
+What changes is the shape of the model's output and where normalization happens.
+
+- The model returns an all-text reading of the source, `WorkoutImportSketch`. It is told not to convert units, resolve ranges, or expand repeats. Every property in the schema is a string, and a test fails if one stops being one.
+- Deterministic conversion happens on the device in `Baseline/Features/WorkoutImport/Conversion/`: catalog identity, canonical units, set expansion, per-exercise metric selection, and one level of grouping. That layer is pure and unit-tested, and it replaces the semantic-transaction validator for this path.
+- Ranges, paces, and effort language stay coach prose rather than becoming typed metrics, as does a metric stated more than once in one prescription, because collapsing it would discard work.
+- `ImportExerciseMatcher` refuses near-misses. Widening past an exact catalog hit reaches only different spellings of the same movement; a qualifier in either direction stops it, and an unresolved name passes through verbatim so the draft builder raises its blocking `unknownExercise` issue with candidates.
+- Routing lives in `WorkoutImportCoordinator.assembleOnFastPath`, after local OCR, which still gates the pipeline and is sent to the model with the image. Multi-image imports never take it, and anything it cannot finish falls through to the durable job, which is the retry.
+- A partial stream is judged on structure, not field completeness: exercises in the right order open the editor with a warning that reading stopped early, while a parse with no exercises at all falls through to the durable job rather than opening an empty editor.
+- The transport is `streamWorkoutImport`, an `onRequest` SSE endpoint rather than a callable, because a callable cannot stream. Auth and App Check are therefore verified by hand in the handler.
+- The photo bytes themselves reach the provider on this path. They are relayed in memory and are never written to Firestore, Cloud Storage, or logs.
+
+Regression cases are JSON files in `fixtures/workout-import/corpus/`, discovered at run time by `WorkoutImportCorpusTests`; adding one needs `xcodegen generate` and no test code changes. See that directory's README.
 
 ## Current resumable architecture
 
@@ -118,12 +135,12 @@ Existing issue #2 implementation details remain useful for transport, persistenc
 - V1 always creates a new template unless the athlete explicitly chooses an existing template to update.
 - A content fingerprint may warn about likely duplicates, but it never merges, overwrites, or updates automatically.
 - Normalized images exist locally only for the import-session evidence lifecycle. They are not placed in the template, SwiftData, Firestore, Cloud Storage, diagnostics, or logs.
-- The first slice has one inexpensive text parser. A stronger multimodal route is designed but not implemented until clean-screenshot imports are evaluated.
+- The durable multi-image job parses OCR text. A single photo goes to the multimodal streaming call instead; see [Fast path](#fast-path).
 - Diagnostics contain operational counts and timings only. They never contain OCR text, exercise names, notes, source crops, or raw images.
 - Atomic handoff ends import ownership of workout content.
 - Save or Discard ends the user-owned draft lifecycle.
 - The saved result is an ordinary `WorkoutTemplate` with no permanent import flag or separate engine path.
-- Progressive section streaming into the editor is explicitly deferred beyond v1.
+- Progressive streaming is shipped for the single-photo fast path: exercises appear as they resolve, and a row already on screen is never rewritten. Rows are shown rather than edited while the stream is open, because the transient store is rebuilt as rows land; editing opens the moment reading finishes. Progressive streaming of the durable job's sections remains deferred.
 
 ## 3. Current codebase integration
 
@@ -171,13 +188,13 @@ Two prerequisites must be addressed during implementation:
 - Handwriting guarantees.
 - Automatic parsing of full multi-day programs from one image.
 - PDF import.
-- A stronger multimodal parser and automatic model escalation.
+- Automatic model escalation. The streaming call is pinned to one model, overridable through `WORKOUT_IMPORT_STREAM_MODEL`.
 - iOS 27 direct Foundation Models image input.
 - Permanent source-image retention or sync.
 - Automatic custom-exercise creation.
 - Automatic duplicate merging or template overwrite.
 - Direct import into an active workout or scheduled plan state.
-- Progressive section streaming into the editor.
+- Progressive streaming of the durable job's sections, and live editing of rows while a stream is still open.
 
 ## 5. Architecture and trust boundaries
 
@@ -736,6 +753,7 @@ selecting
 → loadingImages
 → recognizing
 → preparingSections
+→ assembling (fast path only; falls through to waitingForHandoff when it yields no structure)
 → waitingForHandoff
 → processingSections (retryingSections while a section is re-sent)
 → reviewing
@@ -790,6 +808,8 @@ Preparing editor           // processingSections once every section is done
 ```
 
 There is no separate "Still working" state.
+
+The fast path does not use this screen once the stream opens. `assembling` shows the workout itself as it arrives - the editor's own row components over the real parsed draft - under a **Reading your workout** line that counts the exercises resolved so far. It is not a text preview that gets swapped for the real thing later.
 
 Stages that can count real units - photos loaded, photos recognized, sections completed - render a determinate `ProgressView` driven by those counts.
 Stages that cannot count anything keep the indeterminate spinner rather than inventing a fraction or a synthetic timer.
@@ -1004,7 +1024,7 @@ These app limits intentionally sit well below the platform ceiling and should be
 - Client timeout: explicit and greater than the Firebase callable default only if evaluation shows it is required; no indefinite wait.
 - Retry: one automatic retry only for transient transport/provider failures, never for authentication, validation, rate limit, cancellation, or schema errors.
 
-Cloud Functions second generation currently permits a 32 MB uncompressed HTTP request, but image base64 and callable framing add overhead. The first slice avoids that issue by sending OCR text only. Future image requests must remain below Baseline's smaller normalized-image limit rather than relying on the platform maximum.
+Cloud Functions second generation currently permits a 32 MB uncompressed HTTP request, but image base64 and callable framing add overhead. The durable job sends OCR text only. The streaming fast path does send image bytes and stays well below the platform maximum through its own limits in `WORKOUT_IMPORT_STREAM_LIMITS`: at most 10 images, 5 MB per image, 20 MB in total, and 60,000 characters of accompanying text.
 
 ### Server enforcement
 
@@ -1014,7 +1034,7 @@ Cloud Functions second generation currently permits a 32 MB uncompressed HTTP re
 - Keep user/OCR input in the user-content channel, never concatenate it into system instructions.
 - Use an import-specific provider interface and parser prompt.
 - Use structured output/tool schema and validate the returned object again before responding.
-- The client does not choose the model. The server reads `IMPORT_TEXT_MODEL` or task configuration.
+- The client does not choose the model. The server reads `WORKOUT_IMPORT_MODEL`, or `WORKOUT_IMPORT_STREAM_MODEL` for the streaming path, or task configuration.
 - Use an import-specific per-user daily quota, payload limit, concurrency/burst guard, provider spending cap, and billing alert.
 - Return stable error codes: unauthenticated, app-check-required, invalid-image, input-too-large, no-text, parser-invalid, rate-limited, provider-unavailable, timeout.
 - Log only `importID`, UID hash or protected UID as already permitted operationally, route/model, duration, token/cost counts, bounded counts, and error code.
@@ -1047,7 +1067,9 @@ V1 does not create a Firestore diagnostics collection. This avoids a new synced 
 | Photos/iCloud load fails | No draft | Retry selection or paste |
 | Any unsupported/corrupt/oversized image in the batch | No draft | Choose another image |
 | Normalization fails | Original picker selection only | Retry or replace |
-| OCR finds no useful text on any page | No partial draft | Retry OCR or replace the affected selection; multimodal retry is deferred |
+| OCR finds no useful text on any page | No partial draft | Retry OCR or replace the affected selection. OCR gates the pipeline, so the fast path is not reached either, even though it could read the image itself |
+| Fast-path stream fails or yields no exercises | Images + OCR evidence | Automatic: the durable job takes over as the retry |
+| Fast-path stream ends early with exercises already resolved | User-owned draft + a warning issue | Review the workout against the photo; the missing tail is edited in |
 | Parser offline/times out | Images + OCR evidence | Retry without rerunning OCR |
 | Parser schema invalid | Images + OCR evidence | Retry; log schema error without content |
 | Candidate graph cannot produce one valid exercise | Import evidence only | Try Again or Choose Different Photos; never open the editor |
@@ -1342,9 +1364,9 @@ BaselineTests/WorkoutImport/
 
 1. Register both Firebase apps for App Check with App Attest and enable the App Attest capability for the App Store signing profile.
 2. Generate a fresh simulator debug token, register it in each development Firebase project, and keep it in local/CI secret storage only.
-3. Deploy `parseWorkoutImport` after confirming its secrets exist in the target project: `ANTHROPIC_API_KEY` plus the Langfuse observability secrets (`LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL`); the deploy fails while any is unset. See [firebase-setup.md](../firebase-setup.md) for the `functions:secrets:set` commands.
+3. Deploy `parseWorkoutImport` and `streamWorkoutImport` after confirming their secrets exist in the target project: `ANTHROPIC_API_KEY` plus the Langfuse observability secrets (`LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL`); the deploy fails while any is unset. See [firebase-setup.md](../firebase-setup.md) for the `functions:secrets:set` commands.
 4. Leave `IMPORT_ENFORCE_APP_CHECK` unset while monitoring valid/invalid request metrics; set it to `true` only after legitimate builds are verified.
-5. Optionally set `WORKOUT_IMPORT_MODEL`; the pinned default is `claude-sonnet-4-5-20250929`.
+5. Optionally set `WORKOUT_IMPORT_MODEL`; the pinned default is `claude-sonnet-4-5-20250929`. `WORKOUT_IMPORT_STREAM_MODEL` overrides it for the streaming fast path only and defaults to the same model.
 6. Run the sanitized screenshot corpus on physical devices before enabling the feature for TestFlight users.
 
 ## References

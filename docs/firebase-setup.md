@@ -57,7 +57,7 @@ The plists are gitignored. To restore one: Firebase Console → Project settings
 
 ## Cloud Functions secrets (LLM observability)
 
-The chat and workout-import callables read Langfuse credentials only through Firebase `defineSecret` bindings; the keys never reach iOS.
+The chat and workout-import functions, including the streaming `streamWorkoutImport` endpoint, read Langfuse credentials only through Firebase `defineSecret` bindings; the keys never reach iOS.
 Until these three secrets exist, any deploy that includes those functions fails, so set them per environment before deploying.
 
 Set them with `firebase functions:secrets:set` (it prompts for the value interactively - never pass a key on the command line and never commit one):

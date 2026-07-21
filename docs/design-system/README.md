@@ -73,6 +73,9 @@ control never reads as a recovery state. (Electric blue was rejected — it coll
 - Card / button radius **10**. Pill radius **28**.
 - Hairlines **1px** `Hairline`. Section dividers = full-width hairlines.
 
+## App icon
+See [`app-icon/README.md`](app-icon/README.md) - how large the mark can go, why the white field is structural, and how to review an icon change at real home-screen size.
+
 ## Components (`DS/*` in Figma → `Instrument.swift` in code)
 - **Recovery Display** — big mono `82 /100` + state tag + "▲ 6% vs your baseline".
 - **Baseline Meter** *(signature)* — horizontal 0–100 scale; red/amber/green zone bars; ticks; shaded **7-day baseline band**; glowing **TODAY** needle.
