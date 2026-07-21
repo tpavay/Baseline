@@ -386,7 +386,6 @@ enum WorkoutImportStatus: Equatable, Sendable {
     case waitingForHandoff
     case retryingSections(completed: Int, total: Int)
     case processingSections(completed: Int, total: Int)
-    case parsing
     case reviewing
     case saving
     case saved(templateID: UUID)

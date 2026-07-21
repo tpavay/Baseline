@@ -53,9 +53,11 @@ enum WorkoutImportProgressCopy {
     static let handoffDetail =
         "Baseline is sending the workout text to the parser. \(localStageFootnote)"
 
+    /// A retry re-runs the same device-side handoff `waitingForHandoff` covers, so it carries the
+    /// same backgrounding truth.
     static func retryingDetail(completed: Int, total: Int) -> String {
-        guard total > 0 else { return "Keep Baseline open until the retry is handed off." }
-        return "Progress saved: \(completed) of \(total) sections. Keep Baseline open until the retry is handed off."
+        guard total > 0 else { return localStageFootnote }
+        return "Progress saved: \(completed) of \(total) sections. \(localStageFootnote)"
     }
 
     /// The server reports queued separately from processing, so the wait can admit the import is in
@@ -445,7 +447,7 @@ struct WorkoutImportView: View {
     static func shouldKeepScreenAwake(for status: WorkoutImportStatus) -> Bool {
         switch status {
         case .loadingImages, .recognizing, .preparingSections, .waitingForHandoff,
-             .retryingSections, .processingSections, .parsing:
+             .retryingSections, .processingSections:
             true
         case .selecting, .reviewing, .saving, .saved, .failed:
             false
@@ -546,7 +548,7 @@ struct WorkoutImportView: View {
         switch status {
         case .selecting: target = .selection
         case .loadingImages, .recognizing, .preparingSections, .waitingForHandoff,
-             .retryingSections, .processingSections, .parsing, .saving: target = .progress
+             .retryingSections, .processingSections, .saving: target = .progress
         case .reviewing: target = .review
         case .saved: target = .saved
         case .failed: target = .failure
@@ -593,7 +595,7 @@ struct WorkoutImportView: View {
         case .retryingSections(let completed, let total):
             progress(
                 "Creating your workout",
-                status: "Organizing exercises",
+                status: "Sending to the parser",
                 detail: WorkoutImportProgressCopy.retryingDetail(completed: completed, total: total),
                 steps: (completed, total)
             )
@@ -612,12 +614,6 @@ struct WorkoutImportView: View {
                 ),
                 // A queued job has no section underway, so an empty determinate bar would overstate it.
                 steps: model.isQueuedOnServer ? nil : (completed, total)
-            )
-        case .parsing:
-            progress(
-                "Creating your workout",
-                status: "Organizing exercises",
-                detail: "Baseline is translating the text into editable exercises and sets. \(WorkoutImportProgressCopy.serverStageFootnote)"
             )
         case .reviewing:
             review.accessibilityFocused($focusTarget, equals: .review)

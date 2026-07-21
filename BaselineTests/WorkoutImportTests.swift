@@ -1259,15 +1259,18 @@ struct WorkoutImportSourcePipelineTests {
             .contains("Recognized text"))
     }
 
-    @Test func pendingRetryCopyShowsSavedProgressAndRequiresTheAppToRemainOpen() {
+    /// A retry is the same device-side handoff, so it reports saved progress and the same
+    /// pauses-and-resumes truth rather than telling the athlete they have to stay put.
+    @Test func pendingRetryCopyShowsSavedProgressAndTheLocalBackgroundingTruth() {
         #expect(
             WorkoutImportProgressCopy.retryingDetail(completed: 2, total: 4) ==
-                "Progress saved: 2 of 4 sections. Keep Baseline open until the retry is handed off."
+                "Progress saved: 2 of 4 sections. \(WorkoutImportProgressCopy.localStageFootnote)"
         )
         #expect(
             WorkoutImportProgressCopy.retryingDetail(completed: 0, total: 0) ==
-                "Keep Baseline open until the retry is handed off."
+                WorkoutImportProgressCopy.localStageFootnote
         )
+        #expect(!WorkoutImportProgressCopy.retryingDetail(completed: 2, total: 4).contains("Keep Baseline open"))
     }
 
     @Test func observationsRoundTripSourceImageIndexAndDefaultOldPayloadsToFirstImage() throws {

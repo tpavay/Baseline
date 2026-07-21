@@ -14,7 +14,6 @@ struct WorkoutImportKeepAwakeTests {
             .waitingForHandoff,
             .retryingSections(completed: 1, total: 4),
             .processingSections(completed: 2, total: 5),
-            .parsing,
         ]
         for status in working {
             #expect(

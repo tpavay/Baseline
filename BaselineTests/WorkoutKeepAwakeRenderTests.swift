@@ -4,10 +4,16 @@ import Testing
 import UIKit
 @testable import Baseline
 
-/// Every case that touches `UIApplication.shared.isIdleTimerDisabled` lives under this suite. The
-/// flag is process-global and each case resets it before asserting, so two of them running at once
-/// would read each other's resets. `.serialized` applies to the whole subtree, so no two idle-timer
-/// tests overlap even across files.
+/// `UIApplication.shared.isIdleTimerDisabled` is process-global, and a suite touches it whether or
+/// not it asserts on it: merely hosting `WorkoutView` in logging mode, `ReadingView`,
+/// `CameraReadingView`, or a working `WorkoutImportView` makes that view's `syncKeepAwake` write the
+/// flag on appear and clear it on teardown. So the rule is not "suites that assert the idle timer" -
+/// it is **every suite that renders a keep-awake surface must be nested here**, because a peer
+/// running in parallel would otherwise observe the other's writes. `.serialized` applies to the whole
+/// subtree, so nesting is all a member suite has to do.
+///
+/// Current members: `WorkoutKeepAwakeRenderTests`, `WorkoutImportKeepAwakeRenderTests`,
+/// `WorkoutSessionEditingE2ERenderTests`.
 @Suite(.serialized)
 struct IdleTimerRenderTests {}
 
