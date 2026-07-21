@@ -278,11 +278,12 @@ struct WorkoutImportConversionTests {
         let built = WorkoutImportDraftBuilder.build(converted.document, catalog: catalog)
         let exercise = try #require(built.draft.workout.allExercises.first)
 
-        let store = WorkoutStore(defaults: UserDefaults(suiteName: "import-units-\(UUID().uuidString)")!)
-        store.unitSystem = .imperial
+        let units = StubUnitSystem()
+        let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "import-units-\(UUID().uuidString)")!)
+        units.unitSystem = .imperial
         #expect(store.displayUnit(.distance, for: exercise) == .miles)
 
-        store.unitSystem = .metric
+        units.unitSystem = .metric
         #expect(store.displayUnit(.distance, for: exercise) == .kilometers)
 
         // The stored value never moved; only the lens over it did.

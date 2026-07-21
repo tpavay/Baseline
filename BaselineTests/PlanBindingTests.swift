@@ -22,7 +22,7 @@ struct PlanBindingTests {
         ex.prescription.sets = [PlannedSet(reps: 5, load: 100)]
         return Workout(title: t, blocks: [WorkoutBlock(name: "", exercises: [ex], isDefault: true)])
     }
-    private func buffer() -> WorkoutStore { WorkoutStore(defaults: UserDefaults(suiteName: "bind-\(UUID().uuidString)")!) }
+    private func buffer() -> WorkoutStore { WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "bind-\(UUID().uuidString)")!) }
 
     @Test func agentBoundStoreWriteThroughsContentAndLifecycleToThePlan() {
         let plan = makeStore()

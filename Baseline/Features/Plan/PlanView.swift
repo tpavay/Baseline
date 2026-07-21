@@ -6,6 +6,7 @@ import SwiftUI
 /// editing (drag-drop, versioning) and full WorkoutView execution-reuse arrive in later slices.
 struct PlanView: View {
     @Environment(PlanStore.self) private var plan
+    @Environment(AppSettings.self) private var settings
     @State private var selectedDay: Date = Calendar.planWeek.startOfDay(for: Date())
     @State private var execContext: ExecContext?
     @State private var showChat = false
@@ -382,7 +383,7 @@ struct PlanView: View {
     private func openExecution(_ sw: ScheduledWorkout) {
         // A scratch store bound to this scheduled workout — logging + lifecycle write through immediately;
         // structural content edits are coalesced and flushed as one revision on dismiss.
-        let store = WorkoutStore(defaults: UserDefaults(suiteName: "plan.exec.buffer") ?? .standard)
+        let store = WorkoutStore(units: settings, defaults: UserDefaults(suiteName: "plan.exec.buffer") ?? .standard)
         store.bind(plan.sink(forScheduled: sw.id), coalesceContent: true)
         execContext = ExecContext(id: sw.id, store: store, original: sw.workout)
     }
@@ -471,13 +472,14 @@ struct SevenDayStrip: View {
 // MARK: - Aggregate card
 
 struct AggregateCard: View {
+    @Environment(AppSettings.self) private var settings
     let aggregate: Aggregate
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(PlanFormat.aggregateTitle(aggregate.key)).font(.caption.weight(.semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(PlanFormat.aggregateValue(aggregate)).font(.headline).bold().foregroundStyle(BaselineColor.textHi)
-                if let u = PlanFormat.aggregateUnit(aggregate.key) { Text(u).font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textFaint) }
+                Text(PlanFormat.aggregateValue(aggregate, in: settings.unitSystem)).font(.headline).bold().foregroundStyle(BaselineColor.textHi)
+                if let u = PlanFormat.aggregateUnit(aggregate.key, in: settings.unitSystem) { Text(u).font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textFaint) }
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6).frame(minWidth: 88, alignment: .leading)
@@ -497,13 +499,24 @@ enum PlanFormat {
     static func aggregateTitle(_ k: AggregateKey) -> String {
         switch k { case .sessions: "SESSIONS"; case .duration: "DURATION"; case .distance: "RUNNING"; case .strengthSets: "STRENGTH"; case .calories: "CALORIES" }
     }
-    static func aggregateUnit(_ k: AggregateKey) -> String? {
-        switch k { case .distance: "MI"; case .strengthSets: "SETS"; case .calories: "CAL"; default: nil }
+    /// Distance follows the athlete's unit system like every other display path — it used to be
+    /// hard-coded to miles, which read as "MI" to a metric athlete. The weekly card sums a whole
+    /// week's work across every exercise, so it resolves with no exercise in hand: endurance, which
+    /// is the sense the "RUNNING" tile is counting in.
+    static func aggregateUnit(_ k: AggregateKey, in system: UnitSystem) -> String? {
+        switch k {
+        case .distance: system.displayUnit(metric: .distance, exercise: nil).short.uppercased()
+        case .strengthSets: "SETS"
+        case .calories: "CAL"
+        default: nil
+        }
     }
-    static func aggregateValue(_ a: Aggregate) -> String {
+    static func aggregateValue(_ a: Aggregate, in system: UnitSystem) -> String {
         switch a.key {
         case .duration: return durationShort(Int(a.total))
-        case .distance: return String(format: "%.1f", a.total / 1609.344)   // meters → miles
+        case .distance:
+            return String(format: "%.1f", MetricConvert.fromCanonical(a.total, .distance,
+                                                                      to: system.displayUnit(metric: .distance, exercise: nil)))
         case .strengthSets, .sessions, .calories: return String(Int(a.total))
         }
     }

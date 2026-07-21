@@ -178,7 +178,7 @@ struct PlanRepositoryTests {
         let repo = makeRepo()
         let plan = PlanStore(repo: repo, today: monday)
         let defaults = UserDefaults(suiteName: "mig-\(UUID().uuidString)")!
-        let workouts = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let workouts = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         workouts.create(title: "Legacy day", goal: nil)
 
         PlanMigrator.migrateIfNeeded(defaults: defaults, into: plan, workouts: workouts, today: monday)

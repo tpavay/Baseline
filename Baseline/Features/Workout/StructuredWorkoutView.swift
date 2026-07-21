@@ -1440,7 +1440,7 @@ private struct WorkoutExerciseSection: View {
                 .font(.body.weight(.semibold).monospacedDigit())
                 .foregroundStyle(skipped ? BaselineColor.textFaint : BaselineColor.textHi)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityLabel("Set \(setNumber), \(metric.label)")
+                .accessibilityLabel("Set \(setNumber), \(metric.label), \(store.displayUnit(metric, for: presentedExercise).short)")
                 .accessibilityValue(value)
 
         case .editTemplate:
@@ -1470,7 +1470,7 @@ private struct WorkoutExerciseSection: View {
                 .font(.body.weight(.semibold).monospacedDigit())
                 .foregroundStyle(complete && !skipped ? BaselineColor.textHi : BaselineColor.textFaint)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityLabel("Set \(setNumber), \(metric.label)")
+                .accessibilityLabel("Set \(setNumber), \(metric.label), \(store.displayUnit(metric, for: presentedExercise).short)")
                 .accessibilityValue(value)
         }
     }
@@ -2099,10 +2099,11 @@ private extension PlannedSet {
             details.append("\(lower)–\(upper)")
         }
         for progression in progressions {
+            // `MetricFormat.value` converts from canonical itself, so the magnitude handed to it must
+            // stay canonical — converting first made a +400 m progression read "+0 mi".
             let unit = unitFor(progression.metric)
-            let delta = MetricConvert.fromCanonical(progression.delta, progression.metric, to: unit)
-            let value = MetricFormat.value(abs(delta), progression.metric, unit: unit)
-            details.append("\(delta >= 0 ? "+" : "−")\(value) every \(progression.every) \(progression.unit.rawValue)")
+            let value = MetricFormat.value(abs(progression.delta), progression.metric, unit: unit)
+            details.append("\(progression.delta >= 0 ? "+" : "−")\(value) every \(progression.every) \(progression.unit.rawValue)")
         }
         return details.isEmpty ? nil : details.joined(separator: " · ")
     }

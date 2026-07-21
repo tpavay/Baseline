@@ -96,7 +96,7 @@ private final class WorkoutScreen {
         )
 
         // Stage the store into the mode we want to render. Standalone (no plan sink) keeps it simple.
-        let store = WorkoutStore(defaults: defaults)
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         store.create(title: "KeepAwake Test", goal: "Verify screen stays awake while logging")
         switch stage {
         case .viewingTemplate:

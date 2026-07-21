@@ -214,11 +214,13 @@ final class WorkoutStore {
         }
     }
 
-    /// The athlete's global imperial/metric default, mirrored from `AppSettings` (the source of
-    /// truth) so `displayUnit` can fall back to it. Kept in sync from the root view; defaults to
-    /// metric until set (matching the historical canonical-unit behaviour).
-    var unitSystem: UnitSystem = .metric
+    /// The athlete's global imperial/metric default, **read through** to its single owner rather
+    /// than copied. A mirrored `var` here is what let the Plan tab's execution store render metric
+    /// to an imperial athlete: it was synced from exactly one line in `RootView`, so every store
+    /// built anywhere else silently kept the `.metric` default.
+    var unitSystem: UnitSystem { units.unitSystem }
 
+    private let units: any UnitSystemSource
     private let defaults: UserDefaults
     private let persistsState: Bool
     private weak var configurationSource: WorkoutStore?
@@ -229,7 +231,10 @@ final class WorkoutStore {
     private static let customKey = "workout.customDefinitions"
     private static let recentKey = "workout.recentExercises"
 
-    init(defaults: UserDefaults = .standard) {
+    /// `units` is required, not defaulted: a display surface that forgets to wire the athlete's unit
+    /// system should fail to compile rather than quietly render metric.
+    init(units: any UnitSystemSource, defaults: UserDefaults = .standard) {
+        self.units = units
         self.defaults = defaults
         persistsState = true
         current = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Workout.self, from: $0) }
@@ -245,6 +250,7 @@ final class WorkoutStore {
     /// A review-local editor store. Workout mutations never replace or persist today's workout, while
     /// deliberate catalog/default changes still flow back to the athlete's real configuration.
     init(transientWorkout: Workout, configurationFrom source: WorkoutStore) {
+        units = source.units
         defaults = source.defaults
         persistsState = false
         configurationSource = source
@@ -254,7 +260,6 @@ final class WorkoutStore {
         preferences = source.preferences
         customDefinitions = source.customDefinitions
         recentExerciseIds = source.recentExerciseIds
-        unitSystem = source.unitSystem
     }
 
     // MARK: - Exercise catalog (curated + custom)
@@ -324,15 +329,57 @@ final class WorkoutStore {
     }
 
     /// The display unit for a metric on a planned exercise: this-instance override → per-exercise
-    /// preference → per-category preference → the global unit-system default → canonical.
+    /// preference → per-category preference → the athlete's unit system (which is category-aware —
+    /// see `UnitSystem.displayUnit(metric:exercise:)`). The order is the product rule: a stored
+    /// choice is for the athlete with an unusual preference, and it always beats the default.
+    ///
+    /// Each tier is only honoured if the unit it holds is still one this metric offers. That is a
+    /// safety net, not a new tier: it lets a unit be retired (pace no longer shows raw `s/m`) without
+    /// old stored state resurrecting it, and it never changes which tier wins.
     func displayUnit(_ metric: MetricType, for ex: PlannedExercise) -> MetricUnit {
-        if let u = ex.displayUnits[metric] { return u }
-        if let id = ex.definitionId {
-            if let u = preferences.unitsByExercise[id]?[metric] { return u }
-            if let cat = ExerciseCatalog.definition(id: id)?.category.rawValue, let u = preferences.unitsByCategory[cat]?[metric] { return u }
+        func offered(_ unit: MetricUnit?) -> MetricUnit? {
+            unit.flatMap { metric.displayUnits.contains($0) ? $0 : nil }
         }
-        if let u = unitSystem.defaultUnit(for: metric) { return u }
-        return metric.canonicalUnit
+        if let u = offered(ex.displayUnits[metric]) { return u }
+        let definition = resolvedDefinition(for: ex)
+        if let id = ex.definitionId {
+            if let u = offered(preferences.unitsByExercise[id]?[metric]) { return u }
+            if let u = offered(preferences.unitsByCategory[definition.category.rawValue]?[metric]) { return u }
+        }
+        return unitSystem.displayUnit(metric: metric, exercise: definition)
+    }
+
+    /// The definition backing a planned exercise, resolved against the athlete's **own** catalog.
+    /// `PlannedExercise.definition` only consults the curated catalog, so a custom movement would
+    /// fall through to the generic definition and lose the category the unit rule depends on.
+    ///
+    /// Runs inside `displayUnit` on the SwiftUI render path, so it stays O(1): the small
+    /// `customDefinitions` array first, then the catalog's snapshot dictionary — never the ~900-element
+    /// `allDefinitions` concatenation.
+    private func resolvedDefinition(for ex: PlannedExercise) -> ExerciseDefinition {
+        guard let id = ex.definitionId else { return ex.definition }
+        return customDefinitions.first { $0.id == id } ?? ExerciseCatalog.definition(id: id) ?? ex.definition
+    }
+
+    /// The display unit for a quantity with no exercise to hang an override on — weekly aggregates,
+    /// agent prose about the plan.
+    func displayUnit(_ metric: MetricType) -> MetricUnit {
+        unitSystem.displayUnit(metric: metric, exercise: nil)
+    }
+
+    /// The display unit for a group's **total** target. A total is a single number with room for one
+    /// unit, so the group's composition decides it and nothing about the values does: only a group
+    /// with at least one distance-bearing movement, all of them endurance, reads in the athlete's
+    /// endurance unit. Any floor movement in the mix — or no distance-bearing movement at all, which
+    /// is absence of evidence rather than evidence of endurance — puts the whole total back in meters.
+    func displayUnit(_ metric: MetricType, forTotalsIn group: WorkoutGroup) -> MetricUnit {
+        guard metric == .distance else { return displayUnit(metric) }
+        let distanceMovements = group.children.flatMap(\.exercises)
+            .map(resolvedDefinition(for:))
+            .filter { $0.supported.contains(.distance) }
+        guard !distanceMovements.isEmpty,
+              distanceMovements.allSatisfy({ $0.category.distanceContext == .endurance }) else { return .meters }
+        return displayUnit(metric)
     }
 
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
@@ -817,7 +864,9 @@ final class WorkoutStore {
         guard setNumber >= 1, setNumber <= ex.prescription.sets.count else {
             return .notFound("Set \(setNumber) doesn't exist for \(ex.exerciseName).")
         }
-        let canonical = max(0, MetricConvert.toCanonical(value, metric, from: unit ?? metric.canonicalUnit))
+        // Parse side: an agent that names no unit means the storage unit, which is what the tool
+        // schema tells it. Nothing here is shown to the athlete.
+        let canonical = max(0, MetricConvert.toCanonical(value, metric, from: unit ?? metric.canonicalUnit))  // units:storage
         w.updateExercise(exID) { e in
             e.prescription.sets[setNumber - 1].values[metric] = canonical
             if !e.selectedMetrics.contains(metric) { e.selectedMetrics = MetricType.allCases.filter { e.selectedMetrics.contains($0) || $0 == metric } }
@@ -944,7 +993,9 @@ final class WorkoutStore {
                     lines.append("\(indent)    Range: \(range.metric.label) \(MetricFormat.value(range.lower, range.metric, unit: unit))–\(MetricFormat.value(range.upper, range.metric, unit: unit))")
                 }
                 for progression in set.progressions {
-                    lines.append("\(indent)    Progression: \(progression.metric.label) \(clean(progression.delta)) every \(progression.every) \(progression.unit.rawValue)")
+                    let delta = MetricFormat.value(progression.delta, progression.metric,
+                                                   unit: displayUnit(progression.metric, for: exercise))
+                    lines.append("\(indent)    Progression: \(progression.metric.label) \(delta) every \(progression.every) \(progression.unit.rawValue)")
                 }
                 for alternative in set.alternatives {
                     let alternateValues = alternative.values.present.compactMap { metric -> String? in
@@ -980,14 +1031,16 @@ final class WorkoutStore {
             if !group.execution.totalTargets.isEmpty {
                 let totals = group.execution.totalTargets.present.compactMap { metric -> String? in
                     guard let value = group.execution.totalTargets[metric] else { return nil }
-                    return "\(metric.label)=\(MetricFormat.value(value, metric, unit: metric.canonicalUnit))"
+                    return "\(metric.label)=\(MetricFormat.value(value, metric, unit: displayUnit(metric, forTotalsIn: group)))"
                 }
                 lines.append("\(indent)  Total targets: \(totals.joined(separator: ", "))")
             }
             for adjustment in group.execution.adjustments {
-                var detail = "\(adjustment.metric.label) step \(clean(adjustment.step))"
-                if let minimum = adjustment.minimum { detail += ", minimum \(clean(minimum))" }
-                if let maximum = adjustment.maximum { detail += ", maximum \(clean(maximum))" }
+                let unit = displayUnit(adjustment.metric, forTotalsIn: group)
+                func shown(_ v: Double) -> String { MetricFormat.value(v, adjustment.metric, unit: unit) }
+                var detail = "\(adjustment.metric.label) step \(shown(adjustment.step))"
+                if let minimum = adjustment.minimum { detail += ", minimum \(shown(minimum))" }
+                if let maximum = adjustment.maximum { detail += ", maximum \(shown(maximum))" }
                 lines.append("\(indent)  Adjustment: \(detail)")
             }
             lines.append(contentsOf: guidanceSummary(group.guidance, indent: "\(indent)  "))
@@ -1029,7 +1082,6 @@ final class WorkoutStore {
         }
     }
 
-    private func clean(_ v: Double) -> String { String(format: "%g", v) }
 
     // MARK: - Name resolution (exact case-insensitive, else contains) — ambiguity-aware
 

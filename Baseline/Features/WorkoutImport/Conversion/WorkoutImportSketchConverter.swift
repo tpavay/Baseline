@@ -124,7 +124,7 @@ enum WorkoutImportSketchConverter {
             ParsedWorkoutMetric(
                 type: $0.metric.rawValue,
                 value: $0.canonicalValue,
-                unit: $0.metric.canonicalUnit.rawValue
+                unit: $0.metric.canonicalUnit.rawValue  // units:storage
             )
         }
         let sets = (0..<setCount).map { _ in ParsedWorkoutSet(metrics: metrics) }

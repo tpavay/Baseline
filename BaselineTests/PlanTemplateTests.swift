@@ -74,7 +74,7 @@ struct PlanTemplateTests {
         // Bind a today workout so save_as_template has something to save.
         plan.addScheduled(ScheduledWorkout(programID: plan.programs()[0].id, date: mon, origin: .userCreated,
                                            workoutID: UUID(), workoutRevisionID: UUID(), workout: work("Threshold")))
-        let store = WorkoutStore(defaults: UserDefaults(suiteName: "tpl-\(UUID().uuidString)")!)
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "tpl-\(UUID().uuidString)")!)
         store.bind(plan.sink(forScheduled: plan.todayScheduled(mon)!.id), coalesceContent: false)
         let tools = AgentTools(store: TrainingContextStore(), workouts: store, plan: plan)
 

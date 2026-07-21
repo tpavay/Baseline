@@ -149,7 +149,7 @@ private final class WorkoutImportScreen {
             debugSession: ImportSession(status: status),
             debugJob: job
         )
-            .environment(WorkoutStore(defaults: defaults))
+            .environment(WorkoutStore(units: StubUnitSystem(), defaults: defaults))
             .environment(PlanStore(context: container.mainContext))
             .preferredColorScheme(.dark)
 

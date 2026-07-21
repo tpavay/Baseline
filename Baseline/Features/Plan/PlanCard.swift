@@ -87,9 +87,11 @@ struct ScheduledWorkoutCard: View {
         return total > 0 ? PlanFormat.durationShort(Int(total)) : nil
     }
 
+    /// Modalities uppercase, the duration left alone: `"121m".uppercased()` is `"121M"`, which reads
+    /// as 121 metres on a training card. Only the words are shouted.
     private var summaryLabel: String? {
-        let parts = modalityLabels + [durationLabel].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ").uppercased()
+        let parts = modalityLabels.map { $0.uppercased() } + [durationLabel].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var accessibilityLabel: String {

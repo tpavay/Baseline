@@ -17,7 +17,8 @@ final class AppSettings {
         }
     }
     /// The athlete's global imperial/metric default, seeding every exercise-metric and body input's
-    /// display unit. The source of truth (`WorkoutStore` mirrors it for the display-unit fallback).
+    /// display unit. **The only place this value is stored** — every display surface reads it back
+    /// through `UnitSystemSource` rather than keeping a copy that could go stale.
     var unitSystem: UnitSystem { didSet { defaults.set(unitSystem.rawValue, forKey: Keys.unitSystem) } }
 
     private let defaults: UserDefaults
@@ -42,3 +43,5 @@ final class AppSettings {
         unitSystem = defaults.string(forKey: Keys.unitSystem).flatMap(UnitSystem.init(rawValue:)) ?? .localeDefault
     }
 }
+
+extension AppSettings: UnitSystemSource {}

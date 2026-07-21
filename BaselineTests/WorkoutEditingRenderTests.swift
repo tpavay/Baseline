@@ -102,7 +102,7 @@ private final class EditingScreen {
         plan.addScheduled(ScheduledWorkout(programID: program.id, date: Date(), origin: .userCreated,
                                            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout))
         let scheduled = try #require(plan.todayScheduled())
-        let store = WorkoutStore(defaults: try #require(UserDefaults(suiteName: "render-\(UUID().uuidString)")))
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: try #require(UserDefaults(suiteName: "render-\(UUID().uuidString)")))
         store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
         store.startWorkout()
         return store

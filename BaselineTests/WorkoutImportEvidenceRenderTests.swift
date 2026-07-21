@@ -289,8 +289,7 @@ private final class WorkoutImportScreen {
             UIApplication.shared.connectedScenes.first as? UIWindowScene,
             "No window scene: the test bundle must be hosted by the app."
         )
-        let store = WorkoutStore(defaults: defaults)
-        store.unitSystem = unitSystem
+        let store = WorkoutStore(units: StubUnitSystem(unitSystem), defaults: defaults)
         let root = WorkoutImportView(debugSession: session, debugJob: job)
             .environment(store)
             .environment(PlanStore(context: container.mainContext))

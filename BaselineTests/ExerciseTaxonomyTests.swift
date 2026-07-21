@@ -73,7 +73,7 @@ struct ExerciseTaxonomyTests {
     }
 
     @Test @MainActor func customExerciseCarriesItsTaxonomy() {
-        let store = WorkoutStore(defaults: UserDefaults(suiteName: "test.custom.\(UUID().uuidString)")!)
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "test.custom.\(UUID().uuidString)")!)
         let def = store.createCustomDefinition(
             name: "Single-Arm Sled Drag",
             supported: [.distance, .load, .duration],

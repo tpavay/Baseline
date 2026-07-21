@@ -172,6 +172,10 @@ struct ProfileView: View {
     private func setUnitSystem(_ system: UnitSystem) {
         settings.unitSystem = system
         profile.draft.unitSystem = system
+        // The body height/weight flags are the one other place a unit choice is stored. Reseed them
+        // the same way the onboarding units step does, so the profile can't disagree with itself.
+        profile.draft.metricHeight = (system == .metric)
+        profile.draft.metricWeight = (system == .metric)
         guard let uid = authVM.user?.uid else { return }
         Task { try? await UserRepository().saveUnitSystem(uid: uid, unitSystem: system) }
     }

@@ -812,7 +812,7 @@ struct WorkoutImportIssueReconciliationTests {
             status: .reviewing
         ))
         let defaults = try #require(UserDefaults(suiteName: "import-intensity-\(UUID().uuidString)"))
-        let configuration = WorkoutStore(defaults: defaults)
+        let configuration = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         let reviewStore = WorkoutStore(transientWorkout: built.draft.workout, configurationFrom: configuration)
 
         #expect(firstIssue.exerciseID == exercise.id)
@@ -879,7 +879,7 @@ struct WorkoutImportIssueReconciliationTests {
             status: .reviewing
         ))
         let defaults = try #require(UserDefaults(suiteName: "import-external-intensity-\(UUID().uuidString)"))
-        let configuration = WorkoutStore(defaults: defaults)
+        let configuration = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         let reviewStore = WorkoutStore(transientWorkout: built.draft.workout, configurationFrom: configuration)
 
         reviewStore.edit(.plan) { workout in
@@ -911,7 +911,7 @@ struct WorkoutImportIssueReconciliationTests {
             )],
             status: .reviewing
         ))
-        let source = WorkoutStore(defaults: UserDefaults(suiteName: "import-review-\(UUID().uuidString)")!)
+        let source = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "import-review-\(UUID().uuidString)")!)
         let review = WorkoutStore(transientWorkout: draft, configurationFrom: source)
 
         #expect(review.replaceExercise(exerciseID, with: ExerciseCatalog.definition(id: "echo_bike")!, scope: .plan))
@@ -1734,7 +1734,7 @@ struct WorkoutImportSourcePipelineTests {
             initialSession: ImportSession(draft: .init(workout: original), status: .reviewing)
         )
         let defaults = try #require(UserDefaults(suiteName: "import-save-\(UUID().uuidString)"))
-        let configuration = WorkoutStore(defaults: defaults)
+        let configuration = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         let reviewStore = WorkoutStore(transientWorkout: original, configurationFrom: configuration)
         reviewStore.edit(.plan) { workout in
             workout.rename("Final editor value")

@@ -7,11 +7,13 @@ import SwiftUI
 @main
 struct BaselineApp: App {
     @State private var authVM: AuthViewModel
-    @State private var settings = AppSettings()
+    @State private var settings: AppSettings
     @State private var bluetooth = BluetoothManager()
     @State private var health = HealthService()
     @State private var context = TrainingContextStore()
-    @State private var workouts = WorkoutStore()
+    /// Built from `settings`, not alongside it: the store reads the athlete's unit system back
+    /// through that one instance, so there is nothing to keep in sync.
+    @State private var workouts: WorkoutStore
     @State private var plan: PlanStore
     private let container: ModelContainer
     private let workoutImportCoordinator: WorkoutImportCoordinator
@@ -21,6 +23,9 @@ struct BaselineApp: App {
         FirebaseApp.configure()
         workoutImportCoordinator = WorkoutImportCoordinator()
         authVM = AuthViewModel()
+        let appSettings = AppSettings()
+        _settings = State(initialValue: appSettings)
+        _workouts = State(initialValue: WorkoutStore(units: appSettings))
         // One container for everything on-device; the Plan schema is registered from day one.
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models + SleepSchema.models
         let c = try! ModelContainer(for: Schema(models))

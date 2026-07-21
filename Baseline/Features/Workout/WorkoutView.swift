@@ -541,7 +541,7 @@ struct WorkoutView: View {
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     return WorkoutView()
-        .environment(WorkoutStore(defaults: UserDefaults(suiteName: "preview")!))
+        .environment(WorkoutStore(units: AppSettings(), defaults: UserDefaults(suiteName: "preview")!))
         .environment(PlanStore(context: container.mainContext))
         .environment(BluetoothManager())
         .environment(OnboardingStore())

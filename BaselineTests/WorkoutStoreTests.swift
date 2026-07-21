@@ -6,7 +6,7 @@ import Testing
 struct WorkoutStoreTests {
 
     private func store() -> WorkoutStore {
-        WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
     }
 
     @Test func createAddAndMoveByName() {
@@ -95,7 +95,7 @@ struct WorkoutStoreTests {
 
     @Test func startWorkoutAndLoggedActualsPersistWithoutTouchingPlan() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
-        let s1 = WorkoutStore(defaults: d)
+        let s1 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         s1.create(title: "x", goal: nil)
         s1.addBlock(name: "A", intent: nil)
         s1.addExercise(name: "Squat", toBlockNamed: "A", sets: 1, reps: 5, load: 100, durationSeconds: nil)
@@ -103,7 +103,7 @@ struct WorkoutStoreTests {
         let exID = s1.current!.allExercises.first!.id
         s1.editLog { $0.logSet(SetLog(reps: 5, load: 105), forPlanned: exID, name: "Squat") }
         // Reload from disk: performed log restored, plan intact and separate.
-        let s2 = WorkoutStore(defaults: d)
+        let s2 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         #expect(s2.currentLog?.performed(forPlanned: exID)?.setLogs.first?.load == 105)
         #expect(s2.current?.allExercises.first?.prescription.sets.first?.load == 100)
     }
@@ -311,8 +311,10 @@ struct WorkoutStoreTests {
         #expect(summary.contains("phase main"))
         #expect(summary.contains("dose MED"))
         #expect(summary.contains("optional"))
+        // Group-level values have no single exercise to hang a unit override on, so the group's
+        // composition decides: this one is a sled pull, i.e. floor work, i.e. metres.
         #expect(summary.contains("Total targets: Distance=100 m"))
-        #expect(summary.contains("Adjustment: Load step 5, minimum 20, maximum 60"))
+        #expect(summary.contains("Adjustment: Load step 5 kg, minimum 20 kg, maximum 60 kg"))
         #expect(summary.contains("Protect the next intensity day"))
         #expect(summary.contains("Complete every movement"))
         #expect(summary.contains("Keep the rope tight"))
@@ -320,7 +322,7 @@ struct WorkoutStoreTests {
 
     @Test func transientReviewStoreKeepsDraftEditsIsolatedButSharesDeliberateDefaults() {
         let defaults = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
-        let source = WorkoutStore(defaults: defaults)
+        let source = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         source.create(title: "Today's workout", goal: nil)
         let imported = Workout(
             title: "Imported draft",
@@ -333,7 +335,7 @@ struct WorkoutStoreTests {
         review.edit(.plan) { $0.rename("Edited import") }
         #expect(review.current?.title == "Edited import")
         #expect(source.current?.title == "Today's workout")
-        #expect(WorkoutStore(defaults: defaults).current?.title == "Today's workout")
+        #expect(WorkoutStore(units: StubUnitSystem(), defaults: defaults).current?.title == "Today's workout")
 
         #expect(review.setExercisePreference(
             exerciseNamed: "Stationary Bike",
@@ -426,10 +428,10 @@ struct WorkoutStoreTests {
 
     @Test func persistsAcrossInstances() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
-        let s1 = WorkoutStore(defaults: d)
+        let s1 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         s1.create(title: "Persisted", goal: "test")          // implicit default block
         s1.addBlock(name: "A", intent: nil)                  // + explicit block
-        let s2 = WorkoutStore(defaults: d)
+        let s2 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         #expect(s2.current?.title == "Persisted")
         #expect(s2.current?.blocks.contains { $0.name == "A" } == true)
         #expect(s2.current?.blocks.count == 2)
@@ -438,26 +440,33 @@ struct WorkoutStoreTests {
     // MARK: - Global unit-system default (fallback tier in displayUnit)
 
     @Test func globalUnitSystemSeedsConvertibleDefaults() {
-        let s = store()
+        let units = StubUnitSystem()
+        let s = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         // A bare exercise with no per-instance override and no saved preference.
-        let ex = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift", selectedMetrics: [.load, .distance])
+        let lift = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift", selectedMetrics: [.load, .distance])
+        let run = PlannedExercise(exerciseName: "Run", definitionId: "run", selectedMetrics: [.distance, .pace])
 
-        s.unitSystem = .imperial
-        #expect(s.displayUnit(.load, for: ex) == .pounds)
-        #expect(s.displayUnit(.distance, for: ex) == .miles)
+        units.unitSystem = .imperial
+        #expect(s.displayUnit(.load, for: lift) == .pounds)
+        #expect(s.displayUnit(.distance, for: run) == .miles)
+        #expect(s.displayUnit(.pace, for: run) == .secondsPerMile)
+        // Floor work is meters in both systems — a deadlift carry is not measured in miles.
+        #expect(s.displayUnit(.distance, for: lift) == .meters)
 
-        s.unitSystem = .metric
-        #expect(s.displayUnit(.load, for: ex) == .kilograms)
-        #expect(s.displayUnit(.distance, for: ex) == .kilometers)
+        units.unitSystem = .metric
+        #expect(s.displayUnit(.load, for: lift) == .kilograms)
+        #expect(s.displayUnit(.distance, for: run) == .kilometers)
+        #expect(s.displayUnit(.pace, for: run) == .secondsPerKilometer)
+        #expect(s.displayUnit(.distance, for: lift) == .meters)
 
         // Non-convertible / duration metrics ignore the system and stay canonical.
-        #expect(s.displayUnit(.reps, for: ex) == .count)
-        #expect(s.displayUnit(.duration, for: ex) == .seconds)
+        #expect(s.displayUnit(.reps, for: lift) == .count)
+        #expect(s.displayUnit(.duration, for: lift) == .seconds)
     }
 
     @Test func perInstanceAndPreferenceStillWinOverGlobalDefault() {
-        let s = store()
-        s.unitSystem = .metric
+        let s = WorkoutStore(units: StubUnitSystem(.metric),
+                             defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         // Per-instance override beats the global default.
         let overridden = PlannedExercise(
             exerciseName: "Sled Pull", definitionId: "sled_pull",
@@ -472,12 +481,13 @@ struct WorkoutStoreTests {
     }
 
     @Test func unitSystemPerDimensionMapping() {
-        #expect(UnitSystem.imperial.defaultUnit(for: .load) == .pounds)
-        #expect(UnitSystem.imperial.defaultUnit(for: .distance) == .miles)
-        #expect(UnitSystem.metric.defaultUnit(for: .load) == .kilograms)
-        #expect(UnitSystem.metric.defaultUnit(for: .distance) == .kilometers)
+        let run = ExerciseCatalog.definition(id: "run")
+        #expect(UnitSystem.imperial.displayUnit(metric: .load, exercise: nil) == .pounds)
+        #expect(UnitSystem.imperial.displayUnit(metric: .distance, exercise: run) == .miles)
+        #expect(UnitSystem.metric.displayUnit(metric: .load, exercise: nil) == .kilograms)
+        #expect(UnitSystem.metric.displayUnit(metric: .distance, exercise: run) == .kilometers)
         // Duration and single-unit metrics don't vary by system.
-        #expect(UnitSystem.imperial.defaultUnit(for: .duration) == nil)
-        #expect(UnitSystem.metric.defaultUnit(for: .reps) == nil)
+        #expect(UnitSystem.imperial.displayUnit(metric: .duration, exercise: nil) == .seconds)
+        #expect(UnitSystem.metric.displayUnit(metric: .reps, exercise: nil) == .count)
     }
 }

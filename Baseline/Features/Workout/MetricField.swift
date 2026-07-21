@@ -26,7 +26,7 @@ struct MetricField: View {
 
     var body: some View {
         TextField(placeholder, text: $text)
-            .keyboardType(metric.isInteger ? .numberPad : .decimalPad)
+            .keyboardType(metric.isInteger || metric.isClockKind ? .numberPad : .decimalPad)
             .font(.body.weight(.semibold)).foregroundStyle(color)
             .multilineTextAlignment(.center)
             .accessibilityLabel(accessibilityName ?? "\(metric.label), \(unit.short)")
@@ -36,19 +36,34 @@ struct MetricField: View {
             .onChange(of: canonical) { if !focused { sync() } }   // external edits (agent, undo) refresh the cell
             .onChange(of: unit) { if !focused { sync() } }        // unit switch re-renders in the new unit
             .onChange(of: text) { old, new in
-                if metric.isDurationKind { handleCascade(old: old, new: new) }
+                if metric.isClockKind { handleCascade(old: old, new: new) }
                 else if focused { commit() }
             }
-            .onChange(of: focused) { _, isFocused in if !isFocused { if !metric.isDurationKind { commit() }; sync() } }
-            .onSubmit { if !metric.isDurationKind { commit() }; sync() }
-            .onDisappear { if !metric.isDurationKind { commit() } }   // backstop for teardown mid-edit
+            .onChange(of: focused) { _, isFocused in if !isFocused { if !metric.isClockKind { commit() }; sync() } }
+            .onSubmit { if !metric.isClockKind { commit() }; sync() }
+            .onDisappear { if !metric.isClockKind { commit() } }   // backstop for teardown mid-edit
     }
 
     // MARK: Free-text metrics (reps, load, distance)
 
+    /// The cascade counts seconds in the *displayed* unit, and pace is the only clock metric whose
+    /// display unit changes that count (seconds-per-km vs seconds-per-mile). A duration is unit-free
+    /// on both ends: `MetricFormat.editText` renders it `m:ss` whatever unit the cell happens to
+    /// carry, so converting a duration here would leave the digits and the stored value 60× apart.
+    static func cascadeSeconds(fromCanonical canonical: Double, _ metric: MetricType, unit: MetricUnit) -> Double {
+        metric == .pace ? MetricConvert.fromCanonical(canonical, metric, to: unit) : canonical
+    }
+
+    /// The inverse of `cascadeSeconds(fromCanonical:_:unit:)`, gated on the same rule.
+    static func canonical(fromCascadeSeconds seconds: Double, _ metric: MetricType, unit: MetricUnit) -> Double {
+        metric == .pace ? MetricConvert.toCanonical(seconds, metric, from: unit) : seconds
+    }
+
     private func sync() {
-        if metric.isDurationKind {
-            rawDigits = canonical.map { MetricFormat.cascadeDigits(fromSeconds: $0) } ?? ""
+        if metric.isClockKind {
+            rawDigits = canonical
+                .map { Self.cascadeSeconds(fromCanonical: $0, metric, unit: unit) }
+                .map { MetricFormat.cascadeDigits(fromSeconds: $0) } ?? ""
             text = canonical.map { MetricFormat.editText($0, metric, unit: unit) } ?? ""
         } else {
             text = canonical.map { MetricFormat.editText($0, metric, unit: unit) } ?? ""
@@ -84,7 +99,8 @@ struct MetricField: View {
         if isReformatting { isReformatting = false; return }   // our own programmatic rewrite — ignore
 
         rawDigits = MetricFormat.cascadeEdit(old: old, new: new, rawDigits: rawDigits)
-        canonical = rawDigits.isEmpty ? nil : MetricFormat.cascadeSeconds(rawDigits)
+        canonical = rawDigits.isEmpty ? nil
+            : Self.canonical(fromCascadeSeconds: MetricFormat.cascadeSeconds(rawDigits), metric, unit: unit)
         let display = MetricFormat.cascadeDisplay(rawDigits)
         if text != display { isReformatting = true; text = display }
         syncedText = text

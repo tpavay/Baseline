@@ -3,6 +3,13 @@ import Foundation
 extension MetricType {
     /// Duration-shaped metrics share the smart time format everywhere.
     var isDurationKind: Bool { self == .duration || self == .heartRateZoneTime }
+
+    /// Metrics read and typed as a clock. Pace joins the durations here and nowhere else: it is a
+    /// time (per unit of distance), so `4:35/km` is the only way it reads, and no iOS keyboard has a
+    /// colon — which is what makes digit-cascade entry the only workable field for it too. Duration
+    /// behaviour is untouched by this; the split exists so pace can borrow the mechanism without
+    /// pace's unit conversion leaking into duration's unit-free world.
+    var isClockKind: Bool { isDurationKind || self == .pace }
 }
 
 /// The **single source of truth** for how metric values read and parse across the app — workout cells,
@@ -150,9 +157,11 @@ enum MetricFormat {
 
     // MARK: - Any metric (canonical → display unit and back)
 
-    /// Display a canonical value in the given unit, with the unit suffix (`80 kg`, `3.11 mi`, `10:00`).
+    /// Display a canonical value in the given unit, with the unit suffix (`80 kg`, `3.11 mi`,
+    /// `10:00`, `4:35/km`).
     static func value(_ canonical: Double, _ metric: MetricType, unit: MetricUnit) -> String {
         if metric.isDurationKind { return duration(canonical) }
+        if metric == .pace { return paceText(canonical, unit: unit) + unit.short }
         let d = MetricConvert.fromCanonical(canonical, metric, to: unit)
         let num = number(d, metric)
         return unit.short.isEmpty ? num : "\(num) \(unit.short)"
@@ -161,7 +170,14 @@ enum MetricFormat {
     /// Bare editable text for a table cell (no unit suffix — the column header carries the unit).
     static func editText(_ canonical: Double, _ metric: MetricType, unit: MetricUnit) -> String {
         if metric.isDurationKind { return durationEditText(canonical) }
+        if metric == .pace { return paceText(canonical, unit: unit) }
         return number(MetricConvert.fromCanonical(canonical, metric, to: unit), metric)
+    }
+
+    /// A pace as `m:ss` in its display unit, suffix-free. Always the full clock form — a pace is
+    /// never "45s" — and never sub-minute in any real sport, so no shorthand branch exists.
+    private static func paceText(_ canonical: Double, unit: MetricUnit) -> String {
+        clock(safeInt(MetricConvert.fromCanonical(canonical, .pace, to: unit)))
     }
 
     /// Parse field text → canonical. Durations use the smart parser; everything else is a plain number
@@ -169,6 +185,10 @@ enum MetricFormat {
     /// rounded for integer metrics.
     static func parse(_ text: String, _ metric: MetricType, unit: MetricUnit) -> Double? {
         if metric.isDurationKind { return parseDuration(text) }
+        if metric == .pace {
+            // Typed in the display unit ("4:35" per km), stored per meter.
+            return parseDuration(text).map { MetricConvert.toCanonical($0, .pace, from: unit) }
+        }
         let t = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
         guard let d = Double(t) else { return nil }
         let canonical = MetricConvert.toCanonical(d, metric, from: unit)
@@ -180,6 +200,8 @@ enum MetricFormat {
     /// The column header for a metric cell — the unit where one exists, TIME for durations.
     static func columnHeader(_ metric: MetricType, unit: MetricUnit) -> String {
         if metric.isDurationKind { return "TIME" }
+        // "/KM" alone would read as a stray unit; the column is named for what it holds, like TIME.
+        if metric == .pace { return "PACE \(unit.short.uppercased())" }
         return unit.short.isEmpty ? metric.label.uppercased() : unit.short.uppercased()
     }
 
