@@ -77,6 +77,24 @@ enum UnitSystem: String, Codable, Sendable, CaseIterable {
         default: nil
         }
     }
+
+    /// **The one door every display path goes through.** The unit a quantity is shown in when no
+    /// per-exercise override is in play — plan aggregates, group totals, agent prose, anything with
+    /// no `PlannedExercise` to hang an override on. `WorkoutStore.displayUnit(_:for:)` layers the
+    /// override tiers on top of this and bottoms out here, so there is exactly one rule.
+    /// Nothing in a display path may reach for `canonicalUnit` itself — see `UnitSystemReachTests`.
+    func displayUnit(for metric: MetricType) -> MetricUnit {
+        defaultUnit(for: metric) ?? metric.canonicalUnit
+    }
+}
+
+/// The **single owner** of the athlete's imperial/metric choice, read through rather than copied.
+/// `AppSettings` is the only conformer that stores it; every display surface holds a reference to a
+/// source instead of its own `UnitSystem`, so no surface can drift out of step with the setting.
+/// Injected (never a singleton), and required at construction so a new surface cannot forget it.
+@MainActor
+protocol UnitSystemSource: AnyObject {
+    var unitSystem: UnitSystem { get }
 }
 
 enum MetricUnit: String, Codable, Sendable {
@@ -107,6 +125,9 @@ enum MetricConvert {
     static let metersPerMile = 1609.344
     static let metersPerKilometer = 1000.0
     static let kgPerPound = 0.45359237
+    /// Body height is not a `MetricType`, but its conversion belongs here with the others so the
+    /// onboarding ruler cannot drift from the rest of the app.
+    static let cmPerInch = 2.54
 
     /// Convert a canonical value into a display unit.
     static func fromCanonical(_ value: Double, _ metric: MetricType, to unit: MetricUnit) -> Double {

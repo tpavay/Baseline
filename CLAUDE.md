@@ -199,6 +199,12 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
   Installed skill metadata is the discovery source.
 - If a referenced skill is unavailable in the active harness, say so rather than pretending to have loaded it.
 
+# Units Rule
+- Storage is canonical (distance=m, load=kg, duration=s) and stays that way; display converts at read time.
+- `AppSettings.unitSystem` is the **only** place the athlete's choice is stored. Anything that needs it takes a `UnitSystemSource` by injection and reads through — never copies it into a property that can go stale.
+- Every display path resolves its unit through `UnitSystem.displayUnit(for:)`, or `WorkoutStore.displayUnit(_:for:)` when a `PlannedExercise` supplies override tiers, then renders with `MetricFormat`.
+- Never write a unit literal, a conversion constant, or `canonicalUnit` in display code. `UnitSystemReachTests.newDisplayCodeCannotHardCodeAUnit` scans the sources and fails the build if you do; its allowlist is for parse-side code only.
+
 # Firestore Schema-Change Rule
 - Strict `hasOnly` + `hasAll` field validation on every collection. Adding/removing/renaming a field in the app **requires a matching `firestore.rules` update**. Deploy the same rules to all environments. Order: (1) update rules, (2) update Swift model + write logic, (3) deploy rules before/with the app.
 

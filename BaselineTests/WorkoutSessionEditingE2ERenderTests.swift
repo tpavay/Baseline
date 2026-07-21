@@ -121,7 +121,7 @@ private final class SessionBed {
                                            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout))
         scheduledID = try #require(plan.todayScheduled()).id
 
-        store = WorkoutStore(defaults: try #require(UserDefaults(suiteName: "e2e-\(UUID().uuidString)")))
+        store = WorkoutStore(units: StubUnitSystem(), defaults: try #require(UserDefaults(suiteName: "e2e-\(UUID().uuidString)")))
         store.bind(plan.sink(forScheduled: scheduledID), coalesceContent: false)
         store.startWorkout()
     }

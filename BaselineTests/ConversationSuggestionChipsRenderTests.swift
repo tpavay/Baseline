@@ -161,7 +161,7 @@ private final class AskBaselineScreen {
             .environment(TrainingContextStore(defaults: defaults))
             .environment(HealthService(defaults: defaults))
             .environment(OnboardingStore(defaults: defaults))
-            .environment(WorkoutStore(defaults: defaults))
+            .environment(WorkoutStore(units: StubUnitSystem(), defaults: defaults))
             .environment(PlanStore(context: container.mainContext))
             .modelContainer(container)
             .dynamicTypeSize(textSize)

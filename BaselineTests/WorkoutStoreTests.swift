@@ -6,7 +6,7 @@ import Testing
 struct WorkoutStoreTests {
 
     private func store() -> WorkoutStore {
-        WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
     }
 
     @Test func createAddAndMoveByName() {
@@ -95,7 +95,7 @@ struct WorkoutStoreTests {
 
     @Test func startWorkoutAndLoggedActualsPersistWithoutTouchingPlan() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
-        let s1 = WorkoutStore(defaults: d)
+        let s1 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         s1.create(title: "x", goal: nil)
         s1.addBlock(name: "A", intent: nil)
         s1.addExercise(name: "Squat", toBlockNamed: "A", sets: 1, reps: 5, load: 100, durationSeconds: nil)
@@ -103,7 +103,7 @@ struct WorkoutStoreTests {
         let exID = s1.current!.allExercises.first!.id
         s1.editLog { $0.logSet(SetLog(reps: 5, load: 105), forPlanned: exID, name: "Squat") }
         // Reload from disk: performed log restored, plan intact and separate.
-        let s2 = WorkoutStore(defaults: d)
+        let s2 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         #expect(s2.currentLog?.performed(forPlanned: exID)?.setLogs.first?.load == 105)
         #expect(s2.current?.allExercises.first?.prescription.sets.first?.load == 100)
     }
@@ -320,7 +320,7 @@ struct WorkoutStoreTests {
 
     @Test func transientReviewStoreKeepsDraftEditsIsolatedButSharesDeliberateDefaults() {
         let defaults = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
-        let source = WorkoutStore(defaults: defaults)
+        let source = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         source.create(title: "Today's workout", goal: nil)
         let imported = Workout(
             title: "Imported draft",
@@ -333,7 +333,7 @@ struct WorkoutStoreTests {
         review.edit(.plan) { $0.rename("Edited import") }
         #expect(review.current?.title == "Edited import")
         #expect(source.current?.title == "Today's workout")
-        #expect(WorkoutStore(defaults: defaults).current?.title == "Today's workout")
+        #expect(WorkoutStore(units: StubUnitSystem(), defaults: defaults).current?.title == "Today's workout")
 
         #expect(review.setExercisePreference(
             exerciseNamed: "Stationary Bike",
@@ -426,10 +426,10 @@ struct WorkoutStoreTests {
 
     @Test func persistsAcrossInstances() {
         let d = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
-        let s1 = WorkoutStore(defaults: d)
+        let s1 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         s1.create(title: "Persisted", goal: "test")          // implicit default block
         s1.addBlock(name: "A", intent: nil)                  // + explicit block
-        let s2 = WorkoutStore(defaults: d)
+        let s2 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         #expect(s2.current?.title == "Persisted")
         #expect(s2.current?.blocks.contains { $0.name == "A" } == true)
         #expect(s2.current?.blocks.count == 2)
@@ -438,15 +438,16 @@ struct WorkoutStoreTests {
     // MARK: - Global unit-system default (fallback tier in displayUnit)
 
     @Test func globalUnitSystemSeedsConvertibleDefaults() {
-        let s = store()
+        let units = StubUnitSystem()
+        let s = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         // A bare exercise with no per-instance override and no saved preference.
         let ex = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift", selectedMetrics: [.load, .distance])
 
-        s.unitSystem = .imperial
+        units.unitSystem = .imperial
         #expect(s.displayUnit(.load, for: ex) == .pounds)
         #expect(s.displayUnit(.distance, for: ex) == .miles)
 
-        s.unitSystem = .metric
+        units.unitSystem = .metric
         #expect(s.displayUnit(.load, for: ex) == .kilograms)
         #expect(s.displayUnit(.distance, for: ex) == .kilometers)
 
@@ -456,8 +457,8 @@ struct WorkoutStoreTests {
     }
 
     @Test func perInstanceAndPreferenceStillWinOverGlobalDefault() {
-        let s = store()
-        s.unitSystem = .metric
+        let s = WorkoutStore(units: StubUnitSystem(.metric),
+                             defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         // Per-instance override beats the global default.
         let overridden = PlannedExercise(
             exerciseName: "Sled Pull", definitionId: "sled_pull",

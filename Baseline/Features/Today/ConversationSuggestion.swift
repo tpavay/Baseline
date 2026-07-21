@@ -47,7 +47,7 @@ struct ConversationSuggestion: Identifiable, Sendable {
         .init(label: "Show the workout", prompt: "Show me the workout as it stands"),
         .init(label: "Add an exercise", prompt: "Add 3 sets of 10 push-ups to the warm-up"),
         .init(label: "Replace an exercise", prompt: "Replace bench press with dumbbell push press"),
-        .init(label: "Fix a set", prompt: "Make set 2 of the squat 5 reps at 100 kg"),
+        .init(label: "Fix a set", prompt: "Make set 2 of the squat 5 reps at my working weight"),
         .init(label: "Track load too", prompt: "Add a load field to the sled pull"),
     ]
 }

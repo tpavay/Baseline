@@ -263,7 +263,7 @@ struct UnitsStepView: View {
 
     private let options: [(system: UnitSystem, title: String, subtitle: String, icon: String)] = [
         (.imperial, "Imperial", "Pounds · miles · feet", "ruler"),
-        (.metric, "Metric", "Kilograms · kilometres · centimetres", "ruler.fill"),
+        (.metric, "Metric", "Kilograms · kilometers · centimeters", "ruler.fill"),
     ]
 
     var body: some View {
@@ -319,10 +319,10 @@ struct HeightStepView: View {
             get: {
                 store.draft.metricHeight
                     ? Int(store.draft.heightCm.rounded())
-                    : Int((store.draft.heightCm / 2.54).rounded())
+                    : Int((store.draft.heightCm / MetricConvert.cmPerInch).rounded())
             },
             set: { new in
-                store.draft.heightCm = store.draft.metricHeight ? Double(new) : Double(new) * 2.54
+                store.draft.heightCm = store.draft.metricHeight ? Double(new) : Double(new) * MetricConvert.cmPerInch
             }
         )
     }
@@ -331,7 +331,7 @@ struct HeightStepView: View {
         if store.draft.metricHeight {
             return "\(Int(store.draft.heightCm.rounded())) cm"
         }
-        let inches = Int((store.draft.heightCm / 2.54).rounded())
+        let inches = Int((store.draft.heightCm / MetricConvert.cmPerInch).rounded())
         return "\(inches / 12)'\(inches % 12)\""
     }
 
@@ -369,10 +369,10 @@ struct WeightStepView: View {
             get: {
                 store.draft.metricWeight
                     ? Int(store.draft.weightKg.rounded())
-                    : Int((store.draft.weightKg * 2.2046).rounded())
+                    : Int((store.draft.weightKg / MetricConvert.kgPerPound).rounded())
             },
             set: { new in
-                store.draft.weightKg = store.draft.metricWeight ? Double(new) : Double(new) / 2.2046
+                store.draft.weightKg = store.draft.metricWeight ? Double(new) : Double(new) * MetricConvert.kgPerPound
             }
         )
     }
@@ -380,7 +380,7 @@ struct WeightStepView: View {
     private var display: String {
         store.draft.metricWeight
             ? "\(Int(store.draft.weightKg.rounded()))"
-            : "\(Int((store.draft.weightKg * 2.2046).rounded()))"
+            : "\(Int((store.draft.weightKg / MetricConvert.kgPerPound).rounded()))"
     }
 
     var body: some View {

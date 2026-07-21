@@ -117,7 +117,7 @@ struct AgentToolsTests {
 
     @Test func catalogToolsAreReadOnly() {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
-        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
         _ = t.dispatch(.searchExercises(query: "bench", muscle: nil, equipment: nil, modality: nil,
@@ -138,7 +138,7 @@ struct AgentToolsTests {
 
     @Test func workoutToolsEditThroughTheStore() {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
-        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
         _ = t.dispatch(.addBlock(name: "Strength", intent: nil))
@@ -150,7 +150,7 @@ struct AgentToolsTests {
 
     @Test func createWorkoutRefusesToReplaceWithoutConfirmation() {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
-        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         _ = t.dispatch(.createWorkout(title: "First", goal: nil, replaceExisting: false))
         // Second create without confirmation → refused; existing workout preserved.
@@ -164,7 +164,7 @@ struct AgentToolsTests {
 
     @Test func replaceExerciseUsesAtomicStoreMutationForEveryMatch() throws {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
-        let wk = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let tools = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         _ = tools.dispatch(.createWorkout(title: "Outdoor Run", goal: nil, replaceExisting: false))
         _ = tools.dispatch(.addBlock(name: "Warm-up", intent: nil))
@@ -189,7 +189,7 @@ struct AgentToolsTests {
 
     @Test func requireAllOptionsToolPreservesEveryImportedMovement() {
         let context = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
-        let workouts = WorkoutStore(defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let workouts = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         workouts.create(title: "AMRAP", goal: nil)
         let deadlift = PlannedExercise(
             id: UUID(),

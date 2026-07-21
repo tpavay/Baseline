@@ -35,7 +35,7 @@ struct WorkoutSessionEditingTests {
     }
 
     private func buffer() -> WorkoutStore {
-        WorkoutStore(defaults: UserDefaults(suiteName: "sess-\(UUID().uuidString)")!)
+        WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "sess-\(UUID().uuidString)")!)
     }
 
     private func exercise(_ name: String, reps: Int = 5, load: Double = 100) -> PlannedExercise {

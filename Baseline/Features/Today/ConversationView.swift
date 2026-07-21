@@ -296,7 +296,7 @@ private struct StateInspectorView: View {
                         empty("(empty)")
                     } else {
                         ForEach(block.exercises) { ex in
-                            row(ex.exerciseName, setsLabel(ex.prescription))
+                            row(ex.exerciseName, setsLabel(ex))
                         }
                     }
                 }
@@ -306,10 +306,17 @@ private struct StateInspectorView: View {
         }
     }
 
-    private func setsLabel(_ p: Prescription) -> String {
-        guard !p.sets.isEmpty else { return "no sets" }
-        let s = p.sets.first!
-        let scheme = [s.reps.map { "\($0)" }, s.load.map { "@\(Int($0))" }].compactMap { $0 }.joined(separator: " ")
+    /// The first set's shape, in the athlete's units. It used to print the raw canonical load with no
+    /// unit at all (`3×8 @61` for a 135 lb bar), which is the same class of bug as the metric columns.
+    private func setsLabel(_ ex: PlannedExercise) -> String {
+        let p = ex.prescription
+        guard let first = p.sets.first else { return "no sets" }
+        func shown(_ metric: MetricType) -> String? {
+            first.values[metric].map { MetricFormat.value($0, metric, unit: workouts.displayUnit(metric, for: ex)) }
+        }
+        let reps = first.values.int(.reps).map { "\($0)" }
+        let dose = shown(.load).map { "@\($0)" } ?? shown(.distance) ?? shown(.duration)
+        let scheme = [reps, dose].compactMap { $0 }.joined(separator: " ")
         return "\(p.sets.count)×\(scheme.isEmpty ? "set" : scheme)"
     }
 

@@ -347,14 +347,19 @@ struct TodayView: View {
                     .buttonStyle(.plain)
                 }
                 if let a = yesterdayActivity {
-                    statTile(value: activityValue(a), label: "ACTIVITY", tint: BaselineColor.zoneGreen)
+                    let readout = Self.activityReadout(a)
+                    statTile(value: readout.value, unit: readout.unit, label: "ACTIVITY", tint: BaselineColor.zoneGreen)
                 }
             }
         }
     }
 
-    private func activityValue(_ a: DayActivity) -> String {
-        a.minutes >= 1 ? "\(Int(a.minutes.rounded()))m" : "\(Int(a.kcal.rounded()))cal"
+    /// Apple exercise minutes (or calories) split into number and unit, so the tile can set the unit
+    /// in its own smaller type. It used to render `"121m"` as one 22pt bold string, which reads as
+    /// 121 metres — the reported "121 M". Minutes are a duration, so no unit system applies; the
+    /// fix is to stop a duration masquerading as a distance.
+    static func activityReadout(_ a: DayActivity) -> (value: String, unit: String) {
+        a.minutes >= 1 ? ("\(Int(a.minutes.rounded()))", "MIN") : ("\(Int(a.kcal.rounded()))", "CAL")
     }
 
     private func statTile(value: String, unit: String = "", label: String, tint: Color) -> some View {
@@ -423,7 +428,7 @@ private struct LiveToday {
 }
 
 /// Yesterday's activity for the Home evidence tile — Apple exercise minutes with a calorie fallback.
-private struct DayActivity: Equatable {
+struct DayActivity: Equatable {
     let kcal: Double
     let minutes: Double
 }

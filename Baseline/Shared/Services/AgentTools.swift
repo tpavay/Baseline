@@ -708,9 +708,21 @@ final class AgentTools {
             lines.append("No workout has been built yet. If the athlete wants one, use create_workout (or build it up with add_block/add_exercise).")
         }
 
+        lines.append(unitSystemLine())
         lines.append(capabilityLine())
         lines.append(retrievableLine())
         return lines.joined(separator: "\n")
+    }
+
+    /// The athlete's unit system, stated outright. Without it the model's only frame is the canonical
+    /// storage units the prompt describes, so it narrates kg and metres to an imperial athlete even
+    /// while the screens beside it read lb and miles.
+    private func unitSystemLine() -> String {
+        let system = workouts?.unitSystem ?? .metric
+        let load = system.displayUnit(for: .load).short
+        let distance = system.displayUnit(for: .distance).short
+        return "Units: the athlete uses \(system.rawValue) — write loads in \(load) and distances in \(distance) "
+            + "unless a specific exercise's units say otherwise. Convert before you speak; never quote a stored canonical value."
     }
 
     /// The honest menu of what the model can actually fetch on request — so it offers exactly these

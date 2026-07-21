@@ -102,7 +102,7 @@ struct MetricConfigSheet: View {
         Binding(get: { selected.contains(m) }, set: { if $0 { selected.insert(m) } else { selected.remove(m) } })
     }
     private func unitBinding(_ m: MetricType) -> Binding<MetricUnit> {
-        Binding(get: { units[m] ?? m.canonicalUnit }, set: { units[m] = $0 })
+        Binding(get: { units[m] ?? unitFor(m) }, set: { units[m] = $0 })
     }
     private func apply() {
         let enabled = MetricType.allCases.filter { selected.contains($0) }

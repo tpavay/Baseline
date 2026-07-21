@@ -30,7 +30,7 @@ struct MainTabView: View {
         .environment(BluetoothManager())
         .environment(HealthService())
         .environment(OnboardingStore())
-        .environment(WorkoutStore())
+        .environment(WorkoutStore(units: AppSettings()))
         .environment(PlanStore(context: container.mainContext))
         .modelContainer(container)
 }
