@@ -776,18 +776,32 @@ Once the import job is durably accepted and can continue without the intake surf
 
 ### Progress
 
-The progress screen uses one headline and three natural phases:
+The progress screen uses one headline and a natural phase label per stage:
 
 ```text
 Creating your workout
 
-Reading workout
-Organizing exercises
-Preparing editor
+Preparing photos           // loadingImages
+Reading workout            // recognizing
+Organizing exercises       // preparingSections
+Sending to the parser      // waitingForHandoff, retryingSections
+Waiting for a parser slot  // processingSections while the server reports queued
+Organizing exercises       // processingSections while the server is parsing
+Preparing editor           // processingSections once every section is done
 ```
 
 There is no separate "Still working" state.
-The athlete may close the progress screen after durable job acceptance, and the import continues through its supported background path.
+
+Stages that can count real units - photos loaded, photos recognized, sections completed - render a determinate `ProgressView` driven by those counts.
+Stages that cannot count anything keep the indeterminate spinner rather than inventing a fraction or a synthetic timer.
+A queued job has no section underway, so it stays indeterminate even though `processingSections` carries counts.
+
+The detail line under each phase states the truth about backgrounding, and the two truths are different.
+Device-side stages (photo load, OCR, section prep, handoff) are suspended by iOS and resume from persisted per-page progress, so they say the import pauses and picks up where it left off.
+Once the job is handed off it lives on the server, so those stages say the athlete may close the screen and the result will be waiting; returning to the foreground restores durable progress by job ID.
+
+The display is held awake for exactly the working statuses and released on every terminal state, on `onDisappear`, and on scene phase `.background`, because a leaked idle-timer disable drains the battery silently.
+See `WorkoutImportView.shouldKeepScreenAwake(for:)` and `BaselineTests/WorkoutImportKeepAwakeTests.swift`.
 
 ### Handoff and outcome
 
@@ -1315,7 +1329,7 @@ BaselineTests/WorkoutImport/
 
 - V1 launches from the Plan day-level Add Workout menu.
 - Photo intake and progress are a full-screen import flow before handoff.
-- Progress uses **Creating your workout** with **Reading workout**, **Organizing exercises**, and **Preparing editor** phases.
+- Progress uses one **Creating your workout** headline with a per-stage phase label; see [Progress](#progress) for the phases, determinate-versus-indeterminate rule, and keep-awake behavior.
 - Cancel changes to Close only after the import job is durably accepted.
 - Complete and usable partial results hand off to the ordinary workout editor without an import introduction.
 - The editor displays targeted issues in context and never displays raw OCR or imported-section placeholders.

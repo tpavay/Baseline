@@ -83,6 +83,35 @@ extension IdleTimerRenderTests {
             #expect(UIApplication.shared.isIdleTimerDisabled, "A queued import is still an active wait.")
             screen.capture("workout-import-queued")
         }
+
+        /// Every device-side stage of the wait: each holds the display on, each carries the local
+        /// pause-and-resume footnote rather than the server promise, and the countable ones render a
+        /// determinate bar instead of a minute of indeterminate spinner.
+        @Test(arguments: [
+            ("01-loading-photos", WorkoutImportStatus.loadingImages(completed: 1, total: 4)),
+            ("02-reading-workout", WorkoutImportStatus.recognizing(completed: 3, total: 4)),
+            ("03-preparing-sections", WorkoutImportStatus.preparingSections),
+            ("04-sending-to-parser", WorkoutImportStatus.waitingForHandoff),
+        ])
+        func deviceSideStagesHoldTheScreenAndTellTheTruth(
+            name: String,
+            status: WorkoutImportStatus
+        ) async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
+
+            let screen = try await WorkoutImportScreen(status: status)
+            defer { screen.tearDown() }
+
+            #expect(
+                UIApplication.shared.isIdleTimerDisabled,
+                "\(name) is active work, so the display must stay on."
+            )
+            #expect(
+                screen.showsText(containing: "pauses if you leave Baseline"),
+                "A device-side stage must say it pauses, not that the server keeps working."
+            )
+            screen.capture("workout-import-\(name)")
+        }
     }
 }
 
@@ -142,6 +171,12 @@ private final class WorkoutImportScreen {
         // Let the removed view's onDisappear run so the idle-timer restore is exercised.
         spin(0.3)
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    func showsText(containing needle: String) -> Bool {
+        WorkoutImportScreen.elements(in: window).contains {
+            $0.accessibilityLabel?.contains(needle) == true
+        }
     }
 
     func capture(_ name: String) {
