@@ -91,16 +91,16 @@ Baseline surfaces ambiguity instead of inventing missing details, and all result
 **Import is two layers: the model comprehends, deterministic code converts.**
 The model returns an all-text reading of the source (`WorkoutImportSketch`) and is explicitly told not to convert units, resolve ranges, or expand repeats.
 Everything typed - canonical units, set counts, per-exercise metric sets, catalog identity, grouping - happens in `Conversion/`, which is pure and unit-tested.
-This replaced a rigid intermediate representation whose validator rejected four correct parses in a row and left the athlete looking at a client-side keyword matcher; see `data/baseline-import-latency-p5/report.md`.
+This replaced a rigid intermediate representation whose validator rejected four correct parses in a row and left the athlete looking at a client-side keyword matcher; the measurement behind that is summarized in the header comment of `functions/src/workoutImportStream.ts`.
 Never move normalization back into a prompt-plus-validator loop.
 Baseline also never synthesizes a workout from recognized text: an import that cannot be structured fails visibly with a retry, because a visibly failed import beats a confidently wrong one.
 
 Two transports, both wanted.
-A single photo takes the streaming single call (`streamWorkoutImport`, SSE), which shows real editable rows as exercises resolve and never rewrites one already on screen.
+A single photo takes the streaming single call (`streamWorkoutImport`, SSE), which shows the editor's own rows over the real parsed draft as exercises resolve and never rewrites one already on screen; those rows become editable the moment reading finishes.
 Multi-image imports stay on the durable Cloud Tasks job, which is also the retry when the fast path fails.
 
 Exercise matching surfaces near-misses rather than resolving them: widening past an exact catalog hit reaches only different spellings of the same movement, and anything else stays unresolved for the athlete to choose.
-Ranges, paces, and RPE ("6-8 reps", "3-5km pace", "7RPE") stay coach text, never typed metrics - corroborated against a shipping competitor in `data/baseline-workout-structure-reference.md`.
+Ranges, paces, and RPE ("6-8 reps", "3-5km pace", "7RPE") stay coach text, never typed metrics; the corpus case `fixtures/workout-import/corpus/bayens-intensity-day.json` pins that.
 Add import regression cases by dropping a JSON file in `fixtures/workout-import/corpus/` and running `xcodegen generate`; no test code changes (see that directory's README).
 
 **The source never dictates display units.**
