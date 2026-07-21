@@ -58,8 +58,53 @@ struct EntitlementsConfigurationTests {
             contentsOf: Self.repositoryRoot.appendingPathComponent("project.yml"),
             encoding: .utf8
         )
-        #expect(spec.contains("CODE_SIGN_ENTITLEMENTS: Baseline/Baseline-Debug.entitlements"))
-        #expect(spec.contains("CODE_SIGN_ENTITLEMENTS: Baseline/Baseline.entitlements"))
+        let targetSettings = ["targets", "Baseline", "settings"]
+
+        let base = try Self.block(at: targetSettings + ["base"], in: spec)
+        #expect(base.contains("CODE_SIGN_ENTITLEMENTS: Baseline/Baseline.entitlements"))
+
+        let debug = try Self.block(at: targetSettings + ["configs", "Debug"], in: spec)
+        #expect(debug.contains("CODE_SIGN_ENTITLEMENTS: Baseline/Baseline-Debug.entitlements"))
+
+        for config in ["Staging", "Release"] {
+            let settings = try Self.block(at: targetSettings + ["configs", config], in: spec)
+            #expect(
+                !settings.contains { $0.hasPrefix("CODE_SIGN_ENTITLEMENTS:") },
+                "\(config) must inherit the distribution entitlements from `base`"
+            )
+        }
+    }
+
+    /// Minimal indentation walk over `project.yml`. The test target has no YAML parser, and the
+    /// point of the assertion is *where* the override sits, so a flat `contains` over the whole
+    /// file would pass with the line moved under another configuration or into a comment.
+    /// Returns the significant (non-blank, non-comment) lines nested under the given key path,
+    /// trimmed of indentation.
+    private static func block(at keyPath: [String], in spec: String) throws -> [String] {
+        var lines = spec.components(separatedBy: .newlines).filter {
+            let trimmed = $0.trimmingCharacters(in: .whitespaces)
+            return !trimmed.isEmpty && !trimmed.hasPrefix("#")
+        }
+
+        for key in keyPath {
+            let outerIndent = lines.map(indentation).min() ?? 0
+            let start = try #require(
+                lines.firstIndex {
+                    indentation($0) == outerIndent
+                        && $0.trimmingCharacters(in: .whitespaces) == "\(key):"
+                },
+                "project.yml has no `\(key):` under \(keyPath.joined(separator: "."))"
+            )
+            let children = lines[lines.index(after: start)...]
+            let end = children.firstIndex { indentation($0) <= outerIndent } ?? lines.endIndex
+            lines = Array(lines[lines.index(after: start)..<end])
+        }
+
+        return lines.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func indentation(_ line: String) -> Int {
+        line.prefix { $0 == " " }.count
     }
 
     private static func entitlements(named name: String) throws -> [String: Any] {
