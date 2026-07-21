@@ -10,6 +10,7 @@ import Testing
 struct WorkoutImportConversionTests {
 
     private var catalog: [ExerciseDefinition] { ExerciseCatalog.definitions }
+    private var snapshot: ExerciseCatalogSnapshot { ExerciseCatalogSnapshot(catalog) }
 
     private func isExercise(_ node: ParsedWorkoutNode) -> Bool {
         if case .exercise = node { return true }
@@ -93,15 +94,15 @@ struct WorkoutImportConversionTests {
     // MARK: - Exercise matching surfaces near-misses instead of resolving them
 
     @Test func exactNamesAndCasualAliasesResolveConfidently() {
-        let run = ImportExerciseMatcher.match("Run", in: catalog)
+        let run = ImportExerciseMatcher.match("Run", in: catalog, snapshot: snapshot)
         #expect(run.confidence == .exact)
         #expect(run.definition?.id == "run")
 
-        let strides = ImportExerciseMatcher.match("Strides", in: catalog)
+        let strides = ImportExerciseMatcher.match("Strides", in: catalog, snapshot: snapshot)
         #expect(strides.confidence == .exact)
         #expect(strides.definition?.id == "run")
 
-        let echo = ImportExerciseMatcher.match("Assault Bike", in: catalog)
+        let echo = ImportExerciseMatcher.match("Assault Bike", in: catalog, snapshot: snapshot)
         #expect(echo.confidence == .exact)
         #expect(echo.definition?.id == "echo_bike")
     }
@@ -110,18 +111,27 @@ struct WorkoutImportConversionTests {
     /// every set logged against it lands on another movement's history with no signal that anything
     /// was decided. The catalog has no plain "Sled Drag", and the neighbours it does have either add
     /// a qualifier the source never said or are a different movement entirely.
-    @Test func sledDragIsSurfacedAsUncertainAndNeverBecomesSledPush() {
-        let match = ImportExerciseMatcher.match("Sled Drag", in: catalog)
+    @Test func sledDragIsSurfacedAsUncertainAndNeverBecomesSledPush() throws {
+        let match = ImportExerciseMatcher.match("Sled Drag", in: catalog, snapshot: snapshot)
 
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
-        #expect(!match.nearMisses.isEmpty)
-        #expect(!match.nearMisses.contains { $0.id == "sled_push" })
+
+        // And it survives conversion as an honest unknown: the source's own words, reported as
+        // unresolved, so the draft builder raises its blocking question rather than anything
+        // downstream quietly settling on a different movement.
+        let sketch = WorkoutImportSketch(blocks: [.init(items: [.init(name: "Sled Drag", prescription: "12.5m")])])
+        let converted = WorkoutImportSketchConverter.convert(sketch, catalog: catalog)
+        let exercise = try #require(converted.document.blocks.first?.exercises.first)
+
+        #expect(exercise.name == "Sled Drag")
+        #expect(converted.unresolvedNames == ["Sled Drag"])
+        #expect(!catalog.contains { $0.id == "sled_push" && $0.name == exercise.name })
     }
 
     /// A qualifier the source *did* say is not thrown away to reach a shorter catalog name.
     @Test func aQualifierTheSourceStatedIsNotDiscardedToReachAMatch() {
-        let match = ImportExerciseMatcher.match("Kettlebell Farmers Walk", in: catalog)
+        let match = ImportExerciseMatcher.match("Kettlebell Farmers Walk", in: catalog, snapshot: snapshot)
 
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
@@ -130,18 +140,18 @@ struct WorkoutImportConversionTests {
     /// The widening that *is* allowed: the same movement spelled differently. Singular versus
     /// plural is spelling, not a different exercise.
     @Test func aPluralSpellingOfTheSameMovementStillResolves() {
-        let plural = ImportExerciseMatcher.match("Box Jumps", in: catalog)
+        let plural = ImportExerciseMatcher.match("Box Jumps", in: catalog, snapshot: snapshot)
         #expect(plural.definition?.id == "box_jump")
     }
 
     @Test func anUnknownMovementResolvesToNothingAndOffersCandidates() {
-        let match = ImportExerciseMatcher.match("Zercher Sandbag Yoke Carry Thing", in: catalog)
+        let match = ImportExerciseMatcher.match("Zercher Sandbag Yoke Carry Thing", in: catalog, snapshot: snapshot)
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
     }
 
     @Test func anEmptyNameIsUncertainRatherThanMatchingTheFirstDefinition() {
-        let match = ImportExerciseMatcher.match("   ", in: catalog)
+        let match = ImportExerciseMatcher.match("   ", in: catalog, snapshot: snapshot)
         #expect(match.confidence == .uncertain)
         #expect(match.definition == nil)
     }
@@ -282,6 +292,23 @@ struct WorkoutImportConversionTests {
         let nodes = try #require(WorkoutImportSketchConverter.convert(sketch, catalog: catalog).document.blocks.first?.nodes)
 
         #expect(nodes.count == 2)
+        #expect(nodes.allSatisfy(isExercise))
+    }
+
+    /// The run is two items but only one of them names a movement, so the surviving structure is one
+    /// exercise. A superset container holding a single row — or none at all — is a shape the athlete
+    /// never wrote and the editor should never render.
+    @Test func aGroupWhoseSiblingHasNoNameCollapsesRatherThanRenderingAnEmptyContainer() throws {
+        let sketch = WorkoutImportSketch(blocks: [.init(items: [
+            .init(group: "1", name: "Back Squat", sets: "3", prescription: "5 reps"),
+            .init(group: "1", name: "   ", sets: "3", prescription: "5 reps"),
+            .init(group: "2", name: " ", prescription: "5 reps"),
+            .init(group: "2", name: "", prescription: "5 reps"),
+        ])])
+
+        let nodes = try #require(WorkoutImportSketchConverter.convert(sketch, catalog: catalog).document.blocks.first?.nodes)
+
+        #expect(nodes.count == 1)
         #expect(nodes.allSatisfy(isExercise))
     }
 

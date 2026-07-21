@@ -22,6 +22,9 @@ const rejects = (code, build) => {
   });
 };
 
+/** Every import carries the client's job id; the athlete's daily count is keyed on it. */
+const JOB_ID = "11111111-1111-4111-8111-111111111111";
+
 const image = (bytes = 64, mediaType = "image/jpeg") => ({
   mediaType,
   data: "A".repeat(Math.ceil((bytes * 4) / 3)),
@@ -31,6 +34,7 @@ const image = (bytes = 64, mediaType = "image/jpeg") => ({
 
 test("a well formed payload is accepted with its images and hints", () => {
   const payload = parseWorkoutImportStreamPayload({
+    clientJobID: JOB_ID,
     images: [image(), image()],
     text: "AM: VO2 THRESHOLDS",
     catalogHints: ["Run", "Sled Push"],
@@ -40,39 +44,50 @@ test("a well formed payload is accepted with its images and hints", () => {
   assert.deepEqual(payload.catalogHints, ["Run", "Sled Push"]);
 });
 
+test("a payload without a usable client job id is refused, since the daily count is keyed on it", () => {
+  rejects("malformed_payload", () => parseWorkoutImportStreamPayload({ text: "Run" }));
+  rejects("malformed_payload", () => parseWorkoutImportStreamPayload({ clientJobID: "  ", text: "Run" }));
+  rejects("malformed_payload", () => parseWorkoutImportStreamPayload({ clientJobID: "a/b", text: "Run" }));
+  assert.equal(parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, text: "Run" }).clientJobID, JOB_ID);
+});
+
 test("text alone is a valid source, because not every import is a photo", () => {
-  const payload = parseWorkoutImportStreamPayload({ text: "3 x 10 Back Squat" });
+  const payload = parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, text: "3 x 10 Back Squat" });
   assert.equal(payload.images.length, 0);
   assert.equal(payload.text, "3 x 10 Back Squat");
 });
 
 test("a request carrying neither images nor text is rejected rather than sent to the model", () => {
-  rejects("no_source", () => parseWorkoutImportStreamPayload({ images: [], text: "   " }));
+  rejects("no_source", () => parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, images: [], text: "   " }));
   rejects("malformed_payload", () => parseWorkoutImportStreamPayload(null));
 });
 
 test("every limit is enforced with a distinct code the client can map to copy", () => {
   const many = Array.from({ length: WORKOUT_IMPORT_STREAM_LIMITS.maximumImages + 1 }, () => image());
-  rejects("too_many_images", () => parseWorkoutImportStreamPayload({ images: many }));
+  rejects("too_many_images", () => parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, images: many }));
 
   rejects("image_too_large", () => parseWorkoutImportStreamPayload({
+    clientJobID: JOB_ID,
     images: [image(WORKOUT_IMPORT_STREAM_LIMITS.maximumImageBytes + 1024)],
   }));
 
   rejects("workout_too_large", () => parseWorkoutImportStreamPayload({
+    clientJobID: JOB_ID,
     text: "x".repeat(WORKOUT_IMPORT_STREAM_LIMITS.maximumTextCharacters + 1),
   }));
 });
 
 test("an unsupported or empty image is refused instead of reaching the provider", () => {
-  rejects("image_unreadable", () => parseWorkoutImportStreamPayload({ images: [image(64, "image/heic")] }));
+  rejects("image_unreadable", () => parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, images: [image(64, "image/heic")] }));
   rejects("image_unreadable", () => parseWorkoutImportStreamPayload({
+    clientJobID: JOB_ID,
     images: [{ mediaType: "image/jpeg", data: "" }],
   }));
 });
 
 test("catalog hints are bounded and non-strings dropped, so a bad client cannot inflate the prompt", () => {
   const payload = parseWorkoutImportStreamPayload({
+    clientJobID: JOB_ID,
     text: "workout",
     catalogHints: [...Array.from({ length: 900 }, (_, i) => `Move ${i}`), 42, null],
   });
@@ -83,7 +98,7 @@ test("catalog hints are bounded and non-strings dropped, so a bad client cannot 
 // MARK: - Request shape
 
 test("the request is a single streaming call that forces the sketch tool", () => {
-  const payload = parseWorkoutImportStreamPayload({ images: [image()], text: "Run 400m" });
+  const payload = parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, images: [image()], text: "Run 400m" });
   const request = buildWorkoutImportSketchRequest("claude-sonnet-4-5-20250929", buildWorkoutImportSketchContent(payload));
 
   assert.equal(request.stream, true);
@@ -95,7 +110,7 @@ test("the request is a single streaming call that forces the sketch tool", () =>
 });
 
 test("max_tokens is clamped rather than trusted", () => {
-  const content = buildWorkoutImportSketchContent(parseWorkoutImportStreamPayload({ text: "Run" }));
+  const content = buildWorkoutImportSketchContent(parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, text: "Run" }));
   assert.equal(
     buildWorkoutImportSketchRequest("claude-sonnet-4-5-20250929", content, 1_000_000).max_tokens,
     WORKOUT_IMPORT_STREAM_LIMITS.maximumOutputTokens,
@@ -106,7 +121,7 @@ test("max_tokens is clamped rather than trusted", () => {
 /// Sending `temperature` to a model that rejects it fails the entire request, which reads in
 /// production as a total import outage rather than as a config mistake.
 test("temperature is omitted for models that reject it and set for models that accept it", () => {
-  const content = buildWorkoutImportSketchContent(parseWorkoutImportStreamPayload({ text: "Run" }));
+  const content = buildWorkoutImportSketchContent(parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, text: "Run" }));
   assert.equal(supportsTemperature("claude-sonnet-4-5-20250929"), true);
   assert.equal(buildWorkoutImportSketchRequest("claude-sonnet-4-5-20250929", content).temperature, 0);
 
@@ -115,7 +130,7 @@ test("temperature is omitted for models that reject it and set for models that a
 });
 
 test("images lead the turn so page layout is available while the text is read", () => {
-  const payload = parseWorkoutImportStreamPayload({ images: [image(), image()], text: "Run 400m" });
+  const payload = parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, images: [image(), image()], text: "Run 400m" });
   const content = buildWorkoutImportSketchContent(payload);
 
   assert.equal(content[0].type, "image");
@@ -125,7 +140,7 @@ test("images lead the turn so page layout is available while the text is read", 
 });
 
 test("catalog hints travel as vocabulary rather than as a closed menu", () => {
-  const payload = parseWorkoutImportStreamPayload({ text: "Run", catalogHints: ["Sled Pull"] });
+  const payload = parseWorkoutImportStreamPayload({ clientJobID: JOB_ID, text: "Run", catalogHints: ["Sled Pull"] });
   const text = buildWorkoutImportSketchContent(payload).at(-1).text;
 
   assert.match(text, /Sled Pull/);

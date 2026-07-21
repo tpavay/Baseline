@@ -24,8 +24,11 @@ enum WorkoutImportSketchConverter {
 
     static func convert(_ sketch: WorkoutImportSketch, catalog: [ExerciseDefinition]) -> Result {
         var unresolved: [String] = []
+        // One index per conversion. Matching is per exercise and conversion re-runs on every
+        // streamed delta, so building this inside the matcher would rebuild it thousands of times.
+        let snapshot = ExerciseCatalogSnapshot(catalog)
         let blocks = sketch.blocks.compactMap { block -> ParsedWorkoutBlock? in
-            let nodes = groupedNodes(block.items, catalog: catalog, unresolved: &unresolved)
+            let nodes = groupedNodes(block.items, catalog: catalog, snapshot: snapshot, unresolved: &unresolved)
             guard !nodes.isEmpty else { return nil }
             return ParsedWorkoutBlock(
                 name: cleaned(block.name) ?? "Workout",
@@ -49,9 +52,14 @@ enum WorkoutImportSketchConverter {
     /// standalone movements carrying none. The letter is positional, so order inside the group
     /// supplies it and nothing needs to store it. A run of one is left standalone — a lone "1A" is
     /// a group with nothing to superset against, and rendering a one-child group is just noise.
+    ///
+    /// The decision is made on the children that survived, not on the raw run: an item whose name is
+    /// blank produces no child, so a "1A"/"1B" pair with one unreadable half is still one exercise
+    /// standing alone rather than a superset container with one row in it.
     private static func groupedNodes(
         _ items: [WorkoutImportSketch.Item],
         catalog: [ExerciseDefinition],
+        snapshot: ExerciseCatalogSnapshot,
         unresolved: inout [String]
     ) -> [ParsedWorkoutNode] {
         var nodes: [ParsedWorkoutNode] = []
@@ -59,21 +67,24 @@ enum WorkoutImportSketchConverter {
         while index < items.count {
             let key = cleaned(items[index].group)
             guard let key else {
-                appendExercise(items[index], catalog: catalog, into: &nodes, unresolved: &unresolved)
+                appendExercise(
+                    items[index], catalog: catalog, snapshot: snapshot, into: &nodes, unresolved: &unresolved
+                )
                 index += 1
                 continue
             }
             var runEnd = index
             while runEnd < items.count, cleaned(items[runEnd].group) == key { runEnd += 1 }
-            let run = Array(items[index..<runEnd])
-            if run.count == 1 {
-                appendExercise(run[0], catalog: catalog, into: &nodes, unresolved: &unresolved)
-            } else {
-                var children: [ParsedWorkoutNode] = []
-                for item in run {
-                    appendExercise(item, catalog: catalog, into: &children, unresolved: &unresolved)
-                }
+            var children: [ParsedWorkoutNode] = []
+            for item in items[index..<runEnd] {
+                appendExercise(
+                    item, catalog: catalog, snapshot: snapshot, into: &children, unresolved: &unresolved
+                )
+            }
+            if children.count > 1 {
                 nodes.append(.group(ParsedWorkoutGroup(label: key, children: children)))
+            } else {
+                nodes.append(contentsOf: children)
             }
             index = runEnd
         }
@@ -83,10 +94,13 @@ enum WorkoutImportSketchConverter {
     private static func appendExercise(
         _ item: WorkoutImportSketch.Item,
         catalog: [ExerciseDefinition],
+        snapshot: ExerciseCatalogSnapshot,
         into nodes: inout [ParsedWorkoutNode],
         unresolved: inout [String]
     ) {
-        guard let exercise = exercise(from: item, catalog: catalog, unresolved: &unresolved) else { return }
+        guard let exercise = exercise(
+            from: item, catalog: catalog, snapshot: snapshot, unresolved: &unresolved
+        ) else { return }
         nodes.append(.exercise(exercise))
     }
 
@@ -95,10 +109,11 @@ enum WorkoutImportSketchConverter {
     private static func exercise(
         from item: WorkoutImportSketch.Item,
         catalog: [ExerciseDefinition],
+        snapshot: ExerciseCatalogSnapshot,
         unresolved: inout [String]
     ) -> ParsedWorkoutExercise? {
         guard let sourceName = cleaned(item.name) else { return nil }
-        let match = ImportExerciseMatcher.match(sourceName, in: catalog)
+        let match = ImportExerciseMatcher.match(sourceName, in: catalog, snapshot: snapshot)
         if match.confidence == .uncertain { unresolved.append(sourceName) }
 
         // An unresolved name is passed through verbatim so the draft builder fails to place it and

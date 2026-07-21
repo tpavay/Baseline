@@ -15,7 +15,11 @@ enum WorkoutImportStreamEvent: Equatable, Sendable {
 /// The transport for the fast path. A protocol so the coordinator can be driven in tests with no
 /// network, which is the only way the routing and partial-result rules are worth asserting.
 protocol WorkoutImportStreaming: Sendable {
+    /// `jobID` is the client's identity for the whole import. The server keys the athlete's daily
+    /// import count and the per-job provider budget on it, so a fast-path attempt and the durable
+    /// retry that may follow are one job rather than two.
     func stream(
+        jobID: UUID,
         images: [ImportedWorkoutImage],
         text: String?,
         catalogHints: [String]
@@ -65,6 +69,7 @@ struct FirebaseWorkoutImportStreamingParser: WorkoutImportStreaming {
     }
 
     func stream(
+        jobID: UUID,
         images: [ImportedWorkoutImage],
         text: String?,
         catalogHints: [String]
@@ -72,7 +77,9 @@ struct FirebaseWorkoutImportStreamingParser: WorkoutImportStreaming {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let request = try await buildRequest(images: images, text: text, catalogHints: catalogHints)
+                    let request = try await buildRequest(
+                        jobID: jobID, images: images, text: text, catalogHints: catalogHints
+                    )
                     let (bytes, response) = try await session.bytes(for: request)
                     if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                         continuation.yield(.failed(code: Self.failureCode(forStatus: http.statusCode)))
@@ -123,11 +130,13 @@ struct FirebaseWorkoutImportStreamingParser: WorkoutImportStreaming {
         case 401: "unauthenticated"
         case 429: "rate_limited"
         case 400: "malformed_payload"
+        case 503: "remote_unavailable"
         default: "remote_unavailable"
         }
     }
 
     private func buildRequest(
+        jobID: UUID,
         images: [ImportedWorkoutImage],
         text: String?,
         catalogHints: [String]
@@ -147,6 +156,7 @@ struct FirebaseWorkoutImportStreamingParser: WorkoutImportStreaming {
             request.setValue(appCheck.token, forHTTPHeaderField: "X-Firebase-AppCheck")
         }
         request.httpBody = try JSONEncoder().encode(WorkoutImportStreamRequest(
+            clientJobID: jobID.uuidString,
             images: images.map { .init(mediaType: "image/jpeg", data: $0.data.base64EncodedString()) },
             text: text,
             catalogHints: Array(catalogHints.prefix(500))
@@ -161,6 +171,7 @@ struct WorkoutImportStreamRequest: Encodable, Sendable {
         var data: String
     }
 
+    var clientJobID: String
     var images: [Image]
     var text: String?
     var catalogHints: [String]

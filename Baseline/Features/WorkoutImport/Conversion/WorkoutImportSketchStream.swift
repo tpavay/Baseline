@@ -37,15 +37,20 @@ struct WorkoutImportSketchStream: Sendable {
     /// decode. Walks back through earlier such points if the newest one somehow will not parse, so a
     /// surprising fragment costs one item rather than the whole stream.
     static func decodeLongestPrefix(of buffer: String) -> WorkoutImportSketch? {
-        for closed in closures(of: buffer).prefix(8) {
+        for closed in closures(of: buffer, limit: 8) {
             if let sketch = decode(closed) { return sketch }
         }
         return nil
     }
 
-    /// Every valid completion of `buffer`, longest first.
-    static func closures(of buffer: String) -> [String] {
-        cutPoints(of: buffer).reversed().map { cut in
+    /// Valid completions of `buffer`, longest first, at most `limit` of them.
+    ///
+    /// The limit is not cosmetic. `append` runs once per streamed fragment and a sketch has roughly
+    /// one cut point per JSON token, so materializing a string per cut point would copy the whole
+    /// buffer hundreds of times per delta. Only the newest few are ever decoded, so only those are
+    /// ever built.
+    static func closures(of buffer: String, limit: Int = .max) -> [String] {
+        cutPoints(of: buffer).suffix(max(limit, 0)).reversed().map { cut in
             var closed = String(buffer[buffer.startIndex..<cut.index])
             for opener in cut.open.reversed() { closed.append(opener == "{" ? "}" : "]") }
             return closed

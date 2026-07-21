@@ -81,9 +81,11 @@ actor WorkoutImportCoordinator {
                 loadImage: loadImage,
                 progress: progress
             )
-            if let assembled = await assembleOnFastPath(job, catalog: catalog, progress: progress) {
-                return assembled
-            }
+            let attempt = await assembleOnFastPath(job, catalog: catalog, progress: progress)
+            if let assembled = attempt.assembled { return assembled }
+            // The fast path's own elapsed time is the number the latency work exists to track, so it
+            // survives the fall-through rather than being discarded exactly when it matters most.
+            job.diagnostics.parserMilliseconds += attempt.elapsedMilliseconds
             return await handOffAndWait(job, catalog: catalog, progress: progress)
         } catch is CancellationError {
             if cancelledJobIDs.contains(job.id) {
@@ -730,6 +732,13 @@ actor WorkoutImportCoordinator {
     }
 
 
+    /// What one fast-path attempt produced: a reviewable job when it worked, and either way the time
+    /// it spent, because that time is real whether or not the durable job ends up taking over.
+    private struct FastPathAttempt {
+        var assembled: WorkoutImportJob?
+        var elapsedMilliseconds = 0
+    }
+
     /// Try the fast path, returning a reviewable job when it produced one and nil when the durable
     /// job should take over.
     ///
@@ -742,9 +751,9 @@ actor WorkoutImportCoordinator {
         _ initialJob: WorkoutImportJob,
         catalog: [ExerciseDefinition],
         progress: @escaping ProgressHandler
-    ) async -> WorkoutImportJob? {
-        guard let streamer, initialJob.pages.count == 1 else { return nil }
-        guard (try? ensureActive(initialJob.id)) != nil, !Task.isCancelled else { return nil }
+    ) async -> FastPathAttempt {
+        guard let streamer, initialJob.pages.count == 1 else { return FastPathAttempt() }
+        guard (try? ensureActive(initialJob.id)) != nil, !Task.isCancelled else { return FastPathAttempt() }
 
         var job = initialJob
         let images = await fastPathImages(for: job)
@@ -753,7 +762,9 @@ actor WorkoutImportCoordinator {
             .flatMap(\.observations)
             .map(\.text)
             .joined(separator: "\n")
-        guard !images.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard !images.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return FastPathAttempt()
+        }
 
         job.stage = .assembling
         job.lastUpdated = Date()
@@ -764,6 +775,7 @@ actor WorkoutImportCoordinator {
         let jobID = job.id
         let streamingBase = job
         let outcome = await WorkoutImportFastPath(streamer: streamer).run(
+            jobID: jobID,
             images: images,
             text: text.isEmpty ? nil : text,
             catalog: catalog
@@ -779,14 +791,17 @@ actor WorkoutImportCoordinator {
             await progress(streaming)
         }
 
-        guard (try? ensureActive(jobID)) != nil, !Task.isCancelled else { return nil }
-        job.diagnostics.parserMilliseconds += milliseconds(since: started)
+        let elapsed = milliseconds(since: started)
+        guard (try? ensureActive(jobID)) != nil, !Task.isCancelled else {
+            return FastPathAttempt(elapsedMilliseconds: elapsed)
+        }
+        job.diagnostics.parserMilliseconds += elapsed
 
         guard outcome.isWorthShowing, let build = outcome.build, let document = outcome.document else {
             Self.logger.info(
                 "Import \(jobID.uuidString, privacy: .public) fast path yielded no usable structure (\(outcome.failureCode ?? "empty", privacy: .public)); handing off to the durable job"
             )
-            return nil
+            return FastPathAttempt(elapsedMilliseconds: elapsed)
         }
 
         job.stage = .reviewing
@@ -812,10 +827,10 @@ actor WorkoutImportCoordinator {
         do {
             try await repository.save(job)
         } catch {
-            return nil
+            return FastPathAttempt(elapsedMilliseconds: elapsed)
         }
         await progress(job)
-        return job
+        return FastPathAttempt(assembled: job, elapsedMilliseconds: elapsed)
     }
 
     private func isActive(_ id: UUID) -> Bool { !cancelledJobIDs.contains(id) }

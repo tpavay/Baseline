@@ -10,6 +10,12 @@ const {
 } = require("../lib/workoutImportFirestoreStore");
 const { WorkoutImportJobRuntime } = require("../lib/workoutImportJobRuntime");
 const {
+  admitImportAttempt,
+  chargeImportJob,
+  importUsageLimits,
+  reserveImportJobProviderCall,
+} = require("../lib/workoutImportUsage");
+const {
   MAX_SECTION_RESULT_BYTES,
   encodedJSONByteCount,
 } = require("../lib/workoutImportJobs");
@@ -119,18 +125,83 @@ test("actual store enforces quota idempotency, hash identity, and ownership", as
   const same = await store.createOrGet("owner", payload(), "model");
   assert.equal(first.created, true);
   assert.equal(same.created, false);
-  assert.equal((await db.doc("users/owner/usage/2026-07-14").get()).data().workoutImports, 1);
+
+  // Starting a job costs the athlete nothing. Admission only records the attempt against the
+  // invisible cost guard; the promised daily count is charged when the job yields a document.
+  const admitted = (await db.doc("users/owner/usage/2026-07-14").get()).data();
+  assert.equal(admitted.workoutImports ?? 0, 0);
+  assert.equal(admitted.importJobAttempts, 1);
 
   await assert.rejects(
     store.createOrGet("owner", payload({ jobHash: "c".repeat(64) }), "model"),
     (error) => error.code === "already-exists",
   );
   await assert.rejects(store.getOwned(jobID, "intruder"), (error) => error.code === "not-found");
+
+  // A second job is admitted, because nothing has been charged yet.
   now += 1;
-  await assert.rejects(
-    store.createOrGet("owner", payload({ clientJobID: "33333333-3333-4333-8333-333333333333" }), "model"),
-    (error) => error.code === "resource-exhausted",
+  const second = await store.createOrGet(
+    "owner", payload({ clientJobID: "33333333-3333-4333-8333-333333333333" }), "model",
   );
+  assert.equal(second.created, true);
+});
+
+test("the daily count charges one distinct job once, whichever path finishes it", async () => {
+  const now = Date.UTC(2026, 6, 14);
+  const store = new FirestoreWorkoutImportJobStore(db, 1, () => now);
+  const usage = () => db.doc("users/owner/usage/2026-07-14").get().then((snapshot) => snapshot.data());
+
+  // A fast-path attempt charged this job already.
+  await chargeImportJob(db, "owner", jobID, now);
+  assert.equal((await usage()).workoutImports, 1);
+
+  // The durable job for the same client job id completes. Same job, same charge, not a second one.
+  await store.createOrGet("owner", payload(), "model");
+  await store.markDispatched(jobID, 1, 1);
+  assert.equal((await store.acquireWorker(jobID, 1, 1, "worker")).status, "acquired");
+  assert.equal(await store.completeJob(jobID, 1, "worker", document()), true);
+  assert.equal((await usage()).workoutImports, 1);
+  assert.deepEqual((await usage()).chargedImportJobIDs, [jobID]);
+});
+
+test("a job that produced nothing is never charged, but attempts are still bounded", async () => {
+  const now = Date.UTC(2026, 6, 14);
+  const store = new FirestoreWorkoutImportJobStore(db, 1, () => now);
+  const usage = () => db.doc("users/owner/usage/2026-07-14").get().then((snapshot) => snapshot.data());
+
+  const limits = importUsageLimits(1);
+  for (let index = 0; index < limits.attemptCeiling; index += 1) {
+    await admitImportAttempt(db, "owner", `attempt-${index}`, now, limits);
+  }
+  assert.equal((await usage()).workoutImports ?? 0, 0);
+
+  // The guard trips as its own reason, never as the athlete's daily import limit.
+  await assert.rejects(
+    admitImportAttempt(db, "owner", "attempt-over", now, limits),
+    (error) => error.reason === "cost_guard",
+  );
+  await assert.rejects(
+    store.createOrGet("owner", payload({ clientJobID: "44444444-4444-4444-8444-444444444444" }), "model"),
+    (error) => error.code === "cost-guard",
+  );
+});
+
+test("a fast-path attempt and the durable fall-through draw from one per-job provider pool", async () => {
+  const now = Date.UTC(2026, 6, 14);
+  const store = new FirestoreWorkoutImportJobStore(db, 1, () => now);
+  const limits = { maximumProviderCalls: 2, maximumOutputTokens: 8_192 };
+
+  await reserveImportJobProviderCall(db, "owner", jobID, 4_096, limits, now);
+  await reserveImportJobProviderCall(db, "owner", jobID, 4_096, limits, now);
+  await assert.rejects(
+    reserveImportJobProviderCall(db, "owner", jobID, 4_096, limits, now),
+    (error) => error.reason === "job_budget",
+  );
+
+  // The durable job for the same id starts from what the fast path already spent.
+  const created = await store.createOrGet("owner", payload(), "model");
+  assert.equal(created.job.providerCalls, 2);
+  assert.equal(created.job.outputTokensReserved, 8_192);
 });
 
 test("actual store cancel-before-create tombstone blocks late creation without quota", async () => {

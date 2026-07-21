@@ -184,6 +184,12 @@ export interface WorkoutImportStreamImage {
 }
 
 export interface WorkoutImportStreamPayload {
+  /**
+   * The client's identity for the whole import. The same id is sent to `startWorkoutImportJob`, so
+   * a fast-path attempt and the durable retry that may follow it are one job for both the athlete's
+   * daily count and the per-job provider budget.
+   */
+  clientJobID: string;
   images: WorkoutImportStreamImage[];
   /** Recognized text, used when there are no images or alongside them as a reading aid. */
   text?: string;
@@ -243,7 +249,10 @@ export function parseWorkoutImportStreamPayload(raw: unknown): WorkoutImportStre
     ? source.catalogHints.filter((hint): hint is string => typeof hint === "string").slice(0, 500)
     : [];
 
-  return { images, text, catalogHints };
+  const clientJobID = typeof source.clientJobID === "string" ? source.clientJobID.trim() : "";
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(clientJobID)) return reject("malformed_payload", "bad clientJobID");
+
+  return { clientJobID, images, text, catalogHints };
 }
 
 /**

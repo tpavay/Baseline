@@ -16,8 +16,6 @@ struct ImportExerciseMatch: Equatable, Sendable {
     /// history; an unresolved one is a question the athlete can answer in two taps.
     var definition: ExerciseDefinition?
     var confidence: ImportExerciseMatchConfidence
-    /// What Baseline considered and would not commit to, best first. Surfaced, never applied.
-    var nearMisses: [ExerciseDefinition]
 }
 
 /// Source exercise name → catalog identity, with a confidence, using the catalog's own
@@ -31,40 +29,36 @@ struct ImportExerciseMatch: Equatable, Sendable {
 /// because "barbell" is unaccounted for and the difference might matter.
 enum ImportExerciseMatcher {
 
-    static func match(_ name: String, in catalog: [ExerciseDefinition]) -> ImportExerciseMatch {
+    /// `snapshot` is the search index over `catalog`. It is passed in rather than built here because
+    /// the streaming path re-converts the whole sketch after every delta, and rebuilding the index
+    /// per exercise per delta is thousands of full-catalog builds for one import.
+    static func match(
+        _ name: String,
+        in catalog: [ExerciseDefinition],
+        snapshot: ExerciseCatalogSnapshot
+    ) -> ImportExerciseMatch {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return ImportExerciseMatch(sourceName: name, definition: nil, confidence: .uncertain, nearMisses: [])
+            return ImportExerciseMatch(sourceName: name, definition: nil, confidence: .uncertain)
         }
 
         // The existing exact matcher already folds case, punctuation, and context words such as
         // "warm-up", "400m", or "working set", so "Easy run" and "Run" reach the same definition.
         if let exact = WorkoutImportDraftBuilder.exactMatch(trimmed, in: catalog) {
-            return ImportExerciseMatch(
-                sourceName: trimmed, definition: exact, confidence: .exact, nearMisses: []
-            )
+            return ImportExerciseMatch(sourceName: trimmed, definition: exact, confidence: .exact)
         }
 
-        let snapshot = ExerciseCatalogSnapshot(catalog)
         let ranked = ExerciseSearch.run(.init(text: trimmed), in: snapshot).matches
         let wanted = meaningfulWords(trimmed)
         let sameMovement = wanted.isEmpty ? [] : ranked.filter { describes(wanted, exactly: $0) }
 
         if sameMovement.count == 1, let only = sameMovement.first {
-            return ImportExerciseMatch(
-                sourceName: trimmed, definition: only, confidence: .likely, nearMisses: []
-            )
+            return ImportExerciseMatch(sourceName: trimmed, definition: only, confidence: .likely)
         }
-        return ImportExerciseMatch(
-            sourceName: trimmed,
-            definition: nil,
-            confidence: .uncertain,
-            nearMisses: Array(ranked.prefix(3)).ifEmpty(
-                // Nothing shared a whole word. Fall back to the builder's similarity search so a
-                // misread name still offers something to choose from rather than a blank picker.
-                WorkoutImportDraftBuilder.candidates(for: trimmed, in: catalog, limit: 3)
-            )
-        )
+        // What Baseline would not commit to is not carried here. The draft builder already raises a
+        // blocking `unknownExercise` issue with its own candidates for exactly these names, so
+        // computing a second list per delta only to discard it is duplicated work.
+        return ImportExerciseMatch(sourceName: trimmed, definition: nil, confidence: .uncertain)
     }
 
     /// True when the definition's name or one of its aliases uses **exactly** the words the source
@@ -112,10 +106,4 @@ enum ImportExerciseMatcher {
         "sec", "secs", "second", "seconds", "min", "mins", "minute", "minutes",
         "cal", "cals", "calorie", "calories", "kg", "lb", "lbs",
     ]
-}
-
-private extension Array {
-    func ifEmpty(_ fallback: @autoclosure () -> [Element]) -> [Element] {
-        isEmpty ? fallback() : self
-    }
 }
