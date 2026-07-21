@@ -40,6 +40,19 @@ enum WorkoutImportProgressCopy {
     static let serverStageFootnote =
         "You can close this screen - the import keeps running on Baseline's server and the result will be here when you come back."
 
+    /// Reports photos already loaded rather than the one in flight, so the sentence and the
+    /// determinate bar agree at both ends of the stage.
+    static func loadingImagesDetail(completed: Int, total: Int) -> String {
+        guard total > 0 else { return localStageFootnote }
+        let loaded = min(max(completed, 0), total)
+        return "Loaded \(loaded) of \(total) photos. Large iCloud photos can take a moment. \(localStageFootnote)"
+    }
+
+    /// The handoff is device-side work: backgrounding suspends it and it resumes from persisted
+    /// progress, so the only honest guidance is the local footnote.
+    static let handoffDetail =
+        "Baseline is sending the workout text to the parser. \(localStageFootnote)"
+
     static func retryingDetail(completed: Int, total: Int) -> String {
         guard total > 0 else { return "Keep Baseline open until the retry is handed off." }
         return "Progress saved: \(completed) of \(total) sections. Keep Baseline open until the retry is handed off."
@@ -553,9 +566,7 @@ struct WorkoutImportView: View {
             progress(
                 "Creating your workout",
                 status: "Preparing photos",
-                detail: total > 0
-                    ? "Photo \(min(completed + 1, total)) of \(total). Large iCloud photos can take a moment. \(WorkoutImportProgressCopy.localStageFootnote)"
-                    : WorkoutImportProgressCopy.localStageFootnote,
+                detail: WorkoutImportProgressCopy.loadingImagesDetail(completed: completed, total: total),
                 steps: (completed, total)
             )
         case .recognizing(let completed, let total):
@@ -577,13 +588,14 @@ struct WorkoutImportView: View {
             progress(
                 "Creating your workout",
                 status: "Sending to the parser",
-                detail: "Keep Baseline open until the workout is handed off. \(WorkoutImportProgressCopy.localStageFootnote)"
+                detail: WorkoutImportProgressCopy.handoffDetail
             )
         case .retryingSections(let completed, let total):
             progress(
                 "Creating your workout",
                 status: "Organizing exercises",
-                detail: WorkoutImportProgressCopy.retryingDetail(completed: completed, total: total)
+                detail: WorkoutImportProgressCopy.retryingDetail(completed: completed, total: total),
+                steps: (completed, total)
             )
         case .processingSections(let completed, let total):
             progress(
@@ -670,13 +682,11 @@ struct WorkoutImportView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     if let steps, steps.total > 0 {
-                        ProgressView(
-                            value: Double(min(max(steps.completed, 0), steps.total)),
-                            total: Double(steps.total)
-                        )
-                        .tint(BaselineColor.accent)
-                        .frame(maxWidth: 260)
-                        .accessibilityLabel("Step \(min(steps.completed + 1, steps.total)) of \(steps.total)")
+                        let completed = min(max(steps.completed, 0), steps.total)
+                        ProgressView(value: Double(completed), total: Double(steps.total))
+                            .tint(BaselineColor.accent)
+                            .frame(maxWidth: 260)
+                            .accessibilityLabel("\(completed) of \(steps.total) complete")
                     } else {
                         ProgressView().tint(BaselineColor.accent).scaleEffect(1.2)
                     }

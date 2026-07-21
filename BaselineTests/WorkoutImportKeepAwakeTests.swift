@@ -81,6 +81,31 @@ struct WorkoutImportProgressCopyTests {
         #expect(!WorkoutImportProgressCopy.localStageFootnote.contains("You can close this screen"))
     }
 
+    /// The determinate bar is driven by completed work, so the sentence above it has to count the
+    /// same thing - otherwise the copy and the bar disagree by one for the whole stage.
+    @Test func photoLoadingCountsCompletedWorkNotTheItemInFlight() {
+        #expect(
+            WorkoutImportProgressCopy.loadingImagesDetail(completed: 0, total: 3)
+                .hasPrefix("Loaded 0 of 3 photos.")
+        )
+        #expect(
+            WorkoutImportProgressCopy.loadingImagesDetail(completed: 3, total: 3)
+                .hasPrefix("Loaded 3 of 3 photos.")
+        )
+        #expect(
+            WorkoutImportProgressCopy.loadingImagesDetail(completed: 0, total: 0)
+                == WorkoutImportProgressCopy.localStageFootnote
+        )
+    }
+
+    /// The handoff runs on the device, so it must not tell the user to stay put and then immediately
+    /// reassure them that leaving is safe.
+    @Test func handoffGivesOneConsistentBackgroundingInstruction() {
+        #expect(WorkoutImportProgressCopy.handoffDetail.hasSuffix(WorkoutImportProgressCopy.localStageFootnote))
+        #expect(!WorkoutImportProgressCopy.handoffDetail.contains("Keep Baseline open"))
+        #expect(!WorkoutImportProgressCopy.handoffDetail.contains(WorkoutImportProgressCopy.serverStageFootnote))
+    }
+
     @Test func serverProgressWithoutSectionCountsStillExplainsTheWait() {
         #expect(
             WorkoutImportProgressCopy.processingDetail(isQueued: false, completed: 0, total: 0)

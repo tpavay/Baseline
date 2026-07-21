@@ -4,54 +4,64 @@ import Testing
 import UIKit
 @testable import Baseline
 
-/// Drives the real `WorkoutView` the way an athlete does - view a template, start it to begin
-/// logging, then finish - and reads back the actual system idle-timer flag each time. The claim worth
-/// guarding is end-to-end: rendering the live-log surface must keep the iPhone screen awake (so a
-/// glance at live heart rate never dims or locks), while viewing a template or the completed summary
-/// leaves normal idle behavior. `UIApplication.shared.isIdleTimerDisabled` is the exact flag iOS uses
-/// to hold the display on, so asserting it is asserting the end-user effect, not a stand-in.
-///
-/// Hosted in a window attached to the app's scene: sign-in gates a plain launch and an unattached
-/// window renders blank. The log case also writes a PNG of the surface that stays lit.
-@MainActor
-struct WorkoutKeepAwakeRenderTests {
+/// Every case that touches `UIApplication.shared.isIdleTimerDisabled` lives under this suite. The
+/// flag is process-global and each case resets it before asserting, so two of them running at once
+/// would read each other's resets. `.serialized` applies to the whole subtree, so no two idle-timer
+/// tests overlap even across files.
+@Suite(.serialized)
+struct IdleTimerRenderTests {}
 
-    /// Rendering an in-progress log holds the screen awake; leaving it restores normal idle behavior.
-    @Test func loggingKeepsScreenAwakeAndLeavingRestoresIt() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+extension IdleTimerRenderTests {
+    /// Drives the real `WorkoutView` the way an athlete does - view a template, start it to begin
+    /// logging, then finish - and reads back the actual system idle-timer flag each time. The claim
+    /// worth guarding is end-to-end: rendering the live-log surface must keep the iPhone screen awake
+    /// (so a glance at live heart rate never dims or locks), while viewing a template or the completed
+    /// summary leaves normal idle behavior. `UIApplication.shared.isIdleTimerDisabled` is the exact
+    /// flag iOS uses to hold the display on, so asserting it is asserting the end-user effect, not a
+    /// stand-in.
+    ///
+    /// Hosted in a window attached to the app's scene: sign-in gates a plain launch and an unattached
+    /// window renders blank. The log case also writes a PNG of the surface that stays lit.
+    @MainActor
+    struct WorkoutKeepAwakeRenderTests {
 
-        let screen = try await WorkoutScreen(stage: .logging)
-        #expect(
-            UIApplication.shared.isIdleTimerDisabled,
-            "Rendering the active log must disable the idle timer so the display stays on."
-        )
-        screen.capture("workout-logging-screen-awake")
+        /// Rendering an in-progress log holds the screen awake; leaving it restores normal idle behavior.
+        @Test func loggingKeepsScreenAwakeAndLeavingRestoresIt() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        screen.tearDown()
-        #expect(
-            !UIApplication.shared.isIdleTimerDisabled,
-            "Leaving the workout must restore normal idle behavior."
-        )
-    }
+            let screen = try await WorkoutScreen(stage: .logging)
+            #expect(
+                UIApplication.shared.isIdleTimerDisabled,
+                "Rendering the active log must disable the idle timer so the display stays on."
+            )
+            screen.capture("workout-logging-screen-awake")
 
-    /// Viewing an un-started template keeps normal idle behavior - no reason to hold the screen on.
-    @Test func viewingTemplateLeavesIdleBehavior() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+            screen.tearDown()
+            #expect(
+                !UIApplication.shared.isIdleTimerDisabled,
+                "Leaving the workout must restore normal idle behavior."
+            )
+        }
 
-        let screen = try await WorkoutScreen(stage: .viewingTemplate)
-        defer { screen.tearDown() }
+        /// Viewing an un-started template keeps normal idle behavior - no reason to hold the screen on.
+        @Test func viewingTemplateLeavesIdleBehavior() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        #expect(!UIApplication.shared.isIdleTimerDisabled)
-    }
+            let screen = try await WorkoutScreen(stage: .viewingTemplate)
+            defer { screen.tearDown() }
 
-    /// Reviewing the completed summary keeps normal idle behavior.
-    @Test func completedSummaryLeavesIdleBehavior() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+            #expect(!UIApplication.shared.isIdleTimerDisabled)
+        }
 
-        let screen = try await WorkoutScreen(stage: .completed)
-        defer { screen.tearDown() }
+        /// Reviewing the completed summary keeps normal idle behavior.
+        @Test func completedSummaryLeavesIdleBehavior() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        #expect(!UIApplication.shared.isIdleTimerDisabled)
+            let screen = try await WorkoutScreen(stage: .completed)
+            defer { screen.tearDown() }
+
+            #expect(!UIApplication.shared.isIdleTimerDisabled)
+        }
     }
 }
 

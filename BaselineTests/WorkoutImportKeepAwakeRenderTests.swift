@@ -4,83 +4,85 @@ import Testing
 import UIKit
 @testable import Baseline
 
-/// Drives the real `WorkoutImportView` in a scene-attached window and reads back the actual system
-/// idle-timer flag. The claim worth guarding is end-to-end: while a photo import is working - which
-/// can be a minute or more on a real device - the display must stay on, and every way out of that
-/// wait must restore normal idle behavior. `UIApplication.shared.isIdleTimerDisabled` is the exact
-/// flag iOS uses to hold the display, so asserting it is asserting the end-user effect.
-///
-/// Hosted in a window attached to the app's scene: sign-in gates a plain launch and an unattached
-/// window renders blank. Mirrors `WorkoutKeepAwakeRenderTests`.
-@MainActor
-struct WorkoutImportKeepAwakeRenderTests {
+extension IdleTimerRenderTests {
+    /// Drives the real `WorkoutImportView` in a scene-attached window and reads back the actual system
+    /// idle-timer flag. The claim worth guarding is end-to-end: while a photo import is working - which
+    /// can be a minute or more on a real device - the display must stay on, and every way out of that
+    /// wait must restore normal idle behavior. `UIApplication.shared.isIdleTimerDisabled` is the exact
+    /// flag iOS uses to hold the display, so asserting it is asserting the end-user effect.
+    ///
+    /// Hosted in a window attached to the app's scene: sign-in gates a plain launch and an unattached
+    /// window renders blank. Mirrors `WorkoutKeepAwakeRenderTests`.
+    @MainActor
+    struct WorkoutImportKeepAwakeRenderTests {
 
-    /// The long stage - sections being parsed server-side - holds the screen awake, and leaving the
-    /// import screen releases it.
-    @Test func workingImportKeepsScreenAwakeAndLeavingRestoresIt() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+        /// The long stage - sections being parsed server-side - holds the screen awake, and leaving the
+        /// import screen releases it.
+        @Test func workingImportKeepsScreenAwakeAndLeavingRestoresIt() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        let screen = try await WorkoutImportScreen(status: .processingSections(completed: 2, total: 5))
-        #expect(
-            UIApplication.shared.isIdleTimerDisabled,
-            "Rendering a working import must disable the idle timer so the display stays on."
-        )
-        screen.capture("workout-import-progress-screen-awake")
+            let screen = try await WorkoutImportScreen(status: .processingSections(completed: 2, total: 5))
+            #expect(
+                UIApplication.shared.isIdleTimerDisabled,
+                "Rendering a working import must disable the idle timer so the display stays on."
+            )
+            screen.capture("workout-import-progress-screen-awake")
 
-        screen.tearDown()
-        #expect(
-            !UIApplication.shared.isIdleTimerDisabled,
-            "Leaving the import must restore normal idle behavior."
-        )
-    }
+            screen.tearDown()
+            #expect(
+                !UIApplication.shared.isIdleTimerDisabled,
+                "Leaving the import must restore normal idle behavior."
+            )
+        }
 
-    /// Failure is the exit path a leaked idle-timer disable would hide behind: the work has stopped
-    /// but the screen would stay lit forever.
-    @Test func failedImportLeavesIdleBehavior() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+        /// Failure is the exit path a leaked idle-timer disable would hide behind: the work has stopped
+        /// but the screen would stay lit forever.
+        @Test func failedImportLeavesIdleBehavior() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        let screen = try await WorkoutImportScreen(
-            status: .failed(message: "Baseline could not parse that workout right now. Try again."),
-            settleOn: "Import didn't finish"
-        )
-        defer { screen.tearDown() }
+            let screen = try await WorkoutImportScreen(
+                status: .failed(message: "Baseline could not parse that workout right now. Try again."),
+                settleOn: "Import didn't finish"
+            )
+            defer { screen.tearDown() }
 
-        #expect(!UIApplication.shared.isIdleTimerDisabled)
-    }
+            #expect(!UIApplication.shared.isIdleTimerDisabled)
+        }
 
-    /// The picker, before anything is selected, has no reason to hold the display on.
-    @Test func selectingLeavesIdleBehavior() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+        /// The picker, before anything is selected, has no reason to hold the display on.
+        @Test func selectingLeavesIdleBehavior() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        let screen = try await WorkoutImportScreen(
-            status: .selecting,
-            settleOn: "Choose workout photos"
-        )
-        defer { screen.tearDown() }
+            let screen = try await WorkoutImportScreen(
+                status: .selecting,
+                settleOn: "Choose workout photos"
+            )
+            defer { screen.tearDown() }
 
-        #expect(!UIApplication.shared.isIdleTimerDisabled)
-    }
+            #expect(!UIApplication.shared.isIdleTimerDisabled)
+        }
 
-    /// A queued job says so on screen rather than implying a section is being parsed.
-    @Test func queuedImportSaysItIsWaitingInLine() async throws {
-        UIApplication.shared.isIdleTimerDisabled = false
+        /// A queued job says so on screen rather than implying a section is being parsed.
+        @Test func queuedImportSaysItIsWaitingInLine() async throws {
+            UIApplication.shared.isIdleTimerDisabled = false
 
-        var job = WorkoutImportJob(stage: .processingSections, expectedPageCount: 1)
-        job.serverProgress = WorkoutImportServerProgress(
-            serverJobID: "server-1",
-            status: WorkoutImportRemoteJobState.queued.rawValue,
-            completedSections: 0,
-            totalSections: 4
-        )
-        let screen = try await WorkoutImportScreen(
-            status: .processingSections(completed: 0, total: 4),
-            job: job,
-            settleOn: "Waiting for a parser slot"
-        )
-        defer { screen.tearDown() }
+            var job = WorkoutImportJob(stage: .processingSections, expectedPageCount: 1)
+            job.serverProgress = WorkoutImportServerProgress(
+                serverJobID: "server-1",
+                status: WorkoutImportRemoteJobState.queued.rawValue,
+                completedSections: 0,
+                totalSections: 4
+            )
+            let screen = try await WorkoutImportScreen(
+                status: .processingSections(completed: 0, total: 4),
+                job: job,
+                settleOn: "Waiting for a parser slot"
+            )
+            defer { screen.tearDown() }
 
-        #expect(UIApplication.shared.isIdleTimerDisabled, "A queued import is still an active wait.")
-        screen.capture("workout-import-queued")
+            #expect(UIApplication.shared.isIdleTimerDisabled, "A queued import is still an active wait.")
+            screen.capture("workout-import-queued")
+        }
     }
 }
 
