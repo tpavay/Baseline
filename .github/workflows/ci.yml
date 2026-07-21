@@ -1,0 +1,487 @@
+name: CI
+
+# Baseline's pull-request gate. Before this existed a PR reported "no checks
+# configured", so every merge rode on whatever the author ran locally.
+#
+# Deliberately NOT filtered at the `on:` level, by path or by branch. A
+# workflow that never triggers produces no check run at all, which leaves the
+# PR permanently pending against a required status check (the problem Ascend
+# has). A `paths:` filter does that to a docs-only PR; a `branches:` filter
+# does the same thing to any PR whose base is not listed - a develop -> main
+# release PR, or a stacked feature -> feature PR. Both holes are the same bug,
+# so this workflow triggers on every pull request unconditionally. A `changes`
+# job then decides which expensive jobs are relevant, and the always-running
+# `ci` job is the single required check, so a docs-only PR still reports a
+# green required check having correctly skipped the build.
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap (~15s on ubuntu) triage so a functions-only or docs-only PR does not
+  # spend ~35 macOS-runner minutes, which GitHub bills at 10x. Fails open: if
+  # the diff cannot be computed, every job runs.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.filter.outputs.ios }}
+      functions: ${{ steps.filter.outputs.functions }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "Not a pull_request event — running everything."
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "functions=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Three-dot: the branch's own changes, measured from the merge base,
+          # so commits landed on the base branch after this PR forked do not
+          # count as changed here and drag in the macOS jobs.
+          if ! changed="$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA")"; then
+            echo "::warning::Could not diff $BASE_SHA...$HEAD_SHA - running everything."
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "functions=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          printf '%s\n' "$changed"
+
+          matches() {
+            printf '%s\n' "$changed" | grep -Eq "$1"
+          }
+
+          # Anything that feeds the Xcode build: app sources, tests, the
+          # XcodeGen spec, test fixtures compiled into the test bundle, the
+          # build-phase script, and this workflow. Deliberately no Gemfile:
+          # neither macOS job here sets up Ruby or invokes Fastlane, so a
+          # Gemfile-only PR has nothing to prove on a 10x-billed runner.
+          ios_pattern='^(Baseline/|BaselineTests/|fixtures/|project\.yml$|scripts/select-firebase-plist\.sh$|\.github/workflows/ci\.yml$)'
+          # Anything that feeds the Cloud Functions type-check and test suite.
+          # `fixtures/` is in here because the node suite reads it directly
+          # (functions/test/*.test.js resolve ../../fixtures/workout-import/).
+          functions_pattern='^(functions/|fixtures/|firebase\.json$|\.github/workflows/ci\.yml$)'
+
+          if matches "$ios_pattern"; then echo "ios=true" >> "$GITHUB_OUTPUT"; else echo "ios=false" >> "$GITHUB_OUTPUT"; fi
+          if matches "$functions_pattern"; then echo "functions=true" >> "$GITHUB_OUTPUT"; else echo "functions=false" >> "$GITHUB_OUTPUT"; fi
+
+          cat "$GITHUB_OUTPUT"
+
+  # Builds the app and runs the whole Swift test suite on a simulator, in the
+  # Debug configuration the `Baseline` scheme declares for its test action — so
+  # a green run here means the same thing a green local `xcodebuild test` means.
+  ios-test:
+    name: iOS Build & Test (Debug)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Decode Firebase plist files
+        env:
+          GOOGLE_SERVICE_INFO_DEV_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Same shape as deploy-staging.yml's decoder; keep the copies in step.
+          decode_base64_required() {
+            local secret_name="$1"
+            local encoded="$2"
+            local output_path="$3"
+
+            if [ -z "$encoded" ]; then
+              echo "::error::Required secret ${secret_name} is missing or empty."
+              exit 1
+            fi
+
+            if ! (printf "%s" "$encoded" | base64 --decode > "$output_path" 2>/dev/null || printf "%s" "$encoded" | base64 -D > "$output_path" 2>/dev/null); then
+              echo "::error::Failed to decode secret ${secret_name} as base64."
+              exit 1
+            fi
+
+            if [ ! -s "$output_path" ]; then
+              echo "::error::Decoded file for ${secret_name} is empty."
+              exit 1
+            fi
+
+            if ! plutil -lint "$output_path" >/dev/null; then
+              echo "::error::Decoded file for ${secret_name} is not a valid plist."
+              exit 1
+            fi
+          }
+
+          mkdir -p Baseline/App/Firebase
+          rm -f Baseline/App/Firebase/GoogleService-Info-Dev.plist
+          decode_base64_required "GOOGLE_SERVICE_INFO_DEV_BASE64" "$GOOGLE_SERVICE_INFO_DEV_BASE64" "Baseline/App/Firebase/GoogleService-Info-Dev.plist"
+
+      # Baseline's .xcodeproj is gitignored and generated, so this doubles as
+      # the project.yml validity check: a malformed spec fails the PR here.
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      # Asks CoreSimulator directly rather than parsing `xcodebuild
+      # -showdestinations`: the runner image does not guarantee that a device
+      # has been pre-created for the Xcode `latest-stable` resolves to, and a
+      # destination list that contains only placeholders is indistinguishable
+      # from a parse failure. If no iPhone exists, create one from the newest
+      # installed iOS runtime so the job provisions its own destination instead
+      # of depending on how the image was baked.
+      - name: Select simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          preferred_names=(
+            "iPhone 17 Pro"
+            "iPhone 17"
+            "iPhone 16 Pro"
+            "iPhone 16"
+            "iPhone 15 Pro"
+            "iPhone 15"
+          )
+
+          devices_json="$(xcrun simctl list --json devices available)"
+
+          # Newest runtime wins, so a preferred name that exists on several
+          # runtimes resolves to the most recent iOS.
+          select_device() {
+            printf '%s' "$devices_json" | jq -r --arg target "$1" '
+              [ .devices
+                | to_entries[]
+                | select(.key | test("SimRuntime\\.iOS-"))
+                | (.key | capture("SimRuntime\\.iOS-(?<v>[0-9-]+)") | .v
+                   | split("-") | map(tonumber)) as $version
+                | .value[]
+                | select(.isAvailable)
+                | select(if $target == "" then (.name | startswith("iPhone")) else .name == $target end)
+                | { udid: .udid, version: $version }
+              ]
+              | sort_by(.version)
+              | last
+              | .udid // ""
+            '
+          }
+
+          simulator_id=""
+
+          for name in "${preferred_names[@]}"; do
+            simulator_id="$(select_device "$name")"
+            if [ -n "$simulator_id" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$simulator_id" ]; then
+            simulator_id="$(select_device "")"
+          fi
+
+          if [ -z "$simulator_id" ]; then
+            echo "No iPhone simulator exists on this runner; creating one."
+
+            runtime="$(
+              xcrun simctl list --json runtimes available | jq -r '
+                [ .runtimes[]
+                  | select(.isAvailable)
+                  | select(.identifier | test("SimRuntime\\.iOS-"))
+                ]
+                | sort_by(.version | split(".") | map(tonumber))
+                | last
+                | .identifier // ""
+              '
+            )"
+
+            # `productFamily == "iPhone"` also matches iPod touch, which no
+            # current iOS runtime can instantiate, so match the name instead.
+            # simctl lists iPhone types newest first, hence `first` as the
+            # fallback: an old model is not creatable on the newest runtime.
+            device_types_json="$(xcrun simctl list --json devicetypes)"
+            device_type=""
+
+            for name in "${preferred_names[@]}"; do
+              device_type="$(
+                printf '%s' "$device_types_json" | jq -r --arg target "$name" '
+                  [ .devicetypes[] | select(.name == $target) ] | first | .identifier // ""
+                '
+              )"
+              if [ -n "$device_type" ]; then
+                break
+              fi
+            done
+
+            if [ -z "$device_type" ]; then
+              device_type="$(
+                printf '%s' "$device_types_json" | jq -r '
+                  [ .devicetypes[] | select(.name | startswith("iPhone")) ]
+                  | first
+                  | .identifier // ""
+                '
+              )"
+            fi
+
+            if [ -z "$runtime" ] || [ -z "$device_type" ]; then
+              echo "::error::No iOS simulator runtime or iPhone device type is installed."
+              xcrun simctl list runtimes
+              exit 1
+            fi
+
+            echo "Creating simulator: $device_type on $runtime"
+            simulator_id="$(xcrun simctl create "Baseline-CI-iPhone" "$device_type" "$runtime")"
+          fi
+
+          if [ -z "$simulator_id" ]; then
+            echo "::error::No available iPhone simulator destination found."
+            xcrun simctl list devices available
+            exit 1
+          fi
+
+          echo "Using simulator $simulator_id"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+
+      # The render suites read the screen through the accessibility tree. UIKit
+      # only publishes that tree when the device has application accessibility
+      # switched on, which a developer's long-lived simulator picked up years
+      # ago and a runner's simulator has never had: without it every view - even
+      # a plain UILabel - reports zero accessibility elements, so all seven
+      # render suites see a blank screen and fail. The preference is read at app
+      # launch, so it has to be written before xcodebuild starts the host app.
+      - name: Enable simulator accessibility
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool true
+          xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.Accessibility AccessibilityEnabled -bool true
+          xcrun simctl spawn "$SIMULATOR_ID" defaults read com.apple.Accessibility
+
+      - name: Build and test
+        run: |
+          xcodebuild \
+            -project Baseline.xcodeproj \
+            -scheme "Baseline" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -resultBundlePath TestResults.xcresult \
+            test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Baseline-TestResults
+          path: TestResults.xcresult
+          retention-days: 7
+
+  # Compile-only, ~10 minutes. Staging is a release-type configuration, and it
+  # is what deploy-staging.yml archives on every push to develop. Without this
+  # job an optimization-only or Staging-only build break would first appear
+  # after merge, in the deploy. Signing is disabled because this proves the
+  # compile, not the archive; the real signed archive still happens in
+  # deploy-staging.yml.
+  ios-build-staging:
+    name: iOS Build (Staging, unsigned)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Decode Firebase plist files
+        env:
+          GOOGLE_SERVICE_INFO_STAGING_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_STAGING_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Same shape as deploy-staging.yml's decoder; keep the copies in step.
+          decode_base64_required() {
+            local secret_name="$1"
+            local encoded="$2"
+            local output_path="$3"
+
+            if [ -z "$encoded" ]; then
+              echo "::error::Required secret ${secret_name} is missing or empty."
+              exit 1
+            fi
+
+            if ! (printf "%s" "$encoded" | base64 --decode > "$output_path" 2>/dev/null || printf "%s" "$encoded" | base64 -D > "$output_path" 2>/dev/null); then
+              echo "::error::Failed to decode secret ${secret_name} as base64."
+              exit 1
+            fi
+
+            if [ ! -s "$output_path" ]; then
+              echo "::error::Decoded file for ${secret_name} is empty."
+              exit 1
+            fi
+
+            if ! plutil -lint "$output_path" >/dev/null; then
+              echo "::error::Decoded file for ${secret_name} is not a valid plist."
+              exit 1
+            fi
+          }
+
+          mkdir -p Baseline/App/Firebase
+          rm -f Baseline/App/Firebase/GoogleService-Info-Staging.plist
+          decode_base64_required "GOOGLE_SERVICE_INFO_STAGING_BASE64" "$GOOGLE_SERVICE_INFO_STAGING_BASE64" "Baseline/App/Firebase/GoogleService-Info-Staging.plist"
+
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      # project.yml pins manual signing and a match provisioning profile on the
+      # Staging config for the archive path. Those are overridden to empty here
+      # so the compile needs no certificates, keychain, or match SSH key.
+      - name: Build app (Staging, unsigned, device arch)
+        run: |
+          xcodebuild \
+            -project Baseline.xcodeproj \
+            -scheme "Baseline-Staging" \
+            -configuration Staging \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+
+  # Ubuntu, ~3 minutes. `tsc` is the only static analysis Baseline has on the
+  # functions: strict mode plus noUnusedLocals (see functions/tsconfig.json).
+  # There is no lint script in functions/package.json and no Swift linter in
+  # the repo, so this is the whole "lint" leg — see the PR body.
+  functions-verify:
+    name: Functions Type-check & Test
+    needs: changes
+    if: needs.changes.outputs.functions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix functions ci
+
+      - name: Type-check
+        run: npm --prefix functions run build
+
+      - name: Run tests
+        run: npm --prefix functions test
+
+  # The single required status check. `if: always()` with no other condition,
+  # so it reports on every pull request regardless of base branch, including
+  # ones where every other job was correctly skipped and ones where `changes`
+  # itself failed (a failed upstream result is not success/skipped, so this
+  # fails rather than silently passing). Nothing here can leave a PR stuck
+  # waiting on a check that never reports.
+  #
+  # Set branch protection on this job's name ("CI"), not on the job names
+  # above — those are conditional by design.
+  ci:
+    name: CI
+    if: always()
+    needs:
+      - changes
+      - ios-test
+      - ios-build-staging
+      - functions-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check job results
+        shell: bash
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+
+          echo "Upstream job results: $RESULTS"
+
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A required CI job did not pass (results: $RESULTS)."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "All required CI jobs passed or were correctly skipped."
