@@ -217,6 +217,11 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - App Store upload validation rejects binaries on two things Xcode never warns about: an app icon carrying an alpha channel (the 1024 source in `AppIcon.appiconset` must be fully opaque), and a missing purpose string for anything the **entitlements** permit, not just what the code calls.
   `com.apple.developer.healthkit` cannot be scoped to reads, so `NSHealthUpdateUsageDescription` is required even though `HealthService` is read-only.
   `BaselineTests/AppStoreValidationTests.swift` guards both.
+- Entitlements are split per configuration: `Baseline/Baseline-Debug.entitlements` (App Attest `development`) for Debug, `Baseline/Baseline.entitlements` (`production`) for Staging and Release, wired by `settings.configs` in `project.yml`.
+  Staging must stay on `production` even though it is the pre-prod tier.
+  Apple ignores `com.apple.developer.devicecheck.appattest-environment` once a build is distributed through TestFlight, the App Store, or Enterprise, and forces the production environment, so `development` there would be an inert value that misdescribes the build.
+  Genuine sandbox attestation for staging would require it to stop being a TestFlight build.
+  `BaselineTests/EntitlementsConfigurationTests.swift` guards the values and keeps the two files' other keys in sync.
 - Because Baseline prescribes training **intensity**: keep risk language lightweight but present — an assumption-of-risk / not-medical-advice clause lives in the ToS, accepted via a one-line footnote at the onboarding commitment step, plus a contextual "training guidance, not medical advice — stop if you feel unwell" line on prescription surfaces. **No standalone disclaimer screen and no PAR-Q** (decided 2026-07: cut for onboarding friction). Keep the **HYROX® trademark disclaimer** ("registered trademark of its owner; not affiliated with / endorsed by HYROX"). Get a lawyer to review the ToS.
 
 ---
