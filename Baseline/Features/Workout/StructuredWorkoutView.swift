@@ -307,7 +307,7 @@ private struct WorkoutGroupHeader: View {
     private var groupNameBinding: Binding<String> {
         Binding(
             get: { store.current?.allGroups.first(where: { $0.id == group.id })?.label ?? group.label },
-            set: { value in store.edit { $0.updateGroup(group.id) { $0.label = value } } }
+            set: { value in store.edit(mode.editScope) { $0.updateGroup(group.id) { $0.label = value } } }
         )
     }
 
@@ -318,7 +318,7 @@ private struct WorkoutGroupHeader: View {
                     .joined(separator: "\n\n") ?? ""
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateGroup(group.id) { updated in
                         updated.guidance = updatedGuidance(updated.guidance, notesText: value)
                     }
@@ -337,7 +337,7 @@ private struct WorkoutGroupHeader: View {
     }
 
     private func updateRepetition(_ repetition: RepetitionRule) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateGroup(group.id) { $0.execution.repetition = repetition }
         }
     }
@@ -701,7 +701,7 @@ private struct WorkoutChoiceHeader: View {
                 if mode.isEditing {
                     Menu("Choice actions", systemImage: "ellipsis") {
                         Button("Require All Exercises", systemImage: "list.bullet") {
-                            store.edit { $0.convertChoiceToRequiredGroup(choice.id) }
+                            store.edit(mode.editScope) { $0.convertChoiceToRequiredGroup(choice.id) }
                         }
                     }
                     .labelStyle(.iconOnly)
@@ -796,6 +796,8 @@ private struct WorkoutExerciseSection: View {
     @State private var sheet: ExerciseSheet?
     @State private var showLabelEditor = false
     @State private var labelDraft = ""
+    /// Raised instead of removing outright when a mid-workout true-remove would discard logged sets.
+    @State private var showRemoveConfirmation = false
 
     private var performed: PerformedExercise? {
         store.currentLog?.performed(forPlanned: exercise.id)
@@ -894,6 +896,18 @@ private struct WorkoutExerciseSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This changes how the movement is labeled in this workout without renaming the exercise.")
+        }
+        .confirmationDialog(
+            "Remove \(presentedExercise.exerciseName)?",
+            isPresented: $showRemoveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove and Discard Sets", role: .destructive) {
+                store.removeExerciseFromWorkout(exercise.id, scope: mode.editScope)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You have already logged sets for this exercise. Removing it from this workout discards them.")
         }
     }
 
@@ -1349,7 +1363,7 @@ private struct WorkoutExerciseSection: View {
             Menu {
                 ForEach(SetRole.allCases, id: \.self) { role in
                     Button {
-                        store.edit { $0.updateSet(set.id) { $0.role = role } }
+                        store.edit(mode.editScope) { $0.updateSet(set.id) { $0.role = role } }
                     } label: {
                         Label(role.fullLabel, systemImage: set.role == role ? "checkmark" : role.symbol)
                     }
@@ -1512,7 +1526,7 @@ private struct WorkoutExerciseSection: View {
                     Menu {
                         ForEach(otherBlocks) { block in
                             Button(block.name.isEmpty ? "Main" : block.name) {
-                                store.edit { $0.moveExercise(exercise.id, toBlock: block.id) }
+                                store.edit(mode.editScope) { $0.moveExercise(exercise.id, toBlock: block.id) }
                             }
                         }
                     } label: {
@@ -1520,10 +1534,10 @@ private struct WorkoutExerciseSection: View {
                     }
                 }
 
-                Button { store.edit { $0.duplicateExercise(exercise.id) } } label: {
+                Button { store.edit(mode.editScope) { $0.duplicateExercise(exercise.id) } } label: {
                     Label("Duplicate Exercise", systemImage: "plus.square.on.square")
                 }
-                Button(role: .destructive) { store.edit { $0.removeExercise(exercise.id) } } label: {
+                Button(role: .destructive) { store.edit(mode.editScope) { $0.removeExercise(exercise.id) } } label: {
                     Label("Remove Exercise", systemImage: "trash")
                 }
             } else if mode.isLogging {
@@ -1545,7 +1559,29 @@ private struct WorkoutExerciseSection: View {
                     Button { sheet = .substituteLog(exercise.id, presentedExercise.exerciseName, nil, nil) } label: {
                         Label("Replace Exercise", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    Button(role: .destructive) { removeExercise(groupID: nil, iteration: nil) } label: {
+                    // Mid-workout prescription and logging-config edits. These change what the workout
+                    // asks for (not what was logged), apply to this session only, and are what the
+                    // completion "update your template?" prompt offers to promote to the plan.
+                    Button { sheet = .prescription(exercise.id) } label: {
+                        Label("Edit Sets & Targets", systemImage: "slider.horizontal.below.rectangle")
+                    }
+                    Button { sheet = .configure(exercise.id, exercise.exerciseName, .metrics) } label: {
+                        Label("Metrics", systemImage: "slider.horizontal.3")
+                    }
+                    Button { sheet = .configure(exercise.id, exercise.exerciseName, .units) } label: {
+                        Label("Units", systemImage: "ruler")
+                    }
+                    Divider()
+                    // A true structural removal from this session — not the reversible skip. It also
+                    // purges any logged sets, so completion can't resurrect work for an exercise the
+                    // athlete removed. Confirmed first when there is real logged work to lose.
+                    Button(role: .destructive) {
+                        if store.hasLoggedWork(forExercise: exercise.id) {
+                            showRemoveConfirmation = true
+                        } else {
+                            store.removeExerciseFromWorkout(exercise.id, scope: mode.editScope)
+                        }
+                    } label: {
                         Label("Remove from This Workout", systemImage: "trash")
                     }
                 }
@@ -1575,7 +1611,7 @@ private struct WorkoutExerciseSection: View {
 
     private func saveDisplayLabel() {
         let value = labelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) { planned in
                 planned.displayLabel = value.isEmpty ? nil : value
             }
@@ -1589,7 +1625,7 @@ private struct WorkoutExerciseSection: View {
                     .joined(separator: "\n\n") ?? ""
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateExercise(exercise.id) { updated in
                         updated.guidance = updatedGuidance(updated.guidance, notesText: value)
                     }
@@ -1613,7 +1649,7 @@ private struct WorkoutExerciseSection: View {
             ExerciseHistoryView(exercise: exercise)
         case .substituteTemplate(let id, let current):
             SubstituteExerciseFlow(currentName: current) { definition in
-                store.replaceExercise(id, with: definition)
+                store.replaceExercise(id, with: definition, scope: mode.editScope)
             }
         case .substituteLog(_, let current, let targetGroupID, let targetIteration):
             SubstituteExerciseFlow(currentName: current) { definition in
@@ -1638,9 +1674,11 @@ private struct WorkoutExerciseSection: View {
                         )
                     }
                 ) { enabled, units in
-                    store.setLoggingConfig(exerciseID: id, enabled: enabled, units: units)
+                    store.setLoggingConfig(exerciseID: id, enabled: enabled, units: units, scope: mode.editScope)
                 }
             }
+        case .prescription(let id):
+            EditPrescriptionSheet(exerciseID: id)
         }
     }
 
@@ -1726,7 +1764,7 @@ private struct WorkoutExerciseSection: View {
                     .first(where: { $0.id == set.id })?.values[metric]
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateSet(set.id) { $0.values[metric] = value.map { max(0, $0) } }
                 }
             }
@@ -1745,7 +1783,7 @@ private struct WorkoutExerciseSection: View {
                     .first(where: { $0.id == alternativeID })?.values[metric]
             },
             set: { value in
-                store.edit { workout in
+                store.edit(mode.editScope) { workout in
                     workout.updateSet(setID) { set in
                         guard let index = set.alternatives.firstIndex(where: { $0.id == alternativeID }) else { return }
                         set.alternatives[index].values[metric] = value.map { max(0, $0) }
@@ -1932,7 +1970,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func addSet() {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) { planned in
                 var copy = planned.prescription.sets.last ?? PlannedSet()
                 copy.id = UUID()
@@ -1942,7 +1980,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func duplicateSet(_ setID: UUID) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) { planned in
                 guard let index = planned.prescription.sets.firstIndex(where: { $0.id == setID }) else { return }
                 var copy = planned.prescription.sets[index]
@@ -1953,7 +1991,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func deleteSet(_ setID: UUID) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateExercise(exercise.id) {
                 $0.prescription.sets.removeAll { $0.id == setID }
             }
@@ -1961,7 +1999,7 @@ private struct WorkoutExerciseSection: View {
     }
 
     private func removeAlternative(_ alternativeID: UUID, from setID: UUID) {
-        store.edit { workout in
+        store.edit(mode.editScope) { workout in
             workout.updateSet(setID) { set in
                 set.alternatives.removeAll { $0.id == alternativeID }
             }
@@ -1975,6 +2013,7 @@ private enum ExerciseSheet: Identifiable {
     case substituteTemplate(UUID, String)
     case substituteLog(UUID, String, UUID?, Int?)
     case configure(UUID, String, MetricConfigFocus)
+    case prescription(UUID)
 
     var id: String {
         switch self {
@@ -1983,6 +2022,7 @@ private enum ExerciseSheet: Identifiable {
         case .substituteLog(let id, _, let groupID, let iteration):
             "substitute-log-\(id)-\(groupID?.uuidString ?? "top")-\(iteration.map(String.init) ?? "all")"
         case .configure(let id, _, let focus): "configure-\(id)-\(focus)"
+        case .prescription(let id): "prescription-\(id)"
         }
     }
 }

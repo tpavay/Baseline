@@ -206,6 +206,20 @@ extension Workout {
         return true
     }
 
+    /// Reorder whole blocks via SwiftUI drag (`.onMove`). Order is array position, so this is a pure
+    /// slice move — the offsets/target come straight from the reorder List.
+    mutating func moveBlocks(fromOffsets source: IndexSet, toOffset destination: Int) {
+        blocks.move(fromOffsets: source, toOffset: destination)
+    }
+
+    /// Reorder the top-level nodes *within one block* via drag (`.onMove`). Scoped to a single block so
+    /// a drag can never carry an exercise across a block boundary (a deliberate product constraint —
+    /// cross-block exercise moves are only reachable through the explicit "Move to Block" action).
+    mutating func moveNodes(inBlock blockID: UUID, fromOffsets source: IndexSet, toOffset destination: Int) {
+        guard let i = blocks.firstIndex(where: { $0.id == blockID }) else { return }
+        blocks[i].nodes.move(fromOffsets: source, toOffset: destination)
+    }
+
     @discardableResult
     mutating func renameBlock(_ id: UUID, to name: String) -> Bool {
         guard let i = blocks.firstIndex(where: { $0.id == id }) else { return false }
@@ -616,6 +630,31 @@ extension WorkoutLog {
 
     mutating func removeSetLog(_ id: UUID) {
         for e in exercises.indices { exercises[e].setLogs.removeAll { $0.id == id } }
+    }
+
+    /// True-remove the performed record for a planned exercise, including any logged sets and
+    /// adjustments. Used when an exercise is structurally deleted from the session mid-workout so the
+    /// log never keeps orphaned sets that the UI can't show but completion would otherwise resurface.
+    mutating func removePerformed(forPlanned plannedID: UUID) {
+        exercises.removeAll { $0.plannedExerciseID == plannedID }
+        exerciseAdjustments.removeAll { $0.plannedExerciseID == plannedID }
+    }
+
+    /// True-remove the logged sets that belong to planned sets which no longer exist. Deleting a planned
+    /// set is a structural edit like deleting an exercise: the log table can no longer render the row, so
+    /// leaving the actual behind would let completion commit work the athlete deleted.
+    mutating func removeSetLogs(forPlanned plannedID: UUID, plannedSetIDs: Set<UUID>) {
+        guard let index = exercises.firstIndex(where: { $0.plannedExerciseID == plannedID }) else { return }
+        exercises[index].setLogs.removeAll { log in
+            guard let plannedSetID = log.plannedSetID else { return false }
+            return plannedSetIDs.contains(plannedSetID)
+        }
+    }
+
+    /// Whether the log holds any actually-logged set for a planned exercise — the signal for confirming
+    /// before a destructive true-remove would discard real logged work.
+    func hasLoggedWork(forPlanned plannedID: UUID) -> Bool {
+        performed(forPlanned: plannedID)?.setLogs.contains { !$0.values.isEmpty || $0.completed } ?? false
     }
 
     func exerciseAdjustment(

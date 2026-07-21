@@ -130,12 +130,21 @@ struct TrainingWeek: Sendable {
 enum SessionStatus: String, Codable, Sendable { case active, paused, completed, discarded }
 
 /// The mutable in-progress container. On completion it freezes a `CompletedWorkoutLog`.
+///
+/// `workout` is the session's own copy of the planned training, present only once the athlete edits it
+/// mid-workout (add / true-remove / reorder / metric change). Nil ⇒ the session follows the scheduled
+/// workout's current revision. It is what the athlete performed against, kept separate from the saved
+/// plan until completion reconciliation promotes the changes.
 struct WorkoutSession: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var scheduledWorkoutID: UUID
     var startedAt: Date
     var status: SessionStatus = .active
     var log: WorkoutLog
+    var workout: Workout? = nil
+    /// Whether the "update your plan?" decision for this session is still unanswered — the one shared
+    /// fact every store bound to this workout consults to route an agent edit.
+    var reconciliationPending: Bool = false
 }
 
 /// The frozen, immutable performed fact. Plan restore never touches it; found by `scheduledWorkoutID`.

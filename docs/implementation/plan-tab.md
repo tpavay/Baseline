@@ -287,7 +287,9 @@ default or is optional; all relationships optional). **No `SDTrainingWeek`/`SDTr
                             templateID?; tagsJSON: Data?; supportsGoalIDsJSON: Data?; recurrenceJSON: Data? }
 @Model SDWorkoutRevision  { id; workoutID; createdAt; workoutJSON: Data }   // immutable Workout blob per edit
 @Model SDWorkoutTemplate  { id; name; currentRevisionID; tagsJSON: Data? }  // fwd-compat (point 10); no v1 UI
-@Model SDWorkoutSession   { id; scheduledWorkoutID; startedAt; statusRaw; logJSON: Data }   // point 7 (active/paused/…)
+@Model SDWorkoutSession   { id; scheduledWorkoutID; startedAt; statusRaw; logJSON: Data;   // point 7 (active/paused/…)
+                            sessionWorkoutJSON: Data?;      // session's own edited Workout copy; nil ⇒ follows the revision
+                            reconciliationPending: Bool? }  // "update your plan?" still unanswered (nil ⇒ not pending)
 @Model SDCompletedLog     { id; scheduledWorkoutID; finishedAt; logJSON: Data }   // append-only, never rewound
 @Model SDPlanVersion      { id; timestamp; actorRaw; operationJSON: Data; snapshotJSON: Data }  // append-only
 @Model SDPendingProposal  { id; operationJSON: Data; expectedHeadVersionID; diffJSON: Data;
@@ -369,16 +371,31 @@ func swap / reorder / add / duplicate / replace / skip / delete …(…, proposa
 func startSession(_ id: UUID) -> Result<WorkoutSession, PlanError>
 func resumeSession(_ id: UUID) -> Result<WorkoutSession, PlanError>
 func completeSession(_ id: UUID, proposalID: UUID?) -> MutationResult
+// Session-scoped mid-workout editing + the completion promotion decision
+func setSessionWorkout(forScheduled id: UUID, _ workout: Workout)
+func sessionDecisionPending(forScheduled id: UUID) -> Bool
+func resolveSessionDecision(forScheduled id: UUID)
+func resolveAbandonedSessionDecision(forScheduled id: UUID)
 // Append-only history
 func undo() -> MutationResult          // appends an inverse-op version
 func restore(version: UUID) -> MutationResult   // appends a restore version == chosen snapshot
 ```
+
+> This sketch is illustrative design intent, not a mirror of the shipped API, and parts of it have drifted
+> (several members shown here returning `Result`/`MutationResult` return optionals or `SessionCompletion` in
+> code). Read `PlanRepository` in `Baseline/Shared/Services/PlanRepository.swift` for the authoritative
+> declaration and trust it over this block.
 
 - `SwiftDataPlanRepository` implements it; `@Observable @MainActor` `PlanStore` wraps it for SwiftUI and
   publishes the current week + version list.
 - **Plan edits create revisions.** Editing a scheduled workout's content (via the detail editor or an
   agent tool) writes a **new `WorkoutRevision`**, repoints `ScheduledWorkout.workoutRevisionID`, and
   appends a `PlanVersion`. This is what makes undo cover *plan edits*, not just calendar moves (point 1).
+- **…except while a session is live.** Once the athlete starts the workout, structural and prescription
+  edits are **session-scoped**: they go to `setSessionWorkout` (`SDWorkoutSession.sessionWorkoutJSON`) and
+  create **no** revision, so today's execution never rewrites the saved plan. They reach the plan only if
+  the athlete accepts the "update your plan?" prompt at completion, which then takes the ordinary
+  revision path above. See the mid-workout-edit rule in `CLAUDE.md` and `WorkoutSessionReconciliation`.
 - **Typed confirmation with a stored proposal (point 3 + 8).** A mutation whose blast radius warrants
   confirmation returns `confirmationRequired(warnings, proposedDiff, proposalID)` and applies **nothing**,
   **persisting an `SDPendingProposal`** that holds the full proposed operation, the `proposedDiff`, the

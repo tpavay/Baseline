@@ -35,7 +35,7 @@ struct PlanBindingTests {
 
         #expect(store.current?.title == "W")
         // A content edit becomes a new revision in the plan (immediately).
-        store.edit { $0.rename("W2") }
+        store.edit(.plan) { $0.rename("W2") }
         #expect(plan.scheduledWorkout(sw.id)?.workout.title == "W2")
 
         // Start + log flow to the plan's session, not a local-only log.
@@ -57,7 +57,7 @@ struct PlanBindingTests {
         let store = buffer()
         store.bind(plan.sink(forScheduled: sw.id), coalesceContent: true)    // manual editor — coalesced
 
-        store.edit { $0.rename("Edited") }
+        store.edit(.plan) { $0.rename("Edited") }
         #expect(plan.scheduledWorkout(sw.id)?.workout.title == "W")          // not written through yet
         store.flush()
         #expect(plan.scheduledWorkout(sw.id)?.workout.title == "Edited")     // one revision on flush
@@ -68,7 +68,7 @@ struct PlanBindingTests {
         store.editLog { $0.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: ex.prescription.sets[0].id) { $0.completed = true } }
         #expect(plan.session(for: sw.id)?.log.performed(forPlanned: ex.id)?.setLogs.first?.completed == true)
 
-        store.completeWorkout()
+        store.completeWorkout(awaitingReconciliationDecision: false)
         #expect(store.currentLog?.isComplete == true)
     }
 
@@ -122,7 +122,7 @@ struct PlanBindingTests {
         #expect(plan.todayScheduled()?.workout.title == "Fresh session")     // created in the plan, not just locally
 
         // And subsequent edits write through to that same scheduled workout.
-        store.edit { $0.updateGoal("easy") }
+        store.edit(.plan) { $0.updateGoal("easy") }
         #expect(plan.todayScheduled()?.workout.goal == "easy")
     }
 }

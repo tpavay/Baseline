@@ -208,6 +208,7 @@ History is queryable per identity (`PlanRepository.history(exerciseDefinitionID:
 4. The athlete can add, remove, reorder, substitute, skip, or extend work.
 5. Pain or context events update constraints and can trigger remaining-work adaptation.
 6. Completing the workout produces a Workout Log and Learning Signals.
+7. Work added, removed, reordered, or re-prescribed during the session lands on the session's own copy of the workout; completion offers to promote it to the saved plan (see the mid-workout-edit rule in `CLAUDE.md`).
 
 ### Learning
 1. Baseline compares planned work to performed work.

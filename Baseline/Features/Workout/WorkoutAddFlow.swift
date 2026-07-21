@@ -7,6 +7,8 @@ import SwiftUI
 /// (Real thumbnails + muscle/equipment search need catalog media/metadata — see docs/ux-flow.md.)
 struct AddExerciseFlow: View {
     let blockID: UUID
+    /// Stated by the presenter, which knows whether it is shaping a live session or the saved plan.
+    let scope: WorkoutEditScope
     let onInserted: ([UUID]) -> Void
     @Environment(WorkoutStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -158,7 +160,7 @@ struct AddExerciseFlow: View {
             if metrics.isEmpty { metrics = [.reps, .load] }
             ex.selectedMetrics = MetricType.allCases.filter { metrics.contains($0) }
             ex.prescription.sets = [PlannedSet()]
-            store.addExercise(ex, toBlockID: blockID)
+            store.addExercise(ex, toBlockID: blockID, scope: scope)
             ids.append(ex.id)
         }
         onInserted(ids)

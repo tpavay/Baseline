@@ -818,7 +818,7 @@ struct WorkoutImportIssueReconciliationTests {
         #expect(model.canUseWatts(for: firstIssue))
         #expect(model.session.canSave == false)
 
-        reviewStore.edit { workout in
+        reviewStore.edit(.plan) { workout in
             workout.rename("Only the workout title changed")
             _ = workout.updateExercise(otherExercise.id) { exercise in
                 exercise.prescription.intensityTargets = [.power(lower: 175, upper: 175, unit: .watts)]
@@ -880,7 +880,7 @@ struct WorkoutImportIssueReconciliationTests {
         let configuration = WorkoutStore(defaults: defaults)
         let reviewStore = WorkoutStore(transientWorkout: built.draft.workout, configurationFrom: configuration)
 
-        reviewStore.edit { workout in
+        reviewStore.edit(.plan) { workout in
             _ = workout.updateExercise(exercise.id) { exercise in
                 guard let index = exercise.prescription.intensityTargets.firstIndex(of: marker) else { return }
                 exercise.prescription.intensityTargets.remove(at: index)
@@ -912,7 +912,7 @@ struct WorkoutImportIssueReconciliationTests {
         let source = WorkoutStore(defaults: UserDefaults(suiteName: "import-review-\(UUID().uuidString)")!)
         let review = WorkoutStore(transientWorkout: draft, configurationFrom: source)
 
-        #expect(review.replaceExercise(exerciseID, with: ExerciseCatalog.definition(id: "echo_bike")!))
+        #expect(review.replaceExercise(exerciseID, with: ExerciseCatalog.definition(id: "echo_bike")!, scope: .plan))
         model.synchronizeDraft(from: review)
 
         #expect(model.session.issues.isEmpty)
@@ -1811,7 +1811,7 @@ struct WorkoutImportSourcePipelineTests {
         let defaults = try #require(UserDefaults(suiteName: "import-save-\(UUID().uuidString)"))
         let configuration = WorkoutStore(defaults: defaults)
         let reviewStore = WorkoutStore(transientWorkout: original, configurationFrom: configuration)
-        reviewStore.edit { workout in
+        reviewStore.edit(.plan) { workout in
             workout.rename("Final editor value")
             workout.guidance = CoachGuidance(formCues: ["Saved from the shared editor"])
         }

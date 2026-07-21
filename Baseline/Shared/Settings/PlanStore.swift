@@ -66,7 +66,12 @@ final class PlanStore {
         defer { reload() }; return repo.completeSession(forScheduled: id, acknowledgingOpenWork: acknowledgingOpenWork, now: Date())
     }
     func discard(_ id: UUID) { repo.discardSession(forScheduled: id); reload() }
+    func sessionDecisionPending(_ id: UUID) -> Bool { repo.sessionDecisionPending(forScheduled: id) }
+    func resolveSessionDecision(_ id: UUID) { repo.resolveSessionDecision(forScheduled: id); reload() }
+    func resolveAbandonedSessionDecision(_ id: UUID) { repo.resolveAbandonedSessionDecision(forScheduled: id); reload() }
     func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); reload() }
+    /// Store the session's own copy of the planned workout (a session-scoped mid-workout edit; no revision).
+    func setSessionWorkout(_ id: UUID, _ workout: Workout) { repo.setSessionWorkout(forScheduled: id, workout) }
 
     // MARK: Mutations & versioning (Slice 2) — every schedule change is versioned
 
@@ -122,18 +127,27 @@ final class PlanStore {
     func sink(forScheduled id: UUID) -> WorkoutStore.PlanSink {
         WorkoutStore.PlanSink(
             pushWorkout: { [weak self] w in self?.updateWorkout(id) { $0 = w } },
+            pushSessionWorkout: { [weak self] w in self?.setSessionWorkout(id, w) },
             pushLog: { [weak self] l in self?.updateSessionLog(id) { $0 = l } },
             start: { [weak self] in _ = self?.start(id) },
             complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
             discard: { [weak self] in self?.discard(id) },
+            isSessionDecisionPending: { [weak self] in self?.sessionDecisionPending(id) ?? false },
+            resolveSessionDecision: { [weak self] in self?.resolveSessionDecision(id) },
+            resolveAbandonedSessionDecision: { [weak self] in self?.resolveAbandonedSessionDecision(id) },
             reload: { [weak self] in
                 guard let self, let sw = self.scheduledWorkout(id) else { return nil }
                 let session = self.session(for: id)
-                guard session?.status != .discarded else {
+                guard let session, session.status != .discarded else {
                     return (sw.workout, nil, nil)
                 }
-                return (sw.workout, session?.log, session?.startedAt)
-            })
+                // A live/completed session carries its own (possibly edited) workout copy — what the
+                // athlete performed, and what the summary must show; fall back to the saved plan revision
+                // when the session hasn't been edited. Nothing here decides write routing: an edit names
+                // its own destination.
+                return (session.workout ?? sw.workout, session.log, session.startedAt)
+            },
+            planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
     }
 
     /// Create a brand-new scheduled workout for today (used when the agent builds one and nothing is

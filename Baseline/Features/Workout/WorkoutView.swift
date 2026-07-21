@@ -24,6 +24,14 @@ struct WorkoutView: View {
     @State private var templateName = ""
     @State private var templateConflict: WorkoutTemplate?
 
+    /// Mid-workout structural editing. These edits are session-scoped — they shape this workout only,
+    /// and reach the saved plan solely through the completion prompt below.
+    @State private var showReorder = false
+    @State private var addExerciseRequest: AddExerciseRequest?
+    /// Captures the reconciliation just before completing — so the "update your plan?" decision never
+    /// depends on post-completion store state — and defers the prompt past the finish alert's dismissal.
+    @State private var finishing = WorkoutFinishCoordinator()
+
     /// Live heart-rate monitor for the active log, created only while logging with a saved strap.
     /// The HUD reads it; the workout owns its start/stop lifecycle (this is the go-live wiring).
     @State private var hrMonitor: HeartRateMonitor?
@@ -59,16 +67,33 @@ struct WorkoutView: View {
             Text("Reuse this workout later from Add Workout on the Plan tab.")
         }
         .alert("Finish workout?", isPresented: $showFinishConfirmation) {
-            Button("Finish Workout") { store.completeWorkout() }
+            Button("Finish Workout") { finishWorkout() }
             Button("Keep Logging", role: .cancel) {}
         } message: {
             Text("Logged work will be kept even if you changed, skipped, or did not finish part of the prescription.")
+        }
+        .sheet(isPresented: $showReorder) { WorkoutReorderSheet() }
+        .sheet(item: $addExerciseRequest) { request in
+            AddExerciseFlow(blockID: request.id, scope: mode.editScope) { _ in }
+        }
+        .alert(
+            "Update your plan?",
+            isPresented: Binding(
+                get: { finishing.pendingReconciliation != nil },
+                set: { if !$0 { finishing.pendingReconciliation = nil } }
+            ),
+            presenting: finishing.pendingReconciliation
+        ) { reconciliation in
+            Button("Update Plan") { finishing.apply(reconciliation, to: store) }
+            Button("Keep Original", role: .cancel) { finishing.decline(store) }
+        } message: { reconciliation in
+            Text("We noticed changes from your plan:\n\(reconciliation.diff.summaryLine)")
         }
         .alert("Discard this log?", isPresented: $showDiscardConfirmation) {
             Button("Discard Log", role: .destructive) { store.discardLog() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The workout template will remain, but all actual values in this log will be removed.")
+            Text("Everything you logged will be removed, along with any exercises you added, removed, replaced, or reordered during this workout. Your saved plan stays as it was.")
         }
         .confirmationDialog(
             "A template named \"\(templateName)\" already exists",
@@ -142,6 +167,10 @@ struct WorkoutView: View {
                         }
                     }
                     if mode == .log {
+                        Button { showReorder = true } label: {
+                            Label("Reorder Workout", systemImage: "arrow.up.arrow.down")
+                        }
+                        Divider()
                         Button(role: .destructive) { showDiscardConfirmation = true } label: {
                             Label("Discard Log", systemImage: "trash")
                         }
@@ -384,6 +413,22 @@ struct WorkoutView: View {
                     .padding(.vertical, 16)
             }
 
+            // Adding mid-workout is a first-class move, not an edit-mode-only affordance: the athlete
+            // decides to do extra work far more often than they sit down to redraft a template.
+            if mode == .log {
+                Button {
+                    addExerciseRequest = AddExerciseRequest(id: block.id)
+                } label: {
+                    Label("Add Exercise", systemImage: "plus")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BaselineColor.accent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface))
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 10)
+                .accessibilityHint("Adds an exercise to this workout without changing your saved plan")
+            }
         }
     }
 
@@ -421,7 +466,7 @@ struct WorkoutView: View {
 
     private func cancelEditing() {
         if let snapshot = editSnapshot {
-            store.edit { $0 = snapshot }
+            store.edit(.plan) { $0 = snapshot }
             store.flush()
         }
         editSnapshot = nil
@@ -432,6 +477,15 @@ struct WorkoutView: View {
         store.flush()
         editSnapshot = nil
         isEditingTemplate = false
+    }
+
+    // MARK: - Completing
+
+    /// Finish the session, then offer to promote whatever the athlete changed back to the saved plan.
+    /// The reconciliation is captured *before* completing so the summary describes the session that was
+    /// actually performed, and so declining leaves the plan untouched with no further bookkeeping.
+    private func finishWorkout() {
+        finishing.finish(store)
     }
 
     // MARK: - Templates
@@ -473,6 +527,10 @@ struct WorkoutView: View {
             Spacer()
         }
         .padding(24)
+    }
+
+    private struct AddExerciseRequest: Identifiable {
+        let id: UUID
     }
 }
 
