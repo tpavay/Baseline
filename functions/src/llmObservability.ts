@@ -27,7 +27,8 @@ export type LLMSurface =
   | "chat.workout"
   | "chat.import_fix"
   | "import.image.durable"
-  | "import.image.legacy";
+  | "import.image.legacy"
+  | "import.image.stream";
 
 export interface AppTraceMetadata {
   appVersion?: string;
