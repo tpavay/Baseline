@@ -74,7 +74,7 @@ control never reads as a recovery state. (Electric blue was rejected — it coll
 - Hairlines **1px** `Hairline`. Section dividers = full-width hairlines.
 
 ## App icon
-See [`app-icon/README.md`](app-icon/README.md) — how large the mark can go, why the white field is structural, and how to review an icon change at real home-screen size.
+See [`app-icon/README.md`](app-icon/README.md) - how large the mark can go, why the white field is structural, and how to review an icon change at real home-screen size.
 
 ## Components (`DS/*` in Figma → `Instrument.swift` in code)
 - **Recovery Display** — big mono `82 /100` + state tag + "▲ 6% vs your baseline".

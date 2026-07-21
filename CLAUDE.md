@@ -217,6 +217,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - App Store upload validation rejects binaries on two things Xcode never warns about: an app icon carrying an alpha channel (the 1024 source in `AppIcon.appiconset` must be fully opaque), and a missing purpose string for anything the **entitlements** permit, not just what the code calls.
   `com.apple.developer.healthkit` cannot be scoped to reads, so `NSHealthUpdateUsageDescription` is required even though `HealthService` is read-only.
   `BaselineTests/AppStoreValidationTests.swift` guards both.
+  The icon artwork has a second, unguarded invariant (it must stay tagged sRGB); before editing the bitmap read `docs/design-system/app-icon/README.md`, which owns the icon's invariants, size ceiling, and review procedure.
 - Entitlements are split per configuration: `Baseline/Baseline-Debug.entitlements` (App Attest `development`) for Debug, `Baseline/Baseline.entitlements` (`production`) for Staging and Release, wired by `settings.configs` in `project.yml`.
   Staging must stay on `production` even though it is the pre-prod tier.
   Apple ignores `com.apple.developer.devicecheck.appattest-environment` once a build is distributed through TestFlight, the App Store, or Enterprise, and forces the production environment, so `development` there would be an inert value that misdescribes the build.
