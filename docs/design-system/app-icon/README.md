@@ -3,6 +3,19 @@
 The marketing artwork is `Baseline/Assets.xcassets/AppIcon.appiconset/BaselineAppIcon_1024.png`.
 It is the only file in the icon set: `actool` derives every other size from it at build time, so there is nothing else to regenerate when the artwork changes.
 It must stay fully opaque - App Store upload validation rejects a binary whose 1024 icon carries an alpha channel, and `BaselineTests/AppStoreValidationTests.swift` guards that.
+It must also stay tagged sRGB, so the purple ramp is unambiguous on wide-gamut displays and outside the build, where the marketing 1024 is consumed on its own.
+
+After any bitmap edit, check both invariants at once:
+
+```sh
+sips -g pixelWidth -g pixelHeight -g hasAlpha -g samplesPerPixel -g profile \
+  Baseline/Assets.xcassets/AppIcon.appiconset/BaselineAppIcon_1024.png
+# 1024, 1024, hasAlpha: no, samplesPerPixel: 3, profile: sRGB IEC61966-2.1
+```
+
+Both invariants are easy to lose by accident, and neither the build nor Xcode warns about the profile.
+Pillow drops the colour profile unless it is passed back explicitly on save, and several image tools will helpfully promote the file to RGBA.
+The pixels are already sRGB, so a profile that went missing should be re-tagged rather than converted; a `matchTo`-style conversion would remap the ramp.
 
 ## How large the mark can be
 
@@ -35,6 +48,8 @@ The mock below knocks the mark out in a violet ramp over an amethyst-to-base gra
 ![full-bleed proposal](fullbleed-proposal.png)
 
 ![all three at 60pt](icon-1to1-comparison.png)
+
+The dark corner arcs on the "before" tile, absent from the other two, are not a masking inconsistency or a doctored comparison: all three tiles are identical 181px crops taken from real springboard screenshots at the same coordinates, and the arcs are iOS 26's Liquid Glass edge treatment reacting differently to the two artworks, which is itself part of what changed.
 
 This is a brand decision, not an implementation one, so it is recorded here as a proposal rather than shipped.
 Note that the current artwork is raster, not vector, and no source file exists in the repo; any further change is limited to what can be done to the bitmap until a vector master is produced.
