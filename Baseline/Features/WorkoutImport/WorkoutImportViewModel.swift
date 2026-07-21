@@ -52,6 +52,11 @@ final class WorkoutImportViewModel {
         return status == WorkoutImportRemoteJobState.queued.rawValue
             || status == WorkoutImportRemoteJobState.processing.rawValue
     }
+    /// The server has accepted the job but has not started parsing it. Distinct from `processing` so the
+    /// wait can say the import is queued instead of implying sections are being worked on right now.
+    var isQueuedOnServer: Bool {
+        currentJob?.serverProgress?.status == WorkoutImportRemoteJobState.queued.rawValue
+    }
     var hasCompletedServerResult: Bool {
         currentJob?.stage == .reviewing
             && currentJob?.serverProgress?.status == WorkoutImportRemoteJobState.completed.rawValue

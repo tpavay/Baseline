@@ -262,18 +262,18 @@ struct ImportSession: Identifiable, Sendable {
     var lastUpdated = Date()
 }
 
-enum WorkoutImportStatus: Sendable, Equatable {
+enum WorkoutImportStatus: Equatable, Sendable {
     case selecting
     case loadingImages(completed: Int, total: Int)
-    case readingWorkout
-    case organizingExercises
-    case preparingEditor
-    case readyForHandoff
-    case handedOff(draftID: UUID)
-    case failed(code: WorkoutImportFailureCode)
-    case cancelled
-    case expired
-    case disposed
+    case recognizing(completed: Int, total: Int)
+    case preparingSections
+    case waitingForHandoff
+    case retryingSections(completed: Int, total: Int)
+    case processingSections(completed: Int, total: Int)
+    case reviewing
+    case saving
+    case saved(templateID: UUID)
+    case failed(message: String)
 }
 ```
 
@@ -283,8 +283,8 @@ Session rules:
 - Every accepted transaction, checkpoint, or state transition updates `lastUpdated`.
 - `sourceImages` contains the bounded, normalized images in user-selected order while review is active. Each source is also written to the session's protected temporary directory before OCR.
 - Candidate nodes, confidence, evidence spans, provider results, and transaction history never become editor content.
-- Handoff atomically creates or installs one user-owned `WorkoutDraft`, records its initial revision, and changes the session to `.handedOff`.
-- The session cannot apply content transactions after `.handedOff`.
+- Handoff atomically creates or installs one user-owned `WorkoutDraft`, records its initial revision, and changes the session to `.reviewing`.
+- The session cannot apply content transactions after it reaches `.reviewing`.
 - Closing the editor does not cancel or delete the user-owned draft.
 - The protected file batch and all image, OCR, evidence, candidate, and checkpoint data are removed on Save, Discard, Cancel, or expiry.
 - No source photo or import evidence is persisted in the template.
@@ -734,17 +734,16 @@ Concurrency rules:
 ImportSession
 selecting
 → loadingImages
-→ readingWorkout
-→ organizingExercises
-→ preparingEditor
-→ readyForHandoff
-→ handedOff
-→ disposed
+→ recognizing
+→ preparingSections
+→ waitingForHandoff
+→ processingSections (retryingSections while a section is re-sent)
+→ reviewing
+→ saving
+→ saved
 
-Any pre-handoff state
-├── failed
-├── cancelled
-└── expired
+Any state
+└── failed
 
 WorkoutDraft
 pipelineOwned
@@ -776,18 +775,32 @@ Once the import job is durably accepted and can continue without the intake surf
 
 ### Progress
 
-The progress screen uses one headline and three natural phases:
+The progress screen uses one headline and a natural phase label per stage:
 
 ```text
 Creating your workout
 
-Reading workout
-Organizing exercises
-Preparing editor
+Preparing photos           // loadingImages
+Reading workout            // recognizing
+Organizing exercises       // preparingSections
+Sending to the parser      // waitingForHandoff, retryingSections
+Waiting for a parser slot  // processingSections while the server reports queued
+Organizing exercises       // processingSections while the server is parsing
+Preparing editor           // processingSections once every section is done
 ```
 
 There is no separate "Still working" state.
-The athlete may close the progress screen after durable job acceptance, and the import continues through its supported background path.
+
+Stages that can count real units - photos loaded, photos recognized, sections completed - render a determinate `ProgressView` driven by those counts.
+Stages that cannot count anything keep the indeterminate spinner rather than inventing a fraction or a synthetic timer.
+A queued job has no section underway, so it stays indeterminate even though `processingSections` carries counts.
+
+The detail line under each phase states the truth about backgrounding, and the two truths are different.
+Device-side stages (photo load, OCR, section prep, handoff) are suspended by iOS and resume from persisted per-page progress, so they say the import pauses and picks up where it left off.
+Once the job is handed off it lives on the server, so those stages say the athlete may close the screen and the result will be waiting; returning to the foreground restores durable progress by job ID.
+
+The display is held awake for exactly the working statuses and released on every terminal state, on `onDisappear`, and on scene phase `.background`, because a leaked idle-timer disable drains the battery silently.
+See `WorkoutImportView.shouldKeepScreenAwake(for:)` and `BaselineTests/WorkoutImportKeepAwakeTests.swift`.
 
 ### Handoff and outcome
 
@@ -1315,7 +1328,7 @@ BaselineTests/WorkoutImport/
 
 - V1 launches from the Plan day-level Add Workout menu.
 - Photo intake and progress are a full-screen import flow before handoff.
-- Progress uses **Creating your workout** with **Reading workout**, **Organizing exercises**, and **Preparing editor** phases.
+- Progress uses one **Creating your workout** headline with a per-stage phase label; see [Progress](#progress) for the phases, determinate-versus-indeterminate rule, and keep-awake behavior.
 - Cancel changes to Close only after the import job is durably accepted.
 - Complete and usable partial results hand off to the ordinary workout editor without an import introduction.
 - The editor displays targeted issues in context and never displays raw OCR or imported-section placeholders.

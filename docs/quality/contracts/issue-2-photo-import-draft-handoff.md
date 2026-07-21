@@ -22,7 +22,7 @@ The editor never displays raw OCR, parser output, imported-section placeholders,
 - [ ] AC-1: A structurally valid complete import opens the ordinary workout editor with blocks, exercises, metrics, notes, and ordering preserved.
 - [ ] AC-2: A usable partial import containing at least one valid exercise can be reviewed in the ordinary editor with targeted issues attached to affected workout elements.
 - [ ] AC-3: OCR-only, text-only, candidate-only, empty, or structurally invalid results never open the editor and never render raw OCR as workout content.
-- [ ] AC-4: Import progress reads `Creating your workout` with the phases `Reading workout`, `Organizing exercises`, and `Preparing editor`.
+- [ ] AC-4: Import progress reads `Creating your workout` with the phases `Preparing photos`, `Reading workout`, `Organizing exercises`, `Sending to the parser`, `Waiting for a parser slot`, and `Preparing editor`. (Amended 2026-07-21; see Amendments.)
 - [ ] AC-5: Cancel becomes Close only after the import job is durably accepted, and closing does not cancel supported background processing.
 - [ ] AC-6: Once the editor opens, late, retried, or replayed import results cannot mutate the user-owned draft.
 - [ ] AC-7: Closing the editor before Save preserves the draft so it can be resumed without another import.
@@ -37,7 +37,7 @@ The editor never displays raw OCR, parser output, imported-section placeholders,
 | State | Expected behavior | Verification |
 |---|---|---|
 | Happy path | Progress hands one valid draft to the ordinary editor. | Unit, integration, and rendered UI evidence. |
-| Loading | Three plain-language phases are visible and VoiceOver-readable. | View-model tests and rendered UI evidence. |
+| Loading | The plain-language phase for the current stage is visible and VoiceOver-readable. | View-model tests and rendered UI evidence. |
 | Empty | No editor opens when no valid exercise exists. | Deterministic builder and handoff tests. |
 | Usable partial | Normal editor opens with targeted review issues. | Builder, ownership, and editor integration tests. |
 | Error/offline | Evidence and checkpoints remain retryable when safe; no OCR dump is shown. | Coordinator and view-model tests. |
@@ -53,7 +53,7 @@ The editor never displays raw OCR, parser output, imported-section placeholders,
 | AC-1 | Complete builder and handoff tests | A complete valid graph becomes ordinary draft content. |
 | AC-2 | Usable-partial builder and handoff tests | A valid exercise plus localized issues is allowed to hand off. |
 | AC-3 | Empty and invalid handoff tests | OCR text and candidates cannot satisfy the handoff gate. |
-| AC-4 | Import phase presentation tests | Loading copy derives from the three approved phases. |
+| AC-4 | Import phase presentation tests | Loading copy derives from the approved phase strings for each import stage. |
 | AC-5 | Import close-action state tests | Cancel changes to Close only after durable acceptance. |
 | AC-6 | Ownership handoff stale-result test | A result arriving after handoff cannot alter draft revision or content. |
 | AC-7 | Draft resume repository integration test | Leaving and reopening returns the same active draft. |
@@ -79,6 +79,14 @@ No source images may enter logs, Firestore workout records, Cloud Storage, or an
 Provider output remains untrusted and passes deterministic validation before draft handoff.
 The Firebase functions and rules must be deployed before a phone build relies on new job fields or response shapes.
 Rollback must leave ordinary workout drafts and saved templates readable.
+
+## Amendments
+
+- 2026-07-21: AC-4 originally accepted exactly three phases (`Reading workout`, `Organizing exercises`, `Preparing editor`).
+  The keep-awake and legible-wait change superseded that set: photo loading, upload, and server queueing now name themselves instead of hiding behind a neighboring phase.
+  The shipped strings are `Preparing photos` (loading images), `Reading workout` (Vision recognition), `Organizing exercises` (section preparation and section processing while work is underway), `Sending to the parser` (waiting for handoff and section retries), `Waiting for a parser slot` (section processing while the server reports the job queued), and `Preparing editor` (section processing once all sections are done).
+  The state-matrix Loading row and the AC-4 test-mapping row were reworded for the same reason.
+  Authoritative source: `WorkoutImportProgressCopy` in `Baseline/Features/WorkoutImport/WorkoutImportView.swift`, covered by `BaselineTests/WorkoutImportKeepAwakeTests.swift`.
 
 ## Human gates
 

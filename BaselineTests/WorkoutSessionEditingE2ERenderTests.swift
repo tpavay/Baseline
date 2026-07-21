@@ -4,85 +4,88 @@ import Testing
 import UIKit
 @testable import Baseline
 
-/// Drives the whole in-workout editing story through the real `WorkoutView`, the way an athlete
-/// lives it: start today's scheduled workout, restructure it mid-session (true-remove, add, reorder),
-/// finish, and answer the "Update your plan?" opt-in. The saved plan is read back at every step, so
-/// the session-scoping claim is checked against the plan the athlete would open tomorrow rather than
-/// against store internals. Each step also writes a PNG of the surface.
-///
-/// Hosted in a scene-attached window because sign-in gates a plain launch and an unattached window
-/// renders blank. Alerts are presented in their own windows, so the harness looks at - and captures -
-/// every window in the scene.
-/// Serialized: each test drives a modal alert on the shared scene, and overlapping presentations from
-/// a parallel peer wedge UIKit's presentation machinery.
-@Suite(.serialized) @MainActor
-struct WorkoutSessionEditingE2ERenderTests {
+extension IdleTimerRenderTests {
+    /// Drives the whole in-workout editing story through the real `WorkoutView`, the way an athlete
+    /// lives it: start today's scheduled workout, restructure it mid-session (true-remove, add,
+    /// reorder), finish, and answer the "Update your plan?" opt-in. The saved plan is read back at
+    /// every step, so the session-scoping claim is checked against the plan the athlete would open
+    /// tomorrow rather than against store internals. Each step also writes a PNG of the surface.
+    ///
+    /// Hosted in a scene-attached window because sign-in gates a plain launch and an unattached
+    /// window renders blank. Alerts are presented in their own windows, so the harness looks at - and
+    /// captures - every window in the scene.
+    ///
+    /// Serialized: each test drives a modal alert on the shared scene, and overlapping presentations
+    /// from a parallel peer wedge UIKit's presentation machinery.
+    @Suite(.serialized) @MainActor
+    struct WorkoutSessionEditingE2ERenderTests {
 
-    @Test func sessionEditsReachThePlanOnlyWhenTheAthleteAccepts() async throws {
-        let bed = try SessionBed()
-        let screen = try await bed.render()
-        defer { screen.tearDown() }
+        @Test func sessionEditsReachThePlanOnlyWhenTheAthleteAccepts() async throws {
+            let bed = try SessionBed()
+            let screen = try await bed.render()
+            defer { screen.tearDown() }
 
-        #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
-        screen.capture("10-live-session-as-planned")
+            #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
+            screen.capture("10-live-session-as-planned")
 
-        try await bed.editMidSession(on: screen)
-        screen.capture("11-live-session-after-edits")
+            try await bed.editMidSession(on: screen)
+            screen.capture("11-live-session-after-edits")
 
-        // The whole point: the athlete has restructured today's execution and the saved plan has not
-        // moved at all.
-        #expect(bed.sessionExerciseNames == ["Curl", "Squat", "Face pull"])
-        #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
+            // The whole point: the athlete has restructured today's execution and the saved plan has not
+            // moved at all.
+            #expect(bed.sessionExerciseNames == ["Curl", "Squat", "Face pull"])
+            #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
 
-        try await screen.tap("Finish")
-        screen.capture("12-finish-confirmation")
-        try await screen.tapAlertButton("Finish Workout")
+            try await screen.tap("Finish")
+            screen.capture("12-finish-confirmation")
+            try await screen.tapAlertButton("Finish Workout")
 
-        #expect(screen.element(labelled: "Update your plan?") != nil)
-        screen.capture("13-update-your-plan-prompt")
+            #expect(screen.element(labelled: "Update your plan?") != nil)
+            screen.capture("13-update-your-plan-prompt")
 
-        try await screen.tapAlertButton("Update Plan")
-        // Accepting is the one path that writes a mid-workout edit into the plan.
-        #expect(bed.planExerciseNames == ["Curl", "Squat", "Face pull"])
-        screen.capture("14-plan-updated-summary")
-    }
-
-    @Test func keepingTheOriginalLeavesTheSavedPlanUntouched() async throws {
-        let bed = try SessionBed()
-        let screen = try await bed.render()
-        defer { screen.tearDown() }
-
-        try await bed.editMidSession(on: screen)
-        try await screen.tap("Finish")
-        try await screen.tapAlertButton("Finish Workout")
-        #expect(screen.element(labelled: "Update your plan?") != nil)
-
-        try await screen.tapAlertButton("Keep Original")
-        #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
-        screen.capture("15-kept-original-plan")
-    }
-
-    /// Logging different actuals is a performed fact, not a plan change, so finishing shows no prompt.
-    @Test func loggingDifferentActualsShowsNoPrompt() async throws {
-        let bed = try SessionBed()
-        let screen = try await bed.render()
-        defer { screen.tearDown() }
-
-        let squat = try #require(bed.store.current?.allExercises.first)
-        let setID = try #require(squat.prescription.sets.first?.id)
-        bed.store.editLog { log in
-            log.upsertSetLog(forPlanned: squat.id, name: squat.exerciseName, plannedSetID: setID) { set in
-                set.values[.load] = 180
-                set.completed = true
-            }
+            try await screen.tapAlertButton("Update Plan")
+            // Accepting is the one path that writes a mid-workout edit into the plan.
+            #expect(bed.planExerciseNames == ["Curl", "Squat", "Face pull"])
+            screen.capture("14-plan-updated-summary")
         }
-        try await screen.settle()
 
-        try await screen.tap("Finish")
-        try await screen.tapAlertButton("Finish Workout")
-        #expect(screen.element(labelled: "Update your plan?") == nil)
-        #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
-        screen.capture("16-no-prompt-for-logged-actuals")
+        @Test func keepingTheOriginalLeavesTheSavedPlanUntouched() async throws {
+            let bed = try SessionBed()
+            let screen = try await bed.render()
+            defer { screen.tearDown() }
+
+            try await bed.editMidSession(on: screen)
+            try await screen.tap("Finish")
+            try await screen.tapAlertButton("Finish Workout")
+            #expect(screen.element(labelled: "Update your plan?") != nil)
+
+            try await screen.tapAlertButton("Keep Original")
+            #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
+            screen.capture("15-kept-original-plan")
+        }
+
+        /// Logging different actuals is a performed fact, not a plan change, so finishing shows no prompt.
+        @Test func loggingDifferentActualsShowsNoPrompt() async throws {
+            let bed = try SessionBed()
+            let screen = try await bed.render()
+            defer { screen.tearDown() }
+
+            let squat = try #require(bed.store.current?.allExercises.first)
+            let setID = try #require(squat.prescription.sets.first?.id)
+            bed.store.editLog { log in
+                log.upsertSetLog(forPlanned: squat.id, name: squat.exerciseName, plannedSetID: setID) { set in
+                    set.values[.load] = 180
+                    set.completed = true
+                }
+            }
+            try await screen.settle()
+
+            try await screen.tap("Finish")
+            try await screen.tapAlertButton("Finish Workout")
+            #expect(screen.element(labelled: "Update your plan?") == nil)
+            #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
+            screen.capture("16-no-prompt-for-logged-actuals")
+        }
     }
 }
 
