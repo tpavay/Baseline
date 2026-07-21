@@ -164,6 +164,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-
 
+      # Asks CoreSimulator directly rather than parsing `xcodebuild
+      # -showdestinations`: the runner image does not guarantee that a device
+      # has been pre-created for the Xcode `latest-stable` resolves to, and a
+      # destination list that contains only placeholders is indistinguishable
+      # from a parse failure. If no iPhone exists, create one from the newest
+      # installed iOS runtime so the job provisions its own destination instead
+      # of depending on how the image was baked.
       - name: Select simulator
         id: simulator
         shell: bash
@@ -171,66 +178,109 @@ jobs:
           set -euo pipefail
 
           preferred_names=(
+            "iPhone 17 Pro"
+            "iPhone 17"
             "iPhone 16 Pro"
             "iPhone 16"
-            "iPhone 16 Pro Max"
-            "iPhone 16 Plus"
             "iPhone 15 Pro"
             "iPhone 15"
           )
 
-          destinations="$(
-            xcodebuild \
-              -project Baseline.xcodeproj \
-              -scheme "Baseline" \
-              -showdestinations
-          )"
+          devices_json="$(xcrun simctl list --json devices available)"
 
-          parsed_destinations="$(
-            printf '%s\n' "$destinations" | sed -n 's/.*platform:iOS Simulator,.*id:\([^,}]*\), OS:[^,}]*, name:\(.*\) }.*/\1|\2/p'
-          )"
+          # Newest runtime wins, so a preferred name that exists on several
+          # runtimes resolves to the most recent iOS.
+          select_device() {
+            printf '%s' "$devices_json" | jq -r --arg target "$1" '
+              [ .devices
+                | to_entries[]
+                | select(.key | test("SimRuntime\\.iOS-"))
+                | (.key | capture("SimRuntime\\.iOS-(?<v>[0-9-]+)") | .v
+                   | split("-") | map(tonumber)) as $version
+                | .value[]
+                | select(.isAvailable)
+                | select(if $target == "" then (.name | startswith("iPhone")) else .name == $target end)
+                | { udid: .udid, version: $version }
+              ]
+              | sort_by(.version)
+              | last
+              | .udid // ""
+            '
+          }
 
           simulator_id=""
 
           for name in "${preferred_names[@]}"; do
-            simulator_id="$(
-              printf '%s\n' "$parsed_destinations" | awk -F'|' -v target="$name" '
-                $2 == target {
-                  id = $1
-                }
-                END {
-                  if (id != "") {
-                    print id
-                  }
-                }
-              '
-            )"
-
+            simulator_id="$(select_device "$name")"
             if [ -n "$simulator_id" ]; then
               break
             fi
           done
 
           if [ -z "$simulator_id" ]; then
-            simulator_id="$(
-              printf '%s\n' "$parsed_destinations" | awk -F'|' '
-                $2 ~ /^iPhone/ {
-                  id = $1
-                }
-                END {
-                  if (id != "") {
-                    print id
-                  }
-                }
+            simulator_id="$(select_device "")"
+          fi
+
+          if [ -z "$simulator_id" ]; then
+            echo "No iPhone simulator exists on this runner; creating one."
+
+            runtime="$(
+              xcrun simctl list --json runtimes available | jq -r '
+                [ .runtimes[]
+                  | select(.isAvailable)
+                  | select(.identifier | test("SimRuntime\\.iOS-"))
+                ]
+                | sort_by(.version | split(".") | map(tonumber))
+                | last
+                | .identifier // ""
               '
             )"
+
+            # `productFamily == "iPhone"` also matches iPod touch, which no
+            # current iOS runtime can instantiate, so match the name instead.
+            # simctl lists iPhone types newest first, hence `first` as the
+            # fallback: an old model is not creatable on the newest runtime.
+            device_types_json="$(xcrun simctl list --json devicetypes)"
+            device_type=""
+
+            for name in "${preferred_names[@]}"; do
+              device_type="$(
+                printf '%s' "$device_types_json" | jq -r --arg target "$name" '
+                  [ .devicetypes[] | select(.name == $target) ] | first | .identifier // ""
+                '
+              )"
+              if [ -n "$device_type" ]; then
+                break
+              fi
+            done
+
+            if [ -z "$device_type" ]; then
+              device_type="$(
+                printf '%s' "$device_types_json" | jq -r '
+                  [ .devicetypes[] | select(.name | startswith("iPhone")) ]
+                  | first
+                  | .identifier // ""
+                '
+              )"
+            fi
+
+            if [ -z "$runtime" ] || [ -z "$device_type" ]; then
+              echo "::error::No iOS simulator runtime or iPhone device type is installed."
+              xcrun simctl list runtimes
+              exit 1
+            fi
+
+            echo "Creating simulator: $device_type on $runtime"
+            simulator_id="$(xcrun simctl create "Baseline-CI-iPhone" "$device_type" "$runtime")"
           fi
 
           if [ -z "$simulator_id" ]; then
             echo "::error::No available iPhone simulator destination found."
+            xcrun simctl list devices available
             exit 1
           fi
 
+          echo "Using simulator $simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
 
       - name: Build and test
