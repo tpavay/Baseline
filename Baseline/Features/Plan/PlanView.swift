@@ -500,10 +500,12 @@ enum PlanFormat {
         switch k { case .sessions: "SESSIONS"; case .duration: "DURATION"; case .distance: "RUNNING"; case .strengthSets: "STRENGTH"; case .calories: "CALORIES" }
     }
     /// Distance follows the athlete's unit system like every other display path — it used to be
-    /// hard-coded to miles, which read as "MI" to a metric athlete.
+    /// hard-coded to miles, which read as "MI" to a metric athlete. The weekly card sums a whole
+    /// week's work across every exercise, so it resolves with no exercise in hand: endurance, which
+    /// is the sense the "RUNNING" tile is counting in.
     static func aggregateUnit(_ k: AggregateKey, in system: UnitSystem) -> String? {
         switch k {
-        case .distance: system.displayUnit(for: .distance).short.uppercased()
+        case .distance: system.displayUnit(metric: .distance, exercise: nil).short.uppercased()
         case .strengthSets: "SETS"
         case .calories: "CAL"
         default: nil
@@ -514,7 +516,7 @@ enum PlanFormat {
         case .duration: return durationShort(Int(a.total))
         case .distance:
             return String(format: "%.1f", MetricConvert.fromCanonical(a.total, .distance,
-                                                                      to: system.displayUnit(for: .distance)))
+                                                                      to: system.displayUnit(metric: .distance, exercise: nil)))
         case .strengthSets, .sessions, .calories: return String(Int(a.total))
         }
     }

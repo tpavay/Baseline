@@ -23,14 +23,26 @@ enum MetricType: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Display units the athlete can choose between (canonical first). Single-entry = not convertible.
+    /// Display units the athlete can choose between. Single-entry = not convertible.
+    ///
+    /// Pace deliberately does **not** offer its canonical `s/m`: nobody reads a pace that way. The
+    /// two offered forms are the ones athletes speak — minutes per kilometer and per mile.
     var displayUnits: [MetricUnit] {
         switch self {
         case .distance: [.meters, .kilometers, .miles]
         case .load: [.kilograms, .pounds]
         case .duration, .heartRateZoneTime: [.seconds, .minutes]
+        case .pace: [.secondsPerKilometer, .secondsPerMile]
         default: [canonicalUnit]
         }
+    }
+
+    /// Units a value may arrive **in**, from imported text or an agent tool argument. Wider than the
+    /// display choices on purpose: a source is entitled to state a pace as `s/m` even though the app
+    /// would never show one back. Parsing what the world writes and choosing what the athlete reads
+    /// are different questions, and conflating them made an import reject its own canonical unit.
+    var parsableUnits: [MetricUnit] {
+        displayUnits.contains(canonicalUnit) ? displayUnits : displayUnits + [canonicalUnit]
     }
 
     var label: String {
@@ -55,6 +67,30 @@ enum MetricType: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// Whether a distance in this kind of work is course-length or floor-length. It is the whole reason
+/// distance cannot have one answer per unit system: a 5 km run and a 20 m sled push are the same
+/// metric, and an athlete reads them in different units on the same screen.
+enum DistanceContext: Sendable {
+    /// Runs, rides, rows — the athlete's system decides (km ↔ mi).
+    case endurance
+    /// Sleds, carries, strength work — meters in **both** systems. A 20 m sled push is 20 m to
+    /// everyone; "0.01 mi" is not a distance any athlete has ever programmed.
+    case floor
+}
+
+extension ActivityCategory {
+    /// Endurance is the closed, unambiguous set: the three cardio modalities. Everything else —
+    /// including `other`, which is what an uncatalogued movement resolves to — is floor work, so an
+    /// unmatched import can never render a sled push in miles. Meters on a long effort is merely
+    /// verbose; miles on a sled is wrong, and wrong is what was reported.
+    var distanceContext: DistanceContext {
+        switch self {
+        case .cycling, .running, .erg: .endurance
+        case .strength, .carry, .isometric, .other: .floor
+        }
+    }
+}
+
 /// The athlete's coarse imperial/metric preference. A single onboarding choice that seeds sensible
 /// per-dimension display-unit defaults (imperial → lb + mi, metric → kg + km); duration is unaffected
 /// and every default stays overridable per exercise. Storage is always canonical (see `MetricValues`);
@@ -68,23 +104,37 @@ enum UnitSystem: String, Codable, Sendable, CaseIterable {
         Locale.current.measurementSystem == .metric ? .metric : .imperial
     }
 
-    /// The display unit this system implies for a convertible metric, or nil for metrics that have a
-    /// single display unit (reps, RPE, …) or that this system doesn't reframe (duration stays as-is).
-    func defaultUnit(for metric: MetricType) -> MetricUnit? {
+    /// **The one door every display path goes through**, and the only place the category rule lives —
+    /// views ask this, they never re-derive it.
+    ///
+    /// The approved policy, in full:
+    /// - load — kg (metric) / lb (imperial)
+    /// - endurance distance — km (metric) / mi (imperial)
+    /// - floor distance (sled, carry, strength) — **meters in both systems**
+    /// - pace — min/km (metric) / min/mi (imperial)
+    /// - everything else has one unit and this returns it
+    ///
+    /// This is the *default*. A stored per-exercise or per-instance choice overrides it, which is how
+    /// the metrics picker's "Distance mi" and a specific sled's "20 m" both hold on the same screen —
+    /// see `WorkoutStore.displayUnit(_:for:)` for the full resolution order.
+    ///
+    /// `exercise` is nil where there is genuinely no exercise in hand — weekly aggregates, group
+    /// totals — which reads as endurance, the sense those surfaces sum in. Nothing in a display path
+    /// may reach for `canonicalUnit` itself; see `UnitSystemReachTests`.
+    func displayUnit(metric: MetricType, exercise: ExerciseDefinition?) -> MetricUnit {
         switch metric {
-        case .load: self == .imperial ? .pounds : .kilograms
-        case .distance: self == .imperial ? .miles : .kilometers
-        default: nil
+        case .load:
+            return self == .imperial ? .pounds : .kilograms
+        case .distance:
+            switch exercise?.category.distanceContext ?? .endurance {
+            case .floor: return .meters
+            case .endurance: return self == .imperial ? .miles : .kilometers
+            }
+        case .pace:
+            return self == .imperial ? .secondsPerMile : .secondsPerKilometer
+        default:
+            return metric.canonicalUnit
         }
-    }
-
-    /// **The one door every display path goes through.** The unit a quantity is shown in when no
-    /// per-exercise override is in play — plan aggregates, group totals, agent prose, anything with
-    /// no `PlannedExercise` to hang an override on. `WorkoutStore.displayUnit(_:for:)` layers the
-    /// override tiers on top of this and bottoms out here, so there is exactly one rule.
-    /// Nothing in a display path may reach for `canonicalUnit` itself — see `UnitSystemReachTests`.
-    func displayUnit(for metric: MetricType) -> MetricUnit {
-        defaultUnit(for: metric) ?? metric.canonicalUnit
     }
 }
 
@@ -98,7 +148,8 @@ protocol UnitSystemSource: AnyObject {
 }
 
 enum MetricUnit: String, Codable, Sendable {
-    case count, kilograms, pounds, meters, kilometers, miles, seconds, minutes, kcal, bpm, rpm, watts, secondsPerMeter, rpe
+    case count, kilograms, pounds, meters, kilometers, miles, seconds, minutes, kcal, bpm, rpm, watts
+    case secondsPerMeter, secondsPerKilometer, secondsPerMile, rpe
 
     var short: String {
         switch self {
@@ -115,6 +166,8 @@ enum MetricUnit: String, Codable, Sendable {
         case .rpm: "rpm"
         case .watts: "W"
         case .secondsPerMeter: "s/m"
+        case .secondsPerKilometer: "/km"
+        case .secondsPerMile: "/mi"
         case .rpe: ""
         }
     }
@@ -136,6 +189,9 @@ enum MetricConvert {
         case (.meters, .miles): value / metersPerMile
         case (.kilograms, .pounds): value / kgPerPound
         case (.seconds, .minutes): value / 60
+        // Pace inverts: seconds *per meter* becomes seconds per a longer distance, so it multiplies.
+        case (.secondsPerMeter, .secondsPerKilometer): value * metersPerKilometer
+        case (.secondsPerMeter, .secondsPerMile): value * metersPerMile
         default: value   // same unit or non-convertible
         }
     }
@@ -147,6 +203,8 @@ enum MetricConvert {
         case (.miles, .meters): value * metersPerMile
         case (.pounds, .kilograms): value * kgPerPound
         case (.minutes, .seconds): value * 60
+        case (.secondsPerKilometer, .secondsPerMeter): value / metersPerKilometer
+        case (.secondsPerMile, .secondsPerMeter): value / metersPerMile
         default: value
         }
     }

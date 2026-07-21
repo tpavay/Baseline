@@ -334,7 +334,7 @@ enum WorkoutImportDraftBuilder {
         case "rpe": .rpe
         default: nil
         }
-        guard let unit, metric.displayUnits.contains(unit) else { return nil }
+        guard let unit, metric.parsableUnits.contains(unit) else { return nil }
         guard encodedUnit == nil || encodedUnit == unit else { return nil }
         return unit
     }

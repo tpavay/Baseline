@@ -9,17 +9,21 @@ import UIKit
 /// setting said, because `PlanView` built its execution `WorkoutStore` without the athlete's unit
 /// system and that store shadows the app-wide one inside the sheet.
 ///
+/// The workout is a sled push and a run together, because that is the case the approved design
+/// turns on: on one screen an imperial athlete reads **lb** for load, **m** for the sled, and **mi**
+/// for the run — three different answers that all come from one resolver.
+///
 /// Hosted in a scene-attached window: sign-in gates a plain launch, `ImageRenderer` cannot rasterize
 /// the `ScrollView` this screen is made of, and an unattached window renders blank.
 @Suite(.serialized) @MainActor
 struct UnitSystemE2ERenderTests {
 
     @Test(arguments: [
-        (UnitSystem.imperial, "mi", "lb"),
-        (UnitSystem.metric, "km", "kg"),
+        (UnitSystem.imperial, "lb", "mi"),
+        (UnitSystem.metric, "kg", "km"),
     ])
     func todaysWorkoutOpenedFromPlanIsShownInTheAthletesUnits(
-        system: UnitSystem, distanceUnit: String, loadUnit: String
+        system: UnitSystem, loadUnit: String, enduranceUnit: String
     ) async throws {
         let bed = try Bed(system: system)
         defer { bed.tearDown() }
@@ -29,16 +33,17 @@ struct UnitSystemE2ERenderTests {
 
         // The set cells announce their unit (the visual column header is accessibility-hidden
         // precisely because each cell carries it), so this reads the unit the athlete is shown.
-        #expect(bed.cell("Distance") == "Set 1, Distance, \(distanceUnit)")
-        #expect(bed.cell("Load") == "Set 1, Load, \(loadUnit)")
+        #expect(bed.cell("Sled Push", "Load") == "Set 1, Load, \(loadUnit)")
+        // Floor work: meters in both systems, on the same screen as an imperial load.
+        #expect(bed.cell("Sled Push", "Distance") == "Set 1, Distance, m")
+        // Endurance work on the very same screen follows the athlete's system.
+        #expect(bed.cell("Run", "Distance") == "Set 1, Distance, \(enduranceUnit)")
 
-        // The other system's units must be nowhere on screen — a half-converted table is worse than
-        // a consistently wrong one.
-        let wrong = system == .imperial ? ["km", "kg"] : ["mi", "lb"]
-        let text = bed.visibleText
-        for token in wrong {
-            #expect(!text.contains(", \(token)"), "\(token) is still on screen under \(system.rawValue)")
-        }
+        // The other system's load unit must be nowhere on screen — a half-converted table is worse
+        // than a consistently wrong one.
+        let wrongLoad = system == .imperial ? "kg" : "lb"
+        #expect(!bed.visibleText.contains(", \(wrongLoad)"),
+                "\(wrongLoad) is still on screen under \(system.rawValue)")
     }
 
     /// The store the sheet runs on must be the athlete's, not a fresh one that fell back to a default.
@@ -47,10 +52,10 @@ struct UnitSystemE2ERenderTests {
         defer { bed.tearDown() }
         try await bed.openTodaysWorkout()
 
-        #expect(bed.cell("Distance") == "Set 1, Distance, mi")
+        #expect(bed.cell("Run", "Distance") == "Set 1, Distance, mi")
         bed.settings.unitSystem = .metric
         try await bed.settle()
-        #expect(bed.cell("Distance") == "Set 1, Distance, km",
+        #expect(bed.cell("Run", "Distance") == "Set 1, Distance, km",
                 "changing the setting did not reach the already-open workout")
     }
 }
@@ -77,12 +82,15 @@ private final class Bed {
         let plan = PlanStore(repo: SwiftDataPlanRepository(context: container.mainContext))
         Self.retained.append(contentsOf: [container, plan])
 
-        // 121 m and 100 kg, stored canonically exactly as the repository holds them.
+        // Stored canonically exactly as the repository holds them: a 20 m sled at 100 kg, and a
+        // 5 km run. Both distances, one canonical unit, two different right answers on screen.
         var sled = PlannedExercise(exerciseName: "Sled Push", definitionId: "sled_push",
                                    selectedMetrics: [.distance, .load])
-        sled.prescription.sets = [PlannedSet(values: MetricValues([.distance: 121, .load: 100]))]
+        sled.prescription.sets = [PlannedSet(values: MetricValues([.distance: 20, .load: 100]))]
+        var run = PlannedExercise(exerciseName: "Run", definitionId: "run", selectedMetrics: [.distance])
+        run.prescription.sets = [PlannedSet(values: MetricValues([.distance: 5_000]))]
         let workout = Workout(title: "Conditioning",
-                              blocks: [WorkoutBlock(name: "", exercises: [sled], isDefault: true)])
+                              blocks: [WorkoutBlock(name: "", exercises: [sled, run], isDefault: true)])
         let program = plan.addProgram(Program(name: "P", createdAt: Date()))
         plan.addScheduled(ScheduledWorkout(programID: program.id, date: Date(), origin: .userCreated,
                                            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout))
@@ -124,10 +132,17 @@ private final class Bed {
             .joined(separator: "\n")
     }
 
-    /// A set cell's spoken label for the named metric, which is where the unit lives. (The cell's
-    /// accessibility *value* is the row's completion state, not the number — a separate a11y gap.)
-    func cell(_ metric: String) -> String? {
-        elements.first { $0.accessibilityLabel?.contains(", \(metric), ") ?? false }?.accessibilityLabel
+    /// A set cell's spoken label for a metric under the named exercise, which is where the unit
+    /// lives. Cells are in document order after their exercise heading, so the search starts there —
+    /// two exercises on this screen carry a Distance cell each, and they must not be confused.
+    /// (The cell's accessibility *value* is the row's completion state, not the number — a separate
+    /// a11y gap, untouched here.)
+    func cell(_ exercise: String, _ metric: String) -> String? {
+        let all = elements
+        guard let start = all.firstIndex(where: { $0.accessibilityLabel == exercise }) else { return nil }
+        return all[start...]
+            .first { $0.accessibilityLabel?.contains(", \(metric), ") ?? false }?
+            .accessibilityLabel
     }
 
     func capture(_ name: String) {

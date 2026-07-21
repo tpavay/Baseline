@@ -716,13 +716,17 @@ final class AgentTools {
 
     /// The athlete's unit system, stated outright. Without it the model's only frame is the canonical
     /// storage units the prompt describes, so it narrates kg and metres to an imperial athlete even
-    /// while the screens beside it read lb and miles.
+    /// while the screens beside it read lb and miles. Distance is stated as the two cases it really
+    /// has, because "distances in miles" would have the coach call a 20 m sled push 0.01 mi.
     private func unitSystemLine() -> String {
         let system = workouts?.unitSystem ?? .metric
-        let load = system.displayUnit(for: .load).short
-        let distance = system.displayUnit(for: .distance).short
-        return "Units: the athlete uses \(system.rawValue) — write loads in \(load) and distances in \(distance) "
-            + "unless a specific exercise's units say otherwise. Convert before you speak; never quote a stored canonical value."
+        let load = system.displayUnit(metric: .load, exercise: nil).short
+        let endurance = system.displayUnit(metric: .distance, exercise: nil).short
+        let pace = system.displayUnit(metric: .pace, exercise: nil).short
+        return "Units: the athlete uses \(system.rawValue) — write loads in \(load), running/riding/rowing "
+            + "distances in \(endurance), and pace as minutes\(pace). Sled, carry and strength distances read in "
+            + "meters for everyone. A specific exercise may override any of these. Convert before you speak; "
+            + "never quote a stored canonical value."
     }
 
     /// The honest menu of what the model can actually fetch on request — so it offers exactly these

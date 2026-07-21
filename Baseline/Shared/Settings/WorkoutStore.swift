@@ -329,20 +329,31 @@ final class WorkoutStore {
     }
 
     /// The display unit for a metric on a planned exercise: this-instance override → per-exercise
-    /// preference → per-category preference → the athlete's unit system. The last tier is
-    /// `UnitSystem.displayUnit(for:)`, the same door every exercise-less surface uses.
+    /// preference → per-category preference → the athlete's unit system (which is category-aware —
+    /// see `UnitSystem.displayUnit(metric:exercise:)`). The order is the product rule: a stored
+    /// choice is for the athlete with an unusual preference, and it always beats the default.
+    ///
+    /// Each tier is only honoured if the unit it holds is still one this metric offers. That is a
+    /// safety net, not a new tier: it lets a unit be retired (pace no longer shows raw `s/m`) without
+    /// old stored state resurrecting it, and it never changes which tier wins.
     func displayUnit(_ metric: MetricType, for ex: PlannedExercise) -> MetricUnit {
-        if let u = ex.displayUnits[metric] { return u }
-        if let id = ex.definitionId {
-            if let u = preferences.unitsByExercise[id]?[metric] { return u }
-            if let cat = ExerciseCatalog.definition(id: id)?.category.rawValue, let u = preferences.unitsByCategory[cat]?[metric] { return u }
+        func offered(_ unit: MetricUnit?) -> MetricUnit? {
+            unit.flatMap { metric.displayUnits.contains($0) ? $0 : nil }
         }
-        return unitSystem.displayUnit(for: metric)
+        if let u = offered(ex.displayUnits[metric]) { return u }
+        if let id = ex.definitionId {
+            if let u = offered(preferences.unitsByExercise[id]?[metric]) { return u }
+            if let cat = ExerciseCatalog.definition(id: id)?.category.rawValue,
+               let u = offered(preferences.unitsByCategory[cat]?[metric]) { return u }
+        }
+        return unitSystem.displayUnit(metric: metric, exercise: ex.definition)
     }
 
     /// The display unit for a quantity with no exercise to hang an override on — group totals,
     /// weekly aggregates, agent prose about the plan.
-    func displayUnit(_ metric: MetricType) -> MetricUnit { unitSystem.displayUnit(for: metric) }
+    func displayUnit(_ metric: MetricType) -> MetricUnit {
+        unitSystem.displayUnit(metric: metric, exercise: nil)
+    }
 
     // MARK: - UI-facing edits (id-based; the manual screen drives the same model the agent does)
 

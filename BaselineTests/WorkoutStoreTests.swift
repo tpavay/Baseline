@@ -443,19 +443,25 @@ struct WorkoutStoreTests {
         let units = StubUnitSystem()
         let s = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         // A bare exercise with no per-instance override and no saved preference.
-        let ex = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift", selectedMetrics: [.load, .distance])
+        let lift = PlannedExercise(exerciseName: "Deadlift", definitionId: "deadlift", selectedMetrics: [.load, .distance])
+        let run = PlannedExercise(exerciseName: "Run", definitionId: "run", selectedMetrics: [.distance, .pace])
 
         units.unitSystem = .imperial
-        #expect(s.displayUnit(.load, for: ex) == .pounds)
-        #expect(s.displayUnit(.distance, for: ex) == .miles)
+        #expect(s.displayUnit(.load, for: lift) == .pounds)
+        #expect(s.displayUnit(.distance, for: run) == .miles)
+        #expect(s.displayUnit(.pace, for: run) == .secondsPerMile)
+        // Floor work is meters in both systems — a deadlift carry is not measured in miles.
+        #expect(s.displayUnit(.distance, for: lift) == .meters)
 
         units.unitSystem = .metric
-        #expect(s.displayUnit(.load, for: ex) == .kilograms)
-        #expect(s.displayUnit(.distance, for: ex) == .kilometers)
+        #expect(s.displayUnit(.load, for: lift) == .kilograms)
+        #expect(s.displayUnit(.distance, for: run) == .kilometers)
+        #expect(s.displayUnit(.pace, for: run) == .secondsPerKilometer)
+        #expect(s.displayUnit(.distance, for: lift) == .meters)
 
         // Non-convertible / duration metrics ignore the system and stay canonical.
-        #expect(s.displayUnit(.reps, for: ex) == .count)
-        #expect(s.displayUnit(.duration, for: ex) == .seconds)
+        #expect(s.displayUnit(.reps, for: lift) == .count)
+        #expect(s.displayUnit(.duration, for: lift) == .seconds)
     }
 
     @Test func perInstanceAndPreferenceStillWinOverGlobalDefault() {
@@ -475,12 +481,13 @@ struct WorkoutStoreTests {
     }
 
     @Test func unitSystemPerDimensionMapping() {
-        #expect(UnitSystem.imperial.defaultUnit(for: .load) == .pounds)
-        #expect(UnitSystem.imperial.defaultUnit(for: .distance) == .miles)
-        #expect(UnitSystem.metric.defaultUnit(for: .load) == .kilograms)
-        #expect(UnitSystem.metric.defaultUnit(for: .distance) == .kilometers)
+        let run = ExerciseCatalog.definition(id: "run")
+        #expect(UnitSystem.imperial.displayUnit(metric: .load, exercise: nil) == .pounds)
+        #expect(UnitSystem.imperial.displayUnit(metric: .distance, exercise: run) == .miles)
+        #expect(UnitSystem.metric.displayUnit(metric: .load, exercise: nil) == .kilograms)
+        #expect(UnitSystem.metric.displayUnit(metric: .distance, exercise: run) == .kilometers)
         // Duration and single-unit metrics don't vary by system.
-        #expect(UnitSystem.imperial.defaultUnit(for: .duration) == nil)
-        #expect(UnitSystem.metric.defaultUnit(for: .reps) == nil)
+        #expect(UnitSystem.imperial.displayUnit(metric: .duration, exercise: nil) == .seconds)
+        #expect(UnitSystem.metric.displayUnit(metric: .reps, exercise: nil) == .count)
     }
 }
