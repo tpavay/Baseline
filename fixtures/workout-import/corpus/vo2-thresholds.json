@@ -1,0 +1,61 @@
+{
+  "name": "vo2-thresholds",
+  "source": "data/baseline-import-latency-p5/report.md - the captain's own import. Two email screenshots. The shipped pipeline lost the entire A) 400s main set; a single permissive call recovered it on six of six runs across three models.",
+  "sketch": {
+    "title": "AM: VO2 THRESHOLDS",
+    "notes": [
+      "Level 3: As Prescribed",
+      "Level 2: 12 sets",
+      "Level 1: 10 sets",
+      "Key session of the week. This is a primary focus and will progress in coming weeks.",
+      "Intent: Raise the aerobic ceiling."
+    ],
+    "blocks": [
+      {
+        "name": "Warmup",
+        "notes": [],
+        "items": [
+          { "name": "Run", "prescription": "2km", "note": "easy" },
+          { "name": "Strides", "sets": "6-8", "prescription": "20 sec", "note": "building to threshold pace" }
+        ]
+      },
+      {
+        "name": "A) 400s",
+        "notes": [],
+        "items": [
+          {
+            "name": "Run",
+            "sets": "15",
+            "prescription": "400m",
+            "rest": "40 secs",
+            "intensity": "3-5km pace, 8/9 RPE"
+          },
+          {
+            "name": "Burpee Broad Jump",
+            "sets": "4 min",
+            "prescription": "8 reps",
+            "note": "EMOM. After the last 400m, go straight into this."
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "title": "AM: VO2 THRESHOLDS",
+    "blocks": ["Warmup", "A) 400s"],
+    "exercises": ["Run", "Run", "Run", "Burpee Broad Jump"],
+    "unresolved": [],
+    "setCounts": { "0": 1, "1": 1, "2": 15, "3": 1 },
+    "metrics": {
+      "0": { "distance": 2000 },
+      "1": { "duration": 20 },
+      "2": { "distance": 400 }
+    },
+    "notesContain": {
+      "0": ["easy"],
+      "1": ["6-8", "building to threshold pace"],
+      "2": ["3-5km pace, 8/9 RPE"],
+      "3": ["4 min", "EMOM. After the last 400m, go straight into this."]
+    }
+  }
+}
