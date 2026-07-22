@@ -257,14 +257,15 @@ enum ToolCallMapper {
             guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
                   let setID = requiredUUID(input["set_id"]),
                   let m = metric(input["metric"]), let v = doubleOrNil(input["value"]),
-                  input["unit"] == nil || unit(input["unit"]) != nil,
+                  input["unit"] == nil || valueUnit(input["unit"]) != nil,
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            let parsedUnit = valueUnit(input["unit"])
             return .setMetricValue(
                 exerciseInstanceID: exerciseID,
                 setID: setID,
                 metric: m,
-                value: v,
-                unit: unit(input["unit"]),
+                value: v * (parsedUnit?.multiplier ?? 1),
+                unit: parsedUnit?.unit,
                 expectedRevisionToken: expected
             )
         case "remove_metric":
@@ -293,13 +294,7 @@ enum ToolCallMapper {
     private static func exactIntOrNil(_ value: Any?) -> Int? {
         if value == nil || value is NSNull { return nil }
         if let integer = value as? Int { return integer }
-        if let double = value as? Double,
-           double.isFinite,
-           double.rounded() == double,
-           double >= Double(Int.min),
-           double <= Double(Int.max) {
-            return Int(double)
-        }
+        if let double = value as? Double { return Int(exactly: double) }
         return nil
     }
 
@@ -397,13 +392,17 @@ enum ToolCallMapper {
         }
     }
 
-    private static func rangeTargets(_ value: Any?) -> [PlannedSetRangeTarget]? {
+    /// An inverted range is rejected here because `MetricTargetRange` normalizes bound order at init —
+    /// past this boundary the raw claim "lower 80, upper 40" can no longer be seen, so it must not
+    /// silently become 40–80.
+    private static func rangeTargets(_ value: Any?) -> [MetricTargetRange]? {
         guard let array = value as? [[String: Any]] else { return nil }
-        return array.reduce(into: [PlannedSetRangeTarget]?([])) { result, object in
+        return array.reduce(into: [MetricTargetRange]?([])) { result, object in
             guard result != nil,
                   let metric = metric(object["metric"]),
                   let lower = doubleOrNil(object["lower"]),
-                  let upper = doubleOrNil(object["upper"]) else {
+                  let upper = doubleOrNil(object["upper"]),
+                  lower <= upper else {
                 result = nil
                 return
             }
@@ -420,7 +419,7 @@ enum ToolCallMapper {
         } else {
             effort = nil
         }
-        let ranges: [PlannedSetRangeTarget]
+        let ranges: [MetricTargetRange]
         if let rawRanges = object["ranges"] {
             guard let parsed = rangeTargets(rawRanges) else { return nil }
             ranges = parsed
@@ -450,7 +449,7 @@ enum ToolCallMapper {
             effort = .unchanged
         }
 
-        let ranges: MetadataPatch<[PlannedSetRangeTarget]>
+        let ranges: MetadataPatch<[MetricTargetRange]>
         if let rawRanges = object["ranges"] {
             if rawRanges is NSNull {
                 ranges = .clear
@@ -523,7 +522,20 @@ enum ToolCallMapper {
         switch normalize(rawValue) {
         case "km", "perkm", "minkm", "secondsperkilometer": return .secondsPerKilometer
         case "mi", "permile", "minmi", "secondspermile": return .secondsPerMile
+        case "sm", "secondspermeter": return .secondsPerMeter
         default: return nil
+        }
+    }
+
+    /// A unit for a *value-carrying* argument (`set_metric_value`). Minutes-per-distance paces have no
+    /// `MetricUnit`, so they resolve to their seconds-per form together with the ×60 the value needs —
+    /// "4.5 min/km" must never be stored as 4.5 seconds per kilometer.
+    private static func valueUnit(_ v: Any?) -> (unit: MetricUnit, multiplier: Double)? {
+        guard let s = v as? String else { return nil }
+        switch normalize(s) {
+        case "minkm", "minperkm", "minutesperkilometer": return (.secondsPerKilometer, 60)
+        case "minmi", "minpermile", "minutespermile": return (.secondsPerMile, 60)
+        default: return unit(s).map { ($0, 1) }
         }
     }
 

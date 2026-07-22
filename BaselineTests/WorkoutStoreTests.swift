@@ -23,24 +23,35 @@ struct WorkoutStoreTests {
         #expect(s.current?.blocks.first { $0.name == "Strength" }?.exercises.isEmpty == true)
     }
 
-    @Test func updateSingleSetByNumberLeavesOthers() {
+    @Test func updateSingleSetByIDLeavesOthers() throws {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "A", intent: nil)
         s.addExercise(name: "Squat", toBlockNamed: "A", sets: 3, reps: 5, load: 100, durationSeconds: nil)
-        #expect(s.updateSet(exerciseNamed: "Squat", setNumber: 2, reps: nil, load: 110, durationSeconds: nil, rpe: 9).succeeded)
+        let setID = try #require(s.current?.allExercises.first?.prescription.sets[1].id)
+        let token = try #require(s.mutationTarget(.plan)?.revisionToken)
+        #expect(s.updateSet(
+            setID: setID,
+            patch: .init(values: .set(.init(metrics: [.load: .set(110), .rpe: .set(9)]))),
+            expectedRevisionToken: token
+        ).succeeded)
         let sets = s.current!.allExercises.first!.prescription.sets
         #expect(sets[1].load == 110)
         #expect(sets[1].rpe == 9)
         #expect(sets[0].load == 100)      // untouched
     }
 
-    @Test func unknownNamesAndBadSetsFail() {
+    @Test func unknownNamesAndBadSetsFail() throws {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "Real", intent: nil)     // ≥2 blocks so a bad block name can't fall back to the implicit one
+        let token = try #require(s.mutationTarget(.plan)?.revisionToken)
         #expect(!s.moveExercise(named: "ghost", toBlockNamed: "nowhere").succeeded)
-        #expect(!s.updateSet(exerciseNamed: "ghost", setNumber: 1, reps: 5, load: nil, durationSeconds: nil, rpe: nil).succeeded)
+        #expect(!s.updateSet(
+            setID: UUID(),
+            patch: .init(values: .set(.init(metrics: [.reps: .set(5)]))),
+            expectedRevisionToken: token
+        ).succeeded)
         #expect(!s.addExercise(name: "X", toBlockNamed: "missing block", sets: 1, reps: nil, load: nil, durationSeconds: nil).succeeded)
     }
 
@@ -75,9 +86,9 @@ struct WorkoutStoreTests {
         let recoveryID = try #require(store.current?.blocks.first { $0.name == "Recovery" }?.id)
 
         #expect(store.setLoggingConfig(
-            exerciseNamed: "not the target name",
-            exerciseID: second.id,
-            enabled: [.duration]
+            exerciseInstanceID: second.id,
+            enabled: [.duration],
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
         ).succeeded)
         #expect(store.current?.exercise(first.id)?.selectedMetrics != [.duration])
         #expect(store.current?.exercise(second.id)?.selectedMetrics == [.duration])
@@ -99,9 +110,9 @@ struct WorkoutStoreTests {
         #expect(store.current?.blocks.first { $0.id == recoveryID }?.exercises.map(\.id) == [second.id])
 
         #expect(store.removeMetric(
-            exerciseNamed: "not the target name",
-            exerciseID: second.id,
-            metric: .duration
+            exerciseInstanceID: second.id,
+            metric: .duration,
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
         ).succeeded)
         #expect(store.current?.exercise(second.id)?.selectedMetrics.contains(.duration) == false)
 
@@ -123,24 +134,20 @@ struct WorkoutStoreTests {
         let secondSetID = try #require(second.prescription.sets.first?.id)
 
         #expect(store.updateSet(
-            exerciseNamed: "not the target name",
-            setNumber: 99,
             setID: secondSetID,
-            reps: nil,
-            load: nil,
-            durationSeconds: 180,
-            rpe: nil
+            patch: .init(values: .set(.init(metrics: [.duration: .set(180)]))),
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
         ).succeeded)
         #expect(store.current?.exercise(first.id)?.prescription.sets.first?.duration == 60)
         #expect(store.current?.exercise(second.id)?.prescription.sets.first?.duration == 180)
 
         #expect(store.setMetricValue(
-            exerciseNamed: "not the target name",
-            setNumber: 99,
+            exerciseInstanceID: second.id,
             setID: secondSetID,
             metric: .distance,
             value: 1,
-            unit: .kilometers
+            unit: .kilometers,
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
         ).succeeded)
         #expect(store.current?.exercise(first.id)?.prescription.sets.first?.distance == nil)
         #expect(store.current?.exercise(second.id)?.prescription.sets.first?.distance == 1_000)
@@ -224,7 +231,7 @@ struct WorkoutStoreTests {
         #expect(s.incompleteWork() == (sets: 1, exercises: 1))
     }
 
-    @Test func clampsNegativeNumbersAndRpe() {
+    @Test func clampsNegativeNumbersAndRejectsOutOfRangeRpe() throws {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "A", intent: nil)
@@ -234,9 +241,20 @@ struct WorkoutStoreTests {
         #expect(set.load == 0)
         #expect(set.duration == 0)
         s.addExercise(name: "Bench", toBlockNamed: "A", sets: 1, reps: 5, load: 60, durationSeconds: nil)
-        #expect(s.updateSet(exerciseNamed: "Bench", setNumber: 1, reps: nil, load: nil, durationSeconds: nil, rpe: 99).succeeded)
+        let benchSetID = try #require(
+            s.current?.allExercises.first { $0.exerciseName == "Bench" }?.prescription.sets.first?.id
+        )
+        // The ID-based set patch validates instead of silently clamping: RPE stays 0…10.
+        guard case .notFound(let message) = s.updateSet(
+            setID: benchSetID,
+            patch: .init(values: .set(.init(metrics: [.rpe: .set(99)]))),
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        ) else {
+            Issue.record("expected an out-of-range RPE to be rejected"); return
+        }
+        #expect(message.contains("RPE"))
         let bench = s.current!.allExercises.first { $0.exerciseName == "Bench" }!
-        #expect(bench.prescription.sets.first?.rpe == 10)   // clamped to 0…10
+        #expect(bench.prescription.sets.first?.rpe == nil)   // untouched
     }
 
     @Test func distanceIsStoredInMetersNotTheName() {
@@ -271,21 +289,40 @@ struct WorkoutStoreTests {
         return s
     }
 
-    @Test func durationOnlyBikeHidesDistance() {
+    @Test func durationOnlyBikeHidesDistance() throws {
         let s = bikeStore()
-        #expect(s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: [.duration]).succeeded)
+        let bikeID = try #require(s.current?.allExercises.first?.id)
+        #expect(s.setLoggingConfig(
+            exerciseInstanceID: bikeID,
+            enabled: [.duration],
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        ).succeeded)
         let ex = s.current!.allExercises.first!
         #expect(ex.selectedMetrics == [.duration])
         #expect(!ex.selectedMetrics.contains(.distance))     // no blank distance field
     }
 
-    @Test func switchingKmToMilesPreservesCanonicalMeters() {
+    @Test func switchingKmToMilesPreservesCanonicalMeters() throws {
         let s = bikeStore()
-        s.setMetricValue(exerciseNamed: "Stationary Bike", setNumber: 1, metric: .distance, value: 10, unit: .kilometers)
+        let bike = try #require(s.current?.allExercises.first)
+        let setID = try #require(bike.prescription.sets.first?.id)
+        s.setMetricValue(
+            exerciseInstanceID: bike.id,
+            setID: setID,
+            metric: .distance,
+            value: 10,
+            unit: .kilometers,
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        )
         let stored = s.current!.allExercises.first!.prescription.sets.first!.values[.distance]!
         #expect(abs(stored - 10_000) < 0.001)                // stored canonical (meters)
         // Switch the display unit to miles — the stored value is untouched.
-        s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: nil, units: [.distance: .miles])
+        s.setLoggingConfig(
+            exerciseInstanceID: bike.id,
+            enabled: nil,
+            units: [.distance: .miles],
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        )
         let ex = s.current!.allExercises.first!
         #expect(s.displayUnit(.distance, for: ex) == .miles)
         #expect(abs(ex.prescription.sets.first!.values[.distance]! - 10_000) < 0.001)  // unchanged
@@ -305,9 +342,13 @@ struct WorkoutStoreTests {
         #expect(s.displayUnit(.distance, for: fresh) == .miles)
     }
 
-    @Test func thisWorkoutConfigDoesNotMutateGlobalDefault() {
+    @Test func thisWorkoutConfigDoesNotMutateGlobalDefault() throws {
         let s = bikeStore()
-        #expect(s.setLoggingConfig(exerciseNamed: "Stationary Bike", enabled: [.duration]).succeeded)
+        #expect(s.setLoggingConfig(
+            exerciseInstanceID: try #require(s.current?.allExercises.first?.id),
+            enabled: [.duration],
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        ).succeeded)
         // The global/default preference is untouched by a this-workout change.
         #expect(s.preferences.selectedByExercise["stationary_bike"] == nil)
     }
@@ -458,13 +499,21 @@ struct WorkoutStoreTests {
         #expect(!s.requireAllOptions(choiceNamed: "missing").succeeded)
     }
 
-    @Test func unsupportedMetricIsRejected() {
+    @Test func unsupportedMetricIsRejected() throws {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "Strength", intent: nil)
         s.addExercise(name: "Deadlift", toBlockNamed: "Strength", sets: 3, reps: 5, load: 140, durationSeconds: nil, distanceMeters: nil)
+        let deadlift = try #require(s.current?.allExercises.first)
         // A deadlift has no pace.
-        guard case .notFound(let msg) = s.setMetricValue(exerciseNamed: "Deadlift", setNumber: 1, metric: .pace, value: 5, unit: nil) else {
+        guard case .notFound(let msg) = s.setMetricValue(
+            exerciseInstanceID: deadlift.id,
+            setID: try #require(deadlift.prescription.sets.first?.id),
+            metric: .pace,
+            value: 5,
+            unit: nil,
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        ) else {
             Issue.record("expected rejection"); return
         }
         #expect(msg.localizedCaseInsensitiveContains("pace"))

@@ -74,7 +74,9 @@ final class WorkoutStore {
         let pushSessionWorkout: (Workout) -> Void     // mid-workout edit → session copy only (no revision)
         let pushLog: (WorkoutLog) -> Void             // log a set → the session log
         let mutationTarget: (WorkoutEditScope) -> WorkoutMutationTarget?
-        let applyMutation: (WorkoutMutationRequest, Workout) -> WorkoutMutationResult
+        /// The optional log is a session-scoped companion write (a purged logged actual) that must be
+        /// versioned and undone together with the workout content it belongs to.
+        let applyMutation: (WorkoutMutationRequest, Workout, WorkoutLog?) -> WorkoutMutationResult
         let undoMutation: (UUID, UUID) -> WorkoutMutationResult
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
@@ -92,7 +94,7 @@ final class WorkoutStore {
             pushSessionWorkout: @escaping (Workout) -> Void,
             pushLog: @escaping (WorkoutLog) -> Void,
             mutationTarget: ((WorkoutEditScope) -> WorkoutMutationTarget?)? = nil,
-            applyMutation: ((WorkoutMutationRequest, Workout) -> WorkoutMutationResult)? = nil,
+            applyMutation: ((WorkoutMutationRequest, Workout, WorkoutLog?) -> WorkoutMutationResult)? = nil,
             undoMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
             start: @escaping () -> Void,
             complete: @escaping () -> Void,
@@ -118,12 +120,13 @@ final class WorkoutStore {
                     revisionToken: fallbackRevisionToken
                 )
             }
-            self.applyMutation = applyMutation ?? { request, workout in
+            self.applyMutation = applyMutation ?? { request, workout, log in
                 if isSessionDecisionPending() {
                     pushSessionWorkout(workout)
                 } else {
                     pushWorkout(workout)
                 }
+                if let log { pushLog(log) }
                 let receipt = WorkoutMutationReceipt(
                     mutationID: request.mutationID,
                     scope: .transient,
@@ -156,6 +159,9 @@ final class WorkoutStore {
     private struct TransientMutationUndo {
         let receipt: WorkoutMutationReceipt
         let before: Workout
+        /// Non-nil only when the mutation also rewrote the performed log (a purge); undo must put
+        /// that log back or it would restore a planned set whose logged actual stayed lost.
+        let beforeLog: WorkoutLog?
     }
     /// Only the newest transient receipt can ever undo (the token guard makes every older one
     /// permanently stale), so only its snapshot is retained. Pruned receipts keep their IDs in
@@ -676,6 +682,7 @@ final class WorkoutStore {
         diff: WorkoutMutationDiff,
         dryRun: Bool = false,
         resolvedEntityIDs: () -> [UUID] = { [] },
+        logTransform: ((inout WorkoutLog) -> Void)? = nil,
         transform: (inout Workout) -> EditOutcome?
     ) -> EditOutcome {
         let scope = agentScope
@@ -689,6 +696,14 @@ final class WorkoutStore {
             return .notFound(Self.staleMutationMessage)
         }
         if let failure = transform(&authoritative) { return failure }
+        // A companion log write only accompanies an edit to the workout the log belongs to: the
+        // session copy, or an unbound store's single workout. A bound plan edit never rewrites a
+        // session's performed history.
+        var updatedLog: WorkoutLog?
+        if let logTransform, var log = currentLog, sink == nil || scope == .session {
+            logTransform(&log)
+            if log != currentLog { updatedLog = log }
+        }
         var resolvedDiff = diff
         let entityIDs = resolvedEntityIDs()
         if resolvedDiff.changes.count == 1, let change = resolvedDiff.changes.first, !entityIDs.isEmpty {
@@ -710,7 +725,7 @@ final class WorkoutStore {
         )
         let result: WorkoutMutationResult
         if let sink {
-            result = sink.applyMutation(request, authoritative)
+            result = sink.applyMutation(request, authoritative, dryRun ? nil : updatedLog)
         } else {
             let after = dryRun ? expected : UUID()
             let receipt = WorkoutMutationReceipt(
@@ -735,10 +750,17 @@ final class WorkoutStore {
                 invalidateLatestTransientUndo()
                 latestTransientUndo = TransientMutationUndo(
                     receipt: receipt,
-                    before: before
+                    before: before,
+                    beforeLog: updatedLog == nil ? nil : currentLog
                 )
             }
             if scope == .session || displayWasAuthoritative { current = authoritative }
+            if let updatedLog {
+                // The sink already persisted the companion log write; adopt it without re-pushing.
+                isSyncing = true
+                currentLog = updatedLog
+                isSyncing = false
+            }
             pendingPlanEdit = nil
             return .mutated(receipt)
         case .preview(let receipt):
@@ -805,6 +827,7 @@ final class WorkoutStore {
                 undoAvailable: false
             )
             self.current = applied.before
+            if let beforeLog = applied.beforeLog { currentLog = beforeLog }
             transientRevisionToken = undoReceipt.afterRevisionToken
             invalidateLatestTransientUndo()
             return .mutated(undoReceipt)
@@ -1028,7 +1051,6 @@ final class WorkoutStore {
     private func clampReps(_ v: Int?) -> Int? { v.map { max(0, $0) } }
     private func clampLoad(_ v: Double?) -> Double? { v.map { max(0, $0) } }
     private func clampDuration(_ v: Int?) -> Int? { v.map { max(0, $0) } }
-    private func clampRPE(_ v: Double?) -> Double? { v.map { min(max($0, 0), 10) } }
 
     private func invalidMetricValue(
         metric: MetricType,
@@ -1088,9 +1110,6 @@ final class WorkoutStore {
             ) {
                 return failure
             }
-            guard range.lower <= range.upper else {
-                return "A target range's lower value can't exceed its upper value."
-            }
         }
         return nil
     }
@@ -1099,10 +1118,6 @@ final class WorkoutStore {
         var result = MetricValues()
         for (metric, value) in values.metrics { result[metric] = value }
         return result
-    }
-
-    private func metricRanges(_ ranges: [PlannedSetRangeTarget]) -> [MetricTargetRange] {
-        ranges.map { MetricTargetRange(metric: $0.metric, lower: $0.lower, upper: $0.upper) }
     }
 
     @discardableResult
@@ -1300,51 +1315,6 @@ final class WorkoutStore {
         return outcome
     }
 
-    /// Update one set (1-based `setNumber`) of a named exercise. Only the supplied fields change.
-    @discardableResult
-    func updateSet(exerciseNamed exercise: String, setNumber: Int, setID: UUID? = nil,
-                   reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double? = nil,
-                   rpe: Double?, expectedRevisionToken: UUID? = nil) -> EditOutcome {
-        var affectedID: UUID?
-        return mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Update set \(setNumber) of \(exercise)",
-            diff: .init(changes: [.init(kind: .edit, summary: "Update set \(setNumber) of \(exercise)", entityID: setID)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            let targetSetID: UUID
-            if let setID {
-                guard w.allExercises.contains(where: { exercise in
-                    exercise.prescription.sets.contains { $0.id == setID }
-                }) else {
-                    return .notFound(missingTarget("set", name: "set \(setNumber) of \(exercise)", id: setID))
-                }
-                targetSetID = setID
-            } else {
-                let exID: UUID
-                switch resolveExercise(exercise, in: w) {
-                case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
-                case .one(let id): exID = id
-                case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
-                }
-                guard let ex = w.exercise(exID),
-                      setNumber >= 1, setNumber <= ex.prescription.sets.count else {
-                    return .notFound("Set \(setNumber) doesn't exist for \(exercise).")
-                }
-                targetSetID = ex.prescription.sets[setNumber - 1].id
-            }
-            _ = w.updateSet(targetSetID) { set in
-                if let reps { set.reps = clampReps(reps) }
-                if let load { set.load = clampLoad(load) }
-                if let durationSeconds { set.duration = clampDuration(durationSeconds) }
-                if let distanceMeters { set.distance = clampLoad(distanceMeters) }
-                if let rpe { set.rpe = clampRPE(rpe) }
-            }
-            affectedID = targetSetID
-            return nil
-        }
-    }
-
     @discardableResult
     func addSet(
         exerciseInstanceID: UUID,
@@ -1380,7 +1350,7 @@ final class WorkoutStore {
                 values: metricValues(values),
                 role: role,
                 effortTarget: targets.effort,
-                ranges: metricRanges(targets.ranges)
+                ranges: targets.ranges
             )
             guard workout.addSet(newSet, toExercise: exerciseInstanceID) else {
                 return .notFound("I couldn't add that planned set.")
@@ -1478,7 +1448,7 @@ final class WorkoutStore {
                     }
                     switch targetsPatch.ranges {
                     case .unchanged: break
-                    case .set(let ranges): updated.ranges = metricRanges(ranges)
+                    case .set(let ranges): updated.ranges = ranges
                     case .clear: updated.ranges = []
                     }
                 }
@@ -1499,10 +1469,14 @@ final class WorkoutStore {
     @discardableResult
     func removeSet(setID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
         var ownerID: UUID?
-        let outcome = mutate(
+        return mutate(
             expectedRevisionToken: expectedRevisionToken,
             reason: "Remove planned set",
-            diff: .init(changes: [.init(kind: .remove, summary: "Remove planned set", entityID: setID)])
+            diff: .init(changes: [.init(kind: .remove, summary: "Remove planned set", entityID: setID)]),
+            logTransform: { log in
+                guard let ownerID else { return }
+                log.removeSetLogs(forPlanned: ownerID, plannedSetIDs: [setID])
+            }
         ) { workout in
             guard let exercise = workout.allExercises.first(where: { exercise in
                 exercise.prescription.sets.contains { $0.id == setID }
@@ -1515,10 +1489,6 @@ final class WorkoutStore {
             ownerID = exercise.id
             return nil
         }
-        if outcome.succeeded, currentLog != nil, let ownerID {
-            editLog { $0.removeSetLogs(forPlanned: ownerID, plannedSetIDs: [setID]) }
-        }
-        return outcome
     }
 
     @discardableResult
@@ -1563,52 +1533,6 @@ final class WorkoutStore {
     }
 
     // MARK: - Logging configuration & values (metric system)
-
-    /// THIS WORKOUT: choose which metrics an exercise logs + per-instance unit overrides. Rejects
-    /// metrics the exercise doesn't support.
-    @discardableResult
-    func setLoggingConfig(
-        exerciseNamed name: String,
-        exerciseID: UUID? = nil,
-        enabled: [MetricType]?,
-        units: [MetricType: MetricUnit] = [:],
-        expectedRevisionToken: UUID? = nil
-    ) -> EditOutcome {
-        var affectedID: UUID?
-        return mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Update logging configuration for \(name)",
-            diff: .init(changes: [.init(kind: .edit, summary: "Update logging configuration for \(name)", entityID: exerciseID)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            let exID: UUID
-            switch resolveExercise(name, id: exerciseID, in: w) {
-            case .none: return .notFound(missingTarget("exercise", name: name, id: exerciseID))
-            case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
-            case .one(let id): exID = id
-            }
-            guard let exercise = w.exercise(exID) else { return .notFound("I couldn't find \"\(name)\".") }
-            let requested = (enabled ?? []) + Array(units.keys)
-            if let unsupported = requested.first(where: { !exercise.supportedMetrics.contains($0) }) {
-                return .notFound("\(exercise.exerciseName) doesn't support \(unsupported.label.lowercased()).")
-            }
-            if let invalidUnit = units.first(where: { metric, unit in
-                metric.displayUnits.contains(unit) == false
-            }) {
-                return .notFound("\(invalidUnit.value.short) isn't a display unit for \(invalidUnit.key.label.lowercased()).")
-            }
-            w.updateExercise(exID) { updated in
-                if let enabled {
-                    updated.selectedMetrics = MetricType.allCases.filter { enabled.contains($0) }
-                }
-                for (metric, unit) in units where metric.displayUnits.contains(unit) {
-                    updated.displayUnits[metric] = unit
-                }
-            }
-            affectedID = exID
-            return nil
-        }
-    }
 
     /// ID-only agent surface for this workout's logging metrics and display units.
     /// Unit changes never rewrite any canonical planned-set value.
@@ -1742,83 +1666,9 @@ final class WorkoutStore {
         return .done
     }
 
-    /// Set one metric's value on a planned set (value given in `unit`, stored canonically). Ensures
-    /// the metric is selected/visible. Rejects unsupported metrics.
-    @discardableResult
-    func setMetricValue(
-        exerciseNamed name: String,
-        setNumber: Int,
-        setID: UUID? = nil,
-        metric: MetricType,
-        value: Double,
-        unit: MetricUnit?,
-        expectedRevisionToken: UUID? = nil
-    ) -> EditOutcome {
-        var affectedID: UUID?
-        return mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Set \(metric.label) on set \(setNumber) of \(name)",
-            diff: .init(changes: [.init(kind: .edit, summary: "Set \(metric.label) on set \(setNumber) of \(name)", entityID: setID)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            let exercise: PlannedExercise
-            let targetSetID: UUID
-            if let setID {
-                guard let owner = w.allExercises.first(where: { exercise in
-                    exercise.prescription.sets.contains { $0.id == setID }
-                }) else {
-                    return .notFound(missingTarget("set", name: "set \(setNumber) of \(name)", id: setID))
-                }
-                exercise = owner
-                targetSetID = setID
-            } else {
-                let exerciseID: UUID
-                switch resolveExercise(name, in: w) {
-                case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
-                case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
-                case .one(let id): exerciseID = id
-                }
-                guard let resolved = w.exercise(exerciseID) else {
-                    return .notFound("I couldn't find \"\(name)\".")
-                }
-                guard setNumber >= 1, setNumber <= resolved.prescription.sets.count else {
-                    return .notFound("Set \(setNumber) doesn't exist for \(resolved.exerciseName).")
-                }
-                exercise = resolved
-                targetSetID = resolved.prescription.sets[setNumber - 1].id
-            }
-            guard exercise.supportedMetrics.contains(metric) else {
-                return .notFound("\(exercise.exerciseName) doesn't support \(metric.label.lowercased()).")
-            }
-            if let unit, metric.parsableUnits.contains(unit) == false {
-                return .notFound("\(unit.short) isn't a valid input unit for \(metric.label.lowercased()).")
-            }
-            // An omitted unit means the storage unit, as described by the tool schema.
-            let canonical = MetricConvert.toCanonical(
-                value,
-                metric,
-                from: unit ?? metric.canonicalUnit // units:storage
-            )
-            if let failure = invalidMetricValue(metric: metric, value: canonical, exercise: exercise) {
-                return .notFound(failure)
-            }
-            w.updateExercise(exercise.id) { updated in
-                guard let index = updated.prescription.sets.firstIndex(where: { $0.id == targetSetID }) else {
-                    return
-                }
-                updated.prescription.sets[index].values[metric] = canonical
-                if !updated.selectedMetrics.contains(metric) {
-                    updated.selectedMetrics = MetricType.allCases.filter {
-                        updated.selectedMetrics.contains($0) || $0 == metric
-                    }
-                }
-            }
-            affectedID = targetSetID
-            return nil
-        }
-    }
-
     /// Set one canonical metric value using stable exercise and set IDs from the same workout read.
+    /// The value arrives in `unit` and is stored canonically; an omitted unit means the storage unit,
+    /// as described by the tool schema. Ensures the metric is selected/visible.
     @discardableResult
     func setMetricValue(
         exerciseInstanceID: UUID,
@@ -1874,38 +1724,6 @@ final class WorkoutStore {
     }
 
     /// Remove a metric from an exercise this workout — unselect it and clear its values.
-    @discardableResult
-    func removeMetric(
-        exerciseNamed name: String,
-        exerciseID: UUID? = nil,
-        metric: MetricType,
-        expectedRevisionToken: UUID? = nil
-    ) -> EditOutcome {
-        var affectedID: UUID?
-        return mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Remove \(metric.label) from \(name)",
-            diff: .init(changes: [.init(kind: .remove, summary: "Remove \(metric.label) from \(name)", entityID: exerciseID)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            let exID: UUID
-            switch resolveExercise(name, id: exerciseID, in: w) {
-            case .none: return .notFound(missingTarget("exercise", name: name, id: exerciseID))
-            case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
-            case .one(let id): exID = id
-            }
-            w.updateExercise(exID) { updated in
-                updated.selectedMetrics.removeAll { $0 == metric }
-                updated.displayUnits[metric] = nil
-                for index in updated.prescription.sets.indices {
-                    updated.prescription.sets[index].values[metric] = nil
-                }
-            }
-            affectedID = exID
-            return nil
-        }
-    }
-
     @discardableResult
     func removeMetric(
         exerciseInstanceID: UUID,

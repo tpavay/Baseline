@@ -128,6 +128,43 @@ struct ToolCallMapperTests {
         ]) == .removeMetric(exerciseInstanceID: exerciseID, metric: .pace, expectedRevisionToken: revision))
     }
 
+    @Test func setMetricValueUnitsConvertMinutePacesAndAcceptCanonicalPace() throws {
+        let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let setID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        func map(value: Double, unit: String) -> AgentTools.Call? {
+            ToolCallMapper.map(name: "set_metric_value", input: [
+                "exercise_instance_id": exerciseID.uuidString,
+                "set_id": setID.uuidString,
+                "metric": "pace",
+                "value": value,
+                "unit": unit,
+                "expected_revision_token": revision.uuidString,
+            ])
+        }
+
+        // "4.5 min/km" means 270 seconds per kilometer — never 4.5 of them (a silent 60× corruption).
+        #expect(map(value: 4.5, unit: "min/km") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 270, unit: .secondsPerKilometer, expectedRevisionToken: revision
+        ))
+        #expect(map(value: 8, unit: "min/mi") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 480, unit: .secondsPerMile, expectedRevisionToken: revision
+        ))
+        // The canonical pace unit, exactly as MetricUnit.short renders it, is a valid input unit.
+        #expect(map(value: 0.27, unit: "s/m") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 0.27, unit: .secondsPerMeter, expectedRevisionToken: revision
+        ))
+        // Seconds-per forms pass through unchanged.
+        #expect(map(value: 275, unit: "/km") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 275, unit: .secondsPerKilometer, expectedRevisionToken: revision
+        ))
+    }
+
     @Test func mapsWaveFourSetToolsAndThreeStatePatches() throws {
         let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
         let setID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
@@ -242,6 +279,20 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "move_set", input: [
             "set_id": id,
             "to_index": 1.5,
+            "expected_revision_token": id,
+        ]) == nil)
+        // 2^63 survives the old Double(Int.max) bound check but cannot be an Int — reject, never trap.
+        #expect(ToolCallMapper.map(name: "move_set", input: [
+            "set_id": id,
+            "to_index": 9_223_372_036_854_775_808.0,
+            "expected_revision_token": id,
+        ]) == nil)
+        // An inverted range would be silently normalized by MetricTargetRange past this boundary.
+        #expect(ToolCallMapper.map(name: "add_set", input: [
+            "exercise_instance_id": id,
+            "values": ["duration": 60],
+            "role": "working",
+            "targets": ["ranges": [["metric": "duration", "lower": 80.0, "upper": 40.0]]],
             "expected_revision_token": id,
         ]) == nil)
         #expect(ToolCallMapper.map(name: "update_logging_config", input: [

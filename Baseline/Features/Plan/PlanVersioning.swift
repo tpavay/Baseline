@@ -189,6 +189,9 @@ enum SessionMutationKind: String, Codable, Equatable, Sendable {
 enum SessionMutationSnapshot: Codable, Equatable, Sendable {
     case sessionWorkout(Workout)
     case performedLog(WorkoutLog)
+    /// A content mutation that also rewrote the performed log (a logged-actual purge). Undo must
+    /// restore both together or it would resurrect a planned set whose actual stayed lost.
+    case sessionWorkoutAndLog(Workout, WorkoutLog)
 }
 
 /// Append-only persisted history for workout content and performed facts owned by one session.

@@ -31,17 +31,11 @@ struct PlannedSetValuesPatch: Equatable, Sendable {
     var isUnchanged: Bool { metrics.isEmpty }
 }
 
-struct PlannedSetRangeTarget: Equatable, Sendable {
-    var metric: MetricType
-    var lower: Double
-    var upper: Double
-}
-
 struct PlannedSetTargets: Equatable, Sendable {
     var effort: EffortTarget?
-    var ranges: [PlannedSetRangeTarget]
+    var ranges: [MetricTargetRange]
 
-    init(effort: EffortTarget? = nil, ranges: [PlannedSetRangeTarget] = []) {
+    init(effort: EffortTarget? = nil, ranges: [MetricTargetRange] = []) {
         self.effort = effort
         self.ranges = ranges
     }
@@ -49,11 +43,11 @@ struct PlannedSetTargets: Equatable, Sendable {
 
 struct PlannedSetTargetsPatch: Equatable, Sendable {
     var effort: MetadataPatch<EffortTarget>
-    var ranges: MetadataPatch<[PlannedSetRangeTarget]>
+    var ranges: MetadataPatch<[MetricTargetRange]>
 
     init(
         effort: MetadataPatch<EffortTarget> = .unchanged,
-        ranges: MetadataPatch<[PlannedSetRangeTarget]> = .unchanged
+        ranges: MetadataPatch<[MetricTargetRange]> = .unchanged
     ) {
         self.effort = effort
         self.ranges = ranges
