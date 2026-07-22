@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// The **Plan tab** — Baseline's week-level training surface (`docs/implementation/plan-tab.md`). Slice 1:
-/// program filter, week navigation, an explicit-state day strip, contribution-based weekly aggregates, a
-/// chronological timeline of adaptive workout cards, and the start/resume/complete lifecycle. Structural
-/// editing (drag-drop, versioning) and full WorkoutView execution-reuse arrive in later slices.
+/// The **Plan tab** - Baseline's calendar-level training surface (`docs/implementation/plan-tab.md`).
+/// A continuous day-per-row calendar (about two months back, four ahead) with month headers, the
+/// program/collection filter, weekly aggregates for the visible week, drag-drop rescheduling, and the
+/// start/resume/complete lifecycle reached through each session's row and detail screen.
 struct PlanView: View {
     @Environment(PlanStore.self) private var plan
     @Environment(AppSettings.self) private var settings
-    @State private var selectedDay: Date = Calendar.planWeek.startOfDay(for: Date())
     @State private var execContext: ExecContext?
     @State private var showChat = false
     @State private var dropTargetDate: Date?
@@ -29,6 +28,11 @@ struct PlanView: View {
     @State private var visibleDate = Calendar.planWeek.startOfDay(for: Date())
     @State private var scrollPosition: Date?
     @State private var detailWorkout: ScheduledWorkout?
+    /// Cached calendar projection (-60…+120 days) and derived per-session statuses. Refreshed on appear
+    /// and once per plan mutation (`plan.revision`) - never re-fetched inside `body`, which re-runs on
+    /// every scroll tick because `scrollPosition` drives `visibleDate`.
+    @State private var calendarDays: [TrainingDay] = []
+    @State private var statusByID: [UUID: ScheduleStatus] = [:]
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -93,6 +97,8 @@ struct PlanView: View {
             try? await Task.sleep(for: .seconds(4))
             undoMessage = nil
         }
+        .onAppear(perform: refreshCalendar)
+        .onChange(of: plan.revision) { refreshCalendar() }
         .task { await loadPendingImports() }
     }
 
@@ -113,20 +119,24 @@ struct PlanView: View {
         }
         .scrollIndicators(.hidden)
         .scrollPosition(id: $scrollPosition, anchor: .center)
-        .onAppear {
-            if scrollPosition == nil {
-                scrollPosition = today
-            }
-        }
+        .safeAreaInset(edge: .top, spacing: 0) { weeklyAggregates }
         .onChange(of: scrollPosition) { _, date in
             if let date { visibleDate = date }
         }
     }
 
-    private var calendarDays: [TrainingDay] {
+    /// One repository pass per plan mutation: the 181-day projection plus each session's derived
+    /// status, both held in `@State` so scrolling and other body re-evaluations stay fetch-free.
+    private func refreshCalendar() {
         let start = cal.date(byAdding: .day, value: -60, to: today) ?? today
         let end = cal.date(byAdding: .day, value: 120, to: today) ?? today
-        return plan.days(from: start, through: end)
+        let days = plan.days(from: start, through: end)
+        let now = Date()
+        calendarDays = days
+        statusByID = days.reduce(into: [:]) { result, day in
+            for scheduled in day.sessions { result[scheduled.id] = plan.status(for: scheduled, today: now) }
+        }
+        if scrollPosition == nil { scrollPosition = today }
     }
 
     @ToolbarContentBuilder
@@ -146,11 +156,16 @@ struct PlanView: View {
                         }
                     }
                 }
+                Section("Collections") {
+                    Button("Ad Hoc") { plan.setFilter(.collection(.adHoc)) }
+                    Button("Completed") { plan.setFilter(.collection(.completed)) }
+                    Button("Archived") { plan.setFilter(.collection(.archived)) }
+                }
             } label: {
-                Text(visibleDate.formatted(.dateTime.weekday(.abbreviated).day()).uppercased())
+                Text(calendarMenuLabel)
                     .font(.caption.monospaced().weight(.semibold))
                     .tracking(0.8)
-                    .foregroundStyle(BaselineColor.textFaint)
+                    .foregroundStyle(plan.filter == .allTraining ? BaselineColor.textFaint : BaselineColor.accent)
             }
             .accessibilityLabel("Calendar options")
         }
@@ -172,6 +187,57 @@ struct PlanView: View {
         }
     }
 
+    /// The leading chip doubles as filter visibility: the visible date under All Training, the active
+    /// program or collection name once a narrower filter is applied.
+    private var calendarMenuLabel: String {
+        if plan.filter == .allTraining {
+            return visibleDate.formatted(.dateTime.weekday(.abbreviated).day()).uppercased()
+        }
+        return filterLabel
+    }
+
+    private var filterLabel: String {
+        switch plan.filter {
+        case .allTraining: return "ALL TRAINING"
+        case .program(let id): return (plan.programs().first { $0.id == id }?.name ?? "PROGRAM").uppercased()
+        case .collection(let c): return c.rawValue.uppercased()
+        }
+    }
+
+    // MARK: Weekly aggregates (visible week, pinned above the calendar)
+
+    private var weeklyAggregates: some View {
+        let weekStart = cal.weekStart(for: visibleDate)
+        let weekEnd = cal.date(byAdding: .day, value: 7, to: weekStart) ?? weekStart
+        let sessions = calendarDays
+            .filter { $0.date >= weekStart && $0.date < weekEnd }
+            .flatMap(\.sessions)
+        let aggs = AggregateProvider.aggregates(for: sessions).filter { $0.key != .sessions }
+        return VStack(alignment: .leading, spacing: BaselineSpacing.xxSmall) {
+            InstrumentLabel(visibleWeekRangeLabel, tracking: 1)
+            if aggs.isEmpty {
+                Text("No planned volume yet.").font(.caption).foregroundStyle(BaselineColor.textFaint)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: BaselineSpacing.xSmall) {
+                        ForEach(aggs) { AggregateCard(aggregate: $0) }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, BaselineSpacing.large)
+        .padding(.vertical, BaselineSpacing.xSmall)
+        .background(BaselineColor.base)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    private var visibleWeekRangeLabel: String {
+        let start = cal.weekStart(for: visibleDate)
+        let end = cal.date(byAdding: .day, value: 6, to: start) ?? start
+        return "\(start.formatted(.dateTime.month(.abbreviated).day())) – \(end.formatted(.dateTime.day()))".uppercased()
+    }
+
     private func calendarMonthHeader(_ date: Date) -> some View {
         InstrumentLabel(date.formatted(.dateTime.month(.wide).year()).uppercased(), tracking: 1.2)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,6 +251,7 @@ struct PlanView: View {
     private func calendarDayRow(_ day: TrainingDay) -> some View {
         let isToday = cal.isDate(day.date, inSameDayAs: today)
         let isFuture = day.date > today
+        let isDropTarget = dropTargetDate.map { cal.isDate($0, inSameDayAs: day.date) } ?? false
         let pendingReview = reviewableImport(for: day.date)
 
         return HStack(alignment: .center, spacing: BaselineSpacing.medium) {
@@ -222,7 +289,7 @@ struct PlanView: View {
                         WorkoutSwipeActionRow(
                             actionTitle: "Delete",
                             systemImage: "trash",
-                            contentBackground: isToday ? .clear : BaselineColor.base,
+                            contentBackground: isToday || isDropTarget ? .clear : BaselineColor.base,
                             action: { handle(.delete, scheduled) }
                         ) {
                             calendarSessionButton(scheduled)
@@ -243,7 +310,10 @@ struct PlanView: View {
         .padding(.vertical, BaselineSpacing.medium)
         .frame(maxWidth: .infinity, minHeight: BaselineSize.tabBarHeight, alignment: .leading)
         .background {
-            if isToday {
+            if isDropTarget {
+                RoundedRectangle(cornerRadius: BaselineRadius.row)
+                    .fill(BaselineColor.accent.opacity(0.12))
+            } else if isToday {
                 RoundedRectangle(cornerRadius: BaselineRadius.row)
                     .fill(
                         LinearGradient(
@@ -268,7 +338,8 @@ struct PlanView: View {
     }
 
     private func calendarSessionButton(_ scheduled: ScheduledWorkout) -> some View {
-        Button {
+        let status = statusByID[scheduled.id] ?? .planned
+        return Button {
             detailWorkout = scheduled
         } label: {
             VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
@@ -276,16 +347,57 @@ struct PlanView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(BaselineColor.textHi)
                     .lineLimit(1)
-                Text(calendarSubtitle(scheduled))
-                    .font(.caption)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .lineLimit(1)
+                HStack(spacing: BaselineSpacing.xxSmall) {
+                    if let (label, color) = PlanStatusStyle.chip(status) {
+                        Text(label)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(color)
+                    }
+                    Text(calendarSubtitle(scheduled))
+                        .font(.caption)
+                        .foregroundStyle(BaselineColor.textMid)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityHint("Opens workout details")
+        .contextMenu { sessionMenu(scheduled, status: status) }
+    }
+
+    /// Plan-level organization for a session, one press away from its row: start/resume, move within
+    /// its week, duplicate, skip/unskip, delete. Mirrors what the old timeline card's menu offered.
+    @ViewBuilder
+    private func sessionMenu(_ scheduled: ScheduledWorkout, status: ScheduleStatus) -> some View {
+        Button(openLabel(status), systemImage: "play") { handle(.open, scheduled) }
+        Menu("Move to") {
+            ForEach(weekDates(around: scheduled.date), id: \.self) { date in
+                Button(date.formatted(.dateTime.weekday(.wide))) { handle(.move(date), scheduled) }
+                    .disabled(cal.isDate(date, inSameDayAs: scheduled.date))
+            }
+        }
+        Button("Duplicate") { handle(.duplicate, scheduled) }
+        if scheduled.skipped {
+            Button("Unskip") { handle(.unskip, scheduled) }
+        } else {
+            Button("Skip") { handle(.skip, scheduled) }
+        }
+        Button("Delete", role: .destructive) { handle(.delete, scheduled) }
+    }
+
+    private func openLabel(_ status: ScheduleStatus) -> String {
+        switch status {
+        case .inProgress, .paused: "Resume workout"
+        case .completed: "View session"
+        default: "Start workout"
+        }
+    }
+
+    private func weekDates(around date: Date) -> [Date] {
+        let start = cal.weekStart(for: date)
+        return (0 ..< 7).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
     }
 
     private func calendarImportButton(_ summary: WorkoutImportPendingSummary, date: Date) -> some View {
@@ -372,206 +484,11 @@ struct PlanView: View {
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    // MARK: Toolbar (program filter + today)
-
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Menu {
-                Button("All Training") { plan.setFilter(.allTraining) }
-                let programs = plan.programs().filter { $0.isActive && !$0.isArchived }
-                if !programs.isEmpty {
-                    Section("Programs") { ForEach(programs) { p in Button(p.name) { plan.setFilter(.program(p.id)) } } }
-                }
-                Section("Collections") {
-                    Button("Ad Hoc") { plan.setFilter(.collection(.adHoc)) }
-                    Button("Completed") { plan.setFilter(.collection(.completed)) }
-                    Button("Archived") { plan.setFilter(.collection(.archived)) }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(filterLabel).font(.system(size: 20, weight: .bold)).italic().foregroundStyle(BaselineColor.textHi)
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(BaselineColor.textMid)
-                }
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button { selectedDay = today; plan.showWeek(of: today) } label: {
-                Image(systemName: "calendar").foregroundStyle(BaselineColor.textHi)
-            }
-        }
-    }
-
-    private var filterLabel: String {
-        switch plan.filter {
-        case .allTraining: return "ALL TRAINING"
-        case .program(let id): return (plan.programs().first { $0.id == id }?.name ?? "PROGRAM").uppercased()
-        case .collection(let c): return c.rawValue.uppercased()
-        }
-    }
-
-    // MARK: Week nav
-
-    private var weekNav: some View {
-        HStack {
-            Button { plan.prevWeek() } label: {
-                Image(systemName: "chevron.left").foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 44)
-            }
-            Spacer()
-            Text(weekRangeLabel).font(.subheadline.weight(.semibold).monospaced()).tracking(0.8).foregroundStyle(BaselineColor.textHi)
-            Spacer()
-            Button { plan.nextWeek() } label: {
-                Image(systemName: "chevron.right").foregroundStyle(BaselineColor.textFaint).frame(width: 44, height: 44)
-            }
-        }
-    }
-
-    private var weekRangeLabel: String {
-        let start = plan.week.startDate
-        let end = cal.date(byAdding: .day, value: 6, to: start)!
-        return "\(start.formatted(.dateTime.month(.abbreviated).day())) – \(end.formatted(.dateTime.day()))".uppercased()
-    }
-
-    // MARK: Aggregates
-
-    private var aggregates: some View {
-        let aggs = AggregateProvider.aggregates(for: plan.week.days.flatMap(\.sessions))
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("THIS WEEK").font(.caption.weight(.bold)).tracking(1).foregroundStyle(BaselineColor.textFaint)
-            if aggs.filter({ $0.key != .sessions }).isEmpty {
-                Text("No planned volume yet.").font(.caption).foregroundStyle(BaselineColor.textFaint)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(aggs.filter { $0.key != .sessions }) { AggregateCard(aggregate: $0) }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: Timeline
-
-    private var timeline: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("TIMELINE").font(.caption.weight(.bold)).tracking(1).foregroundStyle(BaselineColor.textFaint)
-                .padding(.bottom, 10)
-            ForEach(plan.week.days) { day in   // every day of the week — empty days are add points + drop targets
-                HStack(alignment: .top, spacing: 10) {
-                    dayDate(day.date)
-                    VStack(alignment: .leading, spacing: 6) {
-                        let pendingReview = reviewableImport(for: day.date)
-                        if let pendingReview {
-                            importIndicatorRow(pendingReview, on: day.date)
-                        }
-                        if !day.sessions.isEmpty {
-                            ForEach(day.sessions) { sw in
-                                WorkoutSwipeActionRow(actionTitle: "Delete", systemImage: "trash", action: { handle(.delete, sw) }) {
-                                    ScheduledWorkoutCard(
-                                        scheduled: sw,
-                                        status: plan.status(for: sw, today: Date()),
-                                        weekDays: plan.week.days.map(\.date),
-                                        onAction: { handle($0, sw) })
-                                }
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .draggable(sw.id.uuidString)
-                            }
-                        } else if pendingReview == nil {
-                            addWorkoutRow(on: day.date)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 8)
-                .contentShape(Rectangle())
-                .dropDestination(for: String.self) { items, _ in
-                    guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
-                    return drop(dragged, on: day.date)
-                } isTargeted: { dropTargetDate = $0 ? day.date : (cal.isDate(dropTargetDate ?? .distantPast, inSameDayAs: day.date) ? nil : dropTargetDate) }
-                .background(cal.isDate(dropTargetDate ?? .distantPast, inSameDayAs: day.date)
-                    ? RoundedRectangle(cornerRadius: 12).fill(BaselineColor.accent.opacity(0.08)) : nil)
-            }
-        }
-    }
-
-    /// Empty-day affordance: a lightweight "+ Add workout" row (rest until you add). The enclosing day is
-    /// still a drop target, so a dragged workout can also land here. Tapping opens the per-day "Add to <day>"
-    /// sheet rather than an inline menu.
-    private func addWorkoutRow(on date: Date) -> some View {
-        Button { addContext = AddContext(date: date) } label: { addWorkoutLabel }.buttonStyle(.plain)
-    }
-
-    /// Surfaces a parsed-and-waiting image import on the day it targets, so a draft the user closed
-    /// mid-review is visible and resumable from the Plan rather than lost off-screen. Tapping reopens
-    /// import for the day, which resumes the same-day draft straight into review.
-    private func importIndicatorRow(_ summary: WorkoutImportPendingSummary, on date: Date) -> some View {
-        Button { importContext = ImportContext(date: date) } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(BaselineColor.accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Import ready to review")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(BaselineColor.textHi)
-                    Text("Tap to review and save")
-                        .font(.caption)
-                        .foregroundStyle(BaselineColor.textFaint)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textFaint)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(BaselineColor.accent.opacity(0.10))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BaselineColor.accent.opacity(0.35), lineWidth: 1))
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens the imported workout to review and save")
-    }
-
-    private var addWorkoutLabel: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus").font(.subheadline.weight(.semibold))
-            Text("Add workout").font(.subheadline.weight(.medium))
-            Spacer()
-        }
-        .foregroundStyle(BaselineColor.textFaint)
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 12).fill(BaselineColor.surface.opacity(0.45)))
-        .contentShape(Rectangle())
-    }
-
     private func addWorkout(on date: Date) {
         openExecution(plan.newScheduledWorkout(on: date))   // blank workout for that date, then open the editor
     }
     private func addFromTemplate(_ id: UUID, on date: Date) {
         if let sw = plan.instantiateTemplate(id, on: date) { openExecution(sw) }
-    }
-
-    private func dayDate(_ date: Date) -> some View {
-        let isToday = cal.isDate(date, inSameDayAs: today)
-        let color = isToday ? BaselineColor.accent : BaselineColor.textFaint
-        return VStack(spacing: 0) {
-            Text(PlanFormat.weekdayAbbreviation(date, calendar: cal))
-                .font(.caption.weight(.bold))
-            Text(date.formatted(.dateTime.day()))
-                .font(.headline.monospacedDigit())
-            Text(date.formatted(.dateTime.month(.abbreviated)).uppercased())
-                .font(.caption.weight(.semibold))
-        }
-        .foregroundStyle(color)
-        .frame(width: 52)
-        .frame(minHeight: 64, alignment: .top)
-        .padding(.top, 6)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(date.formatted(.dateTime.weekday(.wide).month(.wide).day()) + (isToday ? ", today" : ""))
     }
 
     // MARK: Actions
@@ -588,11 +505,13 @@ struct PlanView: View {
         }
     }
 
-    /// A drag dropped on `day`. Empty day → move directly; occupied → offer Move/Swap.
+    /// A drag dropped on `day`. Empty day → move directly; occupied → offer Move/Swap. The occupancy
+    /// check queries the repository for that exact day: the calendar spans months, so the focused-week
+    /// projection cannot answer for an arbitrary drop target.
     private func drop(_ dragged: UUID, on day: Date) -> Bool {
         dropTargetDate = nil
         guard let sw = plan.scheduledWorkout(dragged), !cal.isDate(sw.date, inSameDayAs: day) else { return false }
-        let existing = (plan.week.days.first { cal.isDate($0.date, inSameDayAs: day) }?.sessions ?? []).filter { $0.id != dragged }
+        let existing = (plan.days(from: day, through: day).first?.sessions ?? []).filter { $0.id != dragged }
         if existing.isEmpty { apply(plan.move(dragged, toDate: day), "Moved") }
         else { pendingDrop = PendingDrop(dragged: dragged, day: day, existing: existing) }
         return true
@@ -630,68 +549,6 @@ struct PlanView: View {
         if ctx.store.current != ctx.original { ctx.store.flush() }
         plan.reload()
     }
-
-    private var chatBar: some View {
-        VStack {
-            Spacer()
-            Button { showChat = true } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "sparkle").font(.system(size: 15)).foregroundStyle(BaselineColor.accent)
-                    Text("Ask about your week…").font(.system(size: 15)).foregroundStyle(BaselineColor.textMid)
-                    Spacer()
-                    Image(systemName: "mic.fill").font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-                }
-                .padding(.horizontal, 16).frame(height: 50)
-                .background(Capsule().fill(BaselineColor.surface).overlay(Capsule().strokeBorder(BaselineColor.line, lineWidth: 1)))
-            }
-            .buttonStyle(.plain).padding(.horizontal, 16).padding(.bottom, 8)
-        }
-    }
-}
-
-// MARK: - Seven-day strip (explicit states, not recovery-color dots)
-
-struct SevenDayStrip: View {
-    let week: TrainingWeek
-    let today: Date
-    let selected: Date
-    let onSelect: (Date) -> Void
-    private let cal = Calendar.planWeek
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(week.days) { day in
-                let isToday = cal.isDate(day.date, inSameDayAs: today)
-                let isSel = cal.isDate(day.date, inSameDayAs: selected)
-                Button { onSelect(day.date) } label: {
-                    VStack(spacing: 4) {
-                        Text(day.date.formatted(.dateTime.weekday(.narrow)))
-                            .font(.caption.weight(.bold)).foregroundStyle(isToday ? BaselineColor.accent : BaselineColor.textFaint)
-                        marker(for: day, isToday: isToday)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(isSel ? RoundedRectangle(cornerRadius: 10).fill(BaselineColor.surface) : nil)
-                }.buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 4).padding(.vertical, 2)
-        .background(RoundedRectangle(cornerRadius: 12).strokeBorder(BaselineColor.line, lineWidth: 1))
-    }
-
-    @ViewBuilder private func marker(for day: TrainingDay, isToday: Bool) -> some View {
-        let count = day.sessions.count
-        if count == 0 {
-            Circle().fill(.clear).frame(width: 12, height: 12)                       // rest — no marker
-        } else if count > 1 {
-            Text("\(count)").font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textHi)
-                .frame(width: 14, height: 14).background(Circle().fill(BaselineColor.amethyst))
-        } else if isToday {
-            Circle().strokeBorder(BaselineColor.accent, lineWidth: 2).frame(width: 11, height: 11)  // today ring
-        } else {
-            Circle().fill(BaselineColor.textFaint).frame(width: 6, height: 6)         // scheduled
-        }
-    }
 }
 
 // MARK: - Aggregate card
@@ -715,12 +572,6 @@ struct AggregateCard: View {
 // MARK: - Formatting
 
 enum PlanFormat {
-    static func weekdayAbbreviation(_ date: Date, calendar: Calendar) -> String {
-        let weekday = calendar.component(.weekday, from: date)
-        guard calendar.shortWeekdaySymbols.indices.contains(weekday - 1) else { return "" }
-        return String(calendar.shortWeekdaySymbols[weekday - 1].prefix(2)).uppercased()
-    }
-
     static func aggregateTitle(_ k: AggregateKey) -> String {
         switch k { case .sessions: "SESSIONS"; case .duration: "DURATION"; case .distance: "RUNNING"; case .strengthSets: "STRENGTH"; case .calories: "CALORIES" }
     }

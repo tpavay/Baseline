@@ -16,6 +16,12 @@ struct WorkoutDetailView: View {
     @State private var deleteProposalID: UUID?
     @State private var showDeleteConfirmation = false
     @State private var showTemplateSaved = false
+    /// The screen's repository state, resolved in one pass on appear and per plan mutation
+    /// (`plan.revision`). Every derived value (zone summaries, heart-rate samples, set counts) reads
+    /// from this snapshot so nothing re-fetches inside `body`.
+    @State private var snapshot: DetailSnapshot?
+    @State private var heartRateSamples: [Double] = []
+    @State private var zoneSummaries: [ZoneSummary] = []
 
     private struct EditContext: Identifiable {
         let id: UUID
@@ -34,15 +40,24 @@ struct WorkoutDetailView: View {
         var id: Int { zone }
     }
 
+    private struct DetailSnapshot {
+        let scheduled: ScheduledWorkout
+        let session: WorkoutSession?
+        let completed: CompletedWorkoutLog?
+        let workout: Workout
+        var log: WorkoutLog? { completed?.log ?? session?.log }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 BaselineColor.base.ignoresSafeArea()
 
-                if let scheduled, let workout = effectiveWorkout {
+                if let snapshot {
+                    let workout = snapshot.workout
                     ScrollView {
                         VStack(alignment: .leading, spacing: BaselineSpacing.large) {
-                            detailHeader(scheduled: scheduled, workout: workout)
+                            detailHeader(scheduled: snapshot.scheduled, workout: workout)
                             muscleMapCard(workout: workout)
 
                             if heartRateSamples.isEmpty == false {
@@ -131,13 +146,29 @@ struct WorkoutDetailView: View {
         } message: {
             Text("A reusable copy of this workout is now available from Plan.")
         }
+        .onAppear(perform: reloadSnapshot)
+        .onChange(of: plan.revision) { reloadSnapshot() }
     }
 
-    private var scheduled: ScheduledWorkout? { plan.scheduledWorkout(scheduledWorkoutID) }
-    private var session: WorkoutSession? { plan.session(for: scheduledWorkoutID) }
-    private var completed: CompletedWorkoutLog? { plan.completed(for: scheduledWorkoutID) }
-    private var log: WorkoutLog? { completed?.log ?? session?.log }
-    private var effectiveWorkout: Workout? { session?.workout ?? scheduled?.workout }
+    /// Resolve the scheduled workout, its session and completed log, and the derived summaries in one
+    /// repository pass. The session's own workout copy wins - it is what the athlete performed.
+    private func reloadSnapshot() {
+        guard let scheduled = plan.scheduledWorkout(scheduledWorkoutID) else {
+            snapshot = nil
+            heartRateSamples = []
+            zoneSummaries = []
+            return
+        }
+        let session = plan.session(for: scheduledWorkoutID)
+        let completed = plan.completed(for: scheduledWorkoutID)
+        let workout = session?.workout ?? scheduled.workout
+        let resolved = DetailSnapshot(scheduled: scheduled, session: session, completed: completed, workout: workout)
+        snapshot = resolved
+        // Measured heart rate only - planned prescription targets are intent, not data, and must never
+        // render as AVG/MAX measurements. No performed samples ⇒ no heart-rate card.
+        heartRateSamples = resolved.log?.exercises.flatMap(\.setLogs).compactMap { $0.values[.heartRate] } ?? []
+        zoneSummaries = computeZoneSummaries(workout: workout, log: resolved.log)
+    }
 
     private func detailHeader(scheduled: ScheduledWorkout, workout: Workout) -> some View {
         VStack(alignment: .leading, spacing: BaselineSpacing.small) {
@@ -246,24 +277,17 @@ struct WorkoutDetailView: View {
         }
     }
 
-    private var heartRateSamples: [Double] {
-        let performed = log?.exercises.flatMap(\.setLogs).compactMap { $0.values[.heartRate] } ?? []
-        if performed.isEmpty == false { return performed }
-        return effectiveWorkout?.allExercises.flatMap(\.prescription.sets).compactMap { $0.values[.heartRate] } ?? []
-    }
-
     private var heartRateSummary: String {
         let average = heartRateSamples.isEmpty ? 0 : heartRateSamples.reduce(0, +) / Double(heartRateSamples.count)
         let maximum = heartRateSamples.max() ?? 0
         return "AVG \(Int(average.rounded())) · MAX \(Int(maximum.rounded())) BPM"
     }
 
-    private var zoneSummaries: [ZoneSummary] {
-        guard let workout = effectiveWorkout else { return [] }
-        return (1...5).map { zone in
+    private func computeZoneSummaries(workout: Workout, log: WorkoutLog?) -> [ZoneSummary] {
+        (1...5).map { zone in
             let exercises = workout.allExercises.filter { $0.prescription.targetZone == zone }
             let seconds = exercises.reduce(0.0) { total, exercise in
-                if let performed = performedExercise(for: exercise) {
+                if let performed = performedExercise(for: exercise, in: log) {
                     let logged = performed.setLogs.reduce(0.0) { partial, set in
                         partial + (set.values[.heartRateZoneTime] ?? set.values[.duration] ?? 0)
                     }
@@ -294,18 +318,22 @@ struct WorkoutDetailView: View {
     }
 
     private func performedExercise(for exercise: PlannedExercise) -> PerformedExercise? {
+        performedExercise(for: exercise, in: snapshot?.log)
+    }
+
+    private func performedExercise(for exercise: PlannedExercise, in log: WorkoutLog?) -> PerformedExercise? {
         log?.exercises.first {
             $0.plannedExerciseID == exercise.id || $0.exerciseName == exercise.exerciseName
         }
     }
 
     private func detailSetCount(_ workout: Workout) -> Int {
-        let logged = log?.exercises.flatMap(\.setLogs).filter(\.isHandled).count ?? 0
+        let logged = snapshot?.log?.exercises.flatMap(\.setLogs).filter(\.isHandled).count ?? 0
         return logged > 0 ? logged : workout.allExercises.reduce(0) { $0 + $1.prescription.sets.count }
     }
 
     private func detailDuration(_ scheduled: ScheduledWorkout) -> String {
-        if let session, let completed {
+        if let session = snapshot?.session, let completed = snapshot?.completed {
             let elapsed = completed.finishedAt.timeIntervalSince(session.startedAt)
             if elapsed >= 60 { return MetricFormat.durationLong(elapsed) }
         }
@@ -325,7 +353,7 @@ struct WorkoutDetailView: View {
         case .edit:
             beginEditing()
         case .saveTemplate:
-            guard let workout = effectiveWorkout else { return }
+            guard let workout = snapshot?.workout else { return }
             _ = plan.saveAsTemplate(name: workout.title, from: workout)
             showTemplateSaved = true
         case .delete:
@@ -334,7 +362,7 @@ struct WorkoutDetailView: View {
     }
 
     private func beginEditing() {
-        guard let scheduled else { return }
+        guard let scheduled = plan.scheduledWorkout(scheduledWorkoutID) else { return }
         let defaults = UserDefaults(suiteName: "workout.detail.buffer") ?? .standard
         let store = WorkoutStore(units: settings, defaults: defaults)
         store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: true)
@@ -344,15 +372,20 @@ struct WorkoutDetailView: View {
     }
 
     private func finishEditing() {
-        if let editingBuffer, let editingOriginal, editingBuffer.current != editingOriginal {
-            editingBuffer.flush()
+        let deleteQueued = queuedDeleteAfterEdit
+        queuedDeleteAfterEdit = false
+        if deleteQueued == false {
+            if let editingBuffer, let editingOriginal, editingBuffer.current != editingOriginal {
+                editingBuffer.flush()
+            }
+            plan.reload()
         }
-        plan.reload()
         editContext = nil
         editingBuffer = nil
         editingOriginal = nil
-        if queuedDeleteAfterEdit {
-            queuedDeleteAfterEdit = false
+        if deleteQueued {
+            // The workout is being removed - skip the write-through flush so no revision is written
+            // for content about to be deleted (mirrors PlanView.flushExecution).
             requestDelete()
         }
     }

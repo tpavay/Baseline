@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct WorkoutDetailExerciseSection: View {
-    @Environment(AppSettings.self) private var settings
+    @Environment(WorkoutStore.self) private var store
     let planned: PlannedExercise
     let performed: PerformedExercise?
 
@@ -87,13 +87,11 @@ struct WorkoutDetailExerciseSection: View {
     }
 
     private func columnHeader(_ metric: MetricType) -> String {
-        let unit = planned.displayUnits[metric] ?? settings.unitSystem.displayUnit(metric: metric, exercise: planned.definition)
-        return MetricFormat.columnHeader(metric, unit: unit)
+        MetricFormat.columnHeader(metric, unit: store.displayUnit(metric, for: planned))
     }
 
     private func formatted(_ value: Double?, metric: MetricType) -> String {
         guard let value else { return "-" }
-        let unit = planned.displayUnits[metric] ?? settings.unitSystem.displayUnit(metric: metric, exercise: planned.definition)
-        return MetricFormat.value(value, metric, unit: unit)
+        return MetricFormat.value(value, metric, unit: store.displayUnit(metric, for: planned))
     }
 }

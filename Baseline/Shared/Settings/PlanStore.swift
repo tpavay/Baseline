@@ -11,6 +11,10 @@ final class PlanStore {
     var filter: ProgramFilter = .allTraining
     private(set) var focusedDate: Date
     private(set) var week: TrainingWeek
+    /// Monotonic change counter, bumped on every `reload()`. Views that cache expensive repository
+    /// projections in `@State` (the Plan calendar, Profile history, Workout detail) watch this with
+    /// `.onChange` so they re-fetch exactly once per mutation instead of once per body evaluation.
+    private(set) var revision = 0
 
     init(repo: PlanRepository, today: Date = Date()) {
         self.repo = repo
@@ -24,7 +28,10 @@ final class PlanStore {
 
     // MARK: Navigation
 
-    func reload() { week = repo.week(containing: focusedDate, filter: filter) }
+    func reload() {
+        week = repo.week(containing: focusedDate, filter: filter)
+        revision &+= 1
+    }
     func setFilter(_ f: ProgramFilter) { filter = f; reload() }
     func showWeek(of date: Date) { focusedDate = date; reload() }
     func nextWeek() { shiftWeeks(1) }

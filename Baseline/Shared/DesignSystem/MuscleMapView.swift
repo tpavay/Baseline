@@ -2,11 +2,15 @@ import Foundation
 import SwiftUI
 
 struct MuscleMapView: View {
-    let workouts: [Workout]
-    var isCompact = false
+    let isCompact: Bool
+    /// Reduced once at construction: the Profile Progress tab feeds a full year of workouts, and the
+    /// Canvas draw path reads these weights once per muscle per part, so the reduction must not be a
+    /// computed property re-run inside rendering.
+    private let muscleWeights: [Muscle: Int]
 
-    private var muscleWeights: [Muscle: Int] {
-        workouts.reduce(into: [:]) { result, workout in
+    init(workouts: [Workout], isCompact: Bool = false) {
+        self.isCompact = isCompact
+        muscleWeights = workouts.reduce(into: [:]) { result, workout in
             for exercise in workout.allExercises {
                 let setCount = max(exercise.prescription.sets.count, 1)
                 for muscle in exercise.definition.primaryMuscles {

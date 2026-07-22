@@ -15,6 +15,21 @@ struct ProfileView: View {
     @State private var selectedSection = ProfileSection.workouts
     @State private var showSettings = false
     @State private var detailWorkout: ScheduledWorkout?
+    /// Cached year-to-date training history, derived on appear and once per plan mutation
+    /// (`plan.revision`). The year-long repository fetch and its reductions never run inside `body`.
+    @State private var history = ProfileHistory()
+
+    /// Completed training only - Profile is the record of what the athlete actually did, so scheduled
+    /// sessions that were never performed (or were skipped) contribute nothing here.
+    private struct ProfileHistory {
+        var yearWorkouts: [ScheduledWorkout] = []
+        var thisWeekWorkouts: [ScheduledWorkout] = []
+        var lastWeekWorkouts: [ScheduledWorkout] = []
+        var weekStreak = 0
+        var yearDurationSeconds = 0.0
+        var yearExerciseCount = 0
+        var yearSetCount = 0
+    }
 
     var body: some View {
         ZStack {
@@ -25,8 +40,8 @@ struct ProfileView: View {
                     profileHeader
 
                     HStack(spacing: BaselineSpacing.xSmall) {
-                        ProfileStatTile(value: "\(yearWorkouts.count)", label: "WORKOUTS")
-                        ProfileStatTile(value: "\(weekStreak)", label: "WEEK STREAK")
+                        ProfileStatTile(value: "\(history.yearWorkouts.count)", label: "WORKOUTS")
+                        ProfileStatTile(value: "\(history.weekStreak)", label: "WEEK STREAK")
                         ProfileStatTile(value: thisYearDuration, label: "THIS YEAR")
                     }
                     .padding(.bottom, BaselineSpacing.xxxSmall)
@@ -44,6 +59,8 @@ struct ProfileView: View {
                 .padding(.bottom, BaselineSpacing.screenBottom)
             }
         }
+        .onAppear(perform: refreshHistory)
+        .onChange(of: plan.revision) { refreshHistory() }
         .sheet(isPresented: $showSettings) {
             settingsScreen
         }
@@ -156,16 +173,16 @@ struct ProfileView: View {
 
     private var workoutHistory: some View {
         VStack(alignment: .leading, spacing: BaselineSpacing.xSmall) {
-            workoutSection("THIS WEEK", workouts: thisWeekWorkouts)
-            workoutSection("LAST WEEK", workouts: lastWeekWorkouts)
+            workoutSection("THIS WEEK", workouts: history.thisWeekWorkouts)
+            workoutSection("LAST WEEK", workouts: history.lastWeekWorkouts)
 
-            if thisWeekWorkouts.isEmpty && lastWeekWorkouts.isEmpty {
+            if history.thisWeekWorkouts.isEmpty && history.lastWeekWorkouts.isEmpty {
                 BaselineCard {
                     VStack(alignment: .leading, spacing: BaselineSpacing.xxSmall) {
                         Text("Your workouts will appear here")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(BaselineColor.textHi)
-                        Text("Schedule or complete a session from Plan to build your history.")
+                        Text("Complete a session from Plan to build your history.")
                             .font(.caption)
                             .foregroundStyle(BaselineColor.textMid)
                     }
@@ -195,18 +212,18 @@ struct ProfileView: View {
             BaselineCard {
                 VStack(alignment: .leading, spacing: BaselineSpacing.medium) {
                     InstrumentLabel("MUSCLE MAP", tracking: 1)
-                    MuscleMapView(workouts: yearWorkouts.map(\.workout))
+                    MuscleMapView(workouts: history.yearWorkouts.map(\.workout))
                 }
             }
 
             BaselineCard {
                 VStack(alignment: .leading, spacing: BaselineSpacing.small) {
                     InstrumentLabel("TRAINING SUMMARY", tracking: 1)
-                    summaryRow("Sessions this week", value: "\(thisWeekWorkouts.count)")
+                    summaryRow("Sessions this week", value: "\(history.thisWeekWorkouts.count)")
                     Hairline()
-                    summaryRow("Exercises this year", value: "\(yearExerciseCount)")
+                    summaryRow("Exercises this year", value: "\(history.yearExerciseCount)")
                     Hairline()
-                    summaryRow("Sets this year", value: "\(yearSetCount)")
+                    summaryRow("Sets this year", value: "\(history.yearSetCount)")
                 }
             }
         }
@@ -228,27 +245,34 @@ struct ProfileView: View {
     private var today: Date { calendar.startOfDay(for: Date()) }
     private var currentWeekStart: Date { calendar.weekStart(for: today) }
 
-    private var profileDays: [TrainingDay] {
+    private func refreshHistory() {
         let yearStart = calendar.date(from: calendar.dateComponents([.year], from: today)) ?? today
-        return plan.days(from: yearStart, through: today)
+        let completed = plan.days(from: yearStart, through: today)
+            .flatMap(\.sessions)
+            .filter { $0.date <= today && plan.completed(for: $0.id) != nil }
+
+        var result = ProfileHistory()
+        result.yearWorkouts = completed
+        result.thisWeekWorkouts = completed.filter { $0.date >= currentWeekStart }.sorted { $0.date > $1.date }
+        if let lastWeekStart = calendar.date(byAdding: .day, value: -7, to: currentWeekStart) {
+            result.lastWeekWorkouts = completed
+                .filter { $0.date >= lastWeekStart && $0.date < currentWeekStart }
+                .sorted { $0.date > $1.date }
+        }
+        result.weekStreak = weekStreak(of: completed)
+        result.yearDurationSeconds = completed.reduce(0.0) { partial, scheduled in
+            let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }?.total ?? 0
+            return partial + duration
+        }
+        result.yearExerciseCount = completed.reduce(0) { $0 + $1.workout.allExercises.count }
+        result.yearSetCount = completed.reduce(0) { partial, scheduled in
+            partial + scheduled.workout.allExercises.reduce(0) { $0 + $1.prescription.sets.count }
+        }
+        history = result
     }
 
-    private var yearWorkouts: [ScheduledWorkout] {
-        profileDays.flatMap(\.sessions).filter { $0.date <= today }
-    }
-
-    private var thisWeekWorkouts: [ScheduledWorkout] {
-        let start = currentWeekStart
-        return yearWorkouts.filter { $0.date >= start }.sorted { $0.date > $1.date }
-    }
-
-    private var lastWeekWorkouts: [ScheduledWorkout] {
-        guard let start = calendar.date(byAdding: .day, value: -7, to: currentWeekStart) else { return [] }
-        return yearWorkouts.filter { $0.date >= start && $0.date < currentWeekStart }.sorted { $0.date > $1.date }
-    }
-
-    private var weekStreak: Int {
-        let occupiedWeeks = Set(yearWorkouts.map { calendar.weekStart(for: $0.date) })
+    private func weekStreak(of workouts: [ScheduledWorkout]) -> Int {
+        let occupiedWeeks = Set(workouts.map { calendar.weekStart(for: $0.date) })
         guard occupiedWeeks.isEmpty == false else { return 0 }
         var cursor = currentWeekStart
         if occupiedWeeks.contains(cursor) == false {
@@ -264,19 +288,8 @@ struct ProfileView: View {
     }
 
     private var thisYearDuration: String {
-        let seconds = yearWorkouts.reduce(0.0) { partial, scheduled in
-            let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }?.total ?? 0
-            return partial + duration
-        }
-        let hours = Int((seconds / 3600).rounded())
+        let hours = Int((history.yearDurationSeconds / 3600).rounded())
         return "\(hours)h"
-    }
-
-    private var yearExerciseCount: Int { yearWorkouts.reduce(0) { $0 + $1.workout.allExercises.count } }
-    private var yearSetCount: Int {
-        yearWorkouts.reduce(0) { result, scheduled in
-            result + scheduled.workout.allExercises.reduce(0) { $0 + $1.prescription.sets.count }
-        }
     }
 
     private func workoutSubtitle(_ scheduled: ScheduledWorkout) -> String {
@@ -460,12 +473,16 @@ struct ProfileView: View {
 }
 
 #Preview {
-    ProfileView()
+    let models: [any PersistentModel.Type] = [Reading.self] + PlanSchema.models
+    let container = try! ModelContainer(for: Schema(models),
+                                        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    return ProfileView()
         .environment(OnboardingStore())
         .environment(AuthViewModel())
         .environment(AppSettings())
         .environment(BluetoothManager())
         .environment(HealthService())
-        .modelContainer(for: Reading.self, inMemory: true)
+        .environment(PlanStore(context: container.mainContext))
+        .modelContainer(container)
         .preferredColorScheme(.dark)
 }
