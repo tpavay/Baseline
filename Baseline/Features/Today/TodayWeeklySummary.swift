@@ -107,13 +107,14 @@ struct TodayWeeklySummary: Equatable {
             }
         }
 
+        let muscles = muscleLayers(scores: muscleScores)
         return TodayWeeklySummary(
             sessionCount: weekSessions.count,
             trainingSeconds: trainingSeconds,
             cardioSeconds: cardioSeconds,
             movements: movementSummary(movementSets),
-            frontMuscles: muscleLayers(side: .front, scores: muscleScores),
-            backMuscles: muscleLayers(side: .back, scores: muscleScores),
+            frontMuscles: muscles.front,
+            backMuscles: muscles.back,
             heartRateZones: HeartRateZone.allCases.map {
                 TodayHeartRateZoneSummary(zone: $0, seconds: zoneSeconds[$0, default: 0])
             },
@@ -184,19 +185,29 @@ struct TodayWeeklySummary: Equatable {
     }
 
     private static func muscleLayers(
+        scores: [Muscle: Double]
+    ) -> (front: [TodayMuscleMapLayer], back: [TodayMuscleMapLayer]) {
+        let front = assetScores(side: .front, scores: scores)
+        let back = assetScores(side: .back, scores: scores)
+        let maximum = max(front.values.max() ?? 0, back.values.max() ?? 0)
+        guard maximum > 0 else { return ([], []) }
+        func layers(_ mapped: [String: Double], side: MuscleMapSide) -> [TodayMuscleMapLayer] {
+            mapped.map { slug, score in
+                TodayMuscleMapLayer(assetName: side.assetPrefix + slug, intensity: score / maximum)
+            }
+            .sorted { $0.assetName < $1.assetName }
+        }
+        return (layers(front, side: .front), layers(back, side: .back))
+    }
+
+    private static func assetScores(
         side: MuscleMapSide,
         scores: [Muscle: Double]
-    ) -> [TodayMuscleMapLayer] {
-        let mapped = scores.reduce(into: [String: Double]()) { result, pair in
+    ) -> [String: Double] {
+        scores.reduce(into: [String: Double]()) { result, pair in
             guard let slug = assetSlug(for: pair.key, side: side) else { return }
             result[slug, default: 0] += pair.value
         }
-        let maximum = mapped.values.max() ?? 0
-        guard maximum > 0 else { return [] }
-        return mapped.map { slug, score in
-            TodayMuscleMapLayer(assetName: side.assetPrefix + slug, intensity: score / maximum)
-        }
-        .sorted { $0.assetName < $1.assetName }
     }
 
     private static func assetSlug(for muscle: Muscle, side: MuscleMapSide) -> String? {

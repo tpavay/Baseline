@@ -24,7 +24,7 @@ struct MainTabView: View {
                 .tag(MainTab.profile)
         }
         .toolbar(.hidden, for: .tabBar)
-        .overlay(alignment: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             BaselineFloatingTabBar(selection: $selection)
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -78,7 +78,7 @@ struct BaselineFloatingTabBar: View {
 }
 
 #Preview {
-    let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+    let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models + SleepSchema.models
     let container = try! ModelContainer(for: Schema(models),
                                         configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     return MainTabView()
@@ -86,6 +86,7 @@ struct BaselineFloatingTabBar: View {
         .environment(AppSettings())
         .environment(BluetoothManager())
         .environment(HealthService())
+        .environment(TrainingContextStore())
         .environment(OnboardingStore())
         .environment(WorkoutStore(units: AppSettings()))
         .environment(PlanStore(context: container.mainContext))

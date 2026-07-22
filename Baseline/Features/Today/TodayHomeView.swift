@@ -27,8 +27,6 @@ struct TodayHomeView: View {
                     TodayWeekCardView(summary: model.week)
                     TodayMovementBalanceCardView(movements: model.week.movements)
                     TodayHeartRateZonesCardView(summary: model.week, ranges: model.zoneRanges)
-
-                    Color.clear.frame(height: BaselineSize.floatingTabContentInset)
                 }
                 .padding(.horizontal, BaselineSpacing.large)
                 .padding(.top, BaselineSpacing.xxSmall)

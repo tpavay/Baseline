@@ -306,18 +306,6 @@ struct UnitSystemReachTests {
         #expect(MetricFormat.value(402.336, .distance, unit: .miles) == "0.25 mi")
     }
 
-    /// Yesterday's Apple exercise minutes are a duration, and used to render as one bold "121m"
-    /// string — the shape the report described as "121 M", i.e. 121 metres.
-    @Test func theActivityTileNeverReadsAsADistance() {
-        let long = TodayView.activityReadout(DayActivity(kcal: 900, minutes: 121))
-        #expect(long.value == "121")
-        #expect(long.unit == "MIN")
-
-        let quiet = TodayView.activityReadout(DayActivity(kcal: 340, minutes: 0))
-        #expect(quiet.value == "340")
-        #expect(quiet.unit == "CAL")
-    }
-
     // MARK: - Source access
 
     private static var repositoryRoot: URL {

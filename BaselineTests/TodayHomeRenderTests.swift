@@ -227,7 +227,7 @@ private struct TodayEvidenceRoot: View {
 
     var body: some View {
         TodayHomeView(model: model, openSleep: {}, openHRV: {}, openPlan: {})
-            .overlay(alignment: .bottom) {
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 BaselineFloatingTabBar(selection: $selectedTab)
             }
     }

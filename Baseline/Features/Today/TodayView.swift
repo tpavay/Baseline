@@ -14,9 +14,27 @@ struct TodayView: View {
 
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
     @Query(sort: \ReadinessEntry.date, order: .reverse) private var entries: [ReadinessEntry]
-    @Query(sort: \SDCompletedLog.finishedAt, order: .reverse) private var completedLogs: [SDCompletedLog]
-    @Query(sort: \SDCompletedExercise.date, order: .reverse) private var completedExercises: [SDCompletedExercise]
-    @Query(sort: \SDWorkoutSession.startedAt, order: .reverse) private var workoutSessions: [SDWorkoutSession]
+    @Query private var completedLogs: [SDCompletedLog]
+    @Query private var completedExercises: [SDCompletedExercise]
+    @Query private var workoutSessions: [SDWorkoutSession]
+
+    init() {
+        let calendar = Calendar.planWeek
+        let weekStart = calendar.weekStart(for: .now)
+        let windowStart = calendar.date(byAdding: .day, value: -7, to: weekStart) ?? weekStart
+        _completedLogs = Query(
+            filter: #Predicate<SDCompletedLog> { $0.finishedAt >= windowStart },
+            sort: \SDCompletedLog.finishedAt, order: .reverse
+        )
+        _completedExercises = Query(
+            filter: #Predicate<SDCompletedExercise> { $0.date >= windowStart },
+            sort: \SDCompletedExercise.date, order: .reverse
+        )
+        _workoutSessions = Query(
+            filter: #Predicate<SDWorkoutSession> { $0.startedAt >= windowStart },
+            sort: \SDWorkoutSession.startedAt, order: .reverse
+        )
+    }
 
     @State private var activeModal: TodayModal?
     @State private var autoPromptedDate: Date?
@@ -57,11 +75,6 @@ struct TodayView: View {
                         onDismiss: { activeModal = nil }
                     )
                 }
-            case .snapshotStart:
-                SnapshotStartView(
-                    onStart: { activeModal = readingModal(for: .snapshot) },
-                    onDismiss: { activeModal = nil }
-                )
             case .dailyReading(let type):
                 DailyReadingFlowView(type: type, config: readinessConfig, duration: duration(for: type))
             }
@@ -162,6 +175,7 @@ struct TodayView: View {
         completedLogs.map { completed in
             let startedAt = workoutSessions.first {
                 $0.scheduledWorkoutID == completed.scheduledWorkoutID
+                    && $0.startedAt <= completed.finishedAt
             }?.startedAt
             return TodayCompletedSessionSample(
                 completedLogID: completed.id,
@@ -342,17 +356,6 @@ struct TodayView: View {
     private func duration(for type: ReadingType) -> TimeInterval {
         type == .morning ? TimeInterval(settings.morningReadingDurationSeconds) : type.duration
     }
-
-    static func activityReadout(_ activity: DayActivity) -> (value: String, unit: String) {
-        activity.minutes >= 1
-            ? ("\(Int(activity.minutes.rounded()))", "MIN")
-            : ("\(Int(activity.kcal.rounded()))", "CAL")
-    }
-}
-
-struct DayActivity: Equatable {
-    let kcal: Double
-    let minutes: Double
 }
 
 private enum TodayRoute: Hashable {
@@ -363,23 +366,26 @@ private enum TodayRoute: Hashable {
 
 private enum TodayModal: Identifiable, Equatable {
     case morningPrompt
-    case snapshotStart
     case dailyReading(ReadingType)
 
     var id: String {
         switch self {
         case .morningPrompt: "morningPrompt"
-        case .snapshotStart: "snapshotStart"
         case .dailyReading(let type): "dailyReading.\(type.rawValue)"
         }
     }
 }
 
 #Preview {
-    TodayView()
+    let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models + SleepSchema.models
+    let container = try! ModelContainer(for: Schema(models),
+                                        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    return TodayView()
         .environment(AppSettings())
         .environment(BluetoothManager())
         .environment(HealthService())
         .environment(TrainingContextStore())
         .environment(OnboardingStore())
+        .environment(PlanStore(context: container.mainContext))
+        .modelContainer(container)
 }
