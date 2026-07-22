@@ -1,9 +1,7 @@
-import SwiftUI
 import SwiftData
+import SwiftUI
 
-/// The signed-in app shell — three intents, three tabs: **Today** (decision), **Plan** (the week-level
-/// surface that opens/starts/resumes any workout), **Profile** (setup). History and workout execution
-/// are *capabilities* reached through Plan, not primary destinations.
+/// The signed-in app shell from the approved taxonomy prototype.
 struct MainTabView: View {
     @State private var selection: MainTab
 
@@ -12,22 +10,70 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            TabView(selection: $selection) {
-                TodayView()
-                    .tag(MainTab.today)
+        TabView(selection: $selection) {
+            TodayView()
+                .tag(MainTab.today)
 
             PlanView()
-                    .tag(MainTab.plan)
+                .tag(MainTab.plan)
+
+            WorkoutView()
+                .tag(MainTab.train)
 
             ProfileView()
-                    .tag(MainTab.profile)
-            }
-            .toolbar(.hidden, for: .tabBar)
-
-            BaselineTabBar(selection: $selection)
+                .tag(MainTab.profile)
         }
-        .ignoresSafeArea(.keyboard)
+        .toolbar(.hidden, for: .tabBar)
+        .overlay(alignment: .bottom) {
+            BaselineFloatingTabBar(selection: $selection)
+        }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+    }
+}
+
+struct BaselineFloatingTabBar: View {
+    @Binding var selection: MainTab
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(MainTab.allCases, id: \.self) { tab in
+                Button {
+                    selection = tab
+                } label: {
+                    VStack(spacing: BaselineSpacing.xxxSmall) {
+                        Image(systemName: tab.systemImage)
+                            .font(.system(size: BaselineSize.iconGlyph, weight: .semibold))
+                        Text(tab.title)
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(selection == tab ? BaselineColor.accent : BaselineColor.textMid)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: BaselineSize.floatingTabSelectionHeight)
+                    .background {
+                        if selection == tab {
+                            Capsule()
+                                .fill(BaselineColor.accent.opacity(0.12))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(selection == tab ? .isSelected : [])
+            }
+        }
+        .padding(BaselineSpacing.compact)
+        .frame(height: BaselineSize.floatingTabBarHeight)
+        .background {
+            Capsule()
+                .fill(BaselineColor.surface.opacity(0.97))
+                .overlay {
+                    Capsule()
+                        .stroke(BaselineColor.textFaint.opacity(0.26), lineWidth: BaselineSize.hairline)
+                }
+        }
+        .padding(.horizontal, BaselineSize.floatingTabBarHorizontal)
+        .padding(.bottom, BaselineSize.floatingTabBarBottom)
+        .accessibilityElement(children: .contain)
     }
 }
 

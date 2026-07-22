@@ -102,15 +102,38 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Row radius | `BaselineRadius.row` | 12 pt |
 | Floating tab bar radius | `BaselineRadius.tabBar` | 30 pt |
 | Form row vertical padding | `BaselineSpacing.formRowVertical` | 14 pt |
+| Sleep ring | `BaselineSize.sleepRing` | 84 pt |
+| Sleep ring line width | `BaselineSize.sleepRingLineWidth` | 5 pt |
+| Sleep ring segment gap | `BaselineSize.sleepRingGapDegrees` | 8 degrees |
+| Heart-rate-zone ring | `BaselineSize.zoneRing` | 118 pt |
+| Heart-rate-zone ring line width | `BaselineSize.zoneRingLineWidth` | 11 pt |
+| Heart-rate-zone segment gap | `BaselineSize.zoneRingGapDegrees` | 1.2 degrees |
+| Weekly body figure max width | `BaselineSize.weeklyFigure` | 132 pt |
+| Weekly heat legend | `BaselineSize.heatLegendWidth` by `BaselineSize.heatLegendHeight` | 34 by 7 pt |
+| Movement label width | `BaselineSize.movementLabelWidth` | 74 pt |
+| Movement value width | `BaselineSize.movementValueWidth` | 56 pt |
+| Movement bar height | `BaselineSize.movementBarHeight` | 8 pt |
+| Zone legend marker | `BaselineSize.zoneMarkerWidth` by `BaselineSize.zoneMarkerHeight` | 3 by 15 pt |
+| Zone legend label width | `BaselineSize.zoneLabelWidth` | 17 pt |
+| Zone legend time width | `BaselineSize.zoneTimeWidth` | 32 pt |
+| Two-up reading card height | `BaselineSize.readingCardFullHeight` | 154 pt |
+| Solo reading card height | `BaselineSize.readingCardSoloHeight` | 118 pt |
+| Floating tab bar height | `BaselineSize.floatingTabBarHeight` | 60 pt |
+| Floating tab bar bottom inset | `BaselineSize.floatingTabBarBottom` | 15 pt |
+| Floating tab bar horizontal inset | `BaselineSize.floatingTabBarHorizontal` | 40 pt |
+| Floating tab selection height | `BaselineSize.floatingTabSelectionHeight` | 46 pt |
+| Floating tab content inset | `BaselineSize.floatingTabContentInset` | 90 pt |
+| Compact internal gap | `BaselineSpacing.compact` | 6 pt |
+| Tile gap | `BaselineSpacing.tile` | 9 pt |
+| Section stack gap | `BaselineSpacing.section` | 14 pt |
 | Card content padding | `BaselineSpacing.cardContent` | 15 pt |
-| Compact gap | `BaselineSpacing.compact` | 6 pt |
 | Row padding | `BaselineSpacing.row` | 13 pt |
-| Section gap | `BaselineSpacing.section` | 18 pt |
 | Extra-large gap | `BaselineSpacing.xLarge` | 20 pt |
+| Scroll-end breathing room | `BaselineSpacing.scrollBottom` | 20 pt |
 | Screen margin | `BaselineSpacing.screen` | 24 pt |
 | Screen bottom clearance | `BaselineSpacing.screenBottom` | 90 pt |
 | Profile avatar | `BaselineSize.avatar` | 58 pt |
-| Floating tab bar height | `BaselineSize.tabBarHeight` | 60 pt |
+| Plan calendar row minimum height | `BaselineSize.tabBarHeight` | 60 pt |
 | Compact muscle map | `BaselineSize.miniMuscleMapHeight` | 30 pt |
 | Full muscle map | `BaselineSize.muscleMapHeight` | 180 pt |
 | Heart-rate chart | `BaselineSize.chartHeight` | 108 pt |
