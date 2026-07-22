@@ -25,7 +25,24 @@ struct MainTabShellRenderTests {
             let chat = try #require(screen.element(labelled: "Ask about your week"))
             #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
         }
+        if tab == .train {
+            let chat = try #require(screen.element(labelled: "Talk to Baseline"))
+            #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
+        }
         try screen.capture("shell-\(tab.title.lowercased())")
+    }
+
+    @Test func leavingTrainUnmountsTheWorkoutSurface() async throws {
+        let screen = try MainTabShellScreen(tab: .train)
+        defer { screen.tearDown() }
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "No workout yet") != nil)
+        #expect(screen.activate(labelled: "Today"))
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "No workout yet") == nil)
+        #expect(screen.element(labelled: "Talk to Baseline") == nil)
     }
 
     @Test func theFloatingBarDrivesRealTabSelection() async throws {

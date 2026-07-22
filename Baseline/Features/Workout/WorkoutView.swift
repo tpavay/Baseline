@@ -528,6 +528,14 @@ struct WorkoutView: View {
             Button("New Workout") { store.create(title: "Today's workout", goal: nil) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+            Button {
+                showChat = true
+            } label: {
+                Label("Talk to Baseline", systemImage: "sparkles")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .tint(BaselineColor.accent)
             Spacer()
             Spacer()
         }
