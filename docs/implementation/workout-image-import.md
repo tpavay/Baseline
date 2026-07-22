@@ -864,6 +864,8 @@ The review is the ordinary native workout editor, not an import-specific form:
 - Tap an unresolved exercise to choose a catalog candidate or explicitly create a custom exercise.
 - The ordinary exercise overflow menu supports add, replace exercise, remove exercise, change metrics, and update units.
 - Relationship issues provide direct controls at the affected structure: choose the block, choose grouping, attach a note, or select the intended relationship.
+- **Fix with Baseline** (toolbar sparkles button, plus an action in the issue summary card) opens the import-scoped conversation as a sheet over the review.
+  It inherits the transient review `WorkoutStore`, so the agent edits this draft - never today's workout - and the open issues stream to the model fresh each round (`WorkoutImportViewModel.agentIssueContext`), so fixed issues drop out as the draft reconciles.
 - Save is disabled only by `requiresResolution` issues.
 - Advisory issues can be accepted or dismissed in context.
 - **View Source Photos** is hidden in the editor overflow menu while temporary evidence exists.
@@ -895,8 +897,11 @@ An unresolved movement blocks save until the athlete chooses one of these action
 2. Edit the recognized name and retry matching.
 3. Explicitly choose **Create custom exercise**.
 4. Delete the exercise from the draft.
+5. Ask **Fix with Baseline** to resolve it conversationally - the agent can replace with a catalog match or create the missing movement through the two-phase `create_custom_exercise` tool, which proposes the full classification for the athlete's confirmation before committing.
 
-Custom creation reuses the existing deliberate custom-exercise flow and requires name, category, and supported metrics. Creation is a separate explicit mutation. Only after it succeeds does the draft receive `.customConfirmed(definitionID:)`.
+Custom creation reuses the existing deliberate custom-exercise flow and requires the manual form's gate: a name plus at least one equipment value, one primary muscle, and one logging metric (`WorkoutStore.createCustomDefinition`).
+Creation is a separate explicit mutation.
+Only after it succeeds does the draft receive `.customConfirmed(definitionID:)`.
 
 If custom creation fails, the draft and local source remain available for retry. No generic definition is silently substituted.
 
