@@ -30,7 +30,7 @@ struct WorkoutStoreTests {
         }
         return s.addExercise(
             name: name,
-            toBlockID: blockID,
+            toContainerID: blockID,
             atIndex: nil,
             sets: sets,
             reps: reps,
@@ -94,7 +94,7 @@ struct WorkoutStoreTests {
             expectedRevisionToken: token
         ).succeeded)
         #expect(!s.addExercise(
-            name: "X", toBlockID: UUID(), atIndex: nil,
+            name: "X", toContainerID: UUID(), atIndex: nil,
             sets: 1, reps: nil, load: nil, durationSeconds: nil,
             expectedRevisionToken: token
         ).succeeded)
@@ -496,15 +496,17 @@ struct WorkoutStoreTests {
 
         let summary = s.summary(.plan)
 
-        #expect(summary.contains("REQUIRED GROUP: Option B"))
-        #expect(summary.contains("CHOICE: Bike modality — choose 1 of 2"))
+        #expect(summary.contains("REQUIRED GROUP [id: \(group.id.uuidString)]: Option B"))
+        #expect(summary.contains("CHOICE [id: \(choice.id.uuidString)]: Bike modality — choose 1 of 2"))
+        #expect(summary.contains("OPTION 1 [node id: \(choice.options[0].id.uuidString)]"))
         #expect(summary.contains("Option B sled [exercise: Sled Pull]"))
         #expect(summary.contains("Metrics: Distance (m), Load (lb)"))
         #expect(summary.contains("Distance=25 m"))
         #expect(summary.contains("Load=blank"))
         #expect(summary.contains("Target: Load target: Race weight"))
         #expect(summary.contains("Effort target: RPE 7"))
-        #expect(summary.contains("Alternative Short course: Distance=15 m"))
+        let alternativeID = sled.prescription.sets[0].alternatives[0].id
+        #expect(summary.contains("Alternative Short course [id: \(alternativeID.uuidString)]: Distance=15 m"))
         #expect(summary.contains("Range: Load"))
         #expect(summary.contains("phase main"))
         #expect(summary.contains("dose MED"))

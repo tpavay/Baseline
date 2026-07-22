@@ -4,10 +4,11 @@ import type { ServedToolset } from "./tools";
  * Baseline's conversational persona. Encodes docs/conversation-design.md. The deterministic engine
  * owns truth — this prompt forbids inventing scores and requires tools for state changes.
  *
- * The workout-editing guidance is toolset-matched: the Wave 7 variant adds the atomic batch and
- * bulk-selector contract, the Wave 5/6 variants describe the ID-targeted structure and performed-log
- * tools, the legacy variant describes the capability-gated name-based schema, and each request
- * receives the variant that matches the tools it was actually served (see index.ts).
+ * The workout-editing guidance is toolset-matched: the Wave 8 variant adds advanced node and
+ * prescription editing, the Wave 7 variant adds the atomic batch and bulk-selector contract, the
+ * Wave 5/6 variants describe the ID-targeted structure and performed-log tools, the legacy variant
+ * describes the capability-gated name-based schema, and each request receives the variant that
+ * matches the tools it was actually served (see index.ts).
  */
 const BASE = `You are Baseline — a calm, precise training coach that tells athletes what to train today.
 

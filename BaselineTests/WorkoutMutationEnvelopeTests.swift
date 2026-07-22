@@ -174,7 +174,7 @@ struct WorkoutMutationEnvelopeTests {
         })
         record(try #require(store.addExercise(
             name: "Bench Press",
-            toBlockID: accessory.id,
+            toContainerID: accessory.id,
             atIndex: nil,
             sets: 1,
             reps: 8,
@@ -1435,7 +1435,7 @@ struct WorkoutStructureToolTests {
             let tools = try tools(for: workouts)
             let original = scheduled.workout
             let response = tools.dispatch(.addExercise(
-                blockID: blockIDs[0],
+                containerID: blockIDs[0],
                 name: "Row",
                 atIndex: 1,
                 sets: 2,
@@ -1572,11 +1572,11 @@ struct WorkoutStructureToolTests {
             .moveBlock(blockID: blockIDs[0], toIndex: 1, expectedRevisionToken: staleToken),
             .duplicateBlock(blockID: missingID, expectedRevisionToken: validToken),
             .duplicateBlock(blockID: blockIDs[0], expectedRevisionToken: staleToken),
-            .addExercise(blockID: missingID, name: "Row", atIndex: nil, sets: nil, reps: nil, load: nil,
+            .addExercise(containerID: missingID, name: "Row", atIndex: nil, sets: nil, reps: nil, load: nil,
                          durationSeconds: nil, distanceMeters: nil, expectedRevisionToken: validToken),
-            .addExercise(blockID: blockIDs[0], name: "Row", atIndex: 99, sets: nil, reps: nil, load: nil,
+            .addExercise(containerID: blockIDs[0], name: "Row", atIndex: 99, sets: nil, reps: nil, load: nil,
                          durationSeconds: nil, distanceMeters: nil, expectedRevisionToken: validToken),
-            .addExercise(blockID: blockIDs[0], name: "Row", atIndex: nil, sets: nil, reps: nil, load: nil,
+            .addExercise(containerID: blockIDs[0], name: "Row", atIndex: nil, sets: nil, reps: nil, load: nil,
                          durationSeconds: nil, distanceMeters: nil, expectedRevisionToken: staleToken),
             .moveExercise(exerciseInstanceID: missingID, toBlockID: blockIDs[1], toIndex: 0,
                           expectedRevisionToken: validToken),

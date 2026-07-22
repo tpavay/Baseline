@@ -193,7 +193,7 @@ struct AgentToolsTests {
         let strengthID = try #require(wk.current?.blocks.first { $0.name == "Strength" }?.id)
         let blockToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
         let r = t.dispatch(.addExercise(
-            blockID: strengthID,
+            containerID: strengthID,
             name: "Bench press",
             atIndex: nil,
             sets: 3,
@@ -230,13 +230,13 @@ struct AgentToolsTests {
         let overloadID = try #require(workouts.current?.blocks.first { $0.name == "Overload" }?.id)
         let blockToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
         _ = tools.dispatch(.addExercise(
-            blockID: overloadID, name: "Run", atIndex: nil, sets: 1, reps: nil, load: nil,
+            containerID: overloadID, name: "Run", atIndex: nil, sets: 1, reps: nil, load: nil,
             durationSeconds: 60, distanceMeters: nil,
             expectedRevisionToken: blockToken
         ))
         let firstExerciseToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
         _ = tools.dispatch(.addExercise(
-            blockID: overloadID, name: "Run", atIndex: nil, sets: 1, reps: nil, load: nil,
+            containerID: overloadID, name: "Run", atIndex: nil, sets: 1, reps: nil, load: nil,
             durationSeconds: 120, distanceMeters: nil,
             expectedRevisionToken: firstExerciseToken
         ))
@@ -296,13 +296,13 @@ struct AgentToolsTests {
         let mainID = try #require(wk.current?.blocks.first { $0.name == "Main Run" }?.id)
         let mainToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
         _ = tools.dispatch(.addExercise(
-            blockID: warmupID, name: "Treadmill Run", atIndex: nil, sets: 1, reps: nil,
+            containerID: warmupID, name: "Treadmill Run", atIndex: nil, sets: 1, reps: nil,
             load: nil, durationSeconds: 300, distanceMeters: nil,
             expectedRevisionToken: mainToken
         ))
         let firstExerciseToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
         _ = tools.dispatch(.addExercise(
-            blockID: mainID, name: "Treadmill Run", atIndex: nil, sets: 1, reps: nil,
+            containerID: mainID, name: "Treadmill Run", atIndex: nil, sets: 1, reps: nil,
             load: nil, durationSeconds: 1_800, distanceMeters: nil,
             expectedRevisionToken: firstExerciseToken
         ))
