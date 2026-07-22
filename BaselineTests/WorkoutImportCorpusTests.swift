@@ -34,6 +34,10 @@ struct WorkoutImportCorpusTests {
             var metrics: [String: [String: Double]]?
             /// Exercise index → coach text that must survive verbatim.
             var notesContain: [String: [String]]?
+            /// Coach text that must survive at workout scope.
+            var workoutNotesContain: [String]?
+            /// Block index → shared scheme or coach text that must survive verbatim.
+            var blockNotesContain: [String: [String]]?
 
             struct Group: Decodable {
                 var label: String
@@ -121,6 +125,24 @@ struct WorkoutImportCorpusTests {
 
             if let unresolved = expect.unresolved {
                 #expect(converted.unresolvedNames == unresolved, "\(label) names Baseline must not guess")
+            }
+
+            for note in expect.workoutNotesContain ?? [] {
+                #expect(
+                    document.notes.contains { $0.contains(note) },
+                    "\(label) workout notes must keep coach text “\(note)”; kept \(document.notes)"
+                )
+            }
+
+            for (rawIndex, expected) in expect.blockNotesContain ?? [:] {
+                let index = try #require(Int(rawIndex), "\(label) blockNotesContain key \(rawIndex)")
+                let block = try #require(document.blocks[safe: index], "\(label) no block at \(index)")
+                for note in expected {
+                    #expect(
+                        block.notes.contains { $0.contains(note) },
+                        "\(label) \(block.name) must keep coach text “\(note)”; kept \(block.notes)"
+                    )
+                }
             }
 
             for (rawIndex, count) in expect.setCounts ?? [:] {

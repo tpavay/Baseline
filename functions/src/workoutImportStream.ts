@@ -20,7 +20,7 @@ import type Anthropic from "@anthropic-ai/sdk";
  */
 
 /** Bumped whenever the schema or prompt below changes in a way a trace should be able to tell apart. */
-export const WORKOUT_IMPORT_SKETCH_VERSION = "workout-import-sketch-v1";
+export const WORKOUT_IMPORT_SKETCH_VERSION = "workout-import-sketch-v2";
 
 export const WORKOUT_IMPORT_SKETCH_TOOL_NAME = "submit_workout_sketch";
 
@@ -49,7 +49,9 @@ export const WORKOUT_IMPORT_SKETCH_TOOL: Anthropic.Tool = {
         type: "string",
         description:
           "The workout's own title as written, for example \"AM: VO2 THRESHOLDS\" or " +
-          "\"Intensity Day - Block 13 - Week 1\". Not the app's name, not the date, not a footnote.",
+          "\"Intensity Day - Block 13 - Week 1\". If the source contains several dated sessions, " +
+          "use the program title or a concise date range that covers all of them. Not the app's name " +
+          "or a footnote.",
       },
       notes: {
         type: "array",
@@ -68,7 +70,10 @@ export const WORKOUT_IMPORT_SKETCH_TOOL: Anthropic.Tool = {
           properties: {
             name: {
               type: "string",
-              description: "The section heading as written: \"Warmup\", \"A) 400s\", \"Strength\".",
+              description:
+                "The section heading as written: \"Warmup\", \"A) 400s\", \"Strength\". When " +
+                "several days or sessions appear, prefix the heading with its date/session label so " +
+                "none of them are lost.",
             },
             notes: { type: "array", items: { type: "string" } },
             items: {
@@ -120,7 +125,8 @@ export const WORKOUT_IMPORT_SKETCH_TOOL: Anthropic.Tool = {
                     type: "string",
                     description:
                       "Anything else the coach wrote about this exercise: cues, conditions, " +
-                      "transitions. Copy it whole rather than summarizing.",
+                      "transitions, EMOM rules, nested rounds, multiple set/rep phases. Copy it " +
+                      "whole rather than summarizing. Complex prose is valid output.",
                   },
                 },
               },
@@ -152,6 +158,13 @@ Give the movement alone in "name" and put everything else in the other fields. "
 GROUPING
 Cards marked 1A/1B, or joined by a connector line, share one group ordinal: give both group "1". 2A/2B/2C all get group "2". A card with no marking gets no group at all. There is exactly one level of grouping - never nest.
 
+COMPLEX PRESCRIPTIONS DEGRADE TO PROSE
+- Complexity is never a reason to omit a visible movement. EMOMs, percentages of a test result, race-weight instructions, nested rounds and sets, and multi-phase RPE schemes are all valid workout content.
+- Extract the movement name and any simple value you can copy without interpretation. Put the complete scheme, condition, or progression you cannot express cleanly in the item's note, verbatim enough that the athlete can still follow it.
+- A heading such as "Wall Ball EMOM" names both a section and a movement. Create a Wall Balls item and keep the full EMOM, percentage rule, worked example, recording instruction, and progression prose in its note or its block notes.
+- When a circuit says "4 rounds" and lists several stations, emit every station as its own item in source order. Keep "4 rounds", transition rules, and shared rest in block notes instead of forcing nested structure.
+- When one movement has several phases such as primer sets followed by multiple rep and RPE targets, emit the movement once and copy the whole multi-phase prescription into its note. Never discard the movement because the phases do not fit sets/prescription/intensity neatly.
+
 SOURCES YOU WILL SEE
 The same workout must produce the same reading whether it arrives as an email, a photo of paper, plain text, or a screenshot of another training app. Screenshots of apps carry specific traps:
 - An empty logging table is the athlete's blank log, NOT the prescription. Its column headers ("Reps", "Weight (lbs)", "Rest") tell you which metrics that exercise logs; its empty rows tell you how many sets. Never read a blank cell as a value.
@@ -159,7 +172,7 @@ The same workout must produce the same reading whether it arrives as an email, a
 - A "Daily Summary" block often contains sub-headings that are NOT exercises: Warm-Up, Tempo Block, Overload Interval, Execution Notes, Transition Rest. Those belong in notes.
 
 MULTIPLE IMAGES
-Several images are usually one workout scrolled or photographed in pieces, and they overlap. Stitch them into a single continuous workout and report each exercise ONCE. If the bottom of one image and the top of the next show the same card, that is one card. Do not concatenate the images into repeated sections. If two images are genuinely different workouts, report the one the athlete clearly framed and put the other's title in notes.
+Several images may be one workout scrolled or photographed in pieces, or several adjacent days/sessions selected together. Preserve every legible workout the athlete selected. Stitch overlaps into one continuous source and report each repeated card ONCE. If the images contain different dated sessions, represent every session as ordered blocks and include its date/session label in each block name. Never discard one selected workout merely because another is also present.
 
 WHEN YOU ARE UNSURE
 Report less rather than guessing. Omit a field you cannot read instead of inventing a plausible value; a missing number costs the athlete seconds of typing, a wrong one costs them a training session. But do not omit an EXERCISE you can see - the skeleton is what matters most, and an exercise with only a name is far more useful than a gap.`;

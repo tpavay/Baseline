@@ -1,0 +1,269 @@
+{
+  "name": "hybrid-two-day-complex-prescriptions",
+  "source": "GitHub issue #40 - five legible coaching screenshots captured July 21-22, 2026. This exact class previously exhausted the durable semantic validator and produced a terminal failure.",
+  "sketch": {
+    "title": "July 21-22, 2026",
+    "notes": [
+      "Intent: Establish strength and capacity baselines for the block.",
+      "Primary Goal: Test current wall ball output; build max-effort strength in push press and deadlift.",
+      "Secondary Goal: Develop strength-endurance through ski erg, front squat, sled push, and wall ball combination work.",
+      "Intended Stimulus: Heavy, low-rep strength loading (3-4 RPE building to 7 RPE) followed by higher-rep muscular endurance work; mixed intensity session."
+    ],
+    "blocks": [
+      {
+        "name": "July 21 - Warm Up",
+        "notes": [
+          "2 Rounds"
+        ],
+        "items": [
+          {
+            "name": "BikeErg",
+            "prescription": "500m"
+          },
+          {
+            "name": "Bodyweight Squat",
+            "prescription": "10 reps"
+          },
+          {
+            "name": "Shoulder Taps",
+            "prescription": "20 reps"
+          },
+          {
+            "name": "Push-Up",
+            "prescription": "10 reps"
+          },
+          {
+            "name": "Scapular Pull-Up",
+            "prescription": "10 reps"
+          },
+          {
+            "name": "Barbell Good Morning",
+            "prescription": "10 reps",
+            "load": "empty BB"
+          },
+          {
+            "name": "Barbell Overhead Press",
+            "prescription": "10 reps",
+            "load": "empty BB"
+          }
+        ]
+      },
+      {
+        "name": "July 21 - Strength",
+        "notes": [],
+        "items": [
+          {
+            "name": "Wall Balls",
+            "note": "Wall Ball Test: 1 min max effort @ race weight"
+          },
+          {
+            "name": "Push Press",
+            "note": "2 x 10-15 primer sets @ 3-4 RPE, then 2 x 10 @ 6 RPE and 2 x 8 @ 7 RPE"
+          },
+          {
+            "name": "Deadlift",
+            "note": "2 x 10-15 primer sets @ 3-4 RPE, then 2 x 10 @ 6 RPE and 2 x 8 @ 7 RPE"
+          },
+          {
+            "name": "Wall Balls",
+            "note": "10 min EMOM at 60% of the test number; if the test was 30 reps, use 18 reps @ race weight. Record reps and whether all 10 sets were unbroken. Progression is based on hitting unbroken reps at the target number."
+          }
+        ]
+      },
+      {
+        "name": "July 21 - Strength Endurance",
+        "notes": [
+          "4 rounds; rest 60 secs after each round"
+        ],
+        "items": [
+          {
+            "name": "SkiErg",
+            "prescription": "500m"
+          },
+          {
+            "name": "Barbell Front Squat",
+            "prescription": "12 reps",
+            "intensity": "5-6 RPE"
+          },
+          {
+            "name": "Sled Push",
+            "prescription": "12.5m",
+            "load": "race weight"
+          },
+          {
+            "name": "WB Push Press",
+            "prescription": "20 reps"
+          }
+        ]
+      },
+      {
+        "name": "July 22 - AM: Aerobic Capacity Day",
+        "notes": [
+          "3 rounds; each round: 8 sets of 20 sec race-pace row / 60 secs very easy ski; after the 8th set, 6 dual DB devils press",
+          "Intent: Accumulate volume without accruing significant fatigue. Add a short conditioning stimulus without compromising recovery.",
+          "Primary Goal: Build sub-threshold aerobic durability through controlled tempo efforts. Build power-endurance through devils press.",
+          "Secondary Goal: Teach pacing discipline and staying below threshold even when capable of more. Light additional volume on an otherwise aerobic-focused day.",
+          "Intended Stimulus: Moderate, controlled intensity; athlete should finish feeling fully in control, not laboured. Short, moderate-intensity strength-conditioning hybrid; low overall systemic load."
+        ],
+        "items": [
+          {
+            "name": "BikeErg",
+            "prescription": "50 min",
+            "intensity": "Zone 1/2"
+          },
+          {
+            "name": "Row",
+            "sets": "8 sets",
+            "prescription": "20 sec",
+            "intensity": "race pace"
+          },
+          {
+            "name": "SkiErg",
+            "sets": "8 sets",
+            "prescription": "60 secs",
+            "intensity": "very easy"
+          },
+          {
+            "name": "Dual DB Devils Press",
+            "prescription": "6 reps",
+            "note": "after the 8th set"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "title": "July 21-22, 2026",
+    "blocks": [
+      "July 21 - Warm Up",
+      "July 21 - Strength",
+      "July 21 - Strength Endurance",
+      "July 22 - AM: Aerobic Capacity Day"
+    ],
+    "exercises": [
+      "BikeErg",
+      "Bodyweight Squat",
+      "Shoulder Taps",
+      "Push-Up",
+      "Scapular Pull-Up",
+      "Barbell Good Morning",
+      "Barbell Overhead Press",
+      "Wall Balls",
+      "Push Press",
+      "Deadlift",
+      "Wall Balls",
+      "SkiErg",
+      "Barbell Front Squat",
+      "Sled Push",
+      "WB Push Press",
+      "BikeErg",
+      "Row",
+      "SkiErg",
+      "Dual DB Devils Press"
+    ],
+    "unresolved": [
+      "Shoulder Taps",
+      "Barbell Good Morning",
+      "WB Push Press",
+      "Dual DB Devils Press"
+    ],
+    "setCounts": {
+      "16": 8,
+      "17": 8
+    },
+    "metrics": {
+      "0": {
+        "distance": 500
+      },
+      "1": {
+        "reps": 10
+      },
+      "3": {
+        "reps": 10
+      },
+      "4": {
+        "reps": 10
+      },
+      "6": {
+        "reps": 10
+      },
+      "11": {
+        "distance": 500
+      },
+      "12": {
+        "reps": 12
+      },
+      "13": {
+        "distance": 12.5
+      },
+      "15": {
+        "duration": 3000
+      },
+      "16": {
+        "duration": 20
+      },
+      "17": {
+        "duration": 60
+      },
+      "18": {
+        "reps": 6
+      }
+    },
+    "notesContain": {
+      "7": [
+        "1 min max effort",
+        "race weight"
+      ],
+      "8": [
+        "10-15 primer sets",
+        "2 x 8 @ 7 RPE"
+      ],
+      "9": [
+        "10-15 primer sets",
+        "2 x 8 @ 7 RPE"
+      ],
+      "10": [
+        "60% of the test number",
+        "18 reps @ race weight",
+        "unbroken"
+      ],
+      "12": [
+        "5-6 RPE"
+      ],
+      "13": [
+        "race weight"
+      ],
+      "15": [
+        "Zone 1/2"
+      ],
+      "16": [
+        "race pace"
+      ],
+      "17": [
+        "very easy"
+      ],
+      "18": [
+        "after the 8th set"
+      ]
+    },
+    "workoutNotesContain": [
+      "Intent: Establish strength and capacity baselines",
+      "Secondary Goal: Develop strength-endurance"
+    ],
+    "blockNotesContain": {
+      "0": [
+        "2 Rounds"
+      ],
+      "2": [
+        "4 rounds",
+        "rest 60 secs"
+      ],
+      "3": [
+        "3 rounds",
+        "8 sets",
+        "after the 8th set",
+        "Primary Goal: Build sub-threshold aerobic durability"
+      ]
+    }
+  }
+}

@@ -73,6 +73,31 @@ struct WorkoutImportFastPathTests {
     {"name":"Burpee Broad Jump","sets":"4 min","prescription":"8 reps"}]}]}
     """
 
+    /// The readable five-photo workout that previously exhausted eight provider calls and
+    /// reached the terminal failure screen. Complex schemes are intentionally prose; the skeleton
+    /// remains useful and every unsupported movement remains an item the athlete can resolve.
+    private static let hybridResponse = """
+    {"title":"July 21-22, 2026","notes":["Intent: Establish strength and capacity baselines for the block."],"blocks":[\
+    {"name":"July 21 - Warm Up","notes":["2 Rounds"],"items":[\
+    {"name":"BikeErg","prescription":"500m"},{"name":"Bodyweight Squat","prescription":"10 reps"},\
+    {"name":"Shoulder Taps","prescription":"20 reps"},{"name":"Push-Up","prescription":"10 reps"},\
+    {"name":"Scapular Pull-Up","prescription":"10 reps"},{"name":"Barbell Good Morning","prescription":"10 reps","load":"empty BB"},\
+    {"name":"Barbell Overhead Press","prescription":"10 reps","load":"empty BB"}]},\
+    {"name":"July 21 - Strength","items":[\
+    {"name":"Wall Balls","note":"Wall Ball Test: 1 min max effort @ race weight"},\
+    {"name":"Push Press","note":"2 x 10-15 primer sets @ 3-4 RPE, then 2 x 10 @ 6 RPE and 2 x 8 @ 7 RPE"},\
+    {"name":"Deadlift","note":"2 x 10-15 primer sets @ 3-4 RPE, then 2 x 10 @ 6 RPE and 2 x 8 @ 7 RPE"},\
+    {"name":"Wall Balls","note":"10 min EMOM at 60% of the test number; if test = 30 reps, use 18 reps @ race weight. Record reps and whether all 10 sets were unbroken."}]},\
+    {"name":"July 21 - Strength Endurance","notes":["4 rounds; rest 60 secs after each round"],"items":[\
+    {"name":"SkiErg","prescription":"500m"},{"name":"Barbell Front Squat","prescription":"12 reps","intensity":"5-6 RPE"},\
+    {"name":"Sled Push","prescription":"12.5m","load":"race weight"},{"name":"WB Push Press","prescription":"20 reps"}]},\
+    {"name":"July 22 - AM: Aerobic Capacity Day","notes":["3 rounds; each round: 8 sets of 20 sec race-pace row / 60 secs very easy ski; after the 8th set, 6 dual DB devils press"],"items":[\
+    {"name":"BikeErg","prescription":"50 min","intensity":"Zone 1/2"},\
+    {"name":"Row","sets":"8 sets","prescription":"20 sec","intensity":"race pace"},\
+    {"name":"SkiErg","sets":"8 sets","prescription":"60 secs","intensity":"very easy"},\
+    {"name":"Dual DB Devils Press","prescription":"6 reps","note":"after the 8th set"}]}]}
+    """
+
     /// The response split the way a stream delivers it, so a partial is emitted part way through.
     private static func fragments(of json: String, chunks: Int = 12) -> [WorkoutImportStreamEvent] {
         let size = max(1, json.count / chunks)
@@ -209,14 +234,15 @@ struct WorkoutImportFastPathTests {
         #expect(await parser.startCallCount() == 1)
     }
 
-    /// Multi-image imports stay durable. They are long enough that an athlete may leave the app
-    /// mid-import, which is the case the queue genuinely earns.
-    @Test func aMultiPhotoImportSkipsTheFastPathEntirely() async throws {
+    @Test("Five readable hybrid photos use one graceful stream and never reach the rigid durable validator", .bug(id: 40))
+    func aMultiPhotoImportTakesTheFastPathAndPreservesComplexProse() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "WorkoutImportFastPathMulti-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let parser = RecordingWorkoutImportJobParser()
-        let streamer = RecordingStreamer(events: Self.fragments(of: Self.response) + [.completed(model: nil)])
+        let streamer = RecordingStreamer(
+            events: Self.fragments(of: Self.hybridResponse, chunks: 80) + [.completed(model: "test-model")]
+        )
         let coordinator = WorkoutImportCoordinator(
             repository: FileWorkoutImportJobRepository(root: root),
             normalizer: PassthroughWorkoutImageNormalizer(),
@@ -226,15 +252,34 @@ struct WorkoutImportFastPathTests {
             configuration: .init(pollingDelay: {})
         )
 
-        _ = await coordinator.start(
-            imageCount: 3,
+        let job = await coordinator.start(
+            imageCount: 5,
             catalog: ExerciseCatalog.definitions,
             loadImage: { index in Data([UInt8(index + 1)]) },
             progress: { _ in }
         )
 
-        #expect(await streamer.imageCounts.isEmpty, "the fast path must not run for a multi-photo import")
-        #expect(await parser.startCallCount() == 1)
+        #expect(await streamer.imageCounts == [5], "all selected photos must reach the single streaming call")
+        #expect(await parser.startCallCount() == 0, "readable complexity must not reach the rigid durable validator")
+        #expect(job.stage == .reviewing)
+        #expect(job.draft?.workout.allExercises.count == 19)
+        let parsed = try #require(job.parsedDocument)
+        #expect(parsed.blocks.map(\.name) == [
+            "July 21 - Warm Up",
+            "July 21 - Strength",
+            "July 21 - Strength Endurance",
+            "July 22 - AM: Aerobic Capacity Day",
+        ])
+        #expect(parsed.blocks[1].exercises[3].notes.contains {
+            $0.contains("60% of the test number") && $0.contains("unbroken")
+        })
+        #expect(parsed.blocks[2].notes.contains {
+            $0.contains("4 rounds") && $0.contains("rest 60 secs")
+        })
+        #expect(parsed.blocks[3].notes.contains {
+            $0.contains("8 sets") && $0.contains("after the 8th set")
+        })
+        #expect(job.issues.contains { $0.code == .unknownExercise }, "ambiguous movements must enter resolution")
     }
 
     /// The recognized text always travels, so an import still works when the normalized image is
@@ -262,6 +307,38 @@ struct WorkoutImportFastPathTests {
 
         #expect(await streamer.imageCounts == [1])
         #expect(await streamer.texts.first??.isEmpty == false)
+    }
+
+    @Test("A legible photo can reach review when on-device OCR finds no text", .bug(id: 40))
+    func aPhotoWithoutLocalOCRStillGetsItsMultimodalAttempt() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportFastPathNoOCR-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parser = RecordingWorkoutImportJobParser()
+        let streamer = RecordingStreamer(
+            events: Self.fragments(of: Self.response) + [.completed(model: "test-model")]
+        )
+        let coordinator = WorkoutImportCoordinator(
+            repository: FileWorkoutImportJobRepository(root: root),
+            normalizer: PassthroughWorkoutImageNormalizer(),
+            recognizer: NoTextWorkoutTextRecognizer(),
+            parser: parser,
+            streamer: streamer,
+            configuration: .init(pollingDelay: {})
+        )
+
+        let job = await coordinator.start(
+            imageCount: 1,
+            catalog: ExerciseCatalog.definitions,
+            loadImage: { _ in Data([1]) },
+            progress: { _ in }
+        )
+
+        #expect(await streamer.imageCounts == [1])
+        #expect(await streamer.texts == [nil])
+        #expect(await parser.startCallCount() == 0)
+        #expect(job.stage == .reviewing)
+        #expect(job.draft?.workout.allExercises.isEmpty == false)
     }
 
     /// A stream that ended early still opens the editor, but says so rather than letting the
@@ -373,6 +450,13 @@ private struct IndexedWorkoutTextRecognizer: WorkoutTextRecognizing {
             boundingBox: .init(x: 0, y: 0, width: 1, height: 0.1),
             sourceImageIndex: sourceImageIndex
         )]
+    }
+}
+
+private struct NoTextWorkoutTextRecognizer: WorkoutTextRecognizing {
+    func recognize(image: ImportedWorkoutImage, sourceImageIndex: Int,
+                   customWords: [String]) async throws -> [WorkoutTextObservation] {
+        throw WorkoutImagePipelineError.noText
     }
 }
 

@@ -159,8 +159,17 @@ test("the prompt covers the screenshot hazards a real import hits", () => {
   assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /empty logging table/i);
   assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /HISTORY/);
   // Overlapping screenshots of one workout must be stitched and deduplicated, never concatenated.
-  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /Stitch them into a single continuous workout/);
-  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /report each exercise ONCE/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /Stitch overlaps into one continuous source/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /report each repeated card ONCE/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /Preserve every legible workout/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /Never discard one selected workout/);
+});
+
+test("the prompt degrades complex hybrid prescriptions to notes instead of omitting movements", () => {
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /COMPLEX PRESCRIPTIONS DEGRADE TO PROSE/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /EMOMs, percentages of a test result/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /emit every station as its own item/);
+  assert.match(WORKOUT_IMPORT_SKETCH_SYSTEM, /copy the whole multi-phase prescription into its note/);
 });
 
 test("the prompt treats the source as data rather than as instructions", () => {

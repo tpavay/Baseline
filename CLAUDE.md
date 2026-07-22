@@ -93,11 +93,13 @@ The model returns an all-text reading of the source (`WorkoutImportSketch`) and 
 Everything typed - canonical units, set counts, per-exercise metric sets, catalog identity, grouping - happens in `Conversion/`, which is pure and unit-tested.
 This replaced a rigid intermediate representation whose validator rejected four correct parses in a row and left the athlete looking at a client-side keyword matcher; the measurement behind that is summarized in the header comment of `functions/src/workoutImportStream.ts`.
 Never move normalization back into a prompt-plus-validator loop.
-Baseline also never synthesizes a workout from recognized text: an import that cannot be structured fails visibly with a retry, because a visibly failed import beats a confidently wrong one.
+Baseline also never synthesizes a workout from recognized text: an input with no legible workout skeleton fails visibly with a retry, because a visibly failed import beats a confidently wrong one.
 
 Two transports, both wanted.
-A single photo takes the streaming single call (`streamWorkoutImport`, SSE), which shows the editor's own rows over the real parsed draft as exercises resolve and never rewrites one already on screen; those rows become editable the moment reading finishes.
-Multi-image imports stay on the durable Cloud Tasks job, which is also the retry when the fast path fails.
+Every bounded photo selection first takes the streaming single call (`streamWorkoutImport`, SSE), which shows the editor's own rows over the real parsed draft as exercises resolve and never rewrites one already on screen; those rows become editable the moment reading finishes.
+The durable Cloud Tasks job remains the resumable retry when the fast path produces no usable exercise skeleton.
+Complex but legible schemes such as EMOMs, conditionals, nested repeats, and multi-phase RPE work keep their movement skeleton and preserve unsupported details as notes.
+On-device OCR is supporting context, not the readability verdict: normalized photos still receive their multimodal streaming attempt when OCR found no text.
 
 Exercise matching surfaces near-misses rather than resolving them: widening past an exact catalog hit reaches only different spellings of the same movement, and anything else stays unresolved for the athlete to choose.
 Ranges, paces, and RPE ("6-8 reps", "3-5km pace", "7RPE") stay coach text, never typed metrics; the corpus case `fixtures/workout-import/corpus/bayens-intensity-day.json` pins that.
