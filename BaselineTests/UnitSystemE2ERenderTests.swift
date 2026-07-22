@@ -113,9 +113,21 @@ private final class Bed {
     func openTodaysWorkout() async throws {
         try await settle()
         let card = try #require(element(labelled: "Conditioning"), "today's workout card is not on the Plan tab")
-        #expect(card.accessibilityActivate())
+        // Tapping the calendar row opens the read-only detail screen; starting the session lives in
+        // the row's menu, mirrored as the row's "Start workout" accessibility custom action.
+        let start = try #require(
+            (card.accessibilityCustomActions ?? []).first { $0.name.localizedCaseInsensitiveContains("start") },
+            "the session row does not expose its start action"
+        )
+        #expect(perform(start))
         try await settle()
-        #expect(element(labelled: "Sled Push") != nil, "the workout sheet did not open")
+        #expect(cell("Sled Push", "Load") != nil, "the workout execution sheet did not open")
+    }
+
+    private func perform(_ action: UIAccessibilityCustomAction) -> Bool {
+        if let handler = action.actionHandler { return handler(action) }
+        guard let target = action.target else { return false }
+        return (target.perform(action.selector, with: action) != nil)
     }
 
     func tearDown() {

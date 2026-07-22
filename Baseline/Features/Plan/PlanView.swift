@@ -362,6 +362,9 @@ struct PlanView: View {
         .buttonStyle(.plain)
         .accessibilityHint("Opens workout details")
         .contextMenu { sessionMenu(scheduled, status: status) }
+        // The context menu is invisible to assistive tech, so its primary start/resume/review action
+        // must also be a custom action or the session cannot be started from the calendar at all.
+        .accessibilityAction(named: Text(openLabel(status))) { handle(.open, scheduled) }
     }
 
     /// Plan-level organization for a session, one press away from its row: start/resume, move within
