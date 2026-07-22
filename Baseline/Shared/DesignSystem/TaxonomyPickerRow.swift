@@ -62,7 +62,7 @@ struct TaxonomyPickerRow: View {
             }
             .padding(.horizontal, BaselineSpacing.xxSmall)
             .padding(.vertical, BaselineSpacing.small)
-            .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: BaselineSize.pickerRowMinimumHeight, alignment: .leading)
             .contentShape(Rectangle())
             .overlay(alignment: .bottom) {
                 Hairline(color: BaselineColor.line.opacity(0.45))
