@@ -96,40 +96,62 @@ enum ToolCallMapper {
             )
         case "add_block":
             guard let name = input["name"] as? String,
+                  validOptionalIndex(input["at_index"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .addBlock(name: name, intent: input["intent"] as? String, expectedRevisionToken: expected)
+            return .addBlock(
+                name: name,
+                intent: input["intent"] as? String,
+                guidance: input["guidance"] as? String,
+                atIndex: exactIntOrNil(input["at_index"]),
+                expectedRevisionToken: expected
+            )
+        case "remove_block":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .removeBlock(blockID: blockID, expectedRevisionToken: expected)
+        case "move_block":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .moveBlock(blockID: blockID, toIndex: toIndex, expectedRevisionToken: expected)
+        case "duplicate_block":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .duplicateBlock(blockID: blockID, expectedRevisionToken: expected)
         case "add_exercise":
-            guard let block = input["block"] as? String, let name = input["name"] as? String,
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let name = input["name"] as? String,
+                  validOptionalIndex(input["at_index"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .addExercise(block: block, name: name,
-                                sets: intOrNil(input["sets"]), reps: intOrNil(input["reps"]),
-                                load: doubleOrNil(input["load"]), durationSeconds: intOrNil(input["duration_seconds"]),
-                                distanceMeters: doubleOrNil(input["distance_m"]),
-                                expectedRevisionToken: expected)
+            return .addExercise(
+                blockID: blockID,
+                name: name,
+                atIndex: exactIntOrNil(input["at_index"]),
+                sets: intOrNil(input["sets"]),
+                reps: intOrNil(input["reps"]),
+                load: doubleOrNil(input["load"]),
+                durationSeconds: intOrNil(input["duration_seconds"]),
+                distanceMeters: doubleOrNil(input["distance_m"]),
+                expectedRevisionToken: expected
+            )
         case "move_exercise":
-            guard let exercise = input["exercise"] as? String,
-                  let toBlock = input["to_block"] as? String,
-                  validOptionalUUID(input["exercise_id"]),
-                  validOptionalUUID(input["to_block_id"]),
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let toBlockID = requiredUUID(input["to_block_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0,
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .moveExercise(
-                exercise: exercise,
-                exerciseID: uuid(input["exercise_id"]),
-                toBlock: toBlock,
-                toBlockID: uuid(input["to_block_id"]),
+                exerciseInstanceID: exerciseID,
+                toBlockID: toBlockID,
+                toIndex: toIndex,
                 expectedRevisionToken: expected
             )
         case "replace_exercise":
-            guard let exercise = input["exercise"] as? String,
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
                   let replacement = input["replacement"] as? String,
-                  validOptionalUUID(input["exercise_id"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .replaceExercise(
-                exercise: exercise,
-                exerciseID: uuid(input["exercise_id"]),
+                exerciseInstanceID: exerciseID,
                 replacement: replacement,
-                block: input["block"] as? String,
-                replaceAll: boolOrNil(input["replace_all"]) ?? false,
                 expectedRevisionToken: expected
             )
         case "require_all_options":
@@ -137,10 +159,22 @@ enum ToolCallMapper {
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .requireAllOptions(choice: choice, expectedRevisionToken: expected)
         case "remove_exercise":
-            guard let exercise = input["exercise"] as? String,
-                  validOptionalUUID(input["exercise_id"]),
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .removeExercise(exercise: exercise, exerciseID: uuid(input["exercise_id"]), expectedRevisionToken: expected)
+            return .removeExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: expected)
+        case "reorder_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .reorderExercise(
+                exerciseInstanceID: exerciseID,
+                toIndex: toIndex,
+                expectedRevisionToken: expected
+            )
+        case "duplicate_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .duplicateExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: expected)
         case "add_set":
             guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
                   validOptionalUUID(input["after_set_id"]),
@@ -476,6 +510,10 @@ enum ToolCallMapper {
     /// Optional UUID fields may be omitted or null. A supplied malformed ID always rejects the call.
     private static func validOptionalUUID(_ value: Any?) -> Bool {
         value == nil || value is NSNull || uuid(value) != nil
+    }
+
+    private static func validOptionalIndex(_ value: Any?) -> Bool {
+        value == nil || value is NSNull || exactIntOrNil(value).map { $0 >= 0 } == true
     }
     // MARK: - Metric / unit parsing (tolerant of casual names the model may emit)
 

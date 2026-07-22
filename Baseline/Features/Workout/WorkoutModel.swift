@@ -191,6 +191,22 @@ extension Workout {
         return block.id
     }
 
+    /// Insert a block at a validated zero-based position, or append when no position is supplied.
+    /// Returns nil without changing the workout when the requested position is outside `0...count`.
+    @discardableResult
+    mutating func addBlock(
+        name: String,
+        intent: String?,
+        guidance: CoachGuidance?,
+        at index: Int?
+    ) -> UUID? {
+        let target = index ?? blocks.endIndex
+        guard target >= blocks.startIndex, target <= blocks.endIndex else { return nil }
+        let block = WorkoutBlock(name: name, intent: intent, guidance: guidance)
+        blocks.insert(block, at: target)
+        return block.id
+    }
+
     /// Add a *user-created* block, discarding the implicit empty default if present — creating your
     /// own structure shouldn't leave a phantom "Main" section beside it. Leaves ≥1 block.
     @discardableResult
@@ -275,6 +291,22 @@ extension Workout {
         return true
     }
 
+    /// Insert a top-level exercise at a validated zero-based position in a block, or append when the
+    /// position is omitted. Nested-parent insertion belongs to the general node-editing surface.
+    @discardableResult
+    mutating func addExercise(
+        _ exercise: PlannedExercise,
+        toBlock blockID: UUID,
+        at index: Int?
+    ) -> Bool {
+        guard let blockIndex = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
+        let target = index ?? blocks[blockIndex].nodes.endIndex
+        guard target >= blocks[blockIndex].nodes.startIndex,
+              target <= blocks[blockIndex].nodes.endIndex else { return false }
+        blocks[blockIndex].nodes.insert(.exercise(exercise), at: target)
+        return true
+    }
+
     @discardableResult
     mutating func removeExercise(_ id: UUID) -> Bool {
         for index in blocks.indices {
@@ -283,17 +315,25 @@ extension Workout {
         return false
     }
 
-    /// Move an exercise to another block (or reposition within one) — the cross-block move the docs
-    /// call out. `index` clamps into the destination.
+    /// Move an exercise to another block (or reposition within one). An explicit position is the
+    /// zero-based final index and is validated before extraction, so a rejected move is atomic.
     @discardableResult
     mutating func moveExercise(_ id: UUID, toBlock blockID: UUID, at index: Int? = nil) -> Bool {
         guard let dest = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
+        if let index {
+            let sourceIsTopLevelInDestination = blocks[dest].nodes.contains { node in
+                if case .exercise(let exercise) = node { return exercise.id == id }
+                return false
+            }
+            let finalCount = blocks[dest].nodes.count - (sourceIsTopLevelInDestination ? 1 : 0)
+            guard index >= 0, index <= finalCount else { return false }
+        }
         var extracted: PlannedExercise?
         for source in blocks.indices where extracted == nil {
             extracted = blocks[source].nodes.extractExercise(id)
         }
         guard let exercise = extracted else { return false }
-        let target = min(max(index ?? blocks[dest].nodes.count, 0), blocks[dest].nodes.count)
+        let target = index ?? blocks[dest].nodes.endIndex
         blocks[dest].nodes.insert(.exercise(exercise), at: target)
         return true
     }
@@ -552,6 +592,91 @@ struct PurgedSetLog: Codable, Equatable, Sendable {
     var setLog: SetLog
 }
 
+/// One whole performed exercise removed by a structural edit, including status, notes, and rows.
+/// The original position lets undo restore the record without replacing unrelated later log work.
+struct PurgedPerformedExercise: Codable, Equatable, Sendable {
+    var index: Int
+    var exercise: PerformedExercise
+}
+
+/// One performed-only adjustment removed with its exercise, including its original list position.
+struct PurgedExerciseAdjustment: Codable, Equatable, Sendable {
+    var index: Int
+    var adjustment: ExerciseLogAdjustment
+}
+
+struct PurgedGroupLog: Codable, Equatable, Sendable {
+    var index: Int
+    var group: GroupLog
+}
+
+struct PurgedChoiceLog: Codable, Equatable, Sendable {
+    var index: Int
+    var choice: ChoiceLog
+}
+
+struct PurgedChoiceSelection: Codable, Equatable, Sendable {
+    var plannedChoiceID: UUID
+    var before: [UUID]
+    var after: [UUID]
+}
+
+/// Exact performed content removed alongside a workout-structure mutation.
+/// Whole exercise records and adjustments are captured in addition to individual set rows so an
+/// undo can restore every logged fact without replacing the current log snapshot.
+struct WorkoutLogPurge: Codable, Equatable, Sendable {
+    var performedExercises: [PurgedPerformedExercise] = []
+    var setLogs: [PurgedSetLog] = []
+    var adjustments: [PurgedExerciseAdjustment] = []
+    var groups: [PurgedGroupLog] = []
+    var choices: [PurgedChoiceLog] = []
+    var choiceSelections: [PurgedChoiceSelection] = []
+
+    var isEmpty: Bool {
+        performedExercises.isEmpty && setLogs.isEmpty && adjustments.isEmpty
+            && groups.isEmpty && choices.isEmpty && choiceSelections.isEmpty
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case performedExercises, setLogs, adjustments, groups, choices, choiceSelections
+    }
+
+    init(
+        performedExercises: [PurgedPerformedExercise] = [],
+        setLogs: [PurgedSetLog] = [],
+        adjustments: [PurgedExerciseAdjustment] = [],
+        groups: [PurgedGroupLog] = [],
+        choices: [PurgedChoiceLog] = [],
+        choiceSelections: [PurgedChoiceSelection] = []
+    ) {
+        self.performedExercises = performedExercises
+        self.setLogs = setLogs
+        self.adjustments = adjustments
+        self.groups = groups
+        self.choices = choices
+        self.choiceSelections = choiceSelections
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        performedExercises = try container.decodeIfPresent(
+            [PurgedPerformedExercise].self,
+            forKey: .performedExercises
+        ) ?? []
+        setLogs = try container.decodeIfPresent([PurgedSetLog].self, forKey: .setLogs) ?? []
+        adjustments = try container.decodeIfPresent(
+            [PurgedExerciseAdjustment].self,
+            forKey: .adjustments
+        ) ?? []
+        groups = try container.decodeIfPresent([PurgedGroupLog].self, forKey: .groups) ?? []
+        choices = try container.decodeIfPresent([PurgedChoiceLog].self, forKey: .choices) ?? []
+        choiceSelections = try container.decodeIfPresent(
+            [PurgedChoiceSelection].self,
+            forKey: .choiceSelections
+        ) ?? []
+    }
+}
+
 struct GroupLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var plannedGroupID: UUID
@@ -717,6 +842,20 @@ extension WorkoutLog {
         exerciseAdjustments.removeAll { $0.plannedExerciseID == plannedID }
     }
 
+    mutating func removeGroups(forPlanned plannedIDs: Set<UUID>) {
+        groups.removeAll { plannedIDs.contains($0.plannedGroupID) }
+    }
+
+    mutating func removeChoices(forPlanned plannedIDs: Set<UUID>) {
+        choices.removeAll { plannedIDs.contains($0.plannedChoiceID) }
+    }
+
+    mutating func removeChoiceSelections(optionIDs: Set<UUID>) {
+        for index in choices.indices {
+            choices[index].selectedOptionIDs.removeAll { optionIDs.contains($0) }
+        }
+    }
+
     /// True-remove the logged sets that belong to planned sets which no longer exist. Deleting a planned
     /// set is a structural edit like deleting an exercise: the log table can no longer render the row, so
     /// leaving the actual behind would let completion commit work the athlete deleted.
@@ -754,6 +893,54 @@ extension WorkoutLog {
         }
     }
 
+    /// The complete performed content present before a structural edit but absent afterwards.
+    /// A removed exercise is captured whole, while set-only edits keep the narrower row snapshot.
+    static func purgedContent(before: WorkoutLog, after: WorkoutLog) -> WorkoutLogPurge {
+        let survivingExerciseIDs = Set(after.exercises.map(\.id))
+        let removedExercises = before.exercises.enumerated().compactMap { index, exercise in
+            survivingExerciseIDs.contains(exercise.id)
+                ? nil
+                : PurgedPerformedExercise(index: index, exercise: exercise)
+        }
+        let removedPlannedIDs = Set(removedExercises.compactMap(\.exercise.plannedExerciseID))
+        let rows = purgedSetLogs(before: before, after: after).filter {
+            removedPlannedIDs.contains($0.plannedExerciseID) == false
+        }
+        let survivingAdjustmentIDs = Set(after.exerciseAdjustments.map(\.id))
+        let adjustments = before.exerciseAdjustments.enumerated().compactMap { index, adjustment in
+            survivingAdjustmentIDs.contains(adjustment.id)
+                ? nil
+                : PurgedExerciseAdjustment(index: index, adjustment: adjustment)
+        }
+        let survivingGroupIDs = Set(after.groups.map(\.id))
+        let groups = before.groups.enumerated().compactMap { index, group in
+            survivingGroupIDs.contains(group.id) ? nil : PurgedGroupLog(index: index, group: group)
+        }
+        let survivingChoiceIDs = Set(after.choices.map(\.id))
+        let choices = before.choices.enumerated().compactMap { index, choice in
+            survivingChoiceIDs.contains(choice.id) ? nil : PurgedChoiceLog(index: index, choice: choice)
+        }
+        let removedChoiceIDs = Set(choices.map(\.choice.id))
+        let choiceSelections = before.choices.compactMap { choice -> PurgedChoiceSelection? in
+            guard removedChoiceIDs.contains(choice.id) == false,
+                  let surviving = after.choices.first(where: { $0.id == choice.id }) else { return nil }
+            guard choice.selectedOptionIDs != surviving.selectedOptionIDs else { return nil }
+            return PurgedChoiceSelection(
+                plannedChoiceID: choice.plannedChoiceID,
+                before: choice.selectedOptionIDs,
+                after: surviving.selectedOptionIDs
+            )
+        }
+        return WorkoutLogPurge(
+            performedExercises: removedExercises,
+            setLogs: rows,
+            adjustments: adjustments,
+            groups: groups,
+            choices: choices,
+            choiceSelections: choiceSelections
+        )
+    }
+
     /// Re-insert purged rows into the log **as it stands now**, near their original positions.
     /// Everything logged since the purge is preserved; a row is skipped rather than duplicated if the
     /// same actual (by id) or a newer actual for the same planned set has appeared meanwhile.
@@ -769,6 +956,67 @@ extension WorkoutLog {
                 )
             }) else { continue }
             exercises[i].setLogs.insert(row.setLog, at: min(row.index, exercises[i].setLogs.count))
+        }
+    }
+
+    /// Restore only content removed by a structural edit into the log as it exists at undo time.
+    /// Later rows, notes, statuses, and adjustments remain authoritative and are never replaced.
+    mutating func restore(_ purge: WorkoutLogPurge) {
+        for removed in purge.performedExercises {
+            guard let plannedID = removed.exercise.plannedExerciseID else { continue }
+            if let existingIndex = exercises.firstIndex(where: { $0.plannedExerciseID == plannedID }) {
+                let original = removed.exercise
+                if exercises[existingIndex].status == .pending {
+                    exercises[existingIndex].status = original.status
+                }
+                if exercises[existingIndex].substitutionFor == nil {
+                    exercises[existingIndex].substitutionFor = original.substitutionFor
+                }
+                if exercises[existingIndex].reason == nil {
+                    exercises[existingIndex].reason = original.reason
+                }
+                for note in original.athleteNotes where !exercises[existingIndex].athleteNotes.contains(note) {
+                    exercises[existingIndex].athleteNotes.append(note)
+                }
+                let rows = original.setLogs.enumerated().map { index, row in
+                    PurgedSetLog(
+                        plannedExerciseID: plannedID,
+                        exerciseName: original.exerciseName,
+                        index: index,
+                        setLog: row
+                    )
+                }
+                restore(rows)
+            } else {
+                exercises.insert(removed.exercise, at: min(removed.index, exercises.endIndex))
+            }
+        }
+        restore(purge.setLogs)
+        for removed in purge.adjustments where !exerciseAdjustments.contains(where: {
+            $0.id == removed.adjustment.id
+        }) {
+            exerciseAdjustments.insert(
+                removed.adjustment,
+                at: min(removed.index, exerciseAdjustments.endIndex)
+            )
+        }
+        for removed in purge.groups where !groups.contains(where: {
+            $0.id == removed.group.id || $0.plannedGroupID == removed.group.plannedGroupID
+        }) {
+            groups.insert(removed.group, at: min(removed.index, groups.endIndex))
+        }
+        for removed in purge.choices where !choices.contains(where: {
+            $0.id == removed.choice.id || $0.plannedChoiceID == removed.choice.plannedChoiceID
+        }) {
+            choices.insert(removed.choice, at: min(removed.index, choices.endIndex))
+        }
+        for removed in purge.choiceSelections {
+            guard let choiceIndex = choices.firstIndex(where: {
+                $0.plannedChoiceID == removed.plannedChoiceID
+            }), choices[choiceIndex].selectedOptionIDs == removed.after else {
+                continue
+            }
+            choices[choiceIndex].selectedOptionIDs = removed.before
         }
     }
 
@@ -904,6 +1152,10 @@ extension WorkoutLog {
 }
 
 extension Workout {
+    func choiceOptionIDs(containingExercise exerciseID: UUID) -> [UUID] {
+        blocks.flatMap { $0.nodes.choiceOptionIDs(containingExercise: exerciseID) }
+    }
+
     /// Begin performing this workout: a fresh `WorkoutLog` with one pending `PerformedExercise` per
     /// planned exercise, each linked back by id. Read-only over the plan — the returned log is what
     /// the athlete edits during execution.

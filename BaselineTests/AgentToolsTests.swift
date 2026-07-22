@@ -111,7 +111,13 @@ struct AgentToolsTests {
         #expect(!AgentTools.Call.getExercise(name: "deadlift", id: nil).showsInActivityFeed)
         #expect(!AgentTools.Call.getWeekPlan.showsInActivityFeed)
         // Mutations and Health retrieval still show: the athlete should see those.
-        #expect(AgentTools.Call.addBlock(name: "Strength", intent: nil).showsInActivityFeed)
+        #expect(AgentTools.Call.addBlock(
+            name: "Strength",
+            intent: nil,
+            guidance: nil,
+            atIndex: nil,
+            expectedRevisionToken: UUID()
+        ).showsInActivityFeed)
         #expect(AgentTools.Call.getSleep(nightsAgo: 0).showsInActivityFeed)
     }
 
@@ -171,16 +177,35 @@ struct AgentToolsTests {
 
     // MARK: - Workout editing tools
 
-    @Test func workoutToolsEditThroughTheStore() {
+    @Test func workoutToolsEditThroughTheStore() throws {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
-        _ = t.dispatch(.addBlock(name: "Strength", intent: nil))
-        let r = t.dispatch(.addExercise(block: "Strength", name: "Bench press", sets: 3, reps: 8, load: 60, durationSeconds: nil, distanceMeters: nil))
+        let createToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
+        _ = t.dispatch(.addBlock(
+            name: "Strength",
+            intent: nil,
+            guidance: nil,
+            atIndex: nil,
+            expectedRevisionToken: createToken
+        ))
+        let strengthID = try #require(wk.current?.blocks.first { $0.name == "Strength" }?.id)
+        let blockToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
+        let r = t.dispatch(.addExercise(
+            blockID: strengthID,
+            name: "Bench press",
+            atIndex: nil,
+            sets: 3,
+            reps: 8,
+            load: 60,
+            durationSeconds: nil,
+            distanceMeters: nil,
+            expectedRevisionToken: blockToken
+        ))
         #expect(r.text.localizedCaseInsensitiveContains("bench press"))       // reply echoes the updated workout
         #expect(r.text.contains("MUTATION RECEIPT:"))
-        #expect(r.userFacingText == "Added Bench press to Strength.")         // athlete bubble: sentence only
+        #expect(r.userFacingText == "Added Bench press.")                     // athlete bubble: sentence only
         #expect(!r.userFacingText.contains("MUTATION RECEIPT"))
         #expect(!r.userFacingText.contains("MUTATION TARGET"))
         #expect(r.mutationReceipt?.actor == .agent)
@@ -194,9 +219,27 @@ struct AgentToolsTests {
         let workouts = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let tools = AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts)
         _ = tools.dispatch(.createWorkout(title: "Intervals", goal: nil, replaceExisting: false))
-        _ = tools.dispatch(.addBlock(name: "Overload", intent: nil))
-        _ = tools.dispatch(.addExercise(block: "Overload", name: "Run", sets: 1, reps: nil, load: nil, durationSeconds: 60, distanceMeters: nil))
-        _ = tools.dispatch(.addExercise(block: "Overload", name: "Run", sets: 1, reps: nil, load: nil, durationSeconds: 120, distanceMeters: nil))
+        let createToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addBlock(
+            name: "Overload",
+            intent: nil,
+            guidance: nil,
+            atIndex: nil,
+            expectedRevisionToken: createToken
+        ))
+        let overloadID = try #require(workouts.current?.blocks.first { $0.name == "Overload" }?.id)
+        let blockToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addExercise(
+            blockID: overloadID, name: "Run", atIndex: nil, sets: 1, reps: nil, load: nil,
+            durationSeconds: 60, distanceMeters: nil,
+            expectedRevisionToken: blockToken
+        ))
+        let firstExerciseToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addExercise(
+            blockID: overloadID, name: "Run", atIndex: nil, sets: 1, reps: nil, load: nil,
+            durationSeconds: 120, distanceMeters: nil,
+            expectedRevisionToken: firstExerciseToken
+        ))
 
         let block = try #require(workouts.current?.blocks.first { $0.name == "Overload" })
         let first = try #require(block.exercises.first)
@@ -209,9 +252,13 @@ struct AgentToolsTests {
         #expect(summary.contains(second.id.uuidString))
         #expect(summary.contains(firstSet.id.uuidString))
 
-        let response = tools.dispatch(.removeExercise(exercise: "Run", exerciseID: second.id))
+        let removeToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+        let response = tools.dispatch(.removeExercise(
+            exerciseInstanceID: second.id,
+            expectedRevisionToken: removeToken
+        ))
 
-        #expect(response.text.localizedCaseInsensitiveContains("removed run"))
+        #expect(response.text.localizedCaseInsensitiveContains("removed the exercise"))
         #expect(workouts.current?.exercise(first.id) != nil)
         #expect(workouts.current?.exercise(second.id) == nil)
     }
@@ -230,30 +277,51 @@ struct AgentToolsTests {
         #expect(wk.current?.title == "Second")
     }
 
-    @Test func replaceExerciseUsesAtomicStoreMutationForEveryMatch() throws {
+    @Test func replaceExerciseTargetsOneOfTwoSameNamedInstancesByID() throws {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let tools = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
         _ = tools.dispatch(.createWorkout(title: "Outdoor Run", goal: nil, replaceExisting: false))
-        _ = tools.dispatch(.addBlock(name: "Warm-up", intent: nil))
-        _ = tools.dispatch(.addBlock(name: "Main Run", intent: nil))
-        _ = tools.dispatch(.addExercise(block: "Warm-up", name: "Treadmill Run", sets: 1, reps: nil, load: nil, durationSeconds: 300, distanceMeters: nil))
-        _ = tools.dispatch(.addExercise(block: "Main Run", name: "Treadmill Run", sets: 1, reps: nil, load: nil, durationSeconds: 1_800, distanceMeters: nil))
+        let createToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addBlock(
+            name: "Warm-up", intent: nil, guidance: nil, atIndex: nil,
+            expectedRevisionToken: createToken
+        ))
+        let warmupToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addBlock(
+            name: "Main Run", intent: nil, guidance: nil, atIndex: nil,
+            expectedRevisionToken: warmupToken
+        ))
+        let warmupID = try #require(wk.current?.blocks.first { $0.name == "Warm-up" }?.id)
+        let mainID = try #require(wk.current?.blocks.first { $0.name == "Main Run" }?.id)
+        let mainToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addExercise(
+            blockID: warmupID, name: "Treadmill Run", atIndex: nil, sets: 1, reps: nil,
+            load: nil, durationSeconds: 300, distanceMeters: nil,
+            expectedRevisionToken: mainToken
+        ))
+        let firstExerciseToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
+        _ = tools.dispatch(.addExercise(
+            blockID: mainID, name: "Treadmill Run", atIndex: nil, sets: 1, reps: nil,
+            load: nil, durationSeconds: 1_800, distanceMeters: nil,
+            expectedRevisionToken: firstExerciseToken
+        ))
         let before = try #require(wk.current?.allExercises)
+        let target = try #require(before.last)
 
+        let replaceToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
         let response = tools.dispatch(.replaceExercise(
-            exercise: "Treadmill Run",
-            exerciseID: nil,
+            exerciseInstanceID: target.id,
             replacement: "Run",
-            block: nil,
-            replaceAll: true
+            expectedRevisionToken: replaceToken
         ))
 
         let after = try #require(wk.current?.allExercises)
-        #expect(response.text.localizedCaseInsensitiveContains("replaced every treadmill run"))
+        #expect(response.text.localizedCaseInsensitiveContains("replaced the exercise"))
         #expect(after.count == before.count)
         #expect(Set(after.map(\.id)) == Set(before.map(\.id)))
-        #expect(after.allSatisfy { $0.exerciseName == "Run" })
+        #expect(after.first?.exerciseName == "Treadmill Run")
+        #expect(after.last?.exerciseName == "Run")
     }
 
     @Test func requireAllOptionsToolPreservesEveryImportedMovement() {
@@ -301,11 +369,9 @@ struct AgentToolsTests {
         )
 
         #expect(service.permits(.replaceExercise(
-            exercise: "Stationary Bike",
-            exerciseID: nil,
+            exerciseInstanceID: UUID(),
             replacement: "Echo Bike",
-            block: nil,
-            replaceAll: false
+            expectedRevisionToken: UUID()
         )))
         #expect(service.permits(.updateLoggingConfig(
             exerciseInstanceID: UUID(),
@@ -356,7 +422,13 @@ struct AgentToolsTests {
     }
 
     @Test func workoutEditWithoutStoreIsGraceful() {
-        let r = tools(base: DecisionEngine.Inputs()).dispatch(.addBlock(name: "X", intent: nil))
+        let r = tools(base: DecisionEngine.Inputs()).dispatch(.addBlock(
+            name: "X",
+            intent: nil,
+            guidance: nil,
+            atIndex: nil,
+            expectedRevisionToken: UUID()
+        ))
         #expect(r.text.localizedCaseInsensitiveContains("workout"))
     }
 

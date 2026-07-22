@@ -22,20 +22,19 @@ struct ToolCallMapperTests {
 
     @Test func mapsWorkoutTools() {
         let revision = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        let blockID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        let exerciseID = UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!
         let inputRevision = revision.uuidString
         #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", goal: nil, replaceExisting: false))
         #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "replace_existing": true, "expected_revision_token": inputRevision]) == .createWorkout(title: "Push", goal: nil, replaceExisting: true, expectedRevisionToken: revision))
-        #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength", "expected_revision_token": inputRevision]) == .addBlock(name: "Strength", intent: nil, expectedRevisionToken: revision))
-        #expect(ToolCallMapper.map(name: "add_exercise", input: ["block": "Stations", "name": "Overhead carry", "distance_m": 150, "expected_revision_token": inputRevision])
-                == .addExercise(block: "Stations", name: "Overhead carry", sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150, expectedRevisionToken: revision))
-        #expect(ToolCallMapper.map(name: "move_exercise", input: ["exercise": "Bench", "to_block": "Warm-up", "expected_revision_token": inputRevision])
-                == .moveExercise(exercise: "Bench", exerciseID: nil, toBlock: "Warm-up", toBlockID: nil, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength", "expected_revision_token": inputRevision]) == .addBlock(name: "Strength", intent: nil, guidance: nil, atIndex: nil, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "add_exercise", input: ["block_id": blockID.uuidString, "name": "Overhead carry", "distance_m": 150, "expected_revision_token": inputRevision])
+                == .addExercise(blockID: blockID, name: "Overhead carry", atIndex: nil, sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "move_exercise", input: ["exercise_instance_id": exerciseID.uuidString, "to_block_id": blockID.uuidString, "to_index": 0, "expected_revision_token": inputRevision])
+                == .moveExercise(exerciseInstanceID: exerciseID, toBlockID: blockID, toIndex: 0, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "replace_exercise", input: [
-            "exercise": "Treadmill Run", "replacement": "Run", "replace_all": true, "expected_revision_token": inputRevision,
-        ]) == .replaceExercise(exercise: "Treadmill Run", exerciseID: nil, replacement: "Run", block: nil, replaceAll: true, expectedRevisionToken: revision))
-        #expect(ToolCallMapper.map(name: "replace_exercise", input: [
-            "exercise": "Treadmill Run", "replacement": "Run", "block": "Warm-up", "expected_revision_token": inputRevision,
-        ]) == .replaceExercise(exercise: "Treadmill Run", exerciseID: nil, replacement: "Run", block: "Warm-up", replaceAll: false, expectedRevisionToken: revision))
+            "exercise_instance_id": exerciseID.uuidString, "replacement": "Run", "expected_revision_token": inputRevision,
+        ]) == .replaceExercise(exerciseInstanceID: exerciseID, replacement: "Run", expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "update_set", input: [
             "set_id": inputRevision,
             "patch": ["values": ["distance": 1_000]],
@@ -62,30 +61,24 @@ struct ToolCallMapperTests {
         let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
 
         #expect(ToolCallMapper.map(name: "move_exercise", input: [
-            "exercise": "Run",
-            "exercise_id": exerciseID.uuidString,
-            "to_block": "Recovery",
+            "exercise_instance_id": exerciseID.uuidString,
             "to_block_id": blockID.uuidString,
+            "to_index": 1,
             "expected_revision_token": revision.uuidString,
-        ]) == .moveExercise(exercise: "Run", exerciseID: exerciseID, toBlock: "Recovery", toBlockID: blockID, expectedRevisionToken: revision))
+        ]) == .moveExercise(exerciseInstanceID: exerciseID, toBlockID: blockID, toIndex: 1, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "replace_exercise", input: [
-            "exercise": "Run",
-            "exercise_id": exerciseID.uuidString,
+            "exercise_instance_id": exerciseID.uuidString,
             "replacement": "Treadmill Run",
             "expected_revision_token": revision.uuidString,
         ]) == .replaceExercise(
-            exercise: "Run",
-            exerciseID: exerciseID,
+            exerciseInstanceID: exerciseID,
             replacement: "Treadmill Run",
-            block: nil,
-            replaceAll: false,
             expectedRevisionToken: revision
         ))
         #expect(ToolCallMapper.map(name: "remove_exercise", input: [
-            "exercise": "Run",
-            "exercise_id": exerciseID.uuidString,
+            "exercise_instance_id": exerciseID.uuidString,
             "expected_revision_token": revision.uuidString,
-        ]) == .removeExercise(exercise: "Run", exerciseID: exerciseID, expectedRevisionToken: revision))
+        ]) == .removeExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "update_set", input: [
             "set_id": setID.uuidString,
             "patch": ["values": ["duration": 180]],
@@ -163,6 +156,88 @@ struct ToolCallMapperTests {
             exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
             value: 275, unit: .secondsPerKilometer, expectedRevisionToken: revision
         ))
+    }
+
+    @Test func mapsWaveFiveBlockAndExerciseStructureCalls() throws {
+        let blockID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let expected = revision.uuidString
+
+        #expect(ToolCallMapper.map(name: "add_block", input: [
+            "name": "Main",
+            "intent": "strength",
+            "guidance": "Keep two reps in reserve",
+            "at_index": 0,
+            "expected_revision_token": expected,
+        ]) == .addBlock(
+            name: "Main",
+            intent: "strength",
+            guidance: "Keep two reps in reserve",
+            atIndex: 0,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "remove_block", input: [
+            "block_id": blockID.uuidString,
+            "expected_revision_token": expected,
+        ]) == .removeBlock(blockID: blockID, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "move_block", input: [
+            "block_id": blockID.uuidString,
+            "to_index": 2,
+            "expected_revision_token": expected,
+        ]) == .moveBlock(blockID: blockID, toIndex: 2, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "duplicate_block", input: [
+            "block_id": blockID.uuidString,
+            "expected_revision_token": expected,
+        ]) == .duplicateBlock(blockID: blockID, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "reorder_exercise", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "to_index": 1,
+            "expected_revision_token": expected,
+        ]) == .reorderExercise(
+            exerciseInstanceID: exerciseID,
+            toIndex: 1,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "duplicate_exercise", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "expected_revision_token": expected,
+        ]) == .duplicateExercise(
+            exerciseInstanceID: exerciseID,
+            expectedRevisionToken: revision
+        ))
+    }
+
+    @Test func rejectsMalformedWaveFiveStructureCalls() {
+        let id = UUID().uuidString
+
+        #expect(ToolCallMapper.map(name: "add_block", input: [
+            "name": "Main",
+            "at_index": -1,
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "move_block", input: [
+            "block_id": id,
+            "to_index": 1.5,
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "add_exercise", input: [
+            "block_id": "not-a-uuid",
+            "name": "Run",
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "move_exercise", input: [
+            "exercise_instance_id": id,
+            "to_block_id": id,
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "remove_exercise", input: [
+            "exercise": "Run",
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "duplicate_exercise", input: [
+            "exercise_instance_id": id,
+        ]) == nil)
     }
 
     @Test func mapsWaveFourSetToolsAndThreeStatePatches() throws {
@@ -506,8 +581,8 @@ struct ToolCallMapperTests {
             "expected_revision_token": "not-a-uuid",
         ]) == nil)
         #expect(ToolCallMapper.map(name: "remove_exercise", input: [
-            "exercise": "Run",
-            "exercise_id": "not-a-uuid",
+            "exercise_instance_id": "not-a-uuid",
+            "expected_revision_token": UUID().uuidString,
         ]) == nil)
         #expect(ToolCallMapper.map(name: "delete_everything", input: [:]) == nil)                          // unknown tool
     }

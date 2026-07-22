@@ -40,6 +40,28 @@ indirect enum WorkoutNode: Identifiable, Codable, Equatable, Sendable {
         }
     }
 
+    /// Choice-option IDs that are themselves the exercise being removed.
+    /// Container options remain valid when one descendant moves or is removed, while nested choices
+    /// are searched recursively for an exercise option that disappears.
+    func choiceOptionIDs(containingExercise exerciseID: UUID) -> [UUID] {
+        switch self {
+        case .exercise, .rest:
+            return []
+        case .group(let group):
+            return group.children.flatMap { $0.choiceOptionIDs(containingExercise: exerciseID) }
+        case .choice(let choice):
+            return choice.options.flatMap { option in
+                let direct: [UUID]
+                if case .exercise(let exercise) = option, exercise.id == exerciseID {
+                    direct = [option.id]
+                } else {
+                    direct = []
+                }
+                return direct + option.choiceOptionIDs(containingExercise: exerciseID)
+            }
+        }
+    }
+
     func resolvedExercises(choiceSelections: [UUID: Set<UUID>]) -> [PlannedExercise] {
         switch self {
         case .exercise(let exercise): return [exercise]
@@ -149,6 +171,9 @@ extension Array where Element == WorkoutNode {
     var exercises: [PlannedExercise] { flatMap(\.exercises) }
     var groups: [WorkoutGroup] { flatMap(\.groups) }
     var choices: [WorkoutChoice] { flatMap(\.choices) }
+    func choiceOptionIDs(containingExercise exerciseID: UUID) -> [UUID] {
+        flatMap { $0.choiceOptionIDs(containingExercise: exerciseID) }
+    }
 
     mutating func updateExercise(_ id: UUID, _ transform: (inout PlannedExercise) -> Void) -> Bool {
         for index in indices {

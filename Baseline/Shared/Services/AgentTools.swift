@@ -125,12 +125,17 @@ final class AgentTools {
             guidance: MetadataPatch<String>,
             expectedRevisionToken: UUID
         )
-        case addBlock(name: String, intent: String?, expectedRevisionToken: UUID? = nil)
-        case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, expectedRevisionToken: UUID? = nil)
-        case moveExercise(exercise: String, exerciseID: UUID?, toBlock: String, toBlockID: UUID?, expectedRevisionToken: UUID? = nil)
-        case replaceExercise(exercise: String, exerciseID: UUID?, replacement: String, block: String?, replaceAll: Bool, expectedRevisionToken: UUID? = nil)
+        case addBlock(name: String, intent: String?, guidance: String?, atIndex: Int?, expectedRevisionToken: UUID)
+        case removeBlock(blockID: UUID, expectedRevisionToken: UUID)
+        case moveBlock(blockID: UUID, toIndex: Int, expectedRevisionToken: UUID)
+        case duplicateBlock(blockID: UUID, expectedRevisionToken: UUID)
+        case addExercise(blockID: UUID, name: String, atIndex: Int?, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, expectedRevisionToken: UUID)
+        case moveExercise(exerciseInstanceID: UUID, toBlockID: UUID, toIndex: Int, expectedRevisionToken: UUID)
+        case replaceExercise(exerciseInstanceID: UUID, replacement: String, expectedRevisionToken: UUID)
         case requireAllOptions(choice: String, expectedRevisionToken: UUID? = nil)
-        case removeExercise(exercise: String, exerciseID: UUID?, expectedRevisionToken: UUID? = nil)
+        case removeExercise(exerciseInstanceID: UUID, expectedRevisionToken: UUID)
+        case reorderExercise(exerciseInstanceID: UUID, toIndex: Int, expectedRevisionToken: UUID)
+        case duplicateExercise(exerciseInstanceID: UUID, expectedRevisionToken: UUID)
         case addSet(
             exerciseInstanceID: UUID,
             afterSetID: UUID?,
@@ -209,12 +214,17 @@ final class AgentTools {
                     subject: "exercise",
                     fields: [("display label", displayLabel), ("guidance", guidance)]
                 )
-            case .addBlock(let n, _, _): return "Added block: \(n)"
-            case .addExercise(let b, let n, _, _, _, _, _, _): return "Added \(n) to \(b)"
-            case .moveExercise(let e, _, let b, _, _): return "Moved \(e) → \(b)"
-            case .replaceExercise(let e, let id, let r, _, let all, _): return "Replaced \(all && id == nil ? "all \(e)" : e) → \(r)"
+            case .addBlock(let name, _, _, _, _): return "Added block: \(name)"
+            case .removeBlock: return "Removed a block"
+            case .moveBlock: return "Moved a block"
+            case .duplicateBlock: return "Duplicated a block"
+            case .addExercise(_, let name, _, _, _, _, _, _, _): return "Added \(name)"
+            case .moveExercise: return "Moved an exercise"
+            case .replaceExercise(_, let replacement, _): return "Replaced an exercise with \(replacement)"
             case .requireAllOptions(let choice, _): return "Made every option required in \(choice)"
-            case .removeExercise(let e, _, _): return "Removed \(e)"
+            case .removeExercise: return "Removed an exercise"
+            case .reorderExercise: return "Reordered an exercise"
+            case .duplicateExercise: return "Duplicated an exercise"
             case .addSet: return "Added a planned set"
             case .updateSet: return "Updated a planned set"
             case .removeSet: return "Removed a planned set"
@@ -260,7 +270,8 @@ final class AgentTools {
                  .setNote, .upsertConstraint, .resolveConstraint, .openAppleHealthSetup, .getSleep,
                  .getHRVReadings, .getRestingHeartRate, .createWorkout, .addBlock, .addExercise,
                  .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
-                 .moveExercise, .replaceExercise, .requireAllOptions, .removeExercise, .addSet,
+                 .removeBlock, .moveBlock, .duplicateBlock, .moveExercise, .replaceExercise,
+                 .requireAllOptions, .removeExercise, .reorderExercise, .duplicateExercise, .addSet,
                  .updateSet, .removeSet, .moveSet, .duplicateSet,
                  .undoWorkoutMutation,
                  .startWorkout, .completeWorkout, .moveWorkout, .swapWorkouts, .skipWorkout,
@@ -277,7 +288,8 @@ final class AgentTools {
             switch self {
             case .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
                  .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
-                 .removeExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+                 .removeBlock, .moveBlock, .duplicateBlock, .removeExercise, .reorderExercise,
+                 .duplicateExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
                  .undoWorkoutMutation, .updateLoggingConfig,
                  .setMetricValue, .removeMetric:
                 return true
@@ -521,32 +533,89 @@ final class AgentTools {
                 ),
                 success: "\(call.activityLabel)."
             )
-        case .addBlock(let name, let intent, let expectedRevisionToken):
+        case .addBlock(let name, let intent, let guidance, let atIndex, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             return outcome(
-                workouts.addBlock(name: name, intent: intent, expectedRevisionToken: expectedRevisionToken),
+                workouts.addBlock(
+                    name: name,
+                    intent: intent,
+                    guidance: guidance,
+                    atIndex: atIndex,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
                 success: "Added block \"\(name)\"."
             )
-        case .addExercise(let block, let name, let sets, let reps, let load, let dur, let dist, let expectedRevisionToken):
+        case .removeBlock(let blockID, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist, expectedRevisionToken: expectedRevisionToken),
-                           success: "Added \(name) to \(block).")
-        case .moveExercise(let exercise, let exerciseID, let toBlock, let toBlockID, let expectedRevisionToken):
+            return outcome(
+                workouts.removeBlock(blockID: blockID, expectedRevisionToken: expectedRevisionToken),
+                success: "Removed the block."
+            )
+        case .moveBlock(let blockID, let toIndex, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.moveExercise(named: exercise, exerciseID: exerciseID, toBlockNamed: toBlock, toBlockID: toBlockID, expectedRevisionToken: expectedRevisionToken),
-                           success: "Moved \(exercise) to \(toBlock).")
-        case .replaceExercise(let exercise, let exerciseID, let replacement, let block, let replaceAll, let expectedRevisionToken):
+            return outcome(
+                workouts.moveBlock(
+                    blockID: blockID,
+                    toIndex: toIndex,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Moved the block."
+            )
+        case .duplicateBlock(let blockID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.duplicateBlock(
+                    blockID: blockID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Duplicated the block."
+            )
+        case .addExercise(
+            let blockID,
+            let name,
+            let atIndex,
+            let sets,
+            let reps,
+            let load,
+            let dur,
+            let dist,
+            let expectedRevisionToken
+        ):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.addExercise(
+                    name: name,
+                    toBlockID: blockID,
+                    atIndex: atIndex,
+                    sets: sets,
+                    reps: reps,
+                    load: load,
+                    durationSeconds: dur,
+                    distanceMeters: dist,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Added \(name)."
+            )
+        case .moveExercise(let exerciseInstanceID, let toBlockID, let toIndex, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.moveExercise(
+                    exerciseInstanceID: exerciseInstanceID,
+                    toBlockID: toBlockID,
+                    toIndex: toIndex,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Moved the exercise."
+            )
+        case .replaceExercise(let exerciseInstanceID, let replacement, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             return outcome(
                 workouts.replaceExercise(
-                    named: exercise,
-                    exerciseID: exerciseID,
+                    exerciseInstanceID: exerciseInstanceID,
                     with: replacement,
-                    inBlock: block,
-                    replaceAll: replaceAll,
                     expectedRevisionToken: expectedRevisionToken
                 ),
-                success: "Replaced \(replaceAll && exerciseID == nil ? "every \(exercise)" : exercise) with \(replacement)."
+                success: "Replaced the exercise with \(replacement)."
             )
         case .requireAllOptions(let choice, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
@@ -554,9 +623,34 @@ final class AgentTools {
                 workouts.requireAllOptions(choiceNamed: choice, expectedRevisionToken: expectedRevisionToken),
                 success: "Changed \(choice) from a choice to one required sequence."
             )
-        case .removeExercise(let exercise, let exerciseID, let expectedRevisionToken):
+        case .removeExercise(let exerciseInstanceID, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.removeExercise(named: exercise, exerciseID: exerciseID, expectedRevisionToken: expectedRevisionToken), success: "Removed \(exercise).")
+            return outcome(
+                workouts.removeExercise(
+                    exerciseInstanceID: exerciseInstanceID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Removed the exercise."
+            )
+        case .reorderExercise(let exerciseInstanceID, let toIndex, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.reorderExercise(
+                    exerciseInstanceID: exerciseInstanceID,
+                    toIndex: toIndex,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Reordered the exercise."
+            )
+        case .duplicateExercise(let exerciseInstanceID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.duplicateExercise(
+                    exerciseInstanceID: exerciseInstanceID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Duplicated the exercise."
+            )
         case .addSet(
             let exerciseInstanceID,
             let afterSetID,

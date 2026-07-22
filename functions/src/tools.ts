@@ -5,7 +5,8 @@
  * and ToolCallMapper.swift.
  *
  * Workout target convention: *_id fields are stable instance IDs returned by get_current_workout.
- * When supplied they take precedence over the required human-readable name/number fallback.
+ * Wave 5 structure tools require those IDs. The capability-gated legacy list retains the earlier
+ * name fields only for installed clients that cannot map the Wave 5 contract.
  * Every workout-content mutation also requires the revision token returned by that same read.
  */
 const expectedRevisionToken = {
@@ -64,7 +65,13 @@ const setTargets = {
   additionalProperties: false,
 };
 
-export const TOOLS = [
+type ToolSchema = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+};
+
+export const TOOLS: ToolSchema[] = [
   {
     name: "get_today",
     description: "Read today's current plan, readiness, band, certainty, main limiter, and any active constraints. Call this before answering questions about today.",
@@ -464,21 +471,65 @@ export const TOOLS = [
   },
   {
     name: "add_block",
-    description: "Add a semantic block to the workout (e.g. 'Warm-up', 'Strength', 'Metcon', 'Stations', 'Cooldown').",
+    description: "Add a semantic block at an optional zero-based position. Omit at_index to append. Optional guidance uses the same plain coach-guidance convention as the metadata tools. Returns a versioned receipt and is undoable.",
     input_schema: {
       type: "object",
-      properties: { name: { type: "string" }, intent: { type: "string", description: "Optional purpose, e.g. 'hypertrophy'." }, expected_revision_token: expectedRevisionToken },
+      properties: {
+        name: { type: "string" },
+        intent: { type: "string", description: "Optional purpose, e.g. 'hypertrophy'." },
+        guidance: { type: "string", description: "Optional coach guidance for performing this block." },
+        at_index: { type: "integer", minimum: 0, description: "Optional zero-based insertion position. Omit to append." },
+        expected_revision_token: expectedRevisionToken,
+      },
       required: ["name", "expected_revision_token"],
     },
   },
   {
-    name: "add_exercise",
-    description: "Add an exercise to a named block, optionally with a uniform set scheme. e.g. block 'Strength', name 'Bench press', sets 3, reps 8, load 60.",
+    name: "remove_block",
+    description: "Remove one block by stable ID. In a live session every performed exercise, group, and choice record owned by the block is purged through the logged-work safeguard. Targeted undo restores the block and the exact purged performed content.",
     input_schema: {
       type: "object",
       properties: {
-        block: { type: "string", description: "Name of an existing block." },
+        block_id: { type: "string", description: "Stable block ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["block_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "move_block",
+    description: "Move one block by stable ID to a zero-based final position. Returns a versioned receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        block_id: { type: "string", description: "Stable block ID from get_current_workout." },
+        to_index: { type: "integer", minimum: 0, description: "Zero-based final position." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["block_id", "to_index", "expected_revision_token"],
+    },
+  },
+  {
+    name: "duplicate_block",
+    description: "Deep-copy one block immediately after its source. The copy receives fresh block, node, exercise, set, and alternative IDs. Returns a versioned receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        block_id: { type: "string", description: "Stable block ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["block_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "add_exercise",
+    description: "Add an exercise to an ID-targeted block at an optional zero-based position, optionally with a uniform set scheme. Omit at_index to append. Nested-parent insertion is not supported by this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        block_id: { type: "string", description: "Stable destination block ID from get_current_workout." },
         name: { type: "string", description: "Exercise name." },
+        at_index: { type: "integer", minimum: 0, description: "Optional zero-based insertion position among the block's top-level nodes." },
         sets: { type: "integer", minimum: 1, description: "How many sets (default 1)." },
         reps: { type: "integer" },
         load: { type: "number", description: "Resistance per set." },
@@ -486,51 +537,71 @@ export const TOOLS = [
         distance_m: { type: "number", description: "Distance in METERS (e.g. 150 for a 150m carry, 1000 for a 1km row). Use this for distance work — never put the distance in the exercise name." },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["block", "name", "expected_revision_token"],
+      required: ["block_id", "name", "expected_revision_token"],
     },
   },
   {
     name: "move_exercise",
-    description: "Move an exercise into another block (blocks are semantic groups, not fixed — exercises move freely).",
+    description: "Move one exercise instance into an ID-targeted block at a zero-based final position. This tool targets the instance ID even when names are duplicated. Nested destination containers are not supported yet.",
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string" },
-        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
-        to_block: { type: "string" },
-        to_block_id: { type: "string", description: "Stable destination block ID from get_current_workout. Takes precedence over to_block when supplied." },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        to_block_id: { type: "string", description: "Stable destination block ID from get_current_workout." },
+        to_index: { type: "integer", minimum: 0, description: "Zero-based final position among the destination block's top-level nodes." },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "to_block", "expected_revision_token"],
+      required: ["exercise_instance_id", "to_block_id", "to_index", "expected_revision_token"],
     },
   },
   {
     name: "replace_exercise",
-    description: "Replace an existing exercise in place while preserving its sets, targets, notes, order, and workout identity. ALWAYS use this for replacements — never simulate replacement with add_exercise + remove_exercise. Set replace_all=true when the athlete says all/every instance; otherwise qualify a duplicate with block.",
+    description: "Replace one ID-targeted exercise in place while preserving its instance ID, sets, targets, notes, and order. ALWAYS use this for replacements; never simulate replacement with add_exercise plus remove_exercise.",
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string", description: "Current exercise name." },
-        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise and block when supplied. Omit when replace_all is true." },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
         replacement: { type: "string", description: "Replacement exercise from the catalog." },
-        block: { type: "string", description: "Optional block name to target one duplicate." },
-        replace_all: { type: "boolean", description: "Replace every matching instance. Use when the athlete says all/every." },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "replacement", "expected_revision_token"],
+      required: ["exercise_instance_id", "replacement", "expected_revision_token"],
     },
   },
   {
     name: "remove_exercise",
-    description: "Remove one exercise from the workout. Use exercise_id from get_current_workout for precise targeting; name remains the backward-compatible fallback.",
+    description: "Remove one exercise by stable instance ID. In a live session its performed record and any direct choice selection are purged through the logged-work safeguard. Targeted undo restores the exercise and the exact purged performed content.",
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string" },
-        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "expected_revision_token"],
+      required: ["exercise_instance_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "reorder_exercise",
+    description: "Reorder one exercise by stable instance ID within its current containing node list. to_index is the zero-based final position. Returns a versioned receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        to_index: { type: "integer", minimum: 0, description: "Zero-based final position in the current container." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise_instance_id", "to_index", "expected_revision_token"],
+    },
+  },
+  {
+    name: "duplicate_exercise",
+    description: "Deep-copy one exercise by stable instance ID immediately after its source. The copy receives fresh exercise, set, and alternative IDs. Returns a versioned receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise_instance_id", "expected_revision_token"],
     },
   },
   {
@@ -630,3 +701,109 @@ export const TOOLS = [
     },
   },
 ];
+
+const legacyWaveFiveOverrides = new Map<string, ToolSchema>([
+  ["add_block", {
+    name: "add_block",
+    description: "Add a semantic block to the workout.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        intent: { type: "string", description: "Optional purpose." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["name", "expected_revision_token"],
+    },
+  }],
+  ["add_exercise", {
+    name: "add_exercise",
+    description: "Add an exercise to a named block, optionally with a uniform set scheme.",
+    input_schema: {
+      type: "object",
+      properties: {
+        block: { type: "string", description: "Name of an existing block." },
+        name: { type: "string", description: "Exercise name." },
+        sets: { type: "integer", minimum: 1 },
+        reps: { type: "integer" },
+        load: { type: "number" },
+        duration_seconds: { type: "integer" },
+        distance_m: { type: "number" },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["block", "name", "expected_revision_token"],
+    },
+  }],
+  ["move_exercise", {
+    name: "move_exercise",
+    description: "Move an exercise into another named block. Stable IDs take precedence when supplied.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string" },
+        exercise_id: { type: "string" },
+        to_block: { type: "string" },
+        to_block_id: { type: "string" },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise", "to_block", "expected_revision_token"],
+    },
+  }],
+  ["replace_exercise", {
+    name: "replace_exercise",
+    description: "Replace an exercise in place. Stable IDs take precedence when supplied.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string" },
+        exercise_id: { type: "string" },
+        replacement: { type: "string" },
+        block: { type: "string" },
+        replace_all: { type: "boolean" },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise", "replacement", "expected_revision_token"],
+    },
+  }],
+  ["remove_exercise", {
+    name: "remove_exercise",
+    description: "Remove one exercise. Stable IDs take precedence when supplied.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise: { type: "string" },
+        exercise_id: { type: "string" },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise", "expected_revision_token"],
+    },
+  }],
+]);
+
+const waveFiveOnlyToolNames = new Set([
+  "remove_block",
+  "move_block",
+  "duplicate_block",
+  "reorder_exercise",
+  "duplicate_exercise",
+]);
+
+export const LEGACY_TOOLS: ToolSchema[] = TOOLS
+  .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
+  .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
+
+export type ServedToolset = "wave5" | "legacy";
+
+/**
+ * Monotonic capability gate: any well-formed schema version at or above 5 receives the current
+ * toolset, so a future client bump ("6", "7", ...) can never be silently downgraded to the legacy
+ * schema by a not-yet-updated server. Malformed or older versions stay on the legacy schema.
+ */
+export function servedToolsetForClientSchema(version: unknown): ServedToolset {
+  if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  return Number(version) >= 5 ? "wave5" : "legacy";
+}
+
+export function toolsForClientSchema(version: unknown): ToolSchema[] {
+  return servedToolsetForClientSchema(version) === "wave5" ? TOOLS : LEGACY_TOOLS;
+}

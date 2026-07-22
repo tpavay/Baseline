@@ -9,16 +9,54 @@ struct WorkoutStoreTests {
         WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
     }
 
-    @Test func createAddAndMoveByName() {
+    /// Test setup through the ID-based mutation path: resolves the named block (falling back to the
+    /// workout's first block) and the current revision token so tests read like the old one-liner.
+    @discardableResult
+    private func addExercise(
+        _ s: WorkoutStore,
+        name: String,
+        inBlockNamed blockName: String? = nil,
+        sets: Int? = nil,
+        reps: Int? = nil,
+        load: Double? = nil,
+        durationSeconds: Int? = nil,
+        distanceMeters: Double? = nil
+    ) -> WorkoutStore.EditOutcome {
+        guard let workout = s.current,
+              let blockID = blockName.flatMap({ named in workout.blocks.first { $0.name == named }?.id })
+                ?? workout.blocks.first?.id,
+              let token = s.mutationTarget(.plan)?.revisionToken else {
+            return .notFound("test setup: no current workout")
+        }
+        return s.addExercise(
+            name: name,
+            toBlockID: blockID,
+            atIndex: nil,
+            sets: sets,
+            reps: reps,
+            load: load,
+            durationSeconds: durationSeconds,
+            distanceMeters: distanceMeters,
+            expectedRevisionToken: token
+        )
+    }
+
+    @Test func createAddAndMoveByID() throws {
         let s = store()
         s.create(title: "Push", goal: nil)
         #expect(s.addBlock(name: "Warm-up", intent: nil).succeeded)
         #expect(s.addBlock(name: "Strength", intent: "hypertrophy").succeeded)
-        #expect(s.addExercise(name: "Bench press", toBlockNamed: "Strength", sets: 3, reps: 8, load: 60, durationSeconds: nil).succeeded)
+        #expect(addExercise(s, name: "Bench press", inBlockNamed: "Strength", sets: 3, reps: 8, load: 60).succeeded)
         #expect(s.current?.blocks.first { $0.name == "Strength" }?.exercises.first?.exerciseName == "Bench press")
         #expect(s.current?.allExercises.first?.prescription.sets.count == 3)
-        // Move by name, case-insensitive + fuzzy ("bench" → "Bench press", "warm-up" → "Warm-up").
-        #expect(s.moveExercise(named: "bench", toBlockNamed: "warm-up").succeeded)
+        let benchID = try #require(s.current?.allExercises.first?.id)
+        let warmupID = try #require(s.current?.blocks.first { $0.name == "Warm-up" }?.id)
+        #expect(s.moveExercise(
+            exerciseInstanceID: benchID,
+            toBlockID: warmupID,
+            toIndex: 0,
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        ).succeeded)
         #expect(s.current?.blocks.first { $0.name == "Warm-up" }?.exercises.count == 1)
         #expect(s.current?.blocks.first { $0.name == "Strength" }?.exercises.isEmpty == true)
     }
@@ -27,7 +65,7 @@ struct WorkoutStoreTests {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "A", intent: nil)
-        s.addExercise(name: "Squat", toBlockNamed: "A", sets: 3, reps: 5, load: 100, durationSeconds: nil)
+        addExercise(s, name: "Squat", inBlockNamed: "A", sets: 3, reps: 5, load: 100)
         let setID = try #require(s.current?.allExercises.first?.prescription.sets[1].id)
         let token = try #require(s.mutationTarget(.plan)?.revisionToken)
         #expect(s.updateSet(
@@ -41,35 +79,25 @@ struct WorkoutStoreTests {
         #expect(sets[0].load == 100)      // untouched
     }
 
-    @Test func unknownNamesAndBadSetsFail() throws {
+    @Test func unknownIDsAndBadSetsFail() throws {
         let s = store()
         s.create(title: "x", goal: nil)
-        s.addBlock(name: "Real", intent: nil)     // ≥2 blocks so a bad block name can't fall back to the implicit one
+        s.addBlock(name: "Real", intent: nil)
         let token = try #require(s.mutationTarget(.plan)?.revisionToken)
-        #expect(!s.moveExercise(named: "ghost", toBlockNamed: "nowhere").succeeded)
+        // Failed mutations are atomic, so the same token stays valid across every rejection.
+        #expect(!s.moveExercise(
+            exerciseInstanceID: UUID(), toBlockID: UUID(), toIndex: 0, expectedRevisionToken: token
+        ).succeeded)
         #expect(!s.updateSet(
             setID: UUID(),
             patch: .init(values: .set(.init(metrics: [.reps: .set(5)]))),
             expectedRevisionToken: token
         ).succeeded)
-        #expect(!s.addExercise(name: "X", toBlockNamed: "missing block", sets: 1, reps: nil, load: nil, durationSeconds: nil).succeeded)
-    }
-
-    @Test func ambiguousExerciseAsksWhichOne() {
-        let s = store()
-        s.create(title: "x", goal: nil)
-        s.addBlock(name: "Warm-up", intent: nil)
-        s.addBlock(name: "Durability", intent: nil)
-        s.addExercise(name: "Copenhagen plank", toBlockNamed: "Warm-up", sets: 1, reps: nil, load: nil, durationSeconds: 30)
-        s.addExercise(name: "Copenhagen plank", toBlockNamed: "Durability", sets: 1, reps: nil, load: nil, durationSeconds: 45)
-        // "Copenhagen" matches both → the tool must ask, naming the blocks, not silently pick one.
-        guard case .ambiguous(let msg) = s.removeExercise(named: "Copenhagen") else {
-            Issue.record("expected ambiguous"); return
-        }
-        #expect(msg.localizedCaseInsensitiveContains("Warm-up"))
-        #expect(msg.localizedCaseInsensitiveContains("Durability"))
-        // Nothing was removed while ambiguous.
-        #expect(s.current?.allExercises.count == 2)
+        #expect(!s.addExercise(
+            name: "X", toBlockID: UUID(), atIndex: nil,
+            sets: 1, reps: nil, load: nil, durationSeconds: nil,
+            expectedRevisionToken: token
+        ).succeeded)
     }
 
     @Test func idBasedExerciseMutationsTargetOneDuplicate() throws {
@@ -77,8 +105,8 @@ struct WorkoutStoreTests {
         store.create(title: "Intervals", goal: nil)
         store.addBlock(name: "Overload", intent: nil)
         store.addBlock(name: "Recovery", intent: nil)
-        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 60)
-        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 120)
+        addExercise(store, name: "Run", inBlockNamed: "Overload", sets: 1, durationSeconds: 60)
+        addExercise(store, name: "Run", inBlockNamed: "Overload", sets: 1, durationSeconds: 120)
 
         let runs = try #require(store.current?.blocks.first { $0.name == "Overload" }?.exercises)
         let first = try #require(runs.first)
@@ -94,18 +122,18 @@ struct WorkoutStoreTests {
         #expect(store.current?.exercise(second.id)?.selectedMetrics == [.duration])
 
         #expect(store.replaceExercise(
-            named: "not the target name",
-            exerciseID: first.id,
-            with: "Treadmill Run"
+            exerciseInstanceID: first.id,
+            with: "Treadmill Run",
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
         ).succeeded)
         #expect(store.current?.exercise(first.id)?.exerciseName == "Treadmill Run")
         #expect(store.current?.exercise(second.id)?.exerciseName == "Run")
 
         #expect(store.moveExercise(
-            named: "not the target name",
-            exerciseID: second.id,
-            toBlockNamed: "not the destination name",
-            toBlockID: recoveryID
+            exerciseInstanceID: second.id,
+            toBlockID: recoveryID,
+            toIndex: 0,
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
         ).succeeded)
         #expect(store.current?.blocks.first { $0.id == recoveryID }?.exercises.map(\.id) == [second.id])
 
@@ -116,7 +144,10 @@ struct WorkoutStoreTests {
         ).succeeded)
         #expect(store.current?.exercise(second.id)?.selectedMetrics.contains(.duration) == false)
 
-        #expect(store.removeExercise(named: "not the target name", exerciseID: first.id).succeeded)
+        #expect(store.removeExercise(
+            exerciseInstanceID: first.id,
+            expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken)
+        ).succeeded)
         #expect(store.current?.exercise(first.id) == nil)
         #expect(store.current?.exercise(second.id) != nil)
     }
@@ -125,8 +156,8 @@ struct WorkoutStoreTests {
         let store = store()
         store.create(title: "Intervals", goal: nil)
         store.addBlock(name: "Overload", intent: nil)
-        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 60)
-        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 120)
+        addExercise(store, name: "Run", inBlockNamed: "Overload", sets: 1, durationSeconds: 60)
+        addExercise(store, name: "Run", inBlockNamed: "Overload", sets: 1, durationSeconds: 120)
 
         let runs = try #require(store.current?.blocks.first { $0.name == "Overload" }?.exercises)
         let first = try #require(runs.first)
@@ -156,7 +187,7 @@ struct WorkoutStoreTests {
     @Test func transientUndoRemoveSetRestoresPurgedRowAndKeepsLaterLogs() throws {
         let s = store()
         s.create(title: "Intervals", goal: nil)
-        s.addExercise(name: "Run", toBlockNamed: "Main", sets: 3, reps: nil, load: nil, durationSeconds: 60)
+        addExercise(s, name: "Run", sets: 3, durationSeconds: 60)
         let run = try #require(s.current?.allExercises.first)
         let setIDs = run.prescription.sets.map(\.id)
         s.startWorkout()
@@ -193,13 +224,13 @@ struct WorkoutStoreTests {
         #expect(logs.first { $0.plannedSetID == setIDs[1] }?.values[.duration] == 62)
     }
 
-    @Test func replaceAllExercisesPreservesIdentityAndPrescription() throws {
+    @Test func replaceExercisePreservesIdentityAndPrescription() throws {
         let s = store()
         s.create(title: "Outdoor Run", goal: nil)
         s.addBlock(name: "Warm-up", intent: nil)
         s.addBlock(name: "Main Run", intent: nil)
-        s.addExercise(name: "Treadmill Run", toBlockNamed: "Warm-up", sets: 1, reps: nil, load: nil, durationSeconds: 300)
-        s.addExercise(name: "Treadmill Run", toBlockNamed: "Main Run", sets: 1, reps: nil, load: nil, durationSeconds: 1_800)
+        addExercise(s, name: "Treadmill Run", inBlockNamed: "Warm-up", sets: 1, durationSeconds: 300)
+        addExercise(s, name: "Treadmill Run", inBlockNamed: "Main Run", sets: 1, durationSeconds: 1_800)
 
         let originalIDs = try #require(s.current?.allExercises.map(\.id))
         s.edit(.plan) { workout in
@@ -210,13 +241,13 @@ struct WorkoutStoreTests {
         let before = try #require(s.current?.allExercises)
         let prescriptions = Dictionary(uniqueKeysWithValues: before.map { ($0.id, $0.prescription) })
 
-        guard case .ambiguous = s.replaceExercise(named: "Treadmill Run", with: "Run") else {
-            Issue.record("A duplicate replacement without a scope should be ambiguous.")
-            return
+        for id in originalIDs {
+            #expect(s.replaceExercise(
+                exerciseInstanceID: id,
+                with: "Run",
+                expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+            ).succeeded)
         }
-        #expect(s.current?.allExercises.allSatisfy { $0.exerciseName == "Treadmill Run" } == true)
-
-        #expect(s.replaceExercise(named: "Treadmill Run", with: "Run", replaceAll: true).succeeded)
         let after = try #require(s.current?.allExercises)
         #expect(after.count == 2)
         #expect(Set(after.map(\.id)) == Set(before.map(\.id)))
@@ -230,7 +261,7 @@ struct WorkoutStoreTests {
         let s1 = WorkoutStore(units: StubUnitSystem(), defaults: d)
         s1.create(title: "x", goal: nil)
         s1.addBlock(name: "A", intent: nil)
-        s1.addExercise(name: "Squat", toBlockNamed: "A", sets: 1, reps: 5, load: 100, durationSeconds: nil)
+        addExercise(s1, name: "Squat", inBlockNamed: "A", sets: 1, reps: 5, load: 100)
         s1.startWorkout()
         let exID = s1.current!.allExercises.first!.id
         s1.editLog { $0.logSet(SetLog(reps: 5, load: 105), forPlanned: exID, name: "Squat") }
@@ -244,7 +275,7 @@ struct WorkoutStoreTests {
         let s = store()
         #expect(s.compactSummary(.plan) == nil)                    // no workout yet
         s.create(title: "MED", goal: nil)
-        s.addExercise(name: "Row", toBlockNamed: "Main", sets: 3, reps: nil, load: nil, durationSeconds: 600)
+        addExercise(s, name: "Row", sets: 3, durationSeconds: 600)
         let compact = s.compactSummary(.plan) ?? ""
         #expect(compact.contains("Title: MED"))
         #expect(compact.contains("1 exercise"))
@@ -256,8 +287,8 @@ struct WorkoutStoreTests {
     @Test func incompleteWorkCountsUncheckedSetsAcrossExercises() {
         let s = store()
         s.create(title: "x", goal: nil)
-        s.addExercise(name: "Squat", toBlockNamed: "Main", sets: 2, reps: 5, load: 100, durationSeconds: nil)
-        s.addExercise(name: "Bench", toBlockNamed: "Main", sets: 1, reps: 5, load: 60, durationSeconds: nil)
+        addExercise(s, name: "Squat", sets: 2, reps: 5, load: 100)
+        addExercise(s, name: "Bench", sets: 1, reps: 5, load: 60)
         #expect(s.incompleteWork().sets == 0)               // not started → nothing to complete
         s.startWorkout()
         #expect(s.incompleteWork() == (sets: 3, exercises: 2))
@@ -275,12 +306,12 @@ struct WorkoutStoreTests {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "A", intent: nil)
-        s.addExercise(name: "Squat", toBlockNamed: "A", sets: 1, reps: -5, load: -100, durationSeconds: -30)
+        addExercise(s, name: "Squat", inBlockNamed: "A", sets: 1, reps: -5, load: -100, durationSeconds: -30)
         let set = s.current!.allExercises.first!.prescription.sets.first!
         #expect(set.reps == 0)
         #expect(set.load == 0)
         #expect(set.duration == 0)
-        s.addExercise(name: "Bench", toBlockNamed: "A", sets: 1, reps: 5, load: 60, durationSeconds: nil)
+        addExercise(s, name: "Bench", inBlockNamed: "A", sets: 1, reps: 5, load: 60)
         let benchSetID = try #require(
             s.current?.allExercises.first { $0.exerciseName == "Bench" }?.prescription.sets.first?.id
         )
@@ -302,7 +333,7 @@ struct WorkoutStoreTests {
         s.create(title: "x", goal: nil)
         s.addBlock(name: "Stations", intent: nil)
         // "150m overhead carry" — distance is a real metric, not encoded in the name.
-        #expect(s.addExercise(name: "Overhead carry", toBlockNamed: "Stations", sets: 1, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150).succeeded)
+        #expect(addExercise(s, name: "Overhead carry", inBlockNamed: "Stations", sets: 1, distanceMeters: 150).succeeded)
         #expect(s.current?.allExercises.first?.prescription.sets.first?.distance == 150)
         #expect(s.current?.allExercises.first?.exerciseName == "Overhead carry")
     }
@@ -311,7 +342,7 @@ struct WorkoutStoreTests {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "Cardio", intent: nil)
-        s.addExercise(name: "Stationary Bike", toBlockNamed: "Cardio", sets: 1, reps: nil, load: nil, durationSeconds: 3600, distanceMeters: nil)
+        addExercise(s, name: "Stationary Bike", inBlockNamed: "Cardio", sets: 1, durationSeconds: 3600)
         let ex = s.current!.allExercises.first!
         #expect(ex.definitionId == "stationary_bike")            // resolved to a stable identity
         #expect(ex.selectedMetrics.contains(.duration))
@@ -325,7 +356,7 @@ struct WorkoutStoreTests {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "Cardio", intent: nil)
-        s.addExercise(name: "Stationary Bike", toBlockNamed: "Cardio", sets: 1, reps: nil, load: nil, durationSeconds: 3600, distanceMeters: nil)
+        addExercise(s, name: "Stationary Bike", inBlockNamed: "Cardio", sets: 1, durationSeconds: 3600)
         return s
     }
 
@@ -377,7 +408,7 @@ struct WorkoutStoreTests {
         #expect(existing.displayUnits[.distance] == nil)
         // A NEW instance resolves to miles via the preference.
         s.addBlock(name: "More", intent: nil)
-        s.addExercise(name: "Stationary Bike", toBlockNamed: "More", sets: 1, reps: nil, load: nil, durationSeconds: 600, distanceMeters: nil)
+        addExercise(s, name: "Stationary Bike", inBlockNamed: "More", sets: 1, durationSeconds: 600)
         let fresh = s.current!.allExercises.last!
         #expect(s.displayUnit(.distance, for: fresh) == .miles)
     }
@@ -543,7 +574,7 @@ struct WorkoutStoreTests {
         let s = store()
         s.create(title: "x", goal: nil)
         s.addBlock(name: "Strength", intent: nil)
-        s.addExercise(name: "Deadlift", toBlockNamed: "Strength", sets: 3, reps: 5, load: 140, durationSeconds: nil, distanceMeters: nil)
+        addExercise(s, name: "Deadlift", inBlockNamed: "Strength", sets: 3, reps: 5, load: 140)
         let deadlift = try #require(s.current?.allExercises.first)
         // A deadlift has no pace.
         guard case .notFound(let msg) = s.setMetricValue(
@@ -596,8 +627,7 @@ struct WorkoutStoreTests {
         #expect(s.current?.blocks.count == 1)
         #expect(s.current?.blocks.first?.isDefault == true)
         #expect(s.current?.blocks.first?.name.isEmpty == true)
-        // A simple workout: any block name lands the exercise in the implicit block.
-        #expect(s.addExercise(name: "Deadlift", toBlockNamed: "anything", sets: 3, reps: 5, load: 100, durationSeconds: nil).succeeded)
+        #expect(addExercise(s, name: "Deadlift", sets: 3, reps: 5, load: 100).succeeded)
         #expect(s.current?.allExercises.first?.exerciseName == "Deadlift")
     }
 
