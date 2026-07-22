@@ -6,7 +6,7 @@ test("replace_exercise is an atomic duplicate-safe tool", () => {
   const tool = TOOLS.find((candidate) => candidate.name === "replace_exercise");
 
   assert.ok(tool);
-  assert.deepEqual(tool.input_schema.required, ["exercise", "replacement"]);
+  assert.deepEqual(tool.input_schema.required, ["exercise", "replacement", "expected_revision_token"]);
   assert.equal(tool.input_schema.properties.replace_all.type, "boolean");
   assert.equal(tool.input_schema.properties.block.type, "string");
   assert.match(tool.description, /never simulate replacement/i);
@@ -41,11 +41,11 @@ test("workout tools expose stable ID targeting without breaking name calls", () 
 
   assert.deepEqual(
     TOOLS.find((candidate) => candidate.name === "remove_exercise").input_schema.required,
-    ["exercise"]
+    ["exercise", "expected_revision_token"]
   );
   assert.deepEqual(
     TOOLS.find((candidate) => candidate.name === "update_set").input_schema.required,
-    ["exercise", "set_number"]
+    ["exercise", "set_number", "expected_revision_token"]
   );
 });
 
@@ -53,9 +53,36 @@ test("require_all_options preserves an imported choice's children", () => {
   const tool = TOOLS.find((candidate) => candidate.name === "require_all_options");
 
   assert.ok(tool);
-  assert.deepEqual(tool.input_schema.required, ["choice"]);
+  assert.deepEqual(tool.input_schema.required, ["choice", "expected_revision_token"]);
   assert.match(tool.description, /required ordered group/i);
   assert.match(tool.description, /preserves the child exercises/i);
+});
+
+test("workout mutations require revision tokens and expose targeted undo", () => {
+  const mutationNames = [
+    "add_block",
+    "add_exercise",
+    "move_exercise",
+    "replace_exercise",
+    "remove_exercise",
+    "require_all_options",
+    "update_set",
+    "update_logging_config",
+    "set_metric_value",
+    "remove_metric",
+  ];
+
+  for (const name of mutationNames) {
+    const tool = TOOLS.find((candidate) => candidate.name === name);
+    assert.ok(tool, `${name} should exist`);
+    assert.ok(tool.input_schema.required.includes("expected_revision_token"));
+  }
+
+  const undo = TOOLS.find((candidate) => candidate.name === "undo_workout_mutation");
+  assert.ok(undo);
+  assert.deepEqual(undo.input_schema.required, ["mutation_id", "expected_revision_token"]);
+  assert.match(undo.description, /still the plan head/i);
+  assert.match(undo.description, /rejects as stale/i);
 });
 
 test("search_exercises retrieves from the catalog with every filter optional", () => {

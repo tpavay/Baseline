@@ -144,6 +144,12 @@ struct AgentToolsTests {
         _ = t.dispatch(.addBlock(name: "Strength", intent: nil))
         let r = t.dispatch(.addExercise(block: "Strength", name: "Bench press", sets: 3, reps: 8, load: 60, durationSeconds: nil, distanceMeters: nil))
         #expect(r.text.localizedCaseInsensitiveContains("bench press"))       // reply echoes the updated workout
+        #expect(r.text.contains("MUTATION RECEIPT:"))
+        #expect(r.userFacingText == "Added Bench press to Strength.")         // athlete bubble: sentence only
+        #expect(!r.userFacingText.contains("MUTATION RECEIPT"))
+        #expect(!r.userFacingText.contains("MUTATION TARGET"))
+        #expect(r.mutationReceipt?.actor == .agent)
+        #expect(r.mutationReceipt?.diff.changes.first?.kind == .add)
         #expect(wk.current?.allExercises.first?.exerciseName == "Bench press")
         #expect(t.dispatch(.getCurrentWorkout).text.localizedCaseInsensitiveContains("strength"))
     }

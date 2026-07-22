@@ -48,55 +48,75 @@ enum ToolCallMapper {
         case "get_resting_heart_rate":
             return .getRestingHeartRate(days: intOrNil(input["days"]) ?? 7)
         case "create_workout":
-            guard let title = input["title"] as? String else { return nil }
+            guard let title = input["title"] as? String,
+                  validOptionalUUID(input["expected_revision_token"]) else { return nil }
+            let replaceExisting = boolOrNil(input["replace_existing"]) ?? false
+            let expectedRevisionToken = uuid(input["expected_revision_token"])
+            guard !replaceExisting || expectedRevisionToken != nil else { return nil }
             return .createWorkout(title: title, goal: input["goal"] as? String,
-                                  replaceExisting: boolOrNil(input["replace_existing"]) ?? false)
+                                  replaceExisting: replaceExisting,
+                                  expectedRevisionToken: expectedRevisionToken)
         case "add_block":
-            guard let name = input["name"] as? String else { return nil }
-            return .addBlock(name: name, intent: input["intent"] as? String)
+            guard let name = input["name"] as? String,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .addBlock(name: name, intent: input["intent"] as? String, expectedRevisionToken: expected)
         case "add_exercise":
-            guard let block = input["block"] as? String, let name = input["name"] as? String else { return nil }
+            guard let block = input["block"] as? String, let name = input["name"] as? String,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .addExercise(block: block, name: name,
                                 sets: intOrNil(input["sets"]), reps: intOrNil(input["reps"]),
                                 load: doubleOrNil(input["load"]), durationSeconds: intOrNil(input["duration_seconds"]),
-                                distanceMeters: doubleOrNil(input["distance_m"]))
+                                distanceMeters: doubleOrNil(input["distance_m"]),
+                                expectedRevisionToken: expected)
         case "move_exercise":
             guard let exercise = input["exercise"] as? String,
                   let toBlock = input["to_block"] as? String,
                   validOptionalUUID(input["exercise_id"]),
-                  validOptionalUUID(input["to_block_id"]) else { return nil }
+                  validOptionalUUID(input["to_block_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .moveExercise(
                 exercise: exercise,
                 exerciseID: uuid(input["exercise_id"]),
                 toBlock: toBlock,
-                toBlockID: uuid(input["to_block_id"])
+                toBlockID: uuid(input["to_block_id"]),
+                expectedRevisionToken: expected
             )
         case "replace_exercise":
             guard let exercise = input["exercise"] as? String,
                   let replacement = input["replacement"] as? String,
-                  validOptionalUUID(input["exercise_id"]) else { return nil }
+                  validOptionalUUID(input["exercise_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .replaceExercise(
                 exercise: exercise,
                 exerciseID: uuid(input["exercise_id"]),
                 replacement: replacement,
                 block: input["block"] as? String,
-                replaceAll: boolOrNil(input["replace_all"]) ?? false
+                replaceAll: boolOrNil(input["replace_all"]) ?? false,
+                expectedRevisionToken: expected
             )
         case "require_all_options":
-            guard let choice = input["choice"] as? String else { return nil }
-            return .requireAllOptions(choice: choice)
+            guard let choice = input["choice"] as? String,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .requireAllOptions(choice: choice, expectedRevisionToken: expected)
         case "remove_exercise":
             guard let exercise = input["exercise"] as? String,
-                  validOptionalUUID(input["exercise_id"]) else { return nil }
-            return .removeExercise(exercise: exercise, exerciseID: uuid(input["exercise_id"]))
+                  validOptionalUUID(input["exercise_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .removeExercise(exercise: exercise, exerciseID: uuid(input["exercise_id"]), expectedRevisionToken: expected)
         case "update_set":
             guard let exercise = input["exercise"] as? String,
                   let n = intOrNil(input["set_number"]),
-                  validOptionalUUID(input["set_id"]) else { return nil }
+                  validOptionalUUID(input["set_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .updateSet(exercise: exercise, setNumber: n, setID: uuid(input["set_id"]),
                               reps: intOrNil(input["reps"]), load: doubleOrNil(input["load"]),
                               durationSeconds: intOrNil(input["duration_seconds"]),
-                              distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]))
+                              distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]),
+                              expectedRevisionToken: expected)
+        case "undo_workout_mutation":
+            guard let mutationID = requiredUUID(input["mutation_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .undoWorkoutMutation(mutationID: mutationID, expectedRevisionToken: expected)
         case "search_exercises":
             // Every field is optional - an all-empty search is a valid "what do you have?" browse.
             // Filter *values* aren't validated here: the taxonomy knows them, so ExerciseSearch parses
@@ -147,12 +167,14 @@ enum ToolCallMapper {
             return .updateTemplate(name: n)
         case "update_logging_config":
             guard let ex = input["exercise"] as? String,
-                  validOptionalUUID(input["exercise_id"]) else { return nil }
+                  validOptionalUUID(input["exercise_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .updateLoggingConfig(
                 exercise: ex,
                 exerciseID: uuid(input["exercise_id"]),
                 enabledMetrics: metricList(input["enabled_metrics"]),
-                units: unitOverrides(input)
+                units: unitOverrides(input),
+                expectedRevisionToken: expected
             )
         case "update_exercise_preference":
             guard let ex = input["exercise"] as? String else { return nil }
@@ -161,19 +183,23 @@ enum ToolCallMapper {
         case "set_metric_value":
             guard let ex = input["exercise"] as? String, let n = intOrNil(input["set_number"]),
                   let m = metric(input["metric"]), let v = doubleOrNil(input["value"]),
-                  validOptionalUUID(input["set_id"]) else { return nil }
+                  validOptionalUUID(input["set_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .setMetricValue(
                 exercise: ex,
                 setNumber: n,
                 setID: uuid(input["set_id"]),
                 metric: m,
                 value: v,
-                unit: unit(input["unit"])
+                unit: unit(input["unit"]),
+                expectedRevisionToken: expected
             )
         case "remove_metric":
             guard let ex = input["exercise"] as? String, let m = metric(input["metric"]),
-                  validOptionalUUID(input["exercise_id"]) else { return nil }
-            return .removeMetric(exercise: ex, exerciseID: uuid(input["exercise_id"]), metric: m)
+                  validOptionalUUID(input["exercise_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .removeMetric(exercise: ex, exerciseID: uuid(input["exercise_id"]), metric: m,
+                                 expectedRevisionToken: expected)
         default:
             return nil
         }
@@ -192,6 +218,8 @@ enum ToolCallMapper {
         guard let string = value as? String else { return nil }
         return UUID(uuidString: string)
     }
+
+    private static func requiredUUID(_ value: Any?) -> UUID? { uuid(value) }
 
     /// Omitted IDs preserve the legacy name-based path. A supplied malformed ID rejects the call
     /// instead of silently falling back to a potentially ambiguous name.

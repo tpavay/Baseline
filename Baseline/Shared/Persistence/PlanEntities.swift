@@ -99,6 +99,8 @@ import SwiftData
     /// reconciliation opts in. Optional with a nil default, so it is a lightweight SwiftData migration
     /// and CloudKit-safe (matches the entity conventions in this file).
     var sessionWorkoutJSON: Data?
+    var sessionWorkoutRevisionID: UUID?
+    var performedLogRevisionID: UUID?
     /// Whether this session's "update your plan?" decision is still unanswered. It describes the
     /// *session*, so it lives here rather than on whichever `WorkoutStore` happened to start it — two
     /// stores are bound to the same scheduled workout at once (the Plan tab's execution store and the
@@ -108,10 +110,52 @@ import SwiftData
     var reconciliationPending: Bool?
     init(id: UUID = UUID(), scheduledWorkoutID: UUID = UUID(), startedAt: Date = Date.distantPast,
          statusRaw: String = SessionStatus.active.rawValue, logJSON: Data = Data(),
-         sessionWorkoutJSON: Data? = nil, reconciliationPending: Bool? = nil) {
+         sessionWorkoutJSON: Data? = nil, sessionWorkoutRevisionID: UUID? = nil,
+         performedLogRevisionID: UUID? = nil, reconciliationPending: Bool? = nil) {
         self.id = id; self.scheduledWorkoutID = scheduledWorkoutID; self.startedAt = startedAt
         self.statusRaw = statusRaw; self.logJSON = logJSON; self.sessionWorkoutJSON = sessionWorkoutJSON
+        self.sessionWorkoutRevisionID = sessionWorkoutRevisionID
+        self.performedLogRevisionID = performedLogRevisionID
         self.reconciliationPending = reconciliationPending
+    }
+}
+
+/// Append-only mutation history for one session. The before snapshot is a tagged domain value, and
+/// `afterRevisionToken` binds a future targeted undo to the exact state this mutation produced.
+@Model final class SDSessionMutationVersion {
+    var id: UUID = UUID()
+    var sessionID: UUID = UUID()
+    var mutationID: UUID = UUID()
+    var kindRaw: String = SessionMutationKind.sessionWorkout.rawValue
+    var beforeSnapshotJSON: Data = Data()
+    var afterRevisionToken: UUID = UUID()
+    var actorRaw: String = PlanActor.agent.rawValue
+    var timestamp: Date = Date.distantPast
+    var diffJSON: Data = Data()
+    var workoutMutationReceiptJSON: Data = Data()
+
+    init(
+        id: UUID = UUID(),
+        sessionID: UUID = UUID(),
+        mutationID: UUID = UUID(),
+        kindRaw: String = SessionMutationKind.sessionWorkout.rawValue,
+        beforeSnapshotJSON: Data = Data(),
+        afterRevisionToken: UUID = UUID(),
+        actorRaw: String = PlanActor.agent.rawValue,
+        timestamp: Date = Date.distantPast,
+        diffJSON: Data = Data(),
+        workoutMutationReceiptJSON: Data = Data()
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.mutationID = mutationID
+        self.kindRaw = kindRaw
+        self.beforeSnapshotJSON = beforeSnapshotJSON
+        self.afterRevisionToken = afterRevisionToken
+        self.actorRaw = actorRaw
+        self.timestamp = timestamp
+        self.diffJSON = diffJSON
+        self.workoutMutationReceiptJSON = workoutMutationReceiptJSON
     }
 }
 
@@ -150,10 +194,12 @@ import SwiftData
     var actorRaw: String = PlanActor.user.rawValue
     var operationJSON: Data = Data()
     var snapshotJSON: Data = Data()
+    var workoutMutationReceiptJSON: Data?
     init(id: UUID = UUID(), timestamp: Date = Date.distantPast, actorRaw: String = PlanActor.user.rawValue,
-         operationJSON: Data = Data(), snapshotJSON: Data = Data()) {
+         operationJSON: Data = Data(), snapshotJSON: Data = Data(), workoutMutationReceiptJSON: Data? = nil) {
         self.id = id; self.timestamp = timestamp; self.actorRaw = actorRaw
         self.operationJSON = operationJSON; self.snapshotJSON = snapshotJSON
+        self.workoutMutationReceiptJSON = workoutMutationReceiptJSON
     }
 }
 
@@ -177,6 +223,6 @@ enum PlanSchema {
     static let models: [any PersistentModel.Type] = [
         SDProgram.self, SDProgramSection.self, SDScheduledWorkout.self, SDWorkoutRevision.self,
         SDWorkoutTemplate.self, SDWorkoutSession.self, SDCompletedLog.self, SDCompletedExercise.self,
-        SDPlanVersion.self, SDPendingProposal.self,
+        SDPlanVersion.self, SDPendingProposal.self, SDSessionMutationVersion.self,
     ]
 }

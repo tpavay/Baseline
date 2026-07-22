@@ -60,6 +60,10 @@ protocol PlanRepository {
     func duplicate(_ id: UUID, toDate: Date?, actor: PlanActor, reason: String?) -> MutationResult
     func replaceContent(_ id: UUID, with workout: Workout, actor: PlanActor, reason: String?) -> MutationResult
     func editContent(_ id: UUID, actor: PlanActor, reason: String?, _ transform: (inout Workout) -> Void) -> MutationResult
+    func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout) -> WorkoutMutationResult
+    func undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID, actor: PlanActor) -> WorkoutMutationResult
+    func applyPerformedLogMutation(_ request: WorkoutMutationRequest, log: WorkoutLog) -> WorkoutMutationResult
+    func sessionMutationVersions(sessionID: UUID, limit: Int) -> [SessionMutationVersion]
     func setSkipped(_ id: UUID, _ skipped: Bool, actor: PlanActor, reason: String?) -> MutationResult
     func delete(_ id: UUID, actor: PlanActor, reason: String?, proposalID: UUID?) -> MutationResult
     func undo(actor: PlanActor) -> MutationResult
@@ -206,6 +210,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         }
         let sd = SDWorkoutSession(scheduledWorkoutID: id, startedAt: now,
                                   statusRaw: SessionStatus.active.rawValue, logJSON: PlanCoding.data(sw.workout.startLog()),
+                                  performedLogRevisionID: UUID(),
                                   reconciliationPending: true)
         context.insert(sd); save()
         return map(sd)
@@ -231,12 +236,16 @@ final class SwiftDataPlanRepository: PlanRepository {
     func updateSessionLog(forScheduled id: UUID, _ transform: (inout WorkoutLog) -> Void) {
         guard let sd = latestSession(id), var log = PlanCoding.value(WorkoutLog.self, sd.logJSON) else { return }
         transform(&log)
-        sd.logJSON = PlanCoding.data(log); save()
+        sd.logJSON = PlanCoding.data(log)
+        sd.performedLogRevisionID = UUID()
+        save()
     }
 
     func setSessionWorkout(forScheduled id: UUID, _ workout: Workout) {
         guard let sd = latestSession(id) else { return }
-        sd.sessionWorkoutJSON = PlanCoding.data(workout); save()
+        sd.sessionWorkoutJSON = PlanCoding.data(workout)
+        sd.sessionWorkoutRevisionID = UUID()
+        save()
     }
 
     func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date = Date()) -> SessionCompletion {
@@ -344,6 +353,232 @@ final class SwiftDataPlanRepository: PlanRepository {
             let rev = SDWorkoutRevision(workoutID: sd.workoutID, createdAt: Date(), workoutJSON: PlanCoding.data(w))
             context.insert(rev); sd.workoutRevisionID = rev.id
         }
+    }
+
+    /// The one repository transaction for conversational workout edits. The store has already resolved
+    /// and validated domain IDs against one local value; this boundary repeats the identity and revision
+    /// checks against persisted authoritative state immediately before its single save.
+    func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout) -> WorkoutMutationResult {
+        guard validAgentMutation(request),
+              request.dryRun || !mutationIDExists(request.mutationID) else {
+            return .rejected(.invalidTarget)
+        }
+        switch request.target.scope {
+        case .plan:
+            return applyPlanWorkoutMutation(request, workout: workout)
+        case .sessionWorkout:
+            return applySessionWorkoutMutation(request, workout: workout)
+        case .performedLog, .transient:
+            return .rejected(.invalidTarget)
+        }
+    }
+
+    private func applyPlanWorkoutMutation(
+        _ request: WorkoutMutationRequest,
+        workout: Workout
+    ) -> WorkoutMutationResult {
+        guard let scheduledID = request.target.scheduledWorkoutID,
+              request.target.sessionID == nil,
+              let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == scheduledID }),
+              let authoritative = scheduledWorkout(scheduledID) else {
+            return .rejected(.notFound)
+        }
+        guard sd.workoutID == request.target.workoutID, workout.id == authoritative.workout.id else {
+            return .rejected(.invalidTarget)
+        }
+        guard request.target.revisionToken == request.expectedRevisionToken,
+              sd.workoutRevisionID == request.expectedRevisionToken else {
+            return .rejected(.staleRevision)
+        }
+
+        if request.dryRun {
+            return .preview(receipt(
+                request,
+                before: sd.workoutRevisionID,
+                after: sd.workoutRevisionID,
+                undoAvailable: false
+            ))
+        }
+
+        ensureGenesis(saveAfter: false)
+        let before = sd.workoutRevisionID
+        let revision = SDWorkoutRevision(
+            workoutID: sd.workoutID,
+            createdAt: Date(),
+            workoutJSON: PlanCoding.data(workout)
+        )
+        context.insert(revision)
+        sd.workoutRevisionID = revision.id
+        let receipt = receipt(request, before: before, after: revision.id, undoAvailable: true)
+        let scheduleDiff = scheduleDiff(for: request.diff, scheduledID: scheduledID)
+        _ = appendVersion(
+            kind: .editContent,
+            actor: request.actor,
+            reason: request.reason,
+            diff: scheduleDiff,
+            operationID: request.mutationID,
+            workoutMutationReceipt: receipt,
+            saveAfter: false
+        )
+        guard commitWorkoutMutation() else { return .rejected(.persistenceFailure) }
+        return .applied(receipt)
+    }
+
+    private func applySessionWorkoutMutation(
+        _ request: WorkoutMutationRequest,
+        workout: Workout
+    ) -> WorkoutMutationResult {
+        guard let scheduledID = request.target.scheduledWorkoutID,
+              let sessionID = request.target.sessionID,
+              let sd = latestSession(scheduledID), sd.id == sessionID,
+              let scheduled = scheduledWorkout(scheduledID) else {
+            return .rejected(.notFound)
+        }
+        let before = PlanCoding.value(Workout.self, sd.sessionWorkoutJSON) ?? scheduled.workout
+        guard request.target.workoutID == scheduled.workoutID, workout.id == before.id else {
+            return .rejected(.invalidTarget)
+        }
+        let currentToken = sd.sessionWorkoutRevisionID ?? scheduled.workoutRevisionID
+        guard request.target.revisionToken == request.expectedRevisionToken,
+              currentToken == request.expectedRevisionToken else {
+            return .rejected(.staleRevision)
+        }
+        if request.dryRun {
+            return .preview(receipt(request, before: currentToken, after: currentToken, undoAvailable: false))
+        }
+
+        let after = UUID()
+        let mutationReceipt = receipt(request, before: currentToken, after: after, undoAvailable: false)
+        sd.sessionWorkoutJSON = PlanCoding.data(workout)
+        sd.sessionWorkoutRevisionID = after
+        insertSessionMutation(
+            request,
+            sessionID: sessionID,
+            kind: .sessionWorkout,
+            beforeSnapshot: .sessionWorkout(before),
+            afterRevisionToken: after,
+            receipt: mutationReceipt
+        )
+        guard commitWorkoutMutation() else { return .rejected(.persistenceFailure) }
+        return .applied(mutationReceipt)
+    }
+
+    func applyPerformedLogMutation(
+        _ request: WorkoutMutationRequest,
+        log: WorkoutLog
+    ) -> WorkoutMutationResult {
+        guard validAgentMutation(request),
+              request.dryRun || !mutationIDExists(request.mutationID),
+              request.target.scope == .performedLog,
+              let scheduledID = request.target.scheduledWorkoutID,
+              let sessionID = request.target.sessionID,
+              let sd = latestSession(scheduledID), sd.id == sessionID,
+              let before = PlanCoding.value(WorkoutLog.self, sd.logJSON),
+              let scheduled = scheduledWorkout(scheduledID),
+              request.target.workoutID == scheduled.workoutID else {
+            return .rejected(.notFound)
+        }
+        let currentToken = sd.performedLogRevisionID ?? sd.id
+        guard request.target.revisionToken == request.expectedRevisionToken,
+              currentToken == request.expectedRevisionToken else {
+            return .rejected(.staleRevision)
+        }
+
+        if request.dryRun {
+            return .preview(receipt(request, before: currentToken, after: currentToken, undoAvailable: false))
+        }
+
+        let after = UUID()
+        let mutationReceipt = receipt(request, before: currentToken, after: after, undoAvailable: false)
+        sd.logJSON = PlanCoding.data(log)
+        sd.performedLogRevisionID = after
+        insertSessionMutation(
+            request,
+            sessionID: sessionID,
+            kind: .performedLog,
+            beforeSnapshot: .performedLog(before),
+            afterRevisionToken: after,
+            receipt: mutationReceipt
+        )
+        guard commitWorkoutMutation() else { return .rejected(.persistenceFailure) }
+        return .applied(mutationReceipt)
+    }
+
+    func undoWorkoutMutation(
+        mutationID: UUID,
+        expectedRevisionToken: UUID,
+        actor: PlanActor
+    ) -> WorkoutMutationResult {
+        guard actor == .agent else { return .rejected(.invalidTarget) }
+        let versions = versionSDs()
+        guard let appliedIndex = versions.firstIndex(where: { version in
+            PlanCoding.value(WorkoutMutationReceipt.self, version.workoutMutationReceiptJSON)?.mutationID
+                == mutationID
+        }), let appliedReceipt = PlanCoding.value(
+            WorkoutMutationReceipt.self,
+            versions[appliedIndex].workoutMutationReceiptJSON
+        ) else {
+            return .rejected(.notFound)
+        }
+        guard appliedReceipt.undoAvailable else { return .rejected(.undoUnavailable) }
+        guard appliedIndex > 0,
+              appliedIndex == versions.count - 1,
+              appliedReceipt.scope == .plan,
+              appliedReceipt.afterRevisionToken == expectedRevisionToken,
+              let scheduledID = appliedReceipt.scheduledWorkoutID,
+              let scheduled = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == scheduledID }),
+              scheduled.workoutRevisionID == expectedRevisionToken,
+              let headSnapshot = PlanCoding.value(ScheduleSnapshot.self, versions[appliedIndex].snapshotJSON),
+              scheduleMatchesCurrent(headSnapshot),
+              let target = PlanCoding.value(ScheduleSnapshot.self, versions[appliedIndex - 1].snapshotJSON),
+              let restoredIntent = target.scheduled.first(where: { $0.id == scheduledID }) else {
+            return .rejected(.staleRevision)
+        }
+        if conflictsWithActiveSession(target) { return .rejected(.staleRevision) }
+
+        let undoDiff = WorkoutMutationDiff(changes: [
+            .init(kind: .edit, summary: "Undo: \(appliedReceipt.diff.changes.map(\.summary).joined(separator: "; "))", entityID: scheduledID),
+        ])
+        let undoRequest = WorkoutMutationRequest(
+            mutationID: UUID(),
+            target: WorkoutMutationTarget(
+                scope: .plan,
+                scheduledWorkoutID: scheduledID,
+                sessionID: nil,
+                workoutID: appliedReceipt.workoutID,
+                revisionToken: expectedRevisionToken
+            ),
+            expectedRevisionToken: expectedRevisionToken,
+            actor: actor,
+            reason: "Undo workout mutation \(mutationID.uuidString)",
+            diff: undoDiff,
+            dryRun: false
+        )
+        let undoReceipt = receipt(
+            undoRequest,
+            before: expectedRevisionToken,
+            after: restoredIntent.workoutRevisionID,
+            undoAvailable: false
+        )
+        applySnapshot(target, saveAfter: false)
+        _ = appendVersion(
+            kind: .undo,
+            actor: actor,
+            reason: undoRequest.reason,
+            diff: scheduleDiff(for: undoDiff, scheduledID: scheduledID),
+            operationID: undoRequest.mutationID,
+            workoutMutationReceipt: undoReceipt,
+            snapshot: target,
+            saveAfter: false
+        )
+        guard commitWorkoutMutation() else { return .rejected(.persistenceFailure) }
+        return .applied(undoReceipt)
+    }
+
+    func sessionMutationVersions(sessionID: UUID, limit: Int) -> [SessionMutationVersion] {
+        let rows = fetch(SDSessionMutationVersion.self, where: #Predicate { $0.sessionID == sessionID })
+            .sorted { $0.timestamp < $1.timestamp }
+        return Array(rows.suffix(max(0, limit)).compactMap(mapSessionMutation))
     }
 
     func setSkipped(_ id: UUID, _ skipped: Bool, actor: PlanActor, reason: String?) -> MutationResult {
@@ -461,6 +696,107 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     // MARK: Versioning internals
 
+    private func validAgentMutation(_ request: WorkoutMutationRequest) -> Bool {
+        request.actor == .agent
+            && !request.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !request.diff.changes.isEmpty
+            && request.diff.changes.allSatisfy {
+                !$0.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+    }
+
+    private func mutationIDExists(_ mutationID: UUID) -> Bool {
+        versionSDs().contains { version in
+            PlanCoding.value(
+                WorkoutMutationReceipt.self,
+                version.workoutMutationReceiptJSON
+            )?.mutationID == mutationID
+        } || (fetchAll() as [SDSessionMutationVersion]).contains { $0.mutationID == mutationID }
+    }
+
+    private func receipt(
+        _ request: WorkoutMutationRequest,
+        before: UUID,
+        after: UUID,
+        undoAvailable: Bool
+    ) -> WorkoutMutationReceipt {
+        WorkoutMutationReceipt(
+            mutationID: request.mutationID,
+            scope: request.target.scope,
+            scheduledWorkoutID: request.target.scheduledWorkoutID,
+            sessionID: request.target.sessionID,
+            workoutID: request.target.workoutID,
+            beforeRevisionToken: before,
+            afterRevisionToken: after,
+            diff: request.diff,
+            actor: request.actor,
+            undoAvailable: undoAvailable
+        )
+    }
+
+    private func scheduleDiff(for diff: WorkoutMutationDiff, scheduledID: UUID) -> ScheduleDiff {
+        ScheduleDiff(changes: diff.changes.map { change in
+            .init(kind: .edit, summary: change.summary, scheduledID: scheduledID)
+        })
+    }
+
+    private func insertSessionMutation(
+        _ request: WorkoutMutationRequest,
+        sessionID: UUID,
+        kind: SessionMutationKind,
+        beforeSnapshot: SessionMutationSnapshot,
+        afterRevisionToken: UUID,
+        receipt: WorkoutMutationReceipt
+    ) {
+        context.insert(SDSessionMutationVersion(
+            sessionID: sessionID,
+            mutationID: request.mutationID,
+            kindRaw: kind.rawValue,
+            beforeSnapshotJSON: PlanCoding.data(beforeSnapshot),
+            afterRevisionToken: afterRevisionToken,
+            actorRaw: request.actor.rawValue,
+            timestamp: Date(),
+            diffJSON: PlanCoding.data(request.diff),
+            workoutMutationReceiptJSON: PlanCoding.data(receipt)
+        ))
+    }
+
+    private func mapSessionMutation(_ row: SDSessionMutationVersion) -> SessionMutationVersion? {
+        guard let kind = SessionMutationKind(rawValue: row.kindRaw),
+              let before = PlanCoding.value(SessionMutationSnapshot.self, row.beforeSnapshotJSON),
+              let diff = PlanCoding.value(WorkoutMutationDiff.self, row.diffJSON),
+              let receipt = PlanCoding.value(
+                  WorkoutMutationReceipt.self,
+                  row.workoutMutationReceiptJSON
+              ) else {
+            return nil
+        }
+        return SessionMutationVersion(
+            id: row.id,
+            sessionID: row.sessionID,
+            mutationID: row.mutationID,
+            kind: kind,
+            beforeSnapshot: before,
+            afterRevisionToken: row.afterRevisionToken,
+            actor: PlanActor(rawValue: row.actorRaw) ?? .agent,
+            timestamp: row.timestamp,
+            diff: diff,
+            receipt: receipt
+        )
+    }
+
+    /// Mutation receipts are returned only after SwiftData confirms the entire envelope commit.
+    /// Rolling back on failure prevents callers from offering Undo for a revision that never landed.
+    private func commitWorkoutMutation() -> Bool {
+        do {
+            try context.save()
+            return true
+        } catch {
+            context.rollback()
+            return false
+        }
+    }
+
     private func makeDeleteProposal(_ sd: SDScheduledWorkout) -> MutationResult {
         let name = title(sd.id)
         let diff = ScheduleDiff(changes: [.init(kind: .remove, summary: "Delete \(name)", scheduledID: sd.id)])
@@ -479,19 +815,45 @@ final class SwiftDataPlanRepository: PlanRepository {
         return .applied(diff: diff, version: appendVersion(kind: kind, actor: actor, reason: reason, diff: diff))
     }
 
-    private func ensureGenesis() {
-        if versionSDs().isEmpty { _ = appendVersion(kind: .restore, actor: .user, reason: "genesis", diff: ScheduleDiff()) }
+    private func ensureGenesis(saveAfter: Bool = true) {
+        if versionSDs().isEmpty {
+            _ = appendVersion(
+                kind: .restore,
+                actor: .user,
+                reason: "genesis",
+                diff: ScheduleDiff(),
+                saveAfter: saveAfter
+            )
+        }
     }
 
-    private func appendVersion(kind: PlanOpKind, actor: PlanActor, reason: String?, diff: ScheduleDiff) -> PlanVersion {
+    private func appendVersion(
+        kind: PlanOpKind,
+        actor: PlanActor,
+        reason: String?,
+        diff: ScheduleDiff,
+        operationID: UUID = UUID(),
+        workoutMutationReceipt: WorkoutMutationReceipt? = nil,
+        snapshot explicitSnapshot: ScheduleSnapshot? = nil,
+        saveAfter: Bool = true
+    ) -> PlanVersion {
         let last = versionSDs().last?.timestamp ?? .distantPast
         let ts = max(Date(), last.addingTimeInterval(0.001))   // strictly increasing → head is unambiguous
-        let op = PlanOperation(id: UUID(), kind: kind, actor: actor, reason: reason, timestamp: ts, diff: diff)
-        let snap = snapshot()
+        let op = PlanOperation(id: operationID, kind: kind, actor: actor, reason: reason, timestamp: ts, diff: diff)
+        let snap = explicitSnapshot ?? snapshot()
         let sd = SDPlanVersion(id: UUID(), timestamp: ts, actorRaw: actor.rawValue,
-                               operationJSON: PlanCoding.data(op), snapshotJSON: PlanCoding.data(snap))
-        context.insert(sd); save()
-        return PlanVersion(id: sd.id, timestamp: ts, actor: actor, operation: op, snapshot: snap)
+                               operationJSON: PlanCoding.data(op), snapshotJSON: PlanCoding.data(snap),
+                               workoutMutationReceiptJSON: workoutMutationReceipt.map { PlanCoding.data($0) })
+        context.insert(sd)
+        if saveAfter { save() }
+        return PlanVersion(
+            id: sd.id,
+            timestamp: ts,
+            actor: actor,
+            operation: op,
+            snapshot: snap,
+            workoutMutationReceipt: workoutMutationReceipt
+        )
     }
 
     private func versionSDs() -> [SDPlanVersion] { (fetchAll() as [SDPlanVersion]).sorted { $0.timestamp < $1.timestamp } }
@@ -499,10 +861,26 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func mapVersion(_ sd: SDPlanVersion) -> PlanVersion? {
         guard let op = PlanCoding.value(PlanOperation.self, sd.operationJSON),
               let snap = PlanCoding.value(ScheduleSnapshot.self, sd.snapshotJSON) else { return nil }
-        return PlanVersion(id: sd.id, timestamp: sd.timestamp, actor: PlanActor(rawValue: sd.actorRaw) ?? .user, operation: op, snapshot: snap)
+        return PlanVersion(
+            id: sd.id,
+            timestamp: sd.timestamp,
+            actor: PlanActor(rawValue: sd.actorRaw) ?? .user,
+            operation: op,
+            snapshot: snap,
+            workoutMutationReceipt: PlanCoding.value(WorkoutMutationReceipt.self, sd.workoutMutationReceiptJSON)
+        )
     }
 
     private func snapshot() -> ScheduleSnapshot { ScheduleSnapshot(scheduled: (fetchAll() as [SDScheduledWorkout]).map(intent)) }
+
+    /// True when the live schedule still matches a recorded snapshot. Targeted undo restores the whole
+    /// schedule, so any drift the version log never saw (e.g. a manual editor save, which moves a
+    /// revision pointer without appending a version) makes the undo stale — restoring the prior
+    /// snapshot would silently revert that later work.
+    private func scheduleMatchesCurrent(_ snap: ScheduleSnapshot) -> Bool {
+        Dictionary(uniqueKeysWithValues: snapshot().scheduled.map { ($0.id, $0) })
+            == Dictionary(uniqueKeysWithValues: snap.scheduled.map { ($0.id, $0) })
+    }
 
     private func intent(_ sd: SDScheduledWorkout) -> ScheduledIntent {
         ScheduledIntent(id: sd.id, programID: sd.programID, sectionID: sd.sectionID, date: sd.date,
@@ -516,7 +894,7 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     /// Reconcile the schedule rows to exactly match a snapshot (upsert wanted, delete the rest). Touches
     /// only plan intent — never sessions/logs.
-    private func applySnapshot(_ snap: ScheduleSnapshot) {
+    private func applySnapshot(_ snap: ScheduleSnapshot, saveAfter: Bool = true) {
         let existing = fetchAll() as [SDScheduledWorkout]
         let wanted = Dictionary(uniqueKeysWithValues: snap.scheduled.map { ($0.id, $0) })
         for sd in existing where wanted[sd.id] == nil { context.delete(sd) }
@@ -524,7 +902,7 @@ final class SwiftDataPlanRepository: PlanRepository {
             if let sd = existing.first(where: { $0.id == it.id }) { write(it, to: sd) }
             else { let sd = SDScheduledWorkout(); write(it, to: sd); context.insert(sd) }
         }
-        save()
+        if saveAfter { save() }
     }
 
     private func write(_ it: ScheduledIntent, to sd: SDScheduledWorkout) {
@@ -620,6 +998,8 @@ final class SwiftDataPlanRepository: PlanRepository {
         return WorkoutSession(id: sd.id, scheduledWorkoutID: sd.scheduledWorkoutID, startedAt: sd.startedAt,
                               status: SessionStatus(rawValue: sd.statusRaw) ?? .active, log: log,
                               workout: PlanCoding.value(Workout.self, sd.sessionWorkoutJSON),
+                              sessionWorkoutRevisionID: sd.sessionWorkoutRevisionID,
+                              performedLogRevisionID: sd.performedLogRevisionID,
                               reconciliationPending: sd.reconciliationPending ?? false)
     }
 

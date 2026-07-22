@@ -30,7 +30,7 @@ enum ScheduleStatus: Equatable, Sendable {
 }
 
 /// Who last changed a future scheduled workout (from version history), for attribution status.
-enum PlanActor: String, Codable, Equatable, Sendable { case user, baseline, imported }
+enum PlanActor: String, Codable, Equatable, Sendable { case user, agent, baseline, imported }
 
 enum ScheduleStatusResolver {
     /// Resolve from stored facts only. `session`/`completed` are looked up by `scheduledWorkoutID` (never

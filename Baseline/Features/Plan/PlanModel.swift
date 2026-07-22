@@ -142,6 +142,10 @@ struct WorkoutSession: Identifiable, Codable, Equatable, Sendable {
     var status: SessionStatus = .active
     var log: WorkoutLog
     var workout: Workout? = nil
+    /// Revision tokens are changed on every persisted session-workout or performed-log write.
+    /// They make delayed agent calls and future targeted session undo stale-safe across relaunches.
+    var sessionWorkoutRevisionID: UUID? = nil
+    var performedLogRevisionID: UUID? = nil
     /// Whether the "update your plan?" decision for this session is still unanswered — the one shared
     /// fact every store bound to this workout consults to route an agent edit.
     var reconciliationPending: Bool = false

@@ -82,6 +82,32 @@ final class PlanStore {
     @discardableResult func addWorkout(_ sw: ScheduledWorkout, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.addWorkout(sw, actor: actor, reason: reason) }
     @discardableResult func duplicate(_ id: UUID, toDate: Date? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.duplicate(id, toDate: toDate, actor: actor, reason: reason) }
     @discardableResult func editContent(_ id: UUID, actor: PlanActor = .user, reason: String? = nil, _ transform: (inout Workout) -> Void) -> MutationResult { defer { reload() }; return repo.editContent(id, actor: actor, reason: reason, transform) }
+    @discardableResult func editContent(_ request: WorkoutMutationRequest, workout: Workout) -> WorkoutMutationResult {
+        defer { reload() }
+        return repo.applyWorkoutMutation(request, workout: workout)
+    }
+    @discardableResult func undoWorkoutMutation(
+        mutationID: UUID,
+        expectedRevisionToken: UUID,
+        actor: PlanActor = .agent
+    ) -> WorkoutMutationResult {
+        defer { reload() }
+        return repo.undoWorkoutMutation(
+            mutationID: mutationID,
+            expectedRevisionToken: expectedRevisionToken,
+            actor: actor
+        )
+    }
+    @discardableResult func applyPerformedLogMutation(
+        _ request: WorkoutMutationRequest,
+        log: WorkoutLog
+    ) -> WorkoutMutationResult {
+        defer { reload() }
+        return repo.applyPerformedLogMutation(request, log: log)
+    }
+    func sessionMutationVersions(sessionID: UUID, limit: Int = 100) -> [SessionMutationVersion] {
+        repo.sessionMutationVersions(sessionID: sessionID, limit: limit)
+    }
     @discardableResult func setSkipped(_ id: UUID, _ skipped: Bool, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.setSkipped(id, skipped, actor: actor, reason: reason) }
     @discardableResult func delete(_ id: UUID, proposalID: UUID? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.delete(id, actor: actor, reason: reason, proposalID: proposalID) }
     @discardableResult func undo(actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.undo(actor: actor) }
@@ -129,6 +155,16 @@ final class PlanStore {
             pushWorkout: { [weak self] w in self?.updateWorkout(id) { $0 = w } },
             pushSessionWorkout: { [weak self] w in self?.setSessionWorkout(id, w) },
             pushLog: { [weak self] l in self?.updateSessionLog(id) { $0 = l } },
+            mutationTarget: { [weak self] scope in self?.mutationTarget(forScheduled: id, scope: scope) },
+            applyMutation: { [weak self] request, workout in
+                self?.editContent(request, workout: workout) ?? .rejected(.notFound)
+            },
+            undoMutation: { [weak self] mutationID, expectedRevisionToken in
+                self?.undoWorkoutMutation(
+                    mutationID: mutationID,
+                    expectedRevisionToken: expectedRevisionToken
+                ) ?? .rejected(.notFound)
+            },
             start: { [weak self] in _ = self?.start(id) },
             complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
             discard: { [weak self] in self?.discard(id) },
@@ -148,6 +184,32 @@ final class PlanStore {
                 return (session.workout ?? sw.workout, session.log, session.startedAt)
             },
             planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
+    }
+
+    private func mutationTarget(
+        forScheduled id: UUID,
+        scope: WorkoutEditScope
+    ) -> WorkoutMutationTarget? {
+        guard let scheduled = scheduledWorkout(id) else { return nil }
+        switch scope {
+        case .plan:
+            return WorkoutMutationTarget(
+                scope: .plan,
+                scheduledWorkoutID: id,
+                sessionID: nil,
+                workoutID: scheduled.workoutID,
+                revisionToken: scheduled.workoutRevisionID
+            )
+        case .session:
+            guard let session = session(for: id), session.status != .discarded else { return nil }
+            return WorkoutMutationTarget(
+                scope: .sessionWorkout,
+                scheduledWorkoutID: id,
+                sessionID: session.id,
+                workoutID: scheduled.workoutID,
+                revisionToken: session.sessionWorkoutRevisionID ?? scheduled.workoutRevisionID
+            )
+        }
     }
 
     /// Create a brand-new scheduled workout for today (used when the agent builds one and nothing is
