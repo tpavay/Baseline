@@ -72,8 +72,9 @@ struct AppStoreValidationTests {
         )
     }
 
-    /// The single-photo import fast path relays the athlete's normalized workout photo to the model
-    /// provider, which the recognized-text-only durable path never did. If that declaration is ever
+    /// The streaming import fast path, which every bounded photo selection tries first, relays the
+    /// athlete's normalized workout photos to the model provider, which the recognized-text-only
+    /// durable retry never does. If that declaration is ever
     /// dropped while the photo path remains, the failure should land here rather than at App Store
     /// review. Linked and tracking are pinned too: a silent flip to linked would change the answers
     /// owed to the App Store Connect privacy questionnaire.

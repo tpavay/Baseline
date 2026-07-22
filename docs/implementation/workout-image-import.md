@@ -1075,7 +1075,7 @@ V1 does not create a Firestore diagnostics collection. This avoids a new synced 
 | Photos/iCloud load fails | No draft | Retry selection or paste |
 | Any unsupported/corrupt/oversized image in the batch | No draft | Choose another image |
 | Normalization fails | Original picker selection only | Retry or replace |
-| OCR finds no useful text on any page | No partial draft | Retry OCR or replace the affected selection. OCR gates the pipeline, so the fast path is not reached either, even though it could read the image itself |
+| OCR finds no useful text on any page | No partial draft | The normalized photos still get their streaming multimodal attempt; the OCR failure becomes terminal only when that stream also produces no usable exercise skeleton |
 | Fast-path stream fails or yields no exercises | Images + OCR evidence | Automatic: the durable job takes over as the retry |
 | Fast-path stream ends early with exercises already resolved | User-owned draft + a warning issue | Review the workout against the photo; the missing tail is edited in |
 | Parser offline/times out | Images + OCR evidence | Retry without rerunning OCR |

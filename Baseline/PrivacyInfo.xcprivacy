@@ -99,16 +99,17 @@
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
-		<!-- The single-photo import fast path (streamWorkoutImport) relays the normalized workout
-		     photo itself to the model provider, so the pixels leave the device and must be declared.
+		<!-- The streaming import fast path (streamWorkoutImport), which every bounded photo
+		     selection tries first, relays the normalized workout photos themselves to the model
+		     provider, so the pixels leave the device and must be declared.
 		     They are worth declaring because the layout of a photo is itself information: an app
 		     screenshot is a table, and which number sits in which column is carried by position,
 		     which recognized text throws away. Pixels are what make the screenshot cases work - an
 		     empty logging table that is the athlete's log rather than the prescription, column
 		     headers that say which metrics an exercise logs, interface chrome that must be ignored,
 		     and overlapping screenshots that must be stitched rather than concatenated.
-		     Linked = false: the photo is relayed in memory and never written to Firestore, Cloud
-		     Storage, or logs, so Baseline never associates the image with the athlete's identity.
+		     Linked = false: the photos are relayed in memory and never written to Firestore, Cloud
+		     Storage, or logs, so Baseline never associates the images with the athlete's identity.
 		     This is a data type, not a permission - Baseline picks photos through PhotosPicker and
 		     holds no photo-library access. `AppStoreValidationTests` pins this entry. -->
 		<dict>

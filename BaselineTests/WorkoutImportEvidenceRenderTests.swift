@@ -229,6 +229,37 @@ struct WorkoutImportEvidenceRenderTests {
         )
     }
 
+    /// TEMPORARY VALIDATION EVIDENCE (issue #40): the exact five-photo hybrid two-day workout that
+    /// previously died in the rigid durable validator, staged through the real streaming assembler
+    /// into the real review editor. Captures the full scroll so every preserved block, EMOM rule,
+    /// conditional percentage, multi-phase RPE prescription, circuit rest, and resolve-item row is
+    /// reviewer-visible.
+    @Test func evidenceTheHybridTwoDayWorkoutReachesReviewWithEverythingPreserved() async throws {
+        let json = try Self.corpusSketchJSON(named: "hybrid-two-day-complex-prescriptions")
+        let catalog = ExerciseCatalog.definitions
+        var stream = WorkoutImportSketchStream()
+        _ = stream.append(json)
+        let converted = WorkoutImportSketchConverter.convert(try #require(stream.finish()), catalog: catalog)
+        let built = WorkoutImportDraftBuilder.build(converted.document, catalog: catalog)
+
+        var session = ImportSession()
+        session.draft = built.draft
+        session.issues = built.issues
+        session.status = .reviewing
+
+        let screen = try await WorkoutImportScreen(session: session, settleOn: "Review Workout")
+        defer { screen.tearDown() }
+        var seen: Set<String> = []
+        for (index, offset) in stride(from: 0.0, through: 4_900.0, by: 700.0).enumerated() {
+            screen.scroll(to: offset)
+            screen.capture(String(format: "issue40-hybrid-%02d", index + 1))
+            seen.formUnion(screen.visibleText())
+        }
+        #expect(built.draft.workout.allExercises.count == 19, "all nineteen movements must reach the editor")
+        #expect(!session.canSave, "ambiguous movements must route to resolve-items, not save silently")
+        #expect(seen.contains { $0.contains("60% of the test number") }, "the EMOM conditional must be visible")
+    }
+
     /// Phase one's failure state. There is no fallback synthesis behind this screen any more: it
     /// names what went wrong in the athlete's language and offers a retry that works.
     @Test func aFailedImportExplainsItselfAndOffersARetryInsteadOfGuessing() async throws {
@@ -314,8 +345,12 @@ private final class WorkoutImportScreen {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    /// Labels plus values, because the review editor holds coach text in editable fields whose
+    /// accessibility label is the field's name ("Notes for Wall Balls") and whose value is the text.
     func visibleText() -> [String] {
-        WorkoutImportScreen.elements(in: window).compactMap(\.accessibilityLabel)
+        WorkoutImportScreen.elements(in: window).flatMap {
+            [$0.accessibilityLabel, $0.accessibilityValue].compactMap(\.self)
+        }
     }
 
     func showsText(containing needle: String) -> Bool {
