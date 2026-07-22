@@ -235,7 +235,14 @@ final class ConversationService {
         if let d = response.decision { latestDecision = d }
         if let p = response.plan { latestPlan = p }
         if let receipt = response.mutationReceipt { latestWorkoutMutationReceipt = receipt }
-        if call.showsInActivityFeed { toolActivity.append(ToolEvent(label: call.activityLabel)) }
+        if Self.shouldRecordActivity(call, response: response) {
+            toolActivity.append(ToolEvent(label: call.activityLabel))
+        }
+    }
+
+    static func shouldRecordActivity(_ call: AgentTools.Call, response: AgentTools.Response) -> Bool {
+        guard call.showsInActivityFeed else { return false }
+        return !call.requiresWorkoutMutationReceiptForActivity || response.mutationReceipt != nil
     }
 
     private func callFunction(roundIndex: Int) async -> [[String: Any]]? {
@@ -299,9 +306,10 @@ final class ConversationService {
     func permits(_ call: AgentTools.Call) -> Bool {
         guard scope == .workoutImport else { return true }
         switch call {
-        case .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
+        case .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
+             .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
              .removeExercise, .updateSet, .getCurrentWorkout, .updateLoggingConfig,
-             .setMetricValue, .removeMetric, .searchExercises, .getExercise:
+             .setMetricValue, .removeMetric, .undoWorkoutMutation, .searchExercises, .getExercise:
             return true
         default:
             return false

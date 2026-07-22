@@ -132,6 +132,139 @@ struct ToolCallMapperTests {
         ]) == .removeMetric(exercise: "Run", exerciseID: exerciseID, metric: .pace, expectedRevisionToken: revision))
     }
 
+    @Test func mapsMetadataPatchesWithoutCollapsingOmittedAndNull() throws {
+        let blockID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "title": "Race prep",
+            "goal": NSNull(),
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateWorkoutMetadata(
+            title: .set("Race prep"),
+            goal: .clear,
+            guidance: .unchanged,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "update_block_metadata", input: [
+            "block_id": blockID.uuidString,
+            "intent": "threshold",
+            "guidance": NSNull(),
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateBlockMetadata(
+            blockID: blockID,
+            name: .unchanged,
+            intent: .set("threshold"),
+            guidance: .clear,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "update_exercise_metadata", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "display_label": NSNull(),
+            "guidance": "Stay tall",
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateExerciseMetadata(
+            exerciseInstanceID: exerciseID,
+            displayLabel: .clear,
+            guidance: .set("Stay tall"),
+            expectedRevisionToken: revision
+        ))
+    }
+
+    @Test func mapsEveryNullableMetadataFieldAcrossAllThreeStates() throws {
+        let blockID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        func workoutPatches(_ fields: [String: Any]) -> (MetadataPatch<String>, MetadataPatch<String>)? {
+            var input = fields
+            input["expected_revision_token"] = revision.uuidString
+            guard case .updateWorkoutMetadata(_, let goal, let guidance, _)? =
+                    ToolCallMapper.map(name: "update_workout_metadata", input: input) else { return nil }
+            return (goal, guidance)
+        }
+
+        func blockPatches(_ fields: [String: Any]) -> (MetadataPatch<String>, MetadataPatch<String>)? {
+            var input = fields
+            input["block_id"] = blockID.uuidString
+            input["expected_revision_token"] = revision.uuidString
+            guard case .updateBlockMetadata(_, _, let intent, let guidance, _)? =
+                    ToolCallMapper.map(name: "update_block_metadata", input: input) else { return nil }
+            return (intent, guidance)
+        }
+
+        func exercisePatches(_ fields: [String: Any]) -> (MetadataPatch<String>, MetadataPatch<String>)? {
+            var input = fields
+            input["exercise_instance_id"] = exerciseID.uuidString
+            input["expected_revision_token"] = revision.uuidString
+            guard case .updateExerciseMetadata(_, let displayLabel, let guidance, _)? =
+                    ToolCallMapper.map(name: "update_exercise_metadata", input: input) else { return nil }
+            return (displayLabel, guidance)
+        }
+
+        #expect(workoutPatches(["guidance": "Keep steady"])?.0 == .unchanged)
+        #expect(workoutPatches(["goal": "Build capacity"])?.0 == .set("Build capacity"))
+        #expect(workoutPatches(["goal": NSNull()])?.0 == .clear)
+        #expect(workoutPatches(["goal": "Build capacity"])?.1 == .unchanged)
+        #expect(workoutPatches(["guidance": "Keep steady"])?.1 == .set("Keep steady"))
+        #expect(workoutPatches(["guidance": NSNull()])?.1 == .clear)
+
+        #expect(blockPatches(["guidance": "Stay aerobic"])?.0 == .unchanged)
+        #expect(blockPatches(["intent": "threshold"])?.0 == .set("threshold"))
+        #expect(blockPatches(["intent": NSNull()])?.0 == .clear)
+        #expect(blockPatches(["intent": "threshold"])?.1 == .unchanged)
+        #expect(blockPatches(["guidance": "Stay aerobic"])?.1 == .set("Stay aerobic"))
+        #expect(blockPatches(["guidance": NSNull()])?.1 == .clear)
+
+        #expect(exercisePatches(["guidance": "Stay tall"])?.0 == .unchanged)
+        #expect(exercisePatches(["display_label": "Station A"])?.0 == .set("Station A"))
+        #expect(exercisePatches(["display_label": NSNull()])?.0 == .clear)
+        #expect(exercisePatches(["display_label": "Station A"])?.1 == .unchanged)
+        #expect(exercisePatches(["guidance": "Stay tall"])?.1 == .set("Stay tall"))
+        #expect(exercisePatches(["guidance": NSNull()])?.1 == .clear)
+
+        // Blank strings on nullable fields normalize to clear, matching the manual editor,
+        // so an agent write can never store a value the UI treats as absent.
+        #expect(workoutPatches(["goal": ""])?.0 == .clear)
+        #expect(workoutPatches(["guidance": "  "])?.1 == .clear)
+        #expect(blockPatches(["intent": ""])?.0 == .clear)
+        #expect(blockPatches(["guidance": " \n"])?.1 == .clear)
+        #expect(exercisePatches(["display_label": ""])?.0 == .clear)
+        #expect(exercisePatches(["guidance": "   "])?.1 == .clear)
+    }
+
+    @Test func rejectsInvalidMetadataPatches() {
+        let id = UUID().uuidString
+
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "title": NSNull(),
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "title": "  ",
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_block_metadata", input: [
+            "block_id": id,
+            "name": NSNull(),
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_block_metadata", input: [
+            "block_id": "not-a-uuid",
+            "intent": "easy",
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_exercise_metadata", input: [
+            "exercise_instance_id": id,
+            "guidance": 42,
+            "expected_revision_token": id,
+        ]) == nil)
+    }
+
     @Test func mapsExerciseCatalogTools() {
         #expect(ToolCallMapper.map(name: "search_exercises", input: ["query": "bench"])
                 == .searchExercises(query: "bench", muscle: nil, equipment: nil, modality: nil,

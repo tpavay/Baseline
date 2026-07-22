@@ -60,6 +60,9 @@ test("require_all_options preserves an imported choice's children", () => {
 
 test("workout mutations require revision tokens and expose targeted undo", () => {
   const mutationNames = [
+    "update_workout_metadata",
+    "update_block_metadata",
+    "update_exercise_metadata",
     "add_block",
     "add_exercise",
     "move_exercise",
@@ -83,6 +86,46 @@ test("workout mutations require revision tokens and expose targeted undo", () =>
   assert.deepEqual(undo.input_schema.required, ["mutation_id", "expected_revision_token"]);
   assert.match(undo.description, /still the plan head/i);
   assert.match(undo.description, /rejects as stale/i);
+});
+
+test("metadata tools expose orthogonal patches with nullable clear semantics", () => {
+  const workout = TOOLS.find((candidate) => candidate.name === "update_workout_metadata");
+  const block = TOOLS.find((candidate) => candidate.name === "update_block_metadata");
+  const exercise = TOOLS.find((candidate) => candidate.name === "update_exercise_metadata");
+
+  assert.ok(workout);
+  assert.ok(block);
+  assert.ok(exercise);
+  assert.deepEqual(workout.input_schema.required, ["expected_revision_token"]);
+  assert.deepEqual(block.input_schema.required, ["block_id", "expected_revision_token"]);
+  assert.deepEqual(exercise.input_schema.required, ["exercise_instance_id", "expected_revision_token"]);
+  assert.equal(workout.input_schema.minProperties, 2);
+  assert.equal(block.input_schema.minProperties, 3);
+  assert.equal(exercise.input_schema.minProperties, 3);
+  assert.deepEqual(Object.keys(workout.input_schema.properties).sort(), [
+    "expected_revision_token", "goal", "guidance", "title",
+  ]);
+  assert.deepEqual(Object.keys(block.input_schema.properties).sort(), [
+    "block_id", "expected_revision_token", "guidance", "intent", "name",
+  ]);
+  assert.deepEqual(Object.keys(exercise.input_schema.properties).sort(), [
+    "display_label", "exercise_instance_id", "expected_revision_token", "guidance",
+  ]);
+  assert.equal(workout.input_schema.properties.title.type, "string");
+  assert.equal(block.input_schema.properties.name.type, "string");
+  for (const field of [
+    workout.input_schema.properties.goal,
+    workout.input_schema.properties.guidance,
+    block.input_schema.properties.intent,
+    block.input_schema.properties.guidance,
+    exercise.input_schema.properties.display_label,
+    exercise.input_schema.properties.guidance,
+  ]) {
+    assert.deepEqual(field.type, ["string", "null"]);
+    assert.match(field.description, /clear|return to the catalog/i);
+  }
+  assert.match(block.input_schema.properties.block_id.description, /get_current_workout/i);
+  assert.match(exercise.input_schema.properties.exercise_instance_id.description, /get_current_workout/i);
 });
 
 test("search_exercises retrieves from the catalog with every filter optional", () => {
@@ -115,4 +158,7 @@ test("tool names are unique and map to the on-device executor", () => {
   assert.equal(new Set(names).size, names.length);
   assert.ok(names.includes("search_exercises"));
   assert.ok(names.includes("get_exercise"));
+  assert.ok(names.includes("update_workout_metadata"));
+  assert.ok(names.includes("update_block_metadata"));
+  assert.ok(names.includes("update_exercise_metadata"));
 });

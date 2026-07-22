@@ -56,6 +56,44 @@ enum ToolCallMapper {
             return .createWorkout(title: title, goal: input["goal"] as? String,
                                   replaceExisting: replaceExisting,
                                   expectedRevisionToken: expectedRevisionToken)
+        case "update_workout_metadata":
+            guard let title = stringPatch(input, key: "title", nullable: false),
+                  let goal = stringPatch(input, key: "goal", nullable: true),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  let expected = requiredUUID(input["expected_revision_token"]),
+                  hasChanges(title, goal, guidance) else { return nil }
+            return .updateWorkoutMetadata(
+                title: title,
+                goal: goal,
+                guidance: guidance,
+                expectedRevisionToken: expected
+            )
+        case "update_block_metadata":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let name = stringPatch(input, key: "name", nullable: false),
+                  let intent = stringPatch(input, key: "intent", nullable: true),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  let expected = requiredUUID(input["expected_revision_token"]),
+                  hasChanges(name, intent, guidance) else { return nil }
+            return .updateBlockMetadata(
+                blockID: blockID,
+                name: name,
+                intent: intent,
+                guidance: guidance,
+                expectedRevisionToken: expected
+            )
+        case "update_exercise_metadata":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let displayLabel = stringPatch(input, key: "display_label", nullable: true),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  let expected = requiredUUID(input["expected_revision_token"]),
+                  hasChanges(displayLabel, guidance) else { return nil }
+            return .updateExerciseMetadata(
+                exerciseInstanceID: exerciseID,
+                displayLabel: displayLabel,
+                guidance: guidance,
+                expectedRevisionToken: expected
+            )
         case "add_block":
             guard let name = input["name"] as? String,
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
@@ -220,6 +258,26 @@ enum ToolCallMapper {
     }
 
     private static func requiredUUID(_ value: Any?) -> UUID? { uuid(value) }
+
+    private static func stringPatch(
+        _ input: [String: Any],
+        key: String,
+        nullable: Bool
+    ) -> MetadataPatch<String>? {
+        guard let value = input[key] else { return .unchanged }
+        if value is NSNull { return nullable ? .clear : nil }
+        guard let string = value as? String else { return nil }
+        if string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return nullable ? .clear : nil
+        }
+        return .set(string)
+    }
+
+    private static func hasChanges<Value: Equatable & Sendable>(
+        _ patches: MetadataPatch<Value>...
+    ) -> Bool {
+        patches.contains { !$0.isUnchanged }
+    }
 
     /// Omitted IDs preserve the legacy name-based path. A supplied malformed ID rejects the call
     /// instead of silently falling back to a potentially ambiguous name.

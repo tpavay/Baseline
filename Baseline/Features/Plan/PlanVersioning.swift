@@ -169,6 +169,7 @@ enum WorkoutMutationError: String, Error, Codable, Equatable, Sendable {
     case notFound
     case invalidTarget
     case staleRevision
+    case sessionDiscarded
     case activeSessionConflict
     case undoUnavailable
     case persistenceFailure

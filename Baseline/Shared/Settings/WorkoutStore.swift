@@ -153,6 +153,15 @@ final class WorkoutStore {
     private var coalesceContent = false
     private var isSyncing = false                     // true while pulling from the plan → suppress push-back
     private var transientRevisionToken = UUID()
+    private struct TransientMutationUndo {
+        let receipt: WorkoutMutationReceipt
+        let before: Workout
+    }
+    /// Only the newest transient receipt can ever undo (the token guard makes every older one
+    /// permanently stale), so only its snapshot is retained. Pruned receipts keep their IDs in
+    /// `staleTransientMutationIDs` so a late undo attempt still gets the truthful stale answer.
+    private var latestTransientUndo: TransientMutationUndo?
+    private var staleTransientMutationIDs: Set<UUID> = []
     /// Set once at startup: makes a brand-new today scheduled workout in the plan (for the agent's
     /// create_workout when nothing is scheduled today) and returns a sink bound to it.
     var makeTodayScheduled: ((Workout) -> PlanSink?)?
@@ -231,7 +240,11 @@ final class WorkoutStore {
     private func applySession(_ workout: Workout) -> Bool {
         guard workout != current else { return true }
         current = workout
-        sink?.pushSessionWorkout(workout)
+        if let sink {
+            sink.pushSessionWorkout(workout)
+        } else {
+            advanceTransientRevisionAfterDirectWrite()
+        }
         return true
     }
 
@@ -245,9 +258,25 @@ final class WorkoutStore {
         // is on screen it keeps showing what was performed: the summary is the past, the plan is the
         // future, and rewriting the performed record to keep them in step would be the worse trade.
         if current == base { current = workout }
-        guard let sink else { return true }
+        guard let sink else {
+            advanceTransientRevisionAfterDirectWrite()
+            return true
+        }
         if coalesceContent { pendingPlanEdit = workout } else { sink.pushWorkout(workout) }
         return true
+    }
+
+    /// A direct edit is newer than the latest receipt-bound transient mutation. Advancing the token
+    /// makes that receipt stale and prevents whole-snapshot undo from erasing the direct edit.
+    private func advanceTransientRevisionAfterDirectWrite() {
+        transientRevisionToken = UUID()
+        invalidateLatestTransientUndo()
+    }
+
+    private func invalidateLatestTransientUndo() {
+        guard let latestTransientUndo else { return }
+        staleTransientMutationIDs.insert(latestTransientUndo.receipt.mutationID)
+        self.latestTransientUndo = nil
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -653,6 +682,7 @@ final class WorkoutStore {
         guard var authoritative = workout(scope), let target = mutationTarget(scope) else {
             return .notFound(sink == nil ? "There's no workout yet." : Self.missingPlanWorkout)
         }
+        let before = authoritative
         let displayWasAuthoritative = current == authoritative
         let expected = expectedRevisionToken ?? target.revisionToken
         guard target.revisionToken == expected else {
@@ -693,14 +723,21 @@ final class WorkoutStore {
                 afterRevisionToken: after,
                 diff: resolvedDiff,
                 actor: .agent,
-                undoAvailable: false
+                undoAvailable: !dryRun
             )
             result = dryRun ? .preview(receipt) : .applied(receipt)
         }
 
         switch result {
         case .applied(let receipt):
-            if sink == nil { transientRevisionToken = receipt.afterRevisionToken }
+            if sink == nil {
+                transientRevisionToken = receipt.afterRevisionToken
+                invalidateLatestTransientUndo()
+                latestTransientUndo = TransientMutationUndo(
+                    receipt: receipt,
+                    before: before
+                )
+            }
             if scope == .session || displayWasAuthoritative { current = authoritative }
             pendingPlanEdit = nil
             return .mutated(receipt)
@@ -721,7 +758,56 @@ final class WorkoutStore {
 
     func undoMutation(mutationID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
         guard let sink else {
-            return .notFound("Undo is unavailable for this temporary workout draft.")
+            guard let applied = latestTransientUndo, applied.receipt.mutationID == mutationID else {
+                if staleTransientMutationIDs.contains(mutationID) {
+                    return .notFound(Self.staleUndoMessage)
+                }
+                return .notFound("I couldn't find an undoable workout mutation with that id.")
+            }
+            guard applied.receipt.undoAvailable,
+                  applied.receipt.afterRevisionToken == expectedRevisionToken,
+                  transientRevisionToken == expectedRevisionToken,
+                  let current,
+                  current.id == applied.before.id else {
+                return .notFound(Self.staleUndoMessage)
+            }
+            let undoRequest = WorkoutMutationRequest(
+                mutationID: UUID(),
+                target: WorkoutMutationTarget(
+                    scope: .transient,
+                    scheduledWorkoutID: nil,
+                    sessionID: nil,
+                    workoutID: current.id,
+                    revisionToken: expectedRevisionToken
+                ),
+                expectedRevisionToken: expectedRevisionToken,
+                actor: .agent,
+                reason: "Undo transient workout mutation \(mutationID.uuidString)",
+                diff: WorkoutMutationDiff(changes: [
+                    .init(
+                        kind: .edit,
+                        summary: "Undo: \(applied.receipt.diff.changes.map(\.summary).joined(separator: "; "))",
+                        entityID: current.id
+                    ),
+                ]),
+                dryRun: false
+            )
+            let undoReceipt = WorkoutMutationReceipt(
+                mutationID: undoRequest.mutationID,
+                scope: .transient,
+                scheduledWorkoutID: nil,
+                sessionID: nil,
+                workoutID: current.id,
+                beforeRevisionToken: expectedRevisionToken,
+                afterRevisionToken: applied.receipt.beforeRevisionToken,
+                diff: undoRequest.diff,
+                actor: .agent,
+                undoAvailable: false
+            )
+            self.current = applied.before
+            transientRevisionToken = undoReceipt.afterRevisionToken
+            invalidateLatestTransientUndo()
+            return .mutated(undoReceipt)
         }
         switch sink.undoMutation(mutationID, expectedRevisionToken) {
         case .applied(let receipt):
@@ -733,7 +819,10 @@ final class WorkoutStore {
             return .notFound("That workout has an active-session conflict, so I didn't undo it.")
         case .rejected(.staleRevision):
             reloadFromPlan()
-            return .notFound("That edit is no longer the latest version, so I didn't undo newer work. Read the workout again before changing it.")
+            return .notFound(Self.staleUndoMessage)
+        case .rejected(.sessionDiscarded):
+            reloadFromPlan()
+            return .notFound("That session was discarded, so its record is closed and I didn't undo anything in it.")
         case .rejected(.persistenceFailure):
             reloadFromPlan()
             return .notFound("I couldn't save that undo, so I rolled it back and left the workout unchanged.")
@@ -748,6 +837,8 @@ final class WorkoutStore {
         "Today's workout isn't in your plan any more - it looks like it was deleted. Open the Plan tab and add one, and I'll pick it up from there."
     private static let staleMutationMessage =
         "That workout changed after I read it, so I left it untouched. Call get_current_workout again and retry with its new revision_token."
+    private static let staleUndoMessage =
+        "That edit is no longer the latest version, so I didn't undo newer work. Read the workout again before changing it."
 
 
     /// Whether the stored workout is for today. Unstamped (legacy) workouts count as today's; a
@@ -758,6 +849,139 @@ final class WorkoutStore {
     }
 
     // MARK: - Tool-facing operations (name-resolved)
+
+    @discardableResult
+    func updateWorkoutMetadata(
+        title: MetadataPatch<String>,
+        goal: MetadataPatch<String>,
+        guidance: MetadataPatch<String>,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard !title.isUnchanged || !goal.isUnchanged || !guidance.isUnchanged else {
+            return .notFound("Include at least one workout detail to change.")
+        }
+        guard title != .clear else {
+            return .notFound("A workout title can't be cleared. Set a new title or omit it.")
+        }
+        let changes = metadataChanges(
+            fields: [("workout title", title), ("workout goal", goal), ("workout guidance", guidance)],
+            entityID: current?.id
+        )
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Update workout metadata",
+            diff: .init(changes: changes)
+        ) { workout in
+            if case .set(let value) = title { workout.rename(value) }
+            switch goal {
+            case .unchanged: break
+            case .set(let value): workout.updateGoal(value)
+            case .clear: workout.updateGoal(nil)
+            }
+            workout.updateGuidance(applyingGuidance(guidance, to: workout.guidance))
+            return nil
+        }
+    }
+
+    @discardableResult
+    func updateBlockMetadata(
+        blockID: UUID,
+        name: MetadataPatch<String>,
+        intent: MetadataPatch<String>,
+        guidance: MetadataPatch<String>,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard !name.isUnchanged || !intent.isUnchanged || !guidance.isUnchanged else {
+            return .notFound("Include at least one block detail to change.")
+        }
+        guard name != .clear else {
+            return .notFound("A block name can't be cleared. Set a new name or omit it.")
+        }
+        let changes = metadataChanges(
+            fields: [("block name", name), ("block intent", intent), ("block guidance", guidance)],
+            entityID: blockID
+        )
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Update block metadata",
+            diff: .init(changes: changes)
+        ) { workout in
+            guard let block = workout.blocks.first(where: { $0.id == blockID }) else {
+                return .notFound(missingTarget("block", name: "", id: blockID))
+            }
+            if case .set(let value) = name { _ = workout.renameBlock(blockID, to: value) }
+            switch intent {
+            case .unchanged: break
+            case .set(let value): _ = workout.setBlockIntent(blockID, value)
+            case .clear: _ = workout.setBlockIntent(blockID, nil)
+            }
+            _ = workout.setBlockGuidance(blockID, applyingGuidance(guidance, to: block.guidance))
+            return nil
+        }
+    }
+
+    @discardableResult
+    func updateExerciseMetadata(
+        exerciseInstanceID: UUID,
+        displayLabel: MetadataPatch<String>,
+        guidance: MetadataPatch<String>,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard !displayLabel.isUnchanged || !guidance.isUnchanged else {
+            return .notFound("Include at least one exercise detail to change.")
+        }
+        let changes = metadataChanges(
+            fields: [("exercise display label", displayLabel), ("exercise guidance", guidance)],
+            entityID: exerciseInstanceID
+        )
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Update exercise metadata",
+            diff: .init(changes: changes)
+        ) { workout in
+            guard let exercise = workout.exercise(exerciseInstanceID) else {
+                return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+            }
+            guard workout.updateExercise(exerciseInstanceID, { updated in
+                switch displayLabel {
+                case .unchanged: break
+                case .set(let value): updated.displayLabel = value
+                case .clear: updated.displayLabel = nil
+                }
+                updated.guidance = applyingGuidance(guidance, to: exercise.guidance)
+            }) else {
+                return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+            }
+            return nil
+        }
+    }
+
+    private func metadataChanges(
+        fields: [(String, MetadataPatch<String>)],
+        entityID: UUID?
+    ) -> [WorkoutMutationDiff.Change] {
+        fields.compactMap { field, patch in
+            switch patch {
+            case .unchanged: nil
+            case .set: .init(kind: .edit, summary: "Set \(field)", entityID: entityID)
+            case .clear: .init(kind: .edit, summary: "Clear \(field)", entityID: entityID)
+            }
+        }
+    }
+
+    private func applyingGuidance(
+        _ patch: MetadataPatch<String>,
+        to current: CoachGuidance?
+    ) -> CoachGuidance? {
+        switch patch {
+        case .unchanged:
+            return current
+        case .clear:
+            return nil
+        case .set(let value):
+            return CoachGuidance(formCues: [value])
+        }
+    }
 
     /// Replace the workout wholesale. Refused while a plan-bound session's decision is open: the plan and
     /// the session copy would disagree, and the new exercise ids would match nothing in the log that is
