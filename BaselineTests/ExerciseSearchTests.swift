@@ -14,7 +14,7 @@ struct ExerciseSearchTests {
     ) throws -> ExerciseSearch.Results {
         let parsed = ExerciseSearch.parse(text: text, muscle: muscle, equipment: equipment,
                                           modality: modality, pattern: pattern, tag: tag, level: level)
-        let query = try #require(try parsed.get())
+        let query = try parsed.get()
         return ExerciseSearch.run(query, in: snapshot)
     }
 

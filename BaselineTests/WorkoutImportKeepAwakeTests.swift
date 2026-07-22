@@ -5,6 +5,7 @@ import Testing
 /// A photo import can run for a minute or more. The screen must stay awake for the whole of that
 /// wait - a display that dims and locks mid-import reads as a hang - and it must go back to normal
 /// idle behavior the moment the import stops working, on every exit path.
+@MainActor
 struct WorkoutImportKeepAwakeTests {
     @Test func keepsScreenAwakeWhileImportIsWorking() {
         let working: [WorkoutImportStatus] = [

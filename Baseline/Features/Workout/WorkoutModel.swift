@@ -88,6 +88,21 @@ struct PlannedSet: Identifiable, Codable, Equatable, Sendable {
     var distance: Double? { get { values[.distance] } set { values[.distance] = newValue } }
     var calories: Double? { get { values[.calories] } set { values[.calories] = newValue } }
     var rpe: Double? { get { values[.rpe] } set { values[.rpe] = newValue } }
+
+    /// Copy a planned set for reuse without sharing any addressable identity with the source.
+    func deepCopyWithFreshIDs() -> PlannedSet {
+        var copy = self
+        copy.id = UUID()
+        for index in copy.alternatives.indices {
+            copy.alternatives[index].id = UUID()
+        }
+        return copy
+    }
+}
+
+enum PlannedSetMoveDestination: Equatable, Sendable {
+    case before(UUID)
+    case index(Int)
 }
 
 /// The structured target for a planned exercise — never free text.
@@ -326,6 +341,58 @@ extension Workout {
             exercise.prescription.sets.contains { $0.id == setID }
         })?.id else { return false }
         return updateExercise(exerciseID) { $0.prescription.sets.removeAll { $0.id == setID } }
+    }
+
+    /// Move a set within its owning exercise after validating the complete destination.
+    /// Set IDs cannot cross exercises through this helper.
+    @discardableResult
+    mutating func moveSet(_ setID: UUID, to destination: PlannedSetMoveDestination) -> Bool {
+        guard let exerciseID = allExercises.first(where: { exercise in
+            exercise.prescription.sets.contains { $0.id == setID }
+        })?.id, let exercise = exercise(exerciseID) else { return false }
+
+        let sets = exercise.prescription.sets
+        guard let sourceIndex = sets.firstIndex(where: { $0.id == setID }) else { return false }
+        switch destination {
+        case .before(let beforeSetID):
+            guard beforeSetID != setID, sets.contains(where: { $0.id == beforeSetID }) else {
+                return false
+            }
+        case .index(let index):
+            guard sets.indices.contains(index) else { return false }
+        }
+
+        return updateExercise(exerciseID) { updated in
+            let moved = updated.prescription.sets.remove(at: sourceIndex)
+            switch destination {
+            case .before(let beforeSetID):
+                guard let destinationIndex = updated.prescription.sets.firstIndex(where: {
+                    $0.id == beforeSetID
+                }) else { return }
+                updated.prescription.sets.insert(moved, at: destinationIndex)
+            case .index(let index):
+                updated.prescription.sets.insert(
+                    moved,
+                    at: min(index, updated.prescription.sets.endIndex)
+                )
+            }
+        }
+    }
+
+    /// Duplicate a planned set immediately after its source using fresh set and alternative IDs.
+    @discardableResult
+    mutating func duplicateSet(_ setID: UUID) -> UUID? {
+        guard let exerciseID = allExercises.first(where: { exercise in
+            exercise.prescription.sets.contains { $0.id == setID }
+        })?.id, let exercise = exercise(exerciseID),
+              let sourceIndex = exercise.prescription.sets.firstIndex(where: { $0.id == setID }) else {
+            return nil
+        }
+        let copy = exercise.prescription.sets[sourceIndex].deepCopyWithFreshIDs()
+        guard updateExercise(exerciseID, { updated in
+            updated.prescription.sets.insert(copy, at: sourceIndex + 1)
+        }) else { return nil }
+        return copy.id
     }
 
     @discardableResult

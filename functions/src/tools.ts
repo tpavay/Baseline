@@ -13,6 +13,57 @@ const expectedRevisionToken = {
   description: "Exact revision_token from get_current_workout. The mutation is rejected as stale if the workout changed since that read.",
 };
 
+const setMetricProperties = {
+  reps: { type: "integer", minimum: 0, description: "Canonical repetition count." },
+  load: { type: "number", minimum: 0, description: "Canonical kilograms." },
+  duration: { type: "integer", minimum: 0, description: "Canonical seconds." },
+  distance: { type: "number", minimum: 0, description: "Canonical meters." },
+  calories: { type: "number", minimum: 0 },
+  heartRate: { type: "integer", minimum: 0, description: "Beats per minute." },
+  heartRateZoneTime: { type: "integer", minimum: 0, description: "Canonical seconds in zone." },
+  cadence: { type: "integer", minimum: 0, description: "Revolutions per minute." },
+  power: { type: "number", minimum: 0, description: "Watts." },
+  pace: { type: "number", minimum: 0, description: "Canonical seconds per meter." },
+  rpe: { type: "number", minimum: 0, maximum: 10 },
+};
+
+const nullableSetMetricProperties = Object.fromEntries(
+  Object.entries(setMetricProperties).map(([metric, schema]) => [
+    metric,
+    { ...schema, type: [schema.type, "null"], description: `${"description" in schema ? schema.description : metric}. Pass null to clear.` },
+  ])
+);
+
+const setRangeTarget = {
+  type: "object",
+  properties: {
+    metric: { type: "string", enum: Object.keys(setMetricProperties) },
+    lower: { type: "number", minimum: 0, description: "Canonical lower bound." },
+    upper: { type: "number", minimum: 0, description: "Canonical upper bound, at least lower." },
+  },
+  required: ["metric", "lower", "upper"],
+  additionalProperties: false,
+};
+
+const setEffortTarget = {
+  type: "object",
+  properties: {
+    type: { type: "string", enum: ["rpe", "rir", "toFailure", "maxEffort"] },
+    value: { type: "number", minimum: 0, maximum: 10, description: "Required for rpe or rir; omit for toFailure or maxEffort." },
+  },
+  required: ["type"],
+  additionalProperties: false,
+};
+
+const setTargets = {
+  type: "object",
+  properties: {
+    effort: setEffortTarget,
+    ranges: { type: "array", items: setRangeTarget },
+  },
+  additionalProperties: false,
+};
+
 export const TOOLS = [
   {
     name: "get_today",
@@ -337,19 +388,19 @@ export const TOOLS = [
   },
   {
     name: "update_logging_config",
-    description: "THIS WORKOUT ONLY: choose which metrics an exercise logs and its display units. Does NOT change future defaults. Metrics: reps, load, duration, distance, calories, heartRate, cadence, power, pace, rpe. Unsupported metrics are rejected.",
+    description: "THIS WORKOUT ONLY: choose which metrics an exercise instance logs and its display units. Does NOT change future defaults or canonical stored values. Metrics: reps, load, duration, distance, calories, heartRate, heartRateZoneTime, cadence, power, pace, rpe. Unsupported metrics and units are rejected.",
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string" },
-        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
         enabled_metrics: { type: "array", items: { type: "string" }, description: "The full set of metrics to log for this exercise, e.g. ['duration','distance']." },
         distance_unit: { type: "string", description: "m | km | mi" },
         load_unit: { type: "string", description: "kg | lb" },
         duration_unit: { type: "string", description: "sec | min" },
+        pace_unit: { type: "string", description: "/km | /mi" },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "expected_revision_token"],
+      required: ["exercise_instance_id", "expected_revision_token"],
     },
   },
   {
@@ -370,19 +421,18 @@ export const TOOLS = [
   },
   {
     name: "set_metric_value",
-    description: "Set one metric's value on a set of an exercise (value in the given unit; stored canonically). Adds the metric to what the exercise logs. Rejected if the exercise doesn't support the metric.",
+    description: "Set one metric value on an ID-targeted planned set (value in the given unit; stored canonically). Adds the metric to what the exercise logs. Rejected if the set is not owned by the exercise instance or the exercise does not support the metric.",
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string" },
-        set_number: { type: "integer", minimum: 1 },
-        set_id: { type: "string", description: "Stable set ID from get_current_workout. Takes precedence over exercise and set_number when supplied." },
-        metric: { type: "string", description: "reps | load | duration | distance | calories | power | pace | heartRate | cadence | rpe" },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        set_id: { type: "string", description: "Stable set ID from get_current_workout." },
+        metric: { type: "string", description: "reps | load | duration | distance | calories | power | pace | heartRate | heartRateZoneTime | cadence | rpe" },
         value: { type: "number" },
         unit: { type: "string", description: "Unit of `value` (e.g. mi, km, kg, lb, min). Defaults to canonical." },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "set_number", "metric", "value", "expected_revision_token"],
+      required: ["exercise_instance_id", "set_id", "metric", "value", "expected_revision_token"],
     },
   },
   {
@@ -391,12 +441,11 @@ export const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string" },
-        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
         metric: { type: "string" },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "metric", "expected_revision_token"],
+      required: ["exercise_instance_id", "metric", "expected_revision_token"],
     },
   },
   {
@@ -497,22 +546,87 @@ export const TOOLS = [
     },
   },
   {
-    name: "update_set",
-    description: "Change a single set of an exercise without rewriting the others. set_number is 1-based. Only the fields you pass change.",
+    name: "add_set",
+    description: "Add one planned set to an exercise instance. Values and range bounds are canonical. after_set_id must belong to the same exercise; omit it to append. The mutation returns a receipt and is undoable.",
     input_schema: {
       type: "object",
       properties: {
-        exercise: { type: "string" },
-        set_number: { type: "integer", minimum: 1 },
-        set_id: { type: "string", description: "Stable set ID from get_current_workout. Takes precedence over exercise and set_number when supplied." },
-        reps: { type: "integer" },
-        load: { type: "number" },
-        duration_seconds: { type: "integer" },
-        distance_m: { type: "number", description: "Distance in METERS." },
-        rpe: { type: "number" },
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        after_set_id: { type: "string", description: "Optional stable set ID in the same exercise. The new set is inserted immediately after it." },
+        values: { type: "object", properties: setMetricProperties, additionalProperties: false },
+        role: { type: "string", enum: ["warmup", "working", "top", "backoff", "drop"] },
+        targets: setTargets,
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "set_number", "expected_revision_token"],
+      required: ["exercise_instance_id", "values", "role", "targets", "expected_revision_token"],
+    },
+  },
+  {
+    name: "update_set",
+    description: "Patch one planned set by stable ID. Omitted fields stay unchanged, values set fields, and null explicitly clears nullable values or targets. A set role is required state and cannot be cleared.",
+    input_schema: {
+      type: "object",
+      properties: {
+        set_id: { type: "string", description: "Stable set ID from get_current_workout." },
+        patch: {
+          type: "object",
+          properties: {
+            values: { type: ["object", "null"], properties: nullableSetMetricProperties, additionalProperties: false, description: "Pass null to clear every canonical metric value, or null for one metric to clear only that value." },
+            role: { type: "string", enum: ["warmup", "working", "top", "backoff", "drop"] },
+            targets: {
+              type: ["object", "null"],
+              properties: {
+                effort: { ...setEffortTarget, type: ["object", "null"], description: "Pass null to clear the effort target." },
+                ranges: { type: ["array", "null"], items: setRangeTarget, description: "Pass null to clear target ranges." },
+              },
+              additionalProperties: false,
+              description: "Pass null to clear all effort and range targets.",
+            },
+          },
+          minProperties: 1,
+          additionalProperties: false,
+        },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["set_id", "patch", "expected_revision_token"],
+    },
+  },
+  {
+    name: "remove_set",
+    description: "Remove one planned set by stable ID. In a live session the matching performed row is purged through the logged-actual safeguard so deleted work cannot survive invisibly. The mutation returns a receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        set_id: { type: "string", description: "Stable set ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["set_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "move_set",
+    description: "Move one planned set within its owning exercise by stable ID. Supply exactly one destination: before_set_id in the same exercise, or a zero-based final to_index.",
+    input_schema: {
+      type: "object",
+      properties: {
+        set_id: { type: "string", description: "Stable set ID from get_current_workout." },
+        before_set_id: { type: "string", description: "Stable sibling set ID from get_current_workout." },
+        to_index: { type: "integer", minimum: 0, description: "Zero-based final position in the owning exercise." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["set_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "duplicate_set",
+    description: "Deep-copy one planned set by stable ID immediately after its source. The copy receives a fresh set ID and fresh IDs for every alternative. The mutation returns a receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        set_id: { type: "string", description: "Stable set ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["set_id", "expected_revision_token"],
     },
   },
 ];

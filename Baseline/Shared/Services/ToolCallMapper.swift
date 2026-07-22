@@ -141,16 +141,49 @@ enum ToolCallMapper {
                   validOptionalUUID(input["exercise_id"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .removeExercise(exercise: exercise, exerciseID: uuid(input["exercise_id"]), expectedRevisionToken: expected)
-        case "update_set":
-            guard let exercise = input["exercise"] as? String,
-                  let n = intOrNil(input["set_number"]),
-                  validOptionalUUID(input["set_id"]),
+        case "add_set":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  validOptionalUUID(input["after_set_id"]),
+                  let values = plannedSetValues(input["values"]),
+                  let role = setRole(input["role"]),
+                  let targets = plannedSetTargets(input["targets"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .updateSet(exercise: exercise, setNumber: n, setID: uuid(input["set_id"]),
-                              reps: intOrNil(input["reps"]), load: doubleOrNil(input["load"]),
-                              durationSeconds: intOrNil(input["duration_seconds"]),
-                              distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]),
-                              expectedRevisionToken: expected)
+            return .addSet(
+                exerciseInstanceID: exerciseID,
+                afterSetID: uuid(input["after_set_id"]),
+                values: values,
+                role: role,
+                targets: targets,
+                expectedRevisionToken: expected
+            )
+        case "update_set":
+            guard let setID = requiredUUID(input["set_id"]),
+                  let patchInput = input["patch"] as? [String: Any],
+                  let patch = plannedSetPatch(patchInput),
+                  patch.isUnchanged == false,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .updateSet(setID: setID, patch: patch, expectedRevisionToken: expected)
+        case "remove_set":
+            guard let setID = requiredUUID(input["set_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .removeSet(setID: setID, expectedRevisionToken: expected)
+        case "move_set":
+            guard let setID = requiredUUID(input["set_id"]),
+                  validOptionalUUID(input["before_set_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            let beforeSetID = uuid(input["before_set_id"])
+            let toIndex = exactIntOrNil(input["to_index"])
+            guard (beforeSetID != nil) != (toIndex != nil) else { return nil }
+            return .moveSet(
+                setID: setID,
+                beforeSetID: beforeSetID,
+                toIndex: toIndex,
+                expectedRevisionToken: expected
+            )
+        case "duplicate_set":
+            guard let setID = requiredUUID(input["set_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .duplicateSet(setID: setID, expectedRevisionToken: expected)
         case "undo_workout_mutation":
             guard let mutationID = requiredUUID(input["mutation_id"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
@@ -204,40 +237,45 @@ enum ToolCallMapper {
             guard let n = input["name"] as? String else { return nil }
             return .updateTemplate(name: n)
         case "update_logging_config":
-            guard let ex = input["exercise"] as? String,
-                  validOptionalUUID(input["exercise_id"]),
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  input["enabled_metrics"] == nil || metricList(input["enabled_metrics"]) != nil,
+                  let units = unitOverrides(input),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .updateLoggingConfig(
-                exercise: ex,
-                exerciseID: uuid(input["exercise_id"]),
+                exerciseInstanceID: exerciseID,
                 enabledMetrics: metricList(input["enabled_metrics"]),
-                units: unitOverrides(input),
+                units: units,
                 expectedRevisionToken: expected
             )
         case "update_exercise_preference":
             guard let ex = input["exercise"] as? String else { return nil }
             let scope: WorkoutStore.PreferenceScope = (input["scope"] as? String) == "category" ? .category : .exercise
-            return .updateExercisePreference(exercise: ex, scope: scope, units: unitOverrides(input), selectedMetrics: metricList(input["enabled_metrics"]))
+            guard input["enabled_metrics"] == nil || metricList(input["enabled_metrics"]) != nil,
+                  let units = unitOverrides(input) else { return nil }
+            return .updateExercisePreference(exercise: ex, scope: scope, units: units, selectedMetrics: metricList(input["enabled_metrics"]))
         case "set_metric_value":
-            guard let ex = input["exercise"] as? String, let n = intOrNil(input["set_number"]),
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let setID = requiredUUID(input["set_id"]),
                   let m = metric(input["metric"]), let v = doubleOrNil(input["value"]),
-                  validOptionalUUID(input["set_id"]),
+                  input["unit"] == nil || unit(input["unit"]) != nil,
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .setMetricValue(
-                exercise: ex,
-                setNumber: n,
-                setID: uuid(input["set_id"]),
+                exerciseInstanceID: exerciseID,
+                setID: setID,
                 metric: m,
                 value: v,
                 unit: unit(input["unit"]),
                 expectedRevisionToken: expected
             )
         case "remove_metric":
-            guard let ex = input["exercise"] as? String, let m = metric(input["metric"]),
-                  validOptionalUUID(input["exercise_id"]),
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let m = metric(input["metric"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .removeMetric(exercise: ex, exerciseID: uuid(input["exercise_id"]), metric: m,
-                                 expectedRevisionToken: expected)
+            return .removeMetric(
+                exerciseInstanceID: exerciseID,
+                metric: m,
+                expectedRevisionToken: expected
+            )
         default:
             return nil
         }
@@ -249,6 +287,19 @@ enum ToolCallMapper {
         if let i = v as? Int { return i }
         if let d = v as? Double { return Int(d) }
         if let n = v as? NSNumber { return n.intValue }
+        return nil
+    }
+
+    private static func exactIntOrNil(_ value: Any?) -> Int? {
+        if value == nil || value is NSNull { return nil }
+        if let integer = value as? Int { return integer }
+        if let double = value as? Double,
+           double.isFinite,
+           double.rounded() == double,
+           double >= Double(Int.min),
+           double <= Double(Int.max) {
+            return Int(double)
+        }
         return nil
     }
 
@@ -279,8 +330,151 @@ enum ToolCallMapper {
         patches.contains { !$0.isUnchanged }
     }
 
-    /// Omitted IDs preserve the legacy name-based path. A supplied malformed ID rejects the call
-    /// instead of silently falling back to a potentially ambiguous name.
+    private static func plannedSetValues(_ value: Any?) -> PlannedSetValues? {
+        guard let object = value as? [String: Any] else { return nil }
+        var values: [MetricType: Double] = [:]
+        for (key, rawValue) in object {
+            guard let metric = metric(key), let number = doubleOrNil(rawValue) else { return nil }
+            values[metric] = number
+        }
+        return PlannedSetValues(metrics: values)
+    }
+
+    private static func plannedSetValuesPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<PlannedSetValuesPatch>? {
+        guard let value = input[key] else { return .unchanged }
+        if value is NSNull { return .clear }
+        guard let object = value as? [String: Any] else { return nil }
+        var patches: [MetricType: MetadataPatch<Double>] = [:]
+        for (rawMetric, rawValue) in object {
+            guard let metric = metric(rawMetric) else { return nil }
+            if rawValue is NSNull {
+                patches[metric] = .clear
+            } else {
+                guard let number = doubleOrNil(rawValue) else { return nil }
+                patches[metric] = .set(number)
+            }
+        }
+        guard patches.isEmpty == false else { return nil }
+        return .set(PlannedSetValuesPatch(metrics: patches))
+    }
+
+    private static func setRole(_ value: Any?) -> SetRole? {
+        guard let rawValue = value as? String else { return nil }
+        return SetRole(rawValue: rawValue)
+    }
+
+    private static func setRolePatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<SetRole>? {
+        guard let value = input[key] else { return .unchanged }
+        guard value is NSNull == false, let role = setRole(value) else { return nil }
+        return .set(role)
+    }
+
+    private static func effortTarget(_ value: Any?) -> EffortTarget? {
+        guard let object = value as? [String: Any], let type = object["type"] as? String else {
+            return nil
+        }
+        switch type {
+        case "rpe":
+            guard let value = doubleOrNil(object["value"]) else { return nil }
+            return .rpe(value)
+        case "rir":
+            guard let value = doubleOrNil(object["value"]) else { return nil }
+            return .rir(value)
+        case "toFailure":
+            guard object["value"] == nil else { return nil }
+            return .toFailure
+        case "maxEffort":
+            guard object["value"] == nil else { return nil }
+            return .maxEffort
+        default:
+            return nil
+        }
+    }
+
+    private static func rangeTargets(_ value: Any?) -> [PlannedSetRangeTarget]? {
+        guard let array = value as? [[String: Any]] else { return nil }
+        return array.reduce(into: [PlannedSetRangeTarget]?([])) { result, object in
+            guard result != nil,
+                  let metric = metric(object["metric"]),
+                  let lower = doubleOrNil(object["lower"]),
+                  let upper = doubleOrNil(object["upper"]) else {
+                result = nil
+                return
+            }
+            result?.append(.init(metric: metric, lower: lower, upper: upper))
+        }
+    }
+
+    private static func plannedSetTargets(_ value: Any?) -> PlannedSetTargets? {
+        guard let object = value as? [String: Any] else { return nil }
+        let effort: EffortTarget?
+        if let rawEffort = object["effort"] {
+            guard rawEffort is NSNull == false, let parsed = effortTarget(rawEffort) else { return nil }
+            effort = parsed
+        } else {
+            effort = nil
+        }
+        let ranges: [PlannedSetRangeTarget]
+        if let rawRanges = object["ranges"] {
+            guard let parsed = rangeTargets(rawRanges) else { return nil }
+            ranges = parsed
+        } else {
+            ranges = []
+        }
+        return PlannedSetTargets(effort: effort, ranges: ranges)
+    }
+
+    private static func plannedSetTargetsPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<PlannedSetTargetsPatch>? {
+        guard let value = input[key] else { return .unchanged }
+        if value is NSNull { return .clear }
+        guard let object = value as? [String: Any] else { return nil }
+
+        let effort: MetadataPatch<EffortTarget>
+        if let rawEffort = object["effort"] {
+            if rawEffort is NSNull {
+                effort = .clear
+            } else {
+                guard let parsed = effortTarget(rawEffort) else { return nil }
+                effort = .set(parsed)
+            }
+        } else {
+            effort = .unchanged
+        }
+
+        let ranges: MetadataPatch<[PlannedSetRangeTarget]>
+        if let rawRanges = object["ranges"] {
+            if rawRanges is NSNull {
+                ranges = .clear
+            } else {
+                guard let parsed = rangeTargets(rawRanges) else { return nil }
+                ranges = .set(parsed)
+            }
+        } else {
+            ranges = .unchanged
+        }
+
+        let patch = PlannedSetTargetsPatch(effort: effort, ranges: ranges)
+        guard patch.isUnchanged == false else { return nil }
+        return .set(patch)
+    }
+
+    private static func plannedSetPatch(_ input: [String: Any]) -> PlannedSetPatch? {
+        guard let values = plannedSetValuesPatch(input, key: "values"),
+              let role = setRolePatch(input, key: "role"),
+              let targets = plannedSetTargetsPatch(input, key: "targets") else { return nil }
+        return PlannedSetPatch(values: values, role: role, targets: targets)
+    }
+
+    /// Optional UUID fields may be omitted or null. A supplied malformed ID always rejects the call.
     private static func validOptionalUUID(_ value: Any?) -> Bool {
         value == nil || value is NSNull || uuid(value) != nil
     }
@@ -291,7 +485,8 @@ enum ToolCallMapper {
         "duration": .duration, "time": .duration, "distance": .distance,
         "calories": .calories, "cals": .calories, "cal": .calories,
         "heartrate": .heartRate, "heart_rate": .heartRate, "hr": .heartRate, "avghr": .heartRate,
-        "hrzonetime": .heartRateZoneTime, "zonetime": .heartRateZoneTime,
+        "hrzonetime": .heartRateZoneTime, "heartratezonetime": .heartRateZoneTime,
+        "zonetime": .heartRateZoneTime,
         "cadence": .cadence, "power": .power, "watts": .power, "pace": .pace, "rpe": .rpe,
     ]
     private static let unitAliases: [String: MetricUnit] = [
@@ -312,18 +507,41 @@ enum ToolCallMapper {
     }
     private static func metricList(_ v: Any?) -> [MetricType]? {
         guard let arr = v as? [String] else { return nil }
-        return arr.compactMap { metric($0) }
+        let metrics = arr.compactMap { metric($0) }
+        return metrics.count == arr.count ? metrics : nil
     }
     private static func unit(_ v: Any?) -> MetricUnit? {
         guard let s = v as? String else { return nil }
+        let normalized = normalize(s)
+        if s.contains("/") || normalized.contains("perkilometer") || normalized.contains("permile") {
+            return paceUnit(s)
+        }
         return unitAliases[normalize(s)] ?? MetricUnit(rawValue: s)
     }
-    /// Build a metric→unit override dict from the tool's distance_unit / load_unit / duration_unit.
-    private static func unitOverrides(_ input: [String: Any]) -> [MetricType: MetricUnit] {
+    private static func paceUnit(_ value: Any?) -> MetricUnit? {
+        guard let rawValue = value as? String else { return nil }
+        switch normalize(rawValue) {
+        case "km", "perkm", "minkm", "secondsperkilometer": return .secondsPerKilometer
+        case "mi", "permile", "minmi", "secondspermile": return .secondsPerMile
+        default: return nil
+        }
+    }
+
+    /// Build a metric-to-unit override dictionary and reject malformed supplied values.
+    private static func unitOverrides(_ input: [String: Any]) -> [MetricType: MetricUnit]? {
         var out: [MetricType: MetricUnit] = [:]
-        if let u = unit(input["distance_unit"]) { out[.distance] = u }
-        if let u = unit(input["load_unit"]) { out[.load] = u }
-        if let u = unit(input["duration_unit"]) { out[.duration] = u }
+        for (key, metric) in [
+            ("distance_unit", MetricType.distance),
+            ("load_unit", MetricType.load),
+            ("duration_unit", MetricType.duration),
+        ] where input[key] != nil {
+            guard let parsed = unit(input[key]) else { return nil }
+            out[metric] = parsed
+        }
+        if input["pace_unit"] != nil {
+            guard let parsed = paceUnit(input["pace_unit"]) else { return nil }
+            out[.pace] = parsed
+        }
         return out
     }
 

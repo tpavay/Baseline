@@ -308,7 +308,8 @@ final class ConversationService {
         switch call {
         case .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
              .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
-             .removeExercise, .updateSet, .getCurrentWorkout, .updateLoggingConfig,
+             .removeExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+             .getCurrentWorkout, .updateLoggingConfig,
              .setMetricValue, .removeMetric, .undoWorkoutMutation, .searchExercises, .getExercise:
             return true
         default:

@@ -92,6 +92,49 @@ struct WorkoutModelTests {
         #expect(w.allExercises.first { $0.id == bench }?.prescription.sets.count == 2)
     }
 
+    @Test func moveSetValidatesItsOwningExerciseAndDestination() throws {
+        var (workout, _, strength, benchID) = sample()
+        let benchSets = try #require(workout.exercise(benchID)?.prescription.sets)
+        var row = PlannedExercise(exerciseName: "Row")
+        row.prescription.sets = [PlannedSet(duration: 60)]
+        let added = workout.addExercise(row, toBlock: strength)
+        #expect(added)
+        let rowSetID = try #require(row.prescription.sets.first?.id)
+
+        let movedToFront = workout.moveSet(benchSets[1].id, to: .index(0))
+        #expect(movedToFront)
+        #expect(workout.exercise(benchID)?.prescription.sets.map(\.id) == [benchSets[1].id, benchSets[0].id])
+        let movedBeforeSibling = workout.moveSet(benchSets[1].id, to: .before(benchSets[0].id))
+        let movedAcrossExercise = workout.moveSet(benchSets[0].id, to: .before(rowSetID))
+        let movedOutOfRange = workout.moveSet(benchSets[0].id, to: .index(2))
+        #expect(movedBeforeSibling)
+        #expect(movedAcrossExercise == false)
+        #expect(movedOutOfRange == false)
+    }
+
+    @Test func duplicateSetDeepCopiesSetAndAlternativeIDs() throws {
+        var (workout, _, _, benchID) = sample()
+        let alternative = PlannedSetAlternative(
+            label: "Lighter",
+            values: MetricValues([.load: 50])
+        )
+        let sourceID = try #require(workout.exercise(benchID)?.prescription.sets.first?.id)
+        #expect(workout.updateSet(sourceID) { $0.alternatives = [alternative] })
+
+        let duplicated = workout.duplicateSet(sourceID)
+        let copyID = try #require(duplicated)
+        let sets = try #require(workout.exercise(benchID)?.prescription.sets)
+        let source = try #require(sets.first { $0.id == sourceID })
+        let copy = try #require(sets.first { $0.id == copyID })
+
+        #expect(copy.id != source.id)
+        #expect(copy.values == source.values)
+        #expect(copy.role == source.role)
+        #expect(copy.alternatives.first?.id != source.alternatives.first?.id)
+        #expect(copy.alternatives.first?.values == source.alternatives.first?.values)
+        #expect(Array(sets.map(\.id).prefix(2)) == [sourceID, copyID])
+    }
+
     // MARK: - Planned vs performed
 
     @Test func startLogLinksBackAndNeverMutatesThePlan() {
