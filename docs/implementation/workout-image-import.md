@@ -1,6 +1,8 @@
 # Baseline - Workout Image Import Implementation Plan
 
-*Status: v1 product and ownership contract approved. The single-photo path now runs on the streaming fast path described in [Fast path](#fast-path); the durable section job described throughout the rest of this document owns multi-image imports and every retry. Firebase deployment, Firestore TTL rollout, and App Check console registration remain release steps.*
+*Status: v1 product and ownership contract approved.
+All bounded photo imports now try the streaming fast path described in [Fast path](#fast-path) first; the durable section job described throughout the rest of this document remains the resumable retry.
+Firebase deployment, Firestore TTL rollout, and App Check console registration remain release steps.*
 
 ## 1. Outcome
 
@@ -10,7 +12,8 @@ The provider returns semantic transactions for each bounded source section.
 Deterministic code validates every transaction, applies it to a temporary `CandidateGraph`, and materializes a structurally valid `WorkoutDraft` before the editor opens.
 Structural uncertainty becomes a targeted `ReviewIssue` instead of malformed workout content, raw OCR, or generic warning copy.
 
-The flow below is the durable multi-image path. One photo now takes the streaming fast path instead; see [Fast path](#fast-path).
+The flow below is the durable retry path.
+Every bounded photo selection now tries the streaming fast path first; see [Fast path](#fast-path).
 
 ```text
 Select up to 10 ordered photos, or paste one image
@@ -54,7 +57,7 @@ Any remaining semantic uncertainty must be represented by a targeted `ReviewIssu
 
 ## Fast path
 
-A single photo takes one streaming multimodal call instead of the durable section job.
+One through ten photos take one streaming multimodal call before the durable section job is considered as a retry.
 The invariants above are unchanged: the model still only proposes, deterministic code still owns structure, and the editor still opens only on a structurally valid draft.
 What changes is the shape of the model's output and where normalization happens.
 
@@ -62,7 +65,10 @@ What changes is the shape of the model's output and where normalization happens.
 - Deterministic conversion happens on the device in `Baseline/Features/WorkoutImport/Conversion/`: catalog identity, canonical units, set expansion, per-exercise metric selection, and one level of grouping. That layer is pure and unit-tested, and it replaces the semantic-transaction validator for this path.
 - Ranges, paces, and effort language stay coach prose rather than becoming typed metrics, as does a metric stated more than once in one prescription, because collapsing it would discard work.
 - `ImportExerciseMatcher` refuses near-misses. Widening past an exact catalog hit reaches only different spellings of the same movement; a qualifier in either direction stops it, and an unresolved name passes through verbatim so the draft builder raises its blocking `unknownExercise` issue with candidates.
-- Routing lives in `WorkoutImportCoordinator.assembleOnFastPath`, after local OCR, which still gates the pipeline and is sent to the model with the image. Multi-image imports never take it, and anything it cannot finish falls through to the durable job, which is the retry.
+- Routing lives in `WorkoutImportCoordinator.assembleOnFastPath`, after local OCR, whose recognized text is useful context but is not a prerequisite for the multimodal attempt.
+  Every available image is sent even when on-device OCR found no text; only a stream that also produces no usable exercise skeleton may end as unreadable input.
+- Complex but legible prescriptions remain valid sketch output: the movement skeleton is structured, while EMOM rules, conditionals, nested repeats, multi-phase RPE schemes, and other unsupported details remain as workout, block, or exercise notes.
+- Anything the stream cannot finish falls through to the durable job, which is the retry.
 - A partial stream is judged on structure, not field completeness: exercises in the right order open the editor with a warning that reading stopped early, while a parse with no exercises at all falls through to the durable job rather than opening an empty editor.
 - The transport is `streamWorkoutImport`, an `onRequest` SSE endpoint rather than a callable, because a callable cannot stream. Auth and App Check are therefore verified by hand in the handler.
 - The photo bytes themselves reach the provider on this path. They are relayed in memory and are never written to Firestore, Cloud Storage, or logs.
@@ -135,12 +141,14 @@ Existing issue #2 implementation details remain useful for transport, persistenc
 - V1 always creates a new template unless the athlete explicitly chooses an existing template to update.
 - A content fingerprint may warn about likely duplicates, but it never merges, overwrites, or updates automatically.
 - Normalized images exist locally only for the import-session evidence lifecycle. They are not placed in the template, SwiftData, Firestore, Cloud Storage, diagnostics, or logs.
-- The durable multi-image job parses OCR text. A single photo goes to the multimodal streaming call instead; see [Fast path](#fast-path).
+- The durable section job parses OCR text when the multimodal streaming call cannot produce any usable exercise skeleton; see [Fast path](#fast-path).
 - Diagnostics contain operational counts and timings only. They never contain OCR text, exercise names, notes, source crops, or raw images.
 - Atomic handoff ends import ownership of workout content.
 - Save or Discard ends the user-owned draft lifecycle.
 - The saved result is an ordinary `WorkoutTemplate` with no permanent import flag or separate engine path.
-- Progressive streaming is shipped for the single-photo fast path: exercises appear as they resolve, and a row already on screen is never rewritten. Rows are shown rather than edited while the stream is open, because the transient store is rebuilt as rows land; editing opens the moment reading finishes. Progressive streaming of the durable job's sections remains deferred.
+- Progressive streaming is shipped for the photo fast path: exercises appear as they resolve, and a row already on screen is never rewritten.
+  Rows are shown rather than edited while the stream is open, because the transient store is rebuilt as rows land; editing opens the moment reading finishes.
+  Progressive streaming of the durable job's sections remains deferred.
 
 ## 3. Current codebase integration
 
@@ -1067,7 +1075,7 @@ V1 does not create a Firestore diagnostics collection. This avoids a new synced 
 | Photos/iCloud load fails | No draft | Retry selection or paste |
 | Any unsupported/corrupt/oversized image in the batch | No draft | Choose another image |
 | Normalization fails | Original picker selection only | Retry or replace |
-| OCR finds no useful text on any page | No partial draft | Retry OCR or replace the affected selection. OCR gates the pipeline, so the fast path is not reached either, even though it could read the image itself |
+| OCR finds no useful text on any page | No partial draft | The normalized photos still get their streaming multimodal attempt; the OCR failure becomes terminal only when that stream also produces no usable exercise skeleton |
 | Fast-path stream fails or yields no exercises | Images + OCR evidence | Automatic: the durable job takes over as the retry |
 | Fast-path stream ends early with exercises already resolved | User-owned draft + a warning issue | Review the workout against the photo; the missing tail is edited in |
 | Parser offline/times out | Images + OCR evidence | Retry without rerunning OCR |

@@ -202,7 +202,8 @@ struct WorkoutStoreTests {
         #expect(compact.contains("Title: MED"))
         #expect(compact.contains("1 exercise"))
         #expect(compact.contains("not started"))
-        #expect(!compact.contains("600"))                   // no set-level detail leaks into the index
+        #expect(!compact.contains("Row"))
+        #expect(!compact.contains("Duration:"))            // no exercise or set-level detail leaks into the index
     }
 
     @Test func incompleteWorkCountsUncheckedSetsAcrossExercises() {

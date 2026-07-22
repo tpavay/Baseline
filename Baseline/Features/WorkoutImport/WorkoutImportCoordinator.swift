@@ -74,15 +74,25 @@ actor WorkoutImportCoordinator {
                 "Accepted import \(job.id.uuidString, privacy: .public) with \(imageCount) selected photos"
             )
             await progress(job)
-            job = try await prepareAndRecognize(
+            job = try await prepareAndRecognizeSources(
                 job,
                 imageCount: imageCount,
                 catalog: catalog,
                 loadImage: loadImage,
                 progress: progress
             )
+            var sectionPreparationError: (any Error)?
+            do {
+                job = try await prepareSections(job, progress: progress)
+            } catch {
+                // Vision OCR is useful context for the durable retry, but the multimodal stream can
+                // still read a legible photo when on-device recognition found no text. Give the
+                // actual pixels their one chance before deciding the input is unreadable.
+                sectionPreparationError = error
+            }
             let attempt = await assembleOnFastPath(job, catalog: catalog, progress: progress)
             if let assembled = attempt.assembled { return assembled }
+            if let sectionPreparationError { throw sectionPreparationError }
             // The fast path's own elapsed time is the number the latency work exists to track, so it
             // survives the fall-through rather than being discarded exactly when it matters most.
             job.diagnostics.parserMilliseconds += attempt.elapsedMilliseconds
@@ -160,9 +170,34 @@ actor WorkoutImportCoordinator {
                 job = await handOffAndWait(job, catalog: catalog, progress: progress)
             case .assembling:
                 // The fast path streams to this process and nothing on a server owns it, so a job
-                // killed mid-stream cannot be resumed. The sections are already prepared, so the
-                // durable job picks it up — which is exactly its role as the retry.
-                job = await handOffAndWait(job, catalog: catalog, progress: progress)
+                // killed mid-stream cannot be resumed. With prepared sections the durable job picks
+                // it up, which is exactly its role as the retry. Without them section preparation
+                // had failed before the stream began, so the durable job has nothing valid to
+                // submit; the pixels get a fresh streaming attempt and the original preparation
+                // failure stands when that still yields no skeleton.
+                if job.sections.isEmpty {
+                    let attempt = await assembleOnFastPath(job, catalog: catalog, progress: progress)
+                    if let assembled = attempt.assembled {
+                        job = assembled
+                    } else {
+                        job.diagnostics.parserMilliseconds += attempt.elapsedMilliseconds
+                        do {
+                            job = try await prepareSections(job, progress: progress)
+                            job = await handOffAndWait(job, catalog: catalog, progress: progress)
+                        } catch {
+                            let retained = (try? await repository.load(job.id)) ?? job
+                            job = await fail(
+                                retained,
+                                stage: "local_restore",
+                                reason: localFailureCode(error),
+                                retryable: false,
+                                progress: progress
+                            )
+                        }
+                    }
+                } else {
+                    job = await handOffAndWait(job, catalog: catalog, progress: progress)
+                }
             case .reviewing:
                 if hasInvalidReviewDraft {
                     job = await fail(
@@ -442,7 +477,7 @@ actor WorkoutImportCoordinator {
         }
     }
 
-    private func prepareAndRecognize(
+    private func prepareAndRecognizeSources(
         _ initialJob: WorkoutImportJob,
         imageCount: Int,
         catalog: [ExerciseDefinition],
@@ -468,7 +503,7 @@ actor WorkoutImportCoordinator {
         if job.pages.contains(where: { $0.stage == .failed }) {
             throw WorkoutImportCoordinatorError.sourceResolutionRequired
         }
-        return try await prepareSections(job, progress: progress)
+        return job
     }
 
     private func storeSource(
@@ -742,17 +777,17 @@ actor WorkoutImportCoordinator {
     /// Try the fast path, returning a reviewable job when it produced one and nil when the durable
     /// job should take over.
     ///
-    /// Routing follows the latency report's recommendation. A single photo goes here, because that
-    /// is the case where the durable job bought about six seconds of queueing and cost the rest of
-    /// the failure. Multi-image imports stay durable: they are the case the queue genuinely earns,
-    /// since they are long enough that an athlete may well leave the app mid-import. Anything this
-    /// path cannot finish falls through to the durable job, which is the retry.
+    /// Every bounded import goes through the permissive sketch path first. The transport already
+    /// accepts the same ten-photo limit as intake, and one multimodal call can preserve structure
+    /// across adjacent screenshots without making each section pass the old semantic-transaction
+    /// relationship rules independently. Anything this path cannot finish still falls through to
+    /// the durable job, which remains the resumable retry for transport and provider failures.
     private func assembleOnFastPath(
         _ initialJob: WorkoutImportJob,
         catalog: [ExerciseDefinition],
         progress: @escaping ProgressHandler
     ) async -> FastPathAttempt {
-        guard let streamer, initialJob.pages.count == 1 else { return FastPathAttempt() }
+        guard let streamer, !initialJob.pages.isEmpty else { return FastPathAttempt() }
         guard (try? ensureActive(initialJob.id)) != nil, !Task.isCancelled else { return FastPathAttempt() }
 
         var job = initialJob

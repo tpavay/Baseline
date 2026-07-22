@@ -24,7 +24,9 @@ Adding a case is meant to be trivial:
     "unresolved": [],                            // source names Baseline must refuse to guess
     "setCounts": { "1": 15 },                    // exercise index → number of sets
     "metrics": { "1": { "distance": 400 } },     // exercise index → canonical values on every set
-    "notesContain": { "0": ["easy"] }            // exercise index → coach text that must survive
+    "notesContain": { "0": ["easy"] },           // exercise index → coach text that must survive
+    "workoutNotesContain": ["Intent:"],            // workout-level coach text that must survive
+    "blockNotesContain": { "0": ["4 rounds"] }      // block index → shared scheme text that must survive
   }
 }
 ```

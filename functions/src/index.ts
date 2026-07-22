@@ -336,10 +336,10 @@ export const parseWorkoutImport = onCall(
  * call put the first exercise on screen at ~4 s and finished at ~8 s. Being `onRequest` means auth
  * and App Check are verified here by hand rather than by the callable wrapper.
  *
- * The durable job (`startWorkoutImportJob`) is deliberately kept. It owns multi-image imports and it
- * is the retry when this path fails, because it survives the app being killed and it holds the
- * transactional cost ceilings. What it stops being is the default for one photo, where it bought
- * about six seconds of queueing and cost the rest of the failure.
+ * The durable job (`startWorkoutImportJob`) is deliberately kept as the resumable retry when this
+ * path produces no usable exercise skeleton, because it survives the app being killed and it holds
+ * the transactional cost ceilings. The streaming request itself accepts the same bounded ten-photo
+ * input as the client so complex multi-photo workouts avoid the rigid relationship validator first.
  *
  * Wire format: newline-delimited SSE. `{"type":"delta","text":...}` carries raw JSON fragments of
  * the tool input; `{"type":"done","model":...}` ends a good stream; `{"type":"error","code":...}`
