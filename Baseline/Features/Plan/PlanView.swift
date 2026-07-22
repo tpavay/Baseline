@@ -131,11 +131,8 @@ struct PlanView: View {
         let start = cal.date(byAdding: .day, value: -60, to: today) ?? today
         let end = cal.date(byAdding: .day, value: 120, to: today) ?? today
         let days = plan.days(from: start, through: end)
-        let now = Date()
         calendarDays = days
-        statusByID = days.reduce(into: [:]) { result, day in
-            for scheduled in day.sessions { result[scheduled.id] = plan.status(for: scheduled, today: now) }
-        }
+        statusByID = plan.statuses(for: days.flatMap(\.sessions), today: Date())
         if scrollPosition == nil { scrollPosition = today }
     }
 

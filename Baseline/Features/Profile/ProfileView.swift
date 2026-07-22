@@ -247,9 +247,11 @@ struct ProfileView: View {
 
     private func refreshHistory() {
         let yearStart = calendar.date(from: calendar.dateComponents([.year], from: today)) ?? today
-        let completed = plan.days(from: yearStart, through: today)
+        let sessions = plan.days(from: yearStart, through: today)
             .flatMap(\.sessions)
-            .filter { $0.date <= today && plan.completed(for: $0.id) != nil }
+            .filter { $0.date <= today }
+        let completedIDs = plan.completedScheduledWorkoutIDs(among: sessions.map(\.id))
+        let completed = sessions.filter { completedIDs.contains($0.id) }
 
         var result = ProfileHistory()
         result.yearWorkouts = completed

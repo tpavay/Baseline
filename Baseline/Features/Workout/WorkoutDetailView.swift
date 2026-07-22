@@ -20,6 +20,9 @@ struct WorkoutDetailView: View {
     /// (`plan.revision`). Every derived value (zone summaries, heart-rate samples, set counts) reads
     /// from this snapshot so nothing re-fetches inside `body`.
     @State private var snapshot: DetailSnapshot?
+    /// Distinguishes "not resolved yet" from "resolved and missing": the unavailable state renders
+    /// only after a load attempt, so the first frame never flashes a false error.
+    @State private var hasLoadedSnapshot = false
     @State private var heartRateSamples: [Double] = []
     @State private var zoneSummaries: [ZoneSummary] = []
 
@@ -89,7 +92,7 @@ struct WorkoutDetailView: View {
                         .padding(.vertical, BaselineSpacing.large)
                         .padding(.bottom, BaselineSpacing.screen)
                     }
-                } else {
+                } else if hasLoadedSnapshot {
                     ContentUnavailableView(
                         "Workout unavailable",
                         systemImage: "exclamationmark.triangle",
@@ -153,6 +156,7 @@ struct WorkoutDetailView: View {
     /// Resolve the scheduled workout, its session and completed log, and the derived summaries in one
     /// repository pass. The session's own workout copy wins - it is what the athlete performed.
     private func reloadSnapshot() {
+        defer { hasLoadedSnapshot = true }
         guard let scheduled = plan.scheduledWorkout(scheduledWorkoutID) else {
             snapshot = nil
             heartRateSamples = []

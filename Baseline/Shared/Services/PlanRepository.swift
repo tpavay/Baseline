@@ -22,6 +22,9 @@ protocol PlanRepository {
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout?
     func session(forScheduled id: UUID) -> WorkoutSession?
     func completedLog(forScheduled id: UUID) -> CompletedWorkoutLog?
+    /// The subset of `ids` whose scheduled workout has a completed log — one fetch for a whole range,
+    /// so callers resolving completed status across many sessions never query per session.
+    func completedScheduledWorkoutIDs(among ids: [UUID]) -> Set<UUID>
     /// The most recent completed actuals for an exercise identity, before a date — the Hevy "previous"
     /// column, per-exercise history, PRs. Reads the normalized index; never decodes a full log.
     func mostRecentPerformance(exerciseDefinitionID: String, before: Date) -> ExercisePerformance?
@@ -175,6 +178,13 @@ final class SwiftDataPlanRepository: PlanRepository {
         let logs = fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id })
             .sorted { $0.finishedAt > $1.finishedAt }
         return logs.first.flatMap(map)
+    }
+
+    func completedScheduledWorkoutIDs(among ids: [UUID]) -> Set<UUID> {
+        guard ids.isEmpty == false else { return [] }
+        let candidates = ids
+        let logs = fetch(SDCompletedLog.self, where: #Predicate { candidates.contains($0.scheduledWorkoutID) })
+        return Set(logs.map(\.scheduledWorkoutID))
     }
 
     func mostRecentPerformance(exerciseDefinitionID: String, before: Date) -> ExercisePerformance? {
