@@ -148,6 +148,33 @@ struct AgentToolsTests {
         #expect(t.dispatch(.getCurrentWorkout).text.localizedCaseInsensitiveContains("strength"))
     }
 
+    @Test func currentWorkoutIDsEnableExactDuplicateMutation() throws {
+        let context = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let workouts = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let tools = AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts)
+        _ = tools.dispatch(.createWorkout(title: "Intervals", goal: nil, replaceExisting: false))
+        _ = tools.dispatch(.addBlock(name: "Overload", intent: nil))
+        _ = tools.dispatch(.addExercise(block: "Overload", name: "Run", sets: 1, reps: nil, load: nil, durationSeconds: 60, distanceMeters: nil))
+        _ = tools.dispatch(.addExercise(block: "Overload", name: "Run", sets: 1, reps: nil, load: nil, durationSeconds: 120, distanceMeters: nil))
+
+        let block = try #require(workouts.current?.blocks.first { $0.name == "Overload" })
+        let first = try #require(block.exercises.first)
+        let second = try #require(block.exercises.last)
+        let firstSet = try #require(first.prescription.sets.first)
+        let summary = tools.dispatch(.getCurrentWorkout).text
+
+        #expect(summary.contains(block.id.uuidString))
+        #expect(summary.contains(first.id.uuidString))
+        #expect(summary.contains(second.id.uuidString))
+        #expect(summary.contains(firstSet.id.uuidString))
+
+        let response = tools.dispatch(.removeExercise(exercise: "Run", exerciseID: second.id))
+
+        #expect(response.text.localizedCaseInsensitiveContains("removed run"))
+        #expect(workouts.current?.exercise(first.id) != nil)
+        #expect(workouts.current?.exercise(second.id) == nil)
+    }
+
     @Test func createWorkoutRefusesToReplaceWithoutConfirmation() {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
@@ -175,6 +202,7 @@ struct AgentToolsTests {
 
         let response = tools.dispatch(.replaceExercise(
             exercise: "Treadmill Run",
+            exerciseID: nil,
             replacement: "Run",
             block: nil,
             replaceAll: true
@@ -233,12 +261,14 @@ struct AgentToolsTests {
 
         #expect(service.permits(.replaceExercise(
             exercise: "Stationary Bike",
+            exerciseID: nil,
             replacement: "Echo Bike",
             block: nil,
             replaceAll: false
         )))
         #expect(service.permits(.updateLoggingConfig(
             exercise: "Sled Pull",
+            exerciseID: nil,
             enabledMetrics: [.distance, .load],
             units: [.load: .pounds]
         )))

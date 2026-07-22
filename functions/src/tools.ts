@@ -3,6 +3,9 @@
  * maps each returned `tool_use` (by name) to a validated `AgentTools.Call` and executes it locally,
  * where the state lives. Keep names + params in lock-step with Baseline/Shared/Services/AgentTools.swift
  * and ToolCallMapper.swift.
+ *
+ * Workout target convention: *_id fields are stable instance IDs returned by get_current_workout.
+ * When supplied they take precedence over the required human-readable name/number fallback.
  */
 export const TOOLS = [
   {
@@ -164,7 +167,7 @@ export const TOOLS = [
   },
   {
     name: "get_current_workout",
-    description: "Read the current structured workout (blocks → exercises → sets). Call before editing when you're unsure of the structure, or to answer what today's workout is.",
+    description: "Read the current structured workout (blocks → exercises → sets), including stable IDs for the workout, every block, exercise instance, and set. Call before editing and pass these IDs to mutation tools for precise targeting, especially when names repeat.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -275,6 +278,7 @@ export const TOOLS = [
       type: "object",
       properties: {
         exercise: { type: "string" },
+        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
         enabled_metrics: { type: "array", items: { type: "string" }, description: "The full set of metrics to log for this exercise, e.g. ['duration','distance']." },
         distance_unit: { type: "string", description: "m | km | mi" },
         load_unit: { type: "string", description: "kg | lb" },
@@ -307,6 +311,7 @@ export const TOOLS = [
       properties: {
         exercise: { type: "string" },
         set_number: { type: "integer", minimum: 1 },
+        set_id: { type: "string", description: "Stable set ID from get_current_workout. Takes precedence over exercise and set_number when supplied." },
         metric: { type: "string", description: "reps | load | duration | distance | calories | power | pace | heartRate | cadence | rpe" },
         value: { type: "number" },
         unit: { type: "string", description: "Unit of `value` (e.g. mi, km, kg, lb, min). Defaults to canonical." },
@@ -319,7 +324,11 @@ export const TOOLS = [
     description: "Stop logging a metric for an exercise this workout (unselect it and clear its values).",
     input_schema: {
       type: "object",
-      properties: { exercise: { type: "string" }, metric: { type: "string" } },
+      properties: {
+        exercise: { type: "string" },
+        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+        metric: { type: "string" },
+      },
       required: ["exercise", "metric"],
     },
   },
@@ -367,7 +376,12 @@ export const TOOLS = [
     description: "Move an exercise into another block (blocks are semantic groups, not fixed — exercises move freely).",
     input_schema: {
       type: "object",
-      properties: { exercise: { type: "string" }, to_block: { type: "string" } },
+      properties: {
+        exercise: { type: "string" },
+        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+        to_block: { type: "string" },
+        to_block_id: { type: "string", description: "Stable destination block ID from get_current_workout. Takes precedence over to_block when supplied." },
+      },
       required: ["exercise", "to_block"],
     },
   },
@@ -378,6 +392,7 @@ export const TOOLS = [
       type: "object",
       properties: {
         exercise: { type: "string", description: "Current exercise name." },
+        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise and block when supplied. Omit when replace_all is true." },
         replacement: { type: "string", description: "Replacement exercise from the catalog." },
         block: { type: "string", description: "Optional block name to target one duplicate." },
         replace_all: { type: "boolean", description: "Replace every matching instance. Use when the athlete says all/every." },
@@ -387,10 +402,13 @@ export const TOOLS = [
   },
   {
     name: "remove_exercise",
-    description: "Remove an exercise from the workout by name.",
+    description: "Remove one exercise from the workout. Use exercise_id from get_current_workout for precise targeting; name remains the backward-compatible fallback.",
     input_schema: {
       type: "object",
-      properties: { exercise: { type: "string" } },
+      properties: {
+        exercise: { type: "string" },
+        exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+      },
       required: ["exercise"],
     },
   },
@@ -413,6 +431,7 @@ export const TOOLS = [
       properties: {
         exercise: { type: "string" },
         set_number: { type: "integer", minimum: 1 },
+        set_id: { type: "string", description: "Stable set ID from get_current_workout. Takes precedence over exercise and set_number when supplied." },
         reps: { type: "integer" },
         load: { type: "number" },
         duration_seconds: { type: "integer" },

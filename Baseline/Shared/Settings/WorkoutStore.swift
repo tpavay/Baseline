@@ -653,17 +653,22 @@ final class WorkoutStore {
     }
 
     @discardableResult
-    func moveExercise(named exercise: String, toBlockNamed block: String) -> EditOutcome {
+    func moveExercise(
+        named exercise: String,
+        exerciseID: UUID? = nil,
+        toBlockNamed block: String,
+        toBlockID: UUID? = nil
+    ) -> EditOutcome {
         guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
-        switch resolveExercise(exercise, in: w) {
-        case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
+        switch resolveExercise(exercise, id: exerciseID, in: w) {
+        case .none: return .notFound(missingTarget("exercise", name: exercise, id: exerciseID))
         case .one(let id): exID = id
         case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
         }
         let blockID: UUID
-        switch resolveBlock(block, in: w) {
-        case .none: return .notFound("I couldn't find a block called \"\(block)\".")
+        switch resolveBlock(block, id: toBlockID, in: w) {
+        case .none: return .notFound(missingTarget("block", name: block, id: toBlockID))
         case .one(let id): blockID = id
         case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
         }
@@ -672,10 +677,10 @@ final class WorkoutStore {
     }
 
     @discardableResult
-    func removeExercise(named exercise: String) -> EditOutcome {
+    func removeExercise(named exercise: String, exerciseID: UUID? = nil) -> EditOutcome {
         guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
-        switch resolveExercise(exercise, in: w) {
-        case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
+        switch resolveExercise(exercise, id: exerciseID, in: w) {
+        case .none: return .notFound(missingTarget("exercise", name: exercise, id: exerciseID))
         case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
         case .one(let id): _ = w.removeExercise(id); return committed(apply(w, agentScope))
         }
@@ -686,6 +691,7 @@ final class WorkoutStore {
     @discardableResult
     func replaceExercise(
         named exercise: String,
+        exerciseID: UUID? = nil,
         with replacement: String,
         inBlock block: String? = nil,
         replaceAll: Bool = false
@@ -696,26 +702,36 @@ final class WorkoutStore {
             return .notFound("I couldn't find \"\(replacement)\" in the exercise catalog.")
         }
 
-        let blocks: [WorkoutBlock]
-        if let block, !block.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            switch resolveBlock(block, in: workout) {
-            case .none: return .notFound("I couldn't find a block called \"\(block)\".")
-            case .many(let options): return .ambiguous(ambiguity(block, options, kind: "blocks"))
-            case .one(let id): blocks = workout.blocks.filter { $0.id == id }
+        let matches: [Hit]
+        if let exerciseID {
+            guard let target = workout.exercise(exerciseID) else {
+                return .notFound(missingTarget("exercise", name: exercise, id: exerciseID))
             }
+            let blockName = workout.blocks.first { block in
+                block.exercises.contains { $0.id == exerciseID }
+            }?.name ?? ""
+            matches = [Hit(id: exerciseID, label: target.exerciseName, block: blockName)]
         } else {
-            blocks = workout.blocks
+            let blocks: [WorkoutBlock]
+            if let block, !block.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                switch resolveBlock(block, in: workout) {
+                case .none: return .notFound("I couldn't find a block called \"\(block)\".")
+                case .many(let options): return .ambiguous(ambiguity(block, options, kind: "blocks"))
+                case .one(let id): blocks = workout.blocks.filter { $0.id == id }
+                }
+            } else {
+                blocks = workout.blocks
+            }
+            matches = matchingExercises(exercise, in: blocks)
+            guard !matches.isEmpty else {
+                return .notFound("I couldn't find \"\(exercise)\" in the workout.")
+            }
         }
-
-        let matches = matchingExercises(exercise, in: blocks)
-        guard !matches.isEmpty else {
-            return .notFound("I couldn't find \"\(exercise)\" in the workout.")
-        }
-        guard replaceAll || matches.count == 1 else {
+        guard exerciseID != nil || replaceAll || matches.count == 1 else {
             return .ambiguous(ambiguity(exercise, matches, kind: "exercises"))
         }
 
-        let targets = replaceAll ? matches : [matches[0]]
+        let targets = replaceAll && exerciseID == nil ? matches : [matches[0]]
         for target in targets {
             guard applyReplacement(definition, to: target.id, in: &workout) else {
                 return .notFound("I couldn't replace \"\(target.label)\".")
@@ -728,21 +744,31 @@ final class WorkoutStore {
 
     /// Update one set (1-based `setNumber`) of a named exercise. Only the supplied fields change.
     @discardableResult
-    func updateSet(exerciseNamed exercise: String, setNumber: Int,
+    func updateSet(exerciseNamed exercise: String, setNumber: Int, setID: UUID? = nil,
                    reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double? = nil, rpe: Double?) -> EditOutcome {
         guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
-        let exID: UUID
-        switch resolveExercise(exercise, in: w) {
-        case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
-        case .one(let id): exID = id
-        case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
+        let targetSetID: UUID
+        if let setID {
+            guard w.allExercises.contains(where: { exercise in
+                exercise.prescription.sets.contains { $0.id == setID }
+            }) else {
+                return .notFound(missingTarget("set", name: "set \(setNumber) of \(exercise)", id: setID))
+            }
+            targetSetID = setID
+        } else {
+            let exID: UUID
+            switch resolveExercise(exercise, in: w) {
+            case .none: return .notFound("I couldn't find \"\(exercise)\" in the workout.")
+            case .one(let id): exID = id
+            case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
+            }
+            guard let ex = w.exercise(exID),
+                  setNumber >= 1, setNumber <= ex.prescription.sets.count else {
+                return .notFound("Set \(setNumber) doesn't exist for \(exercise).")
+            }
+            targetSetID = ex.prescription.sets[setNumber - 1].id
         }
-        guard let ex = w.allExercises.first(where: { $0.id == exID }),
-              setNumber >= 1, setNumber <= ex.prescription.sets.count else {
-            return .notFound("Set \(setNumber) doesn't exist for \(exercise).")
-        }
-        let setID = ex.prescription.sets[setNumber - 1].id
-        _ = w.updateSet(setID) { s in
+        _ = w.updateSet(targetSetID) { s in
             if let reps { s.reps = clampReps(reps) }
             if let load { s.load = clampLoad(load) }
             if let durationSeconds { s.duration = clampDuration(durationSeconds) }
@@ -757,11 +783,16 @@ final class WorkoutStore {
     /// THIS WORKOUT: choose which metrics an exercise logs + per-instance unit overrides. Rejects
     /// metrics the exercise doesn't support.
     @discardableResult
-    func setLoggingConfig(exerciseNamed name: String, enabled: [MetricType]?, units: [MetricType: MetricUnit] = [:]) -> EditOutcome {
+    func setLoggingConfig(
+        exerciseNamed name: String,
+        exerciseID: UUID? = nil,
+        enabled: [MetricType]?,
+        units: [MetricType: MetricUnit] = [:]
+    ) -> EditOutcome {
         guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
-        switch resolveExercise(name, in: w) {
-        case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
+        switch resolveExercise(name, id: exerciseID, in: w) {
+        case .none: return .notFound(missingTarget("exercise", name: name, id: exerciseID))
         case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
         case .one(let id): exID = id
         }
@@ -849,26 +880,48 @@ final class WorkoutStore {
     /// Set one metric's value on a planned set (value given in `unit`, stored canonically). Ensures
     /// the metric is selected/visible. Rejects unsupported metrics.
     @discardableResult
-    func setMetricValue(exerciseNamed name: String, setNumber: Int, metric: MetricType, value: Double, unit: MetricUnit?) -> EditOutcome {
+    func setMetricValue(
+        exerciseNamed name: String,
+        setNumber: Int,
+        setID: UUID? = nil,
+        metric: MetricType,
+        value: Double,
+        unit: MetricUnit?
+    ) -> EditOutcome {
         guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
-        let exID: UUID
-        switch resolveExercise(name, in: w) {
-        case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
-        case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
-        case .one(let id): exID = id
+        let exercise: PlannedExercise
+        let targetSetID: UUID
+        if let setID {
+            guard let owner = w.allExercises.first(where: { exercise in
+                exercise.prescription.sets.contains { $0.id == setID }
+            }) else {
+                return .notFound(missingTarget("set", name: "set \(setNumber) of \(name)", id: setID))
+            }
+            exercise = owner
+            targetSetID = setID
+        } else {
+            let exerciseID: UUID
+            switch resolveExercise(name, in: w) {
+            case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
+            case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
+            case .one(let id): exerciseID = id
+            }
+            guard let resolved = w.exercise(exerciseID) else { return .notFound("I couldn't find \"\(name)\".") }
+            guard setNumber >= 1, setNumber <= resolved.prescription.sets.count else {
+                return .notFound("Set \(setNumber) doesn't exist for \(resolved.exerciseName).")
+            }
+            exercise = resolved
+            targetSetID = resolved.prescription.sets[setNumber - 1].id
         }
-        guard let ex = w.exercise(exID) else { return .notFound("I couldn't find \"\(name)\".") }
-        guard ex.supportedMetrics.contains(metric) else {
-            return .notFound("\(ex.exerciseName) doesn't support \(metric.label.lowercased()).")
-        }
-        guard setNumber >= 1, setNumber <= ex.prescription.sets.count else {
-            return .notFound("Set \(setNumber) doesn't exist for \(ex.exerciseName).")
+        guard exercise.supportedMetrics.contains(metric) else {
+            return .notFound("\(exercise.exerciseName) doesn't support \(metric.label.lowercased()).")
         }
         // Parse side: an agent that names no unit means the storage unit, which is what the tool
         // schema tells it. Nothing here is shown to the athlete.
         let canonical = max(0, MetricConvert.toCanonical(value, metric, from: unit ?? metric.canonicalUnit))  // units:storage
-        w.updateExercise(exID) { e in
-            e.prescription.sets[setNumber - 1].values[metric] = canonical
+        w.updateExercise(exercise.id) { e in
+            guard let index = e.prescription.sets.firstIndex(where: { $0.id == targetSetID }) else { return }
+            e.prescription.sets[index].values[metric] = canonical
             if !e.selectedMetrics.contains(metric) { e.selectedMetrics = MetricType.allCases.filter { e.selectedMetrics.contains($0) || $0 == metric } }
         }
         return committed(apply(w, agentScope))
@@ -876,11 +929,11 @@ final class WorkoutStore {
 
     /// Remove a metric from an exercise this workout — unselect it and clear its values.
     @discardableResult
-    func removeMetric(exerciseNamed name: String, metric: MetricType) -> EditOutcome {
+    func removeMetric(exerciseNamed name: String, exerciseID: UUID? = nil, metric: MetricType) -> EditOutcome {
         guard var w = workout(agentScope) else { return .notFound("There's no workout yet.") }
         let exID: UUID
-        switch resolveExercise(name, in: w) {
-        case .none: return .notFound("I couldn't find \"\(name)\" in the workout.")
+        switch resolveExercise(name, id: exerciseID, in: w) {
+        case .none: return .notFound(missingTarget("exercise", name: name, id: exerciseID))
         case .many(let opts): return .ambiguous(ambiguity(name, opts, kind: "exercises"))
         case .one(let id): exID = id
         }
@@ -937,11 +990,11 @@ final class WorkoutStore {
     /// change, so a confirmation can never echo a workout the tool did not touch.
     func summary(_ scope: WorkoutEditScope) -> String {
         guard let w = workout(scope) else { return "No workout has been created yet." }
-        var lines = ["WORKOUT: \(w.title)" + (w.goal.map { " — goal: \($0)" } ?? "")]
+        var lines = ["WORKOUT [id: \(w.id.uuidString)]: \(w.title)" + (w.goal.map { " - goal: \($0)" } ?? "")]
         lines.append(contentsOf: guidanceSummary(w.guidance, indent: "  "))
         if w.blocks.isEmpty { lines.append("(no blocks yet)") }
         for (index, block) in w.blocks.enumerated() {
-            lines.append("BLOCK \(index + 1): \(block.name)" + (block.intent.map { " — intent: \($0)" } ?? ""))
+            lines.append("BLOCK \(index + 1) [id: \(block.id.uuidString)]: \(block.name)" + (block.intent.map { " - intent: \($0)" } ?? ""))
             lines.append(contentsOf: guidanceSummary(block.guidance, indent: "  "))
             if block.nodes.isEmpty { lines.append("  (empty)") }
             for node in block.nodes {
@@ -958,7 +1011,7 @@ final class WorkoutStore {
             let heading = label.flatMap { $0.isEmpty ? nil : $0 }.map { "\($0) [exercise: \(exercise.exerciseName)]" }
                 ?? exercise.exerciseName
             let identity = exercise.definitionId.map { " — catalog id: \($0)" } ?? " — custom/unmatched"
-            lines.append("\(indent)EXERCISE: \(heading)\(identity)")
+            lines.append("\(indent)EXERCISE [id: \(exercise.id.uuidString)]: \(heading)\(identity)")
             let metricDescriptions = exercise.selectedMetrics.map { metric in
                 let unit = displayUnit(metric, for: exercise)
                 return unit.short.isEmpty ? metric.label : "\(metric.label) (\(unit.short))"
@@ -984,7 +1037,7 @@ final class WorkoutStore {
                         values.append("\(metric.label)=blank")
                     }
                 }
-                lines.append("\(indent)  Set \(index + 1) [\(set.role.rawValue)]: \(values.isEmpty ? "no values" : values.joined(separator: ", "))")
+                lines.append("\(indent)  Set \(index + 1) [id: \(set.id.uuidString)] [\(set.role.rawValue)]: \(values.isEmpty ? "no values" : values.joined(separator: ", "))")
                 if let effort = set.effortTarget {
                     lines.append("\(indent)    Effort target: \(effortSummary(effort))")
                 }
@@ -1098,8 +1151,11 @@ final class WorkoutStore {
         }
     }
 
-    private func resolveExercise(_ name: String, in w: Workout) -> Match {
-        classify(matchingExercises(name, in: w.blocks))
+    /// Stable workout-instance IDs always win over names. If an ID is stale or invalid, callers fail
+    /// instead of falling back to a name that could select a different instance.
+    private func resolveExercise(_ name: String, id: UUID? = nil, in w: Workout) -> Match {
+        if let id { return w.exercise(id) == nil ? .none : .one(id) }
+        return classify(matchingExercises(name, in: w.blocks))
     }
 
     private func matchingExercises(_ name: String, in blocks: [WorkoutBlock]) -> [Hit] {
@@ -1117,7 +1173,8 @@ final class WorkoutStore {
         return exact.isEmpty ? fuzzy : exact
     }
 
-    private func resolveBlock(_ name: String, in w: Workout) -> Match {
+    private func resolveBlock(_ name: String, id: UUID? = nil, in w: Workout) -> Match {
+        if let id { return w.blocks.contains(where: { $0.id == id }) ? .one(id) : .none }
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
         var exact: [Hit] = [], fuzzy: [Hit] = []
         for b in w.blocks {
@@ -1128,6 +1185,11 @@ final class WorkoutStore {
             }
         }
         return classify(exact.isEmpty ? fuzzy : exact)
+    }
+
+    private func missingTarget(_ kind: String, name: String, id: UUID?) -> String {
+        if let id { return "I couldn't find the \(kind) with id \(id.uuidString) in the workout." }
+        return "I couldn't find \"\(name)\" in the workout."
     }
 
     private func applyReplacement(

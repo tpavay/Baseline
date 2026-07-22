@@ -61,6 +61,91 @@ struct WorkoutStoreTests {
         #expect(s.current?.allExercises.count == 2)
     }
 
+    @Test func idBasedExerciseMutationsTargetOneDuplicate() throws {
+        let store = store()
+        store.create(title: "Intervals", goal: nil)
+        store.addBlock(name: "Overload", intent: nil)
+        store.addBlock(name: "Recovery", intent: nil)
+        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 60)
+        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 120)
+
+        let runs = try #require(store.current?.blocks.first { $0.name == "Overload" }?.exercises)
+        let first = try #require(runs.first)
+        let second = try #require(runs.last)
+        let recoveryID = try #require(store.current?.blocks.first { $0.name == "Recovery" }?.id)
+
+        #expect(store.setLoggingConfig(
+            exerciseNamed: "not the target name",
+            exerciseID: second.id,
+            enabled: [.duration]
+        ).succeeded)
+        #expect(store.current?.exercise(first.id)?.selectedMetrics != [.duration])
+        #expect(store.current?.exercise(second.id)?.selectedMetrics == [.duration])
+
+        #expect(store.replaceExercise(
+            named: "not the target name",
+            exerciseID: first.id,
+            with: "Treadmill Run"
+        ).succeeded)
+        #expect(store.current?.exercise(first.id)?.exerciseName == "Treadmill Run")
+        #expect(store.current?.exercise(second.id)?.exerciseName == "Run")
+
+        #expect(store.moveExercise(
+            named: "not the target name",
+            exerciseID: second.id,
+            toBlockNamed: "not the destination name",
+            toBlockID: recoveryID
+        ).succeeded)
+        #expect(store.current?.blocks.first { $0.id == recoveryID }?.exercises.map(\.id) == [second.id])
+
+        #expect(store.removeMetric(
+            exerciseNamed: "not the target name",
+            exerciseID: second.id,
+            metric: .duration
+        ).succeeded)
+        #expect(store.current?.exercise(second.id)?.selectedMetrics.contains(.duration) == false)
+
+        #expect(store.removeExercise(named: "not the target name", exerciseID: first.id).succeeded)
+        #expect(store.current?.exercise(first.id) == nil)
+        #expect(store.current?.exercise(second.id) != nil)
+    }
+
+    @Test func idBasedSetMutationsTargetOneDuplicate() throws {
+        let store = store()
+        store.create(title: "Intervals", goal: nil)
+        store.addBlock(name: "Overload", intent: nil)
+        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 60)
+        store.addExercise(name: "Run", toBlockNamed: "Overload", sets: 1, reps: nil, load: nil, durationSeconds: 120)
+
+        let runs = try #require(store.current?.blocks.first { $0.name == "Overload" }?.exercises)
+        let first = try #require(runs.first)
+        let second = try #require(runs.last)
+        let secondSetID = try #require(second.prescription.sets.first?.id)
+
+        #expect(store.updateSet(
+            exerciseNamed: "not the target name",
+            setNumber: 99,
+            setID: secondSetID,
+            reps: nil,
+            load: nil,
+            durationSeconds: 180,
+            rpe: nil
+        ).succeeded)
+        #expect(store.current?.exercise(first.id)?.prescription.sets.first?.duration == 60)
+        #expect(store.current?.exercise(second.id)?.prescription.sets.first?.duration == 180)
+
+        #expect(store.setMetricValue(
+            exerciseNamed: "not the target name",
+            setNumber: 99,
+            setID: secondSetID,
+            metric: .distance,
+            value: 1,
+            unit: .kilometers
+        ).succeeded)
+        #expect(store.current?.exercise(first.id)?.prescription.sets.first?.distance == nil)
+        #expect(store.current?.exercise(second.id)?.prescription.sets.first?.distance == 1_000)
+    }
+
     @Test func replaceAllExercisesPreservesIdentityAndPrescription() throws {
         let s = store()
         s.create(title: "Outdoor Run", goal: nil)
