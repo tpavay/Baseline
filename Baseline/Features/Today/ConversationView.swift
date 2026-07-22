@@ -116,6 +116,7 @@ private struct ConversationView: View {
                     LazyVStack(spacing: 12) {
                         if service.log.isEmpty { greeting }
                         ForEach(service.log) { bubble($0) }
+                        if service.canUndoLatestWorkoutMutation { undoMutationButton }
                         if service.isThinking { typing }
                     }
                     .padding(16)
@@ -124,6 +125,9 @@ private struct ConversationView: View {
                 .scrollDismissesKeyboard(.interactively)   // swipe down on the chat to hide the keyboard
                 .onChange(of: service.log.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
                 .onChange(of: service.isThinking) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: service.canUndoLatestWorkoutMutation) { _, _ in
+                    withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
             }
             // Openers, offered while the greeting is, so the two retire together the moment the
             // athlete says anything.
@@ -192,6 +196,18 @@ private struct ConversationView: View {
         .padding(.horizontal, 14).padding(.vertical, 12)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var undoMutationButton: some View {
+        Button {
+            service.undoLatestWorkoutMutation()
+        } label: {
+            Label("Undo last edit", systemImage: "arrow.uturn.backward")
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.accent))
+        .accessibilityHint("Restores the workout to its state before the last Baseline edit")
+        .transition(.opacity)
     }
 
     private var composer: some View {

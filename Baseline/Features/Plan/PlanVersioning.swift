@@ -61,6 +61,147 @@ struct PlanVersion: Identifiable, Codable, Equatable, Sendable {
     var actor: PlanActor
     var operation: PlanOperation
     var snapshot: ScheduleSnapshot
+    var workoutMutationReceipt: WorkoutMutationReceipt? = nil
+}
+
+// MARK: - Workout mutation contract
+
+/// The shared scope vocabulary for every conversational workout mutation.
+///
+/// A target always carries its authoritative revision token. The caller repeats that token as
+/// `expectedRevisionToken`; keeping both values makes a delayed request self-describing while the
+/// repository still verifies it against current persisted state immediately before writing.
+enum WorkoutMutationScope: String, Codable, Equatable, Sendable {
+    case plan
+    case sessionWorkout
+    case performedLog
+    case transient
+}
+
+struct WorkoutMutationTarget: Codable, Equatable, Sendable {
+    var scope: WorkoutMutationScope
+    var scheduledWorkoutID: UUID?
+    var sessionID: UUID?
+    var workoutID: UUID
+    var revisionToken: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case scope
+        case scheduledWorkoutID = "scheduled_workout_id"
+        case sessionID = "session_id"
+        case workoutID = "workout_id"
+        case revisionToken = "revision_token"
+    }
+}
+
+/// A domain-level description of what changed. Later composite waves append multiple changes to this
+/// same value, so one receipt and one undo continue to represent one user intent.
+struct WorkoutMutationDiff: Codable, Equatable, Sendable {
+    struct Change: Codable, Equatable, Sendable {
+        enum Kind: String, Codable, Equatable, Sendable {
+            case add, remove, move, replace, edit
+        }
+
+        var kind: Kind
+        var summary: String
+        var entityID: UUID?
+
+        enum CodingKeys: String, CodingKey {
+            case kind, summary
+            case entityID = "entity_id"
+        }
+    }
+
+    var changes: [Change]
+}
+
+/// Internal input shared by every workout-content tool. Validation and transformation happen against
+/// one authoritative value before this request crosses the persistence boundary.
+struct WorkoutMutationRequest: Codable, Equatable, Sendable {
+    var mutationID: UUID
+    var target: WorkoutMutationTarget
+    var expectedRevisionToken: UUID
+    var actor: PlanActor
+    var reason: String
+    var diff: WorkoutMutationDiff
+    var dryRun: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case mutationID = "mutation_id"
+        case target
+        case expectedRevisionToken = "expected_revision_token"
+        case actor, reason, diff
+        case dryRun = "dry_run"
+    }
+}
+
+/// Durable proof of one applied workout mutation. The mutation ID names exactly one persisted plan
+/// version or session mutation version, and undo is allowed only while `afterRevisionToken` remains
+/// authoritative for that same target.
+struct WorkoutMutationReceipt: Codable, Equatable, Sendable, Identifiable {
+    var mutationID: UUID
+    var scope: WorkoutMutationScope
+    var scheduledWorkoutID: UUID?
+    var sessionID: UUID?
+    var workoutID: UUID
+    var beforeRevisionToken: UUID
+    var afterRevisionToken: UUID
+    var diff: WorkoutMutationDiff
+    var actor: PlanActor
+    var undoAvailable: Bool
+
+    var id: UUID { mutationID }
+
+    enum CodingKeys: String, CodingKey {
+        case mutationID = "mutation_id"
+        case scope
+        case scheduledWorkoutID = "scheduled_workout_id"
+        case sessionID = "session_id"
+        case workoutID = "workout_id"
+        case beforeRevisionToken = "before_revision_token"
+        case afterRevisionToken = "after_revision_token"
+        case diff, actor
+        case undoAvailable = "undo_available"
+    }
+}
+
+enum WorkoutMutationError: String, Error, Codable, Equatable, Sendable {
+    case notFound
+    case invalidTarget
+    case staleRevision
+    case activeSessionConflict
+    case undoUnavailable
+    case persistenceFailure
+}
+
+enum WorkoutMutationResult: Equatable, Sendable {
+    case applied(WorkoutMutationReceipt)
+    case preview(WorkoutMutationReceipt)
+    case rejected(WorkoutMutationError)
+}
+
+enum SessionMutationKind: String, Codable, Equatable, Sendable {
+    case sessionWorkout
+    case performedLog
+}
+
+enum SessionMutationSnapshot: Codable, Equatable, Sendable {
+    case sessionWorkout(Workout)
+    case performedLog(WorkoutLog)
+}
+
+/// Append-only persisted history for workout content and performed facts owned by one session.
+struct SessionMutationVersion: Codable, Equatable, Sendable, Identifiable {
+    var id: UUID
+    var sessionID: UUID
+    var mutationID: UUID
+    var kind: SessionMutationKind
+    var beforeSnapshot: SessionMutationSnapshot
+    var afterRevisionToken: UUID
+    var actor: PlanActor
+    var timestamp: Date
+    var diff: WorkoutMutationDiff
+    var receipt: WorkoutMutationReceipt
 }
 
 /// A confirmation-gated operation, persisted until the caller resubmits with its id (a bare UUID binds

@@ -45,6 +45,7 @@ final class ConversationService {
     // "What Baseline knows" inspector.
     private(set) var latestDecision: DecisionEngine.Result?
     private(set) var latestPlan: PlanningEngine.Plan?
+    private(set) var latestWorkoutMutationReceipt: WorkoutMutationReceipt?
     private(set) var toolActivity: [ToolEvent] = []
 
     private let tools: AgentTools
@@ -69,6 +70,10 @@ final class ConversationService {
         self.surface = scope == .workoutImport ? .workoutImport : surface
     }
 
+    var canUndoLatestWorkoutMutation: Bool {
+        latestWorkoutMutationReceipt?.undoAvailable == true && !isThinking
+    }
+
     func send(_ text: String) {
         let userText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !userText.isEmpty, !isThinking else { return }
@@ -85,6 +90,28 @@ final class ConversationService {
             guard let self else { return }
             let completed = await runLoop()
             if !completed { transcript.removeLast(transcript.count - checkpoint) }
+            isThinking = false
+        }
+    }
+
+    /// Applies the exact persisted inverse represented by the latest receipt. This deliberately
+    /// bypasses the model: undo is a deterministic user action bound to one mutation and revision.
+    func undoLatestWorkoutMutation() {
+        guard canUndoLatestWorkoutMutation,
+              let receipt = latestWorkoutMutationReceipt else { return }
+        isThinking = true
+        Task { [weak self] in
+            guard let self else { return }
+            let call = AgentTools.Call.undoWorkoutMutation(
+                mutationID: receipt.mutationID,
+                expectedRevisionToken: receipt.afterRevisionToken
+            )
+            let response = await tools.execute(call)
+            record(call, response)
+            if response.mutationReceipt == nil {
+                latestWorkoutMutationReceipt = nil
+            }
+            log.append(Message(role: .baseline, text: response.text))
             isThinking = false
         }
     }
@@ -203,6 +230,7 @@ final class ConversationService {
     private func record(_ call: AgentTools.Call, _ response: AgentTools.Response) {
         if let d = response.decision { latestDecision = d }
         if let p = response.plan { latestPlan = p }
+        if let receipt = response.mutationReceipt { latestWorkoutMutationReceipt = receipt }
         if call.showsInActivityFeed { toolActivity.append(ToolEvent(label: call.activityLabel)) }
     }
 

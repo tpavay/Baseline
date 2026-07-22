@@ -6,7 +6,13 @@
  *
  * Workout target convention: *_id fields are stable instance IDs returned by get_current_workout.
  * When supplied they take precedence over the required human-readable name/number fallback.
+ * Every workout-content mutation also requires the revision token returned by that same read.
  */
+const expectedRevisionToken = {
+  type: "string",
+  description: "Exact revision_token from get_current_workout. The mutation is rejected as stale if the workout changed since that read.",
+};
+
 export const TOOLS = [
   {
     name: "get_today",
@@ -167,8 +173,20 @@ export const TOOLS = [
   },
   {
     name: "get_current_workout",
-    description: "Read the current structured workout (blocks → exercises → sets), including stable IDs for the workout, every block, exercise instance, and set. Call before editing and pass these IDs to mutation tools for precise targeting, especially when names repeat.",
+    description: "Read the current structured workout, including its mutation scope, stable IDs for every block, exercise instance, and set, plus revision_token. Call before editing and pass the IDs plus revision_token to mutation tools. A stale token is rejected without writing.",
     input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "undo_workout_mutation",
+    description: "Undo exactly one workout edit using its mutation receipt. This succeeds only while that mutation is still the plan head and expected_revision_token still matches its after_revision_token. If any later edit or conflicting session intervened, it rejects as stale instead of reverting newer work.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mutation_id: { type: "string", description: "mutation_id from the exact mutation receipt to undo." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["mutation_id", "expected_revision_token"],
+    },
   },
   {
     name: "start_workout",
@@ -283,8 +301,9 @@ export const TOOLS = [
         distance_unit: { type: "string", description: "m | km | mi" },
         load_unit: { type: "string", description: "kg | lb" },
         duration_unit: { type: "string", description: "sec | min" },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise"],
+      required: ["exercise", "expected_revision_token"],
     },
   },
   {
@@ -315,8 +334,9 @@ export const TOOLS = [
         metric: { type: "string", description: "reps | load | duration | distance | calories | power | pace | heartRate | cadence | rpe" },
         value: { type: "number" },
         unit: { type: "string", description: "Unit of `value` (e.g. mi, km, kg, lb, min). Defaults to canonical." },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "set_number", "metric", "value"],
+      required: ["exercise", "set_number", "metric", "value", "expected_revision_token"],
     },
   },
   {
@@ -328,8 +348,9 @@ export const TOOLS = [
         exercise: { type: "string" },
         exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
         metric: { type: "string" },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "metric"],
+      required: ["exercise", "metric", "expected_revision_token"],
     },
   },
   {
@@ -341,6 +362,7 @@ export const TOOLS = [
         title: { type: "string" },
         goal: { type: "string", description: "Optional overall goal." },
         replace_existing: { type: "boolean", description: "Set true ONLY after the athlete confirms replacing an existing workout." },
+        expected_revision_token: { ...expectedRevisionToken, description: "Required when replace_existing is true; use revision_token from get_current_workout. Omit only when no workout exists yet." },
       },
       required: ["title"],
     },
@@ -350,8 +372,8 @@ export const TOOLS = [
     description: "Add a semantic block to the workout (e.g. 'Warm-up', 'Strength', 'Metcon', 'Stations', 'Cooldown').",
     input_schema: {
       type: "object",
-      properties: { name: { type: "string" }, intent: { type: "string", description: "Optional purpose, e.g. 'hypertrophy'." } },
-      required: ["name"],
+      properties: { name: { type: "string" }, intent: { type: "string", description: "Optional purpose, e.g. 'hypertrophy'." }, expected_revision_token: expectedRevisionToken },
+      required: ["name", "expected_revision_token"],
     },
   },
   {
@@ -367,8 +389,9 @@ export const TOOLS = [
         load: { type: "number", description: "Resistance per set." },
         duration_seconds: { type: "integer", description: "For time-based work / holds." },
         distance_m: { type: "number", description: "Distance in METERS (e.g. 150 for a 150m carry, 1000 for a 1km row). Use this for distance work — never put the distance in the exercise name." },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["block", "name"],
+      required: ["block", "name", "expected_revision_token"],
     },
   },
   {
@@ -381,8 +404,9 @@ export const TOOLS = [
         exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
         to_block: { type: "string" },
         to_block_id: { type: "string", description: "Stable destination block ID from get_current_workout. Takes precedence over to_block when supplied." },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "to_block"],
+      required: ["exercise", "to_block", "expected_revision_token"],
     },
   },
   {
@@ -396,8 +420,9 @@ export const TOOLS = [
         replacement: { type: "string", description: "Replacement exercise from the catalog." },
         block: { type: "string", description: "Optional block name to target one duplicate." },
         replace_all: { type: "boolean", description: "Replace every matching instance. Use when the athlete says all/every." },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "replacement"],
+      required: ["exercise", "replacement", "expected_revision_token"],
     },
   },
   {
@@ -408,8 +433,9 @@ export const TOOLS = [
       properties: {
         exercise: { type: "string" },
         exercise_id: { type: "string", description: "Stable exercise instance ID from get_current_workout. Takes precedence over exercise when supplied." },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise"],
+      required: ["exercise", "expected_revision_token"],
     },
   },
   {
@@ -419,8 +445,9 @@ export const TOOLS = [
       type: "object",
       properties: {
         choice: { type: "string", description: "The current choice label, or an unambiguous part of it." },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["choice"],
+      required: ["choice", "expected_revision_token"],
     },
   },
   {
@@ -437,8 +464,9 @@ export const TOOLS = [
         duration_seconds: { type: "integer" },
         distance_m: { type: "number", description: "Distance in METERS." },
         rpe: { type: "number" },
+        expected_revision_token: expectedRevisionToken,
       },
-      required: ["exercise", "set_number"],
+      required: ["exercise", "set_number", "expected_revision_token"],
     },
   },
 ];
