@@ -148,6 +148,7 @@ Selection never relies on color alone.
 Single selection replaces the previous ID.
 Multiple selection toggles an unbounded set.
 Disabled rows cannot mutate selection.
+Callers may override the default search placeholder and receive an optional post-selection callback after each enabled row tap, which single-select feature pickers use to dismiss on selection.
 Feature screens provide data, labels, icons, and disabled reasons without rebuilding interaction behavior.
 
 ## App icon
