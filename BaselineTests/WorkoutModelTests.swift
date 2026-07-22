@@ -415,6 +415,50 @@ struct WorkoutModelTests {
         #expect(group.children.flatMap(\.exercises).map { $0.prescription.sets.first?.reps } == [12, 12])
     }
 
+    // MARK: - Shared group round expansion
+
+    /// The round selector and the agent's active-session snapshot must expose identical rounds:
+    /// while logging, an `.until` group shows completed rounds plus the one in progress, so work
+    /// the agent logs is always visible and editable in the live UI.
+    @Test func untilGroupRoundsMatchTheRoundSelectorWhileLogging() {
+        var run = PlannedExercise(exerciseName: "Run")
+        run.prescription.sets = [PlannedSet(distance: 400)]
+        var group = WorkoutGroup(label: "AMRAP", children: [
+            .exercise(run),
+            .rest(PlannedRest(durationSeconds: 60)),
+        ])
+        group.execution.repetition = .until(seconds: 1_200)
+
+        var log = WorkoutLog()
+        #expect(group.iterationCount(log: log, isLogging: true) == 1)
+        #expect(group.iterationCount(log: nil, isLogging: true) == 1)
+
+        // A set logged ahead in round 1 does not open round 2 until the round completes.
+        let ahead = SetLog(groupID: group.id, iteration: 1, values: MetricValues())
+        log.logSet(ahead, forPlanned: run.id, name: run.exerciseName)
+        #expect(group.iterationCount(log: log, isLogging: true) == 1)
+
+        log.upsertGroupLog(group.id) { $0.completedIterations = 2 }
+        #expect(group.iterationCount(log: log, isLogging: true) == 3)
+        #expect(group.iterationCount(log: log, isLogging: false) == 2)
+
+        // Rest nodes carry no loggable work; the round holds only the exercise.
+        #expect(group.exercises(forIteration: 3, choiceSelections: [:]).map(\.id) == [run.id])
+    }
+
+    @Test func childCadenceGroupCyclesOneExercisePerRound() {
+        let bike = PlannedExercise(exerciseName: "Bike")
+        let row = PlannedExercise(exerciseName: "Row")
+        var group = WorkoutGroup(label: "EMOM", children: [.exercise(bike), .exercise(row)])
+        group.execution.repetition = .count(4)
+        group.execution.cadence = StartCadence(intervalSeconds: 60, scope: .child)
+
+        #expect(group.iterationCount(log: nil, isLogging: true) == 4)
+        #expect(group.exercises(forIteration: 1, choiceSelections: [:]).map(\.id) == [bike.id])
+        #expect(group.exercises(forIteration: 2, choiceSelections: [:]).map(\.id) == [row.id])
+        #expect(group.exercises(forIteration: 3, choiceSelections: [:]).map(\.id) == [bike.id])
+    }
+
     // MARK: - Validation
 
     @Test func invalidEditsReturnFalse() {

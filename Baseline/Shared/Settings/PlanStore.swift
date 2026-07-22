@@ -70,6 +70,14 @@ final class PlanStore {
     func resolveSessionDecision(_ id: UUID) { repo.resolveSessionDecision(forScheduled: id); reload() }
     func resolveAbandonedSessionDecision(_ id: UUID) { repo.resolveAbandonedSessionDecision(forScheduled: id); reload() }
     func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); reload() }
+    @discardableResult func updateSessionLog(
+        _ id: UUID,
+        request: WorkoutMutationRequest,
+        log: WorkoutLog
+    ) -> WorkoutMutationResult {
+        defer { reload() }
+        return repo.updateSessionLog(forScheduled: id, request: request, log: log)
+    }
     /// Store the session's own copy of the planned workout (a session-scoped mid-workout edit; no revision).
     func setSessionWorkout(_ id: UUID, _ workout: Workout) { repo.setSessionWorkout(forScheduled: id, workout) }
 
@@ -102,12 +110,17 @@ final class PlanStore {
             actor: actor
         )
     }
-    @discardableResult func applyPerformedLogMutation(
-        _ request: WorkoutMutationRequest,
-        log: WorkoutLog
+    @discardableResult func undoSessionMutation(
+        mutationID: UUID,
+        expectedRevisionToken: UUID,
+        actor: PlanActor = .agent
     ) -> WorkoutMutationResult {
         defer { reload() }
-        return repo.applyPerformedLogMutation(request, log: log)
+        return repo.undoSessionMutation(
+            mutationID: mutationID,
+            expectedRevisionToken: expectedRevisionToken,
+            actor: actor
+        )
     }
     func sessionMutationVersions(sessionID: UUID, limit: Int = 100) -> [SessionMutationVersion] {
         repo.sessionMutationVersions(sessionID: sessionID, limit: limit)
@@ -160,11 +173,28 @@ final class PlanStore {
             pushSessionWorkout: { [weak self] w in self?.setSessionWorkout(id, w) },
             pushLog: { [weak self] l in self?.updateSessionLog(id) { $0 = l } },
             mutationTarget: { [weak self] scope in self?.mutationTarget(forScheduled: id, scope: scope) },
+            activeSession: { [weak self] in
+                guard let session = self?.session(for: id),
+                      session.status == .active || session.status == .paused else { return nil }
+                return session
+            },
+            performedLogMutationTarget: { [weak self] in
+                self?.performedLogMutationTarget(forScheduled: id)
+            },
             applyMutation: { [weak self] request, workout, log in
                 self?.editContent(request, workout: workout, log: log) ?? .rejected(.notFound)
             },
+            applyLogMutation: { [weak self] request, log in
+                self?.updateSessionLog(id, request: request, log: log) ?? .rejected(.notFound)
+            },
             undoMutation: { [weak self] mutationID, expectedRevisionToken in
                 self?.undoWorkoutMutation(
+                    mutationID: mutationID,
+                    expectedRevisionToken: expectedRevisionToken
+                ) ?? .rejected(.notFound)
+            },
+            undoSessionMutation: { [weak self] mutationID, expectedRevisionToken in
+                self?.undoSessionMutation(
                     mutationID: mutationID,
                     expectedRevisionToken: expectedRevisionToken
                 ) ?? .rejected(.notFound)
@@ -214,6 +244,19 @@ final class PlanStore {
                 revisionToken: session.sessionWorkoutRevisionID ?? scheduled.workoutRevisionID
             )
         }
+    }
+
+    private func performedLogMutationTarget(forScheduled id: UUID) -> WorkoutMutationTarget? {
+        guard let scheduled = scheduledWorkout(id),
+              let session = session(for: id),
+              session.status == .active || session.status == .paused else { return nil }
+        return WorkoutMutationTarget(
+            scope: .performedLog,
+            scheduledWorkoutID: id,
+            sessionID: session.id,
+            workoutID: scheduled.workoutID,
+            revisionToken: session.performedLogRevisionID ?? session.id
+        )
     }
 
     /// Create a brand-new scheduled workout for today (used when the agent builds one and nothing is

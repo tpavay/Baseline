@@ -1,6 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { LEGACY_TOOLS, TOOLS, servedToolsetForClientSchema, toolsForClientSchema } = require("../lib/tools");
+const {
+  LEGACY_TOOLS,
+  TOOLS,
+  WAVE5_TOOLS,
+  servedToolsetForClientSchema,
+  toolsForClientSchema,
+} = require("../lib/tools");
 
 test("replace_exercise is an atomic duplicate-safe tool", () => {
   const tool = TOOLS.find((candidate) => candidate.name === "replace_exercise");
@@ -96,7 +102,7 @@ test("Wave 5 structure schemas are ID-only, positioned, purge-aware, and undoabl
 });
 
 test("Wave 5 schemas are capability-gated for installed clients", () => {
-  assert.equal(toolsForClientSchema("5"), TOOLS);
+  assert.equal(toolsForClientSchema("5"), WAVE5_TOOLS);
   assert.equal(toolsForClientSchema(undefined), LEGACY_TOOLS);
 
   // The gate is monotonic: a future client version bump keeps the current schema, while malformed
@@ -112,7 +118,7 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(toolsForClientSchema(null), LEGACY_TOOLS);
 
   assert.equal(servedToolsetForClientSchema("5"), "wave5");
-  assert.equal(servedToolsetForClientSchema("7"), "wave5");
+  assert.equal(servedToolsetForClientSchema("7"), "wave6");
   assert.equal(servedToolsetForClientSchema("4"), "legacy");
   assert.equal(servedToolsetForClientSchema(undefined), "legacy");
 
@@ -128,6 +134,67 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
     LEGACY_TOOLS.find((tool) => tool.name === "remove_exercise").input_schema.required,
     ["exercise", "expected_revision_token"]
   );
+});
+
+test("Wave 6 performed logging is distinct, unit-safe, and capability-gated", () => {
+  const performedNames = [
+    "get_active_session",
+    "upsert_performed_set",
+    "set_performed_set_outcome",
+    "add_extra_performed_set",
+    "update_extra_performed_set",
+    "delete_extra_performed_set",
+    "add_exercise_session_note",
+    "undo_session_mutation",
+  ];
+  const wave6Names = new Set(TOOLS.map((tool) => tool.name));
+  const wave5Names = new Set(WAVE5_TOOLS.map((tool) => tool.name));
+
+  for (const name of performedNames) {
+    assert.equal(wave6Names.has(name), true, `${name} should be served to Wave 6 clients`);
+    assert.equal(wave5Names.has(name), false, `${name} should not leak to Wave 5 clients`);
+  }
+
+  for (const name of ["upsert_performed_set", "add_extra_performed_set", "update_extra_performed_set"]) {
+    const tool = TOOLS.find((candidate) => candidate.name === name);
+    const valueText = tool.input_schema.properties.values.items.properties.value_text;
+    assert.equal(valueText.type, "string");
+    assert.match(valueText.description, /athlete's quantity wording/i);
+    assert.match(valueText.description, /unit/i);
+  }
+
+  const outcome = TOOLS.find((tool) => tool.name === "set_performed_set_outcome");
+  assert.deepEqual(outcome.input_schema.properties.outcome.enum, ["pending", "completed", "skipped"]);
+  assert.ok(outcome.input_schema.properties.planned_set_id);
+  assert.ok(outcome.input_schema.properties.performed_set_id);
+
+  // The schema must reject exactly what the iOS mapper rejects: performed_set_id combined with any
+  // planned-target field, and group_id or iteration supplied alone.
+  assert.deepEqual(outcome.input_schema.oneOf, [
+    {
+      required: ["performed_set_id"],
+      not: {
+        anyOf: [
+          { required: ["exercise_instance_id"] },
+          { required: ["planned_set_id"] },
+          { required: ["group_id"] },
+          { required: ["iteration"] },
+        ],
+      },
+    },
+    {
+      required: ["exercise_instance_id", "planned_set_id"],
+      not: { required: ["performed_set_id"] },
+    },
+  ]);
+  const pairing = { group_id: ["iteration"], iteration: ["group_id"] };
+  for (const name of ["set_performed_set_outcome", "upsert_performed_set", "add_extra_performed_set"]) {
+    const tool = TOOLS.find((candidate) => candidate.name === name);
+    assert.deepEqual(tool.input_schema.dependencies, pairing, `${name} should pair group_id with iteration`);
+  }
+
+  assert.equal(toolsForClientSchema("6"), TOOLS);
+  assert.equal(servedToolsetForClientSchema("6"), "wave6");
 });
 
 test("Wave 4 planned-set schemas are ID-only and explicit about clearing", () => {

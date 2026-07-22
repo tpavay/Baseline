@@ -74,10 +74,14 @@ final class WorkoutStore {
         let pushSessionWorkout: (Workout) -> Void     // mid-workout edit → session copy only (no revision)
         let pushLog: (WorkoutLog) -> Void             // log a set → the session log
         let mutationTarget: (WorkoutEditScope) -> WorkoutMutationTarget?
+        let activeSession: () -> WorkoutSession?
+        let performedLogMutationTarget: () -> WorkoutMutationTarget?
         /// The optional log is a session-scoped companion write (a purged logged actual) that must be
         /// versioned and undone together with the workout content it belongs to.
         let applyMutation: (WorkoutMutationRequest, Workout, WorkoutLog?) -> WorkoutMutationResult
+        let applyLogMutation: (WorkoutMutationRequest, WorkoutLog) -> WorkoutMutationResult
         let undoMutation: (UUID, UUID) -> WorkoutMutationResult
+        let undoSessionMutation: (UUID, UUID) -> WorkoutMutationResult
         let start: () -> Void                         // begin the session in the plan
         let complete: () -> Void                      // freeze the completed log
         let discard: () -> Void
@@ -94,8 +98,12 @@ final class WorkoutStore {
             pushSessionWorkout: @escaping (Workout) -> Void,
             pushLog: @escaping (WorkoutLog) -> Void,
             mutationTarget: ((WorkoutEditScope) -> WorkoutMutationTarget?)? = nil,
+            activeSession: (() -> WorkoutSession?)? = nil,
+            performedLogMutationTarget: (() -> WorkoutMutationTarget?)? = nil,
             applyMutation: ((WorkoutMutationRequest, Workout, WorkoutLog?) -> WorkoutMutationResult)? = nil,
+            applyLogMutation: ((WorkoutMutationRequest, WorkoutLog) -> WorkoutMutationResult)? = nil,
             undoMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
+            undoSessionMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
             start: @escaping () -> Void,
             complete: @escaping () -> Void,
             discard: @escaping () -> Void,
@@ -120,6 +128,8 @@ final class WorkoutStore {
                     revisionToken: fallbackRevisionToken
                 )
             }
+            self.activeSession = activeSession ?? { nil }
+            self.performedLogMutationTarget = performedLogMutationTarget ?? { nil }
             self.applyMutation = applyMutation ?? { request, workout, log in
                 if isSessionDecisionPending() {
                     pushSessionWorkout(workout)
@@ -141,7 +151,23 @@ final class WorkoutStore {
                 )
                 return .applied(receipt)
             }
+            self.applyLogMutation = applyLogMutation ?? { request, log in
+                pushLog(log)
+                return .applied(WorkoutMutationReceipt(
+                    mutationID: request.mutationID,
+                    scope: .performedLog,
+                    scheduledWorkoutID: request.target.scheduledWorkoutID,
+                    sessionID: request.target.sessionID,
+                    workoutID: request.target.workoutID,
+                    beforeRevisionToken: request.expectedRevisionToken,
+                    afterRevisionToken: UUID(),
+                    diff: request.diff,
+                    actor: request.actor,
+                    undoAvailable: false
+                ))
+            }
             self.undoMutation = undoMutation ?? { _, _ in .rejected(.undoUnavailable) }
+            self.undoSessionMutation = undoSessionMutation ?? { _, _ in .rejected(.undoUnavailable) }
             self.start = start
             self.complete = complete
             self.discard = discard
@@ -1873,6 +1899,491 @@ final class WorkoutStore {
         }
     }
 
+    // MARK: - Performed-log tools
+
+    private struct ExerciseSessionContext {
+        var exercise: PlannedExercise
+        var groupID: UUID?
+        var iteration: Int?
+    }
+
+    private enum PerformedValuesResult {
+        case success([MetricType: Double])
+        case failure(String)
+    }
+
+    /// The active session payload and all IDs the model needs to target actual work precisely.
+    func activeSessionSnapshot() -> ActiveSessionToolSnapshot? {
+        guard let sink,
+              let session = sink.activeSession(),
+              let workout = session.workout ?? current,
+              let sessionTarget = mutationTarget(.session),
+              let logTarget = sink.performedLogMutationTarget(),
+              let scheduledID = logTarget.scheduledWorkoutID,
+              let sessionID = logTarget.sessionID,
+              sessionID == session.id else { return nil }
+
+        let contexts = exerciseSessionContexts(in: workout, log: session.log)
+        var orderedExerciseIDs: [UUID] = []
+        for context in contexts where !orderedExerciseIDs.contains(context.exercise.id) {
+            orderedExerciseIDs.append(context.exercise.id)
+        }
+
+        let exercises = orderedExerciseIDs.compactMap { exerciseID -> ActiveSessionToolSnapshot.Exercise? in
+            guard let exercise = contexts.first(where: { $0.exercise.id == exerciseID })?.exercise else { return nil }
+            let performed = session.log.performed(forPlanned: exerciseID)
+            let targets = contexts.filter { $0.exercise.id == exerciseID }.flatMap { context in
+                exercise.prescription.sets.map { set in
+                    let actual = session.log.setLog(
+                        forPlanned: exerciseID,
+                        plannedSetID: set.id,
+                        groupID: context.groupID,
+                        iteration: context.iteration
+                    )
+                    return ActiveSessionToolSnapshot.PlannedSetTarget(
+                        plannedSetID: set.id,
+                        groupID: context.groupID,
+                        iteration: context.iteration,
+                        plannedValues: set.expectedValues(iteration: context.iteration ?? 1),
+                        performedSetID: actual?.id,
+                        performedValues: actual?.values ?? MetricValues(),
+                        outcome: actual?.outcome ?? .pending
+                    )
+                }
+            }
+            let extraSets = (performed?.setLogs ?? []).filter { $0.plannedSetID == nil }.map { set in
+                ActiveSessionToolSnapshot.ExtraPerformedSet(
+                    performedSetID: set.id,
+                    groupID: set.groupID,
+                    iteration: set.iteration,
+                    values: set.values,
+                    outcome: set.outcome
+                )
+            }
+            return ActiveSessionToolSnapshot.Exercise(
+                exerciseInstanceID: exercise.id,
+                catalogDefinitionID: exercise.definitionId,
+                name: exercise.exerciseName,
+                selectedMetrics: exercise.selectedMetrics,
+                plannedSets: targets,
+                extraPerformedSets: extraSets,
+                notes: performed?.athleteNotes ?? []
+            )
+        }
+
+        return ActiveSessionToolSnapshot(
+            scope: .performedLog,
+            scheduledWorkoutID: scheduledID,
+            sessionID: sessionID,
+            workoutID: logTarget.workoutID,
+            workoutLogID: session.log.id,
+            sessionStatus: session.status,
+            startedAt: session.startedAt,
+            sessionWorkoutRevisionToken: sessionTarget.revisionToken,
+            performedLogRevisionToken: logTarget.revisionToken,
+            exercises: exercises
+        )
+    }
+
+    func upsertPerformedSet(
+        exerciseInstanceID: UUID,
+        plannedSetID: UUID,
+        groupID: UUID?,
+        iteration: Int?,
+        values: [PerformedMetricInput],
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard let workout = current,
+              let context = plannedSetContext(
+                  exerciseInstanceID: exerciseInstanceID,
+                  plannedSetID: plannedSetID,
+                  groupID: groupID,
+                  iteration: iteration,
+                  workout: workout
+              ) else {
+            return .notFound("I couldn't find that planned set, group, and iteration in the active session.")
+        }
+        switch parsedPerformedValues(values, for: context.exercise) {
+        case .failure(let message):
+            return .notFound(message)
+        case .success(let parsed):
+            return mutatePerformedLog(
+                expectedRevisionToken: expectedRevisionToken,
+                reason: "Log actual values for \(context.exercise.exerciseName)",
+                diff: .init(changes: [
+                    .init(kind: .edit, summary: "Log actual values for \(context.exercise.exerciseName)", entityID: plannedSetID),
+                ])
+            ) { log in
+                log.upsertSetLog(
+                    forPlanned: exerciseInstanceID,
+                    name: context.exercise.exerciseName,
+                    plannedSetID: plannedSetID,
+                    groupID: groupID,
+                    iteration: iteration
+                ) { actual in
+                    for (metric, value) in parsed { actual.values[metric] = value }
+                }
+                return nil
+            }
+        }
+    }
+
+    func setPerformedSetOutcome(
+        target: PerformedSetTarget,
+        outcome: SetLogOutcome,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard let workout = current else { return .notFound("There isn't an active session to log.") }
+        switch target {
+        case .planned(let exerciseID, let setID, let groupID, let iteration):
+            guard let context = plannedSetContext(
+                exerciseInstanceID: exerciseID,
+                plannedSetID: setID,
+                groupID: groupID,
+                iteration: iteration,
+                workout: workout
+            ) else {
+                return .notFound("I couldn't find that planned set, group, and iteration in the active session.")
+            }
+            return mutatePerformedLog(
+                expectedRevisionToken: expectedRevisionToken,
+                reason: "Set \(context.exercise.exerciseName) outcome to \(outcome.rawValue)",
+                diff: .init(changes: [
+                    .init(kind: .edit, summary: "Set performed-set outcome to \(outcome.rawValue)", entityID: setID),
+                ])
+            ) { log in
+                log.upsertSetLog(
+                    forPlanned: exerciseID,
+                    name: context.exercise.exerciseName,
+                    plannedSetID: setID,
+                    groupID: groupID,
+                    iteration: iteration
+                ) { $0.outcome = outcome }
+                return nil
+            }
+        case .extra(let performedSetID):
+            guard extraSetContext(performedSetID: performedSetID, workout: workout) != nil else {
+                return .notFound("I couldn't find that extra performed set in the active session.")
+            }
+            return mutatePerformedLog(
+                expectedRevisionToken: expectedRevisionToken,
+                reason: "Set extra performed-set outcome to \(outcome.rawValue)",
+                diff: .init(changes: [
+                    .init(kind: .edit, summary: "Set extra performed-set outcome to \(outcome.rawValue)", entityID: performedSetID),
+                ])
+            ) { log in
+                log.updateSetLog(performedSetID) { $0.outcome = outcome }
+                return nil
+            }
+        }
+    }
+
+    func addExtraPerformedSet(
+        exerciseInstanceID: UUID,
+        groupID: UUID?,
+        iteration: Int?,
+        values: [PerformedMetricInput],
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard let workout = current,
+              let context = exerciseSessionContexts(in: workout, log: currentLog ?? WorkoutLog()).first(where: {
+                  $0.exercise.id == exerciseInstanceID && $0.groupID == groupID && $0.iteration == iteration
+              }) else {
+            return .notFound("I couldn't find that exercise, group, and iteration in the active session.")
+        }
+        let parsedResult = parsedPerformedValues(values, for: context.exercise)
+        guard case .success(let parsed) = parsedResult else {
+            if case .failure(let message) = parsedResult { return .notFound(message) }
+            return .notFound("I couldn't interpret those performed values.")
+        }
+        var metricValues = MetricValues()
+        for (metric, value) in parsed { metricValues[metric] = value }
+        let extra = SetLog(
+            plannedSetID: nil,
+            groupID: groupID,
+            iteration: iteration,
+            values: metricValues
+        )
+        return mutatePerformedLog(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Add extra performed set for \(context.exercise.exerciseName)",
+            diff: .init(changes: [
+                .init(kind: .add, summary: "Add extra performed set for \(context.exercise.exerciseName)", entityID: extra.id),
+            ])
+        ) { log in
+            log.logSet(extra, forPlanned: exerciseInstanceID, name: context.exercise.exerciseName)
+            return nil
+        }
+    }
+
+    func updateExtraPerformedSet(
+        performedSetID: UUID,
+        values: [PerformedMetricInput],
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard let workout = current,
+              let context = extraSetContext(performedSetID: performedSetID, workout: workout) else {
+            return .notFound("I couldn't find that extra performed set in the active session.")
+        }
+        switch parsedPerformedValues(values, for: context.exercise) {
+        case .failure(let message):
+            return .notFound(message)
+        case .success(let parsed):
+            return mutatePerformedLog(
+                expectedRevisionToken: expectedRevisionToken,
+                reason: "Update extra performed set for \(context.exercise.exerciseName)",
+                diff: .init(changes: [
+                    .init(kind: .edit, summary: "Update extra performed set for \(context.exercise.exerciseName)", entityID: performedSetID),
+                ])
+            ) { log in
+                log.updateSetLog(performedSetID) { actual in
+                    for (metric, value) in parsed { actual.values[metric] = value }
+                }
+                return nil
+            }
+        }
+    }
+
+    func deleteExtraPerformedSet(
+        performedSetID: UUID,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        guard let workout = current,
+              extraSetContext(performedSetID: performedSetID, workout: workout) != nil else {
+            return .notFound("I couldn't find that extra performed set in the active session.")
+        }
+        return mutatePerformedLog(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Delete extra performed set",
+            diff: .init(changes: [
+                .init(kind: .remove, summary: "Delete extra performed set", entityID: performedSetID),
+            ])
+        ) { log in
+            log.removeSetLog(performedSetID)
+            return nil
+        }
+    }
+
+    func addExerciseSessionNote(
+        exerciseInstanceID: UUID,
+        note: String,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .notFound("The exercise session note can't be empty.") }
+        guard let exercise = current?.exercise(exerciseInstanceID) else {
+            return .notFound("I couldn't find that exercise in the active session.")
+        }
+        return mutatePerformedLog(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Add session note for \(exercise.exerciseName)",
+            diff: .init(changes: [
+                .init(kind: .add, summary: "Add session note for \(exercise.exerciseName)", entityID: exerciseInstanceID),
+            ])
+        ) { log in
+            log.addNote(trimmed, forPlanned: exerciseInstanceID, name: exercise.exerciseName)
+            return nil
+        }
+    }
+
+    func undoSessionMutation(mutationID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
+        guard let sink else { return .notFound("Session mutation undo isn't available in this context.") }
+        switch sink.undoSessionMutation(mutationID, expectedRevisionToken) {
+        case .applied(let receipt):
+            reloadFromPlan()
+            return .mutated(receipt)
+        case .preview(let receipt):
+            return .mutated(receipt)
+        case .rejected(.staleRevision):
+            reloadFromPlan()
+            return .notFound(Self.staleUndoMessage)
+        case .rejected(.sessionDiscarded):
+            reloadFromPlan()
+            return .notFound("That session was discarded, so I didn't undo anything in it.")
+        case .rejected(.persistenceFailure):
+            reloadFromPlan()
+            return .notFound("I couldn't save that undo, so I left the session unchanged.")
+        case .rejected(.undoUnavailable):
+            return .notFound("That session mutation isn't eligible for another undo.")
+        case .rejected:
+            return .notFound("I couldn't find an undoable session mutation with that id.")
+        }
+    }
+
+    private func mutatePerformedLog(
+        expectedRevisionToken: UUID,
+        reason: String,
+        diff: WorkoutMutationDiff,
+        transform: (inout WorkoutLog) -> String?
+    ) -> EditOutcome {
+        guard let sink, let target = sink.performedLogMutationTarget(), var log = currentLog else {
+            return .notFound("There isn't an active session to log.")
+        }
+        guard target.revisionToken == expectedRevisionToken else {
+            reloadFromPlan()
+            return .notFound(Self.staleMutationMessage)
+        }
+        let before = log
+        if let message = transform(&log) { return .notFound(message) }
+        guard log != before else { return .notFound("That performed log already has this value, so nothing changed.") }
+
+        let request = WorkoutMutationRequest(
+            mutationID: UUID(),
+            target: target,
+            expectedRevisionToken: expectedRevisionToken,
+            actor: .agent,
+            reason: reason,
+            diff: diff,
+            dryRun: false
+        )
+        switch editLog(request: request, replacingWith: log) {
+        case .applied(let receipt):
+            return .mutated(receipt)
+        case .preview(let receipt):
+            return .mutated(receipt)
+        case .rejected(.staleRevision):
+            reloadFromPlan()
+            return .notFound(Self.staleMutationMessage)
+        case .rejected(.sessionDiscarded):
+            reloadFromPlan()
+            return .notFound("That session was discarded, so its performed log is closed.")
+        case .rejected(.persistenceFailure):
+            reloadFromPlan()
+            return .notFound("I couldn't save that performed-set edit, so I left the session unchanged.")
+        case .rejected:
+            reloadFromPlan()
+            return .notFound("I couldn't apply that performed-set edit to the active session.")
+        }
+    }
+
+    /// Receipt-backed counterpart to the direct-control `editLog` method.
+    /// The repository performs the write, revision advance, and history append atomically.
+    private func editLog(
+        request: WorkoutMutationRequest,
+        replacingWith log: WorkoutLog
+    ) -> WorkoutMutationResult {
+        guard let sink else { return .rejected(.invalidTarget) }
+        let result = sink.applyLogMutation(request, log)
+        if case .applied = result {
+            isSyncing = true
+            currentLog = log
+            isSyncing = false
+        }
+        return result
+    }
+
+    private func parsedPerformedValues(
+        _ inputs: [PerformedMetricInput],
+        for exercise: PlannedExercise
+    ) -> PerformedValuesResult {
+        guard !inputs.isEmpty else { return .failure("At least one performed metric value is required.") }
+        var parsed: [MetricType: Double] = [:]
+        for input in inputs {
+            guard parsed[input.metric] == nil else {
+                return .failure("Each performed metric can appear only once in one tool call.")
+            }
+            guard exercise.selectedMetrics.contains(input.metric) else {
+                return .failure("\(exercise.exerciseName) isn't configured to log \(input.metric.label.lowercased()).")
+            }
+            guard let value = ImportQuantityParser.canonicalValue(
+                for: input.metric,
+                valueText: input.valueText
+            ) else {
+                return .failure(quantityCorrection(metric: input.metric, valueText: input.valueText))
+            }
+            parsed[input.metric] = value
+        }
+        return .success(parsed)
+    }
+
+    private func quantityCorrection(metric: MetricType, valueText: String) -> String {
+        let example: String
+        switch metric {
+        case .load: example = "185 lb or 84 kg"
+        case .distance: example = "400 m or 1 mi"
+        case .duration, .heartRateZoneTime: example = "1:19 or 79 seconds"
+        case .pace: example = "1:19 per 400 m or 4:30 per km"
+        case .heartRate: example = "150 bpm"
+        case .cadence: example = "90 rpm"
+        case .power: example = "250 watts"
+        case .calories: example = "20 cal"
+        case .reps: example = "8 reps"
+        case .rpe: example = "RPE 8"
+        }
+        return "I couldn't interpret \"\(valueText)\" as \(metric.label.lowercased()). Include an unambiguous value such as \(example)."
+    }
+
+    private func plannedSetContext(
+        exerciseInstanceID: UUID,
+        plannedSetID: UUID,
+        groupID: UUID?,
+        iteration: Int?,
+        workout: Workout
+    ) -> (exercise: PlannedExercise, set: PlannedSet)? {
+        guard let context = exerciseSessionContexts(in: workout, log: currentLog ?? WorkoutLog()).first(where: {
+            $0.exercise.id == exerciseInstanceID && $0.groupID == groupID && $0.iteration == iteration
+        }), let set = context.exercise.prescription.sets.first(where: { $0.id == plannedSetID }) else {
+            return nil
+        }
+        return (context.exercise, set)
+    }
+
+    private func extraSetContext(
+        performedSetID: UUID,
+        workout: Workout
+    ) -> (exercise: PlannedExercise, set: SetLog)? {
+        guard let log = currentLog else { return nil }
+        for performed in log.exercises {
+            guard let set = performed.setLogs.first(where: {
+                $0.id == performedSetID && $0.plannedSetID == nil
+            }), let exerciseID = performed.plannedExerciseID,
+                  let context = exerciseSessionContexts(in: workout, log: log).first(where: {
+                      $0.exercise.id == exerciseID && $0.groupID == set.groupID && $0.iteration == set.iteration
+                  }) else { continue }
+            return (context.exercise, set)
+        }
+        return nil
+    }
+
+    private func exerciseSessionContexts(in workout: Workout, log: WorkoutLog) -> [ExerciseSessionContext] {
+        let selections = Dictionary(uniqueKeysWithValues: log.choices.map {
+            ($0.plannedChoiceID, Set($0.selectedOptionIDs))
+        })
+        var result: [ExerciseSessionContext] = []
+
+        func selectedOptions(_ choice: WorkoutChoice) -> [WorkoutNode] {
+            let selected = selections[choice.id] ?? Set(choice.options.prefix(choice.selectionCount).map(\.id))
+            return choice.options.filter { selected.contains($0.id) }
+        }
+
+        func appendTopLevel(_ nodes: [WorkoutNode]) {
+            for node in nodes {
+                switch node {
+                case .exercise(let exercise):
+                    result.append(.init(exercise: exercise, groupID: nil, iteration: nil))
+                case .rest:
+                    break
+                case .choice(let choice):
+                    appendTopLevel(selectedOptions(choice))
+                case .group(let group):
+                    guard group.execution.isRepeated else {
+                        appendTopLevel(group.children)
+                        continue
+                    }
+                    for iteration in 1...group.iterationCount(log: log, isLogging: true) {
+                        let exercises = group.exercises(forIteration: iteration, choiceSelections: selections)
+                        result.append(contentsOf: exercises.map {
+                            .init(exercise: $0, groupID: group.id, iteration: iteration)
+                        })
+                    }
+                }
+            }
+        }
+
+        for block in workout.blocks { appendTopLevel(block.nodes) }
+        return result
+    }
+
     // MARK: - Read
 
     /// A cheap **index** of the workout this scope describes, for the always-sent context — ID, title,
@@ -1899,7 +2410,7 @@ final class WorkoutStore {
     }
 
     /// The active session id (the performed log), or nil if the workout hasn't been started.
-    var activeSessionID: UUID? { currentLog?.id }
+    var activeSessionID: UUID? { sink?.activeSession()?.id ?? currentLog?.id }
 
     /// Sets still unchecked, and how many exercises they span — so complete_workout can warn before
     /// finalizing (and start_workout can tell whether a session is already live).

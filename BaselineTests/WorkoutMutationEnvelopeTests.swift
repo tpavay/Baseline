@@ -377,7 +377,7 @@ struct WorkoutMutationEnvelopeTests {
             expectedRevisionToken: performedToken,
             summary: "Complete Squat set"
         )
-        guard case .applied(let logReceipt) = plan.applyPerformedLogMutation(logRequest, log: updatedLog) else {
+        guard case .applied(let logReceipt) = plan.updateSessionLog(scheduled.id, request: logRequest, log: updatedLog) else {
             Issue.record("Expected a performed-log mutation")
             return
         }
@@ -385,7 +385,7 @@ struct WorkoutMutationEnvelopeTests {
         #expect(sessionReceipt.scope == .sessionWorkout)
         #expect(sessionReceipt.undoAvailable)
         #expect(logReceipt.scope == .performedLog)
-        #expect(!logReceipt.undoAvailable)
+        #expect(logReceipt.undoAvailable)
         #expect(plan.scheduledWorkout(scheduled.id)?.workoutRevisionID == scheduled.workoutRevisionID)
 
         let reloadedRepository = SwiftDataPlanRepository(context: ModelContext(harness.container))
@@ -414,6 +414,23 @@ struct WorkoutMutationEnvelopeTests {
         } else {
             Issue.record("Expected the pre-edit performed-log snapshot")
         }
+
+        guard case .applied(let undoReceipt) = reloadedRepository.undoSessionMutation(
+            mutationID: logReceipt.mutationID,
+            expectedRevisionToken: logReceipt.afterRevisionToken,
+            actor: .agent
+        ) else {
+            Issue.record("Expected persisted performed-log undo to restore its before snapshot")
+            return
+        }
+        let restoredSession = reloadedRepository.session(forScheduled: scheduled.id)
+        #expect(undoReceipt.scope == .performedLog)
+        #expect(!undoReceipt.undoAvailable)
+        #expect(restoredSession?.log.setLog(
+            forPlanned: scheduled.workout.allExercises[0].id,
+            plannedSetID: setID
+        ) == nil)
+        #expect(reloadedRepository.sessionMutationVersions(sessionID: started.id, limit: 10).count == 3)
     }
 }
 

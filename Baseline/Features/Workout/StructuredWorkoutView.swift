@@ -363,22 +363,7 @@ private struct WorkoutGroupLogger: View {
     }
 
     private var iterationCount: Int {
-        switch group.execution.repetition {
-        case .count(let count): min(max(count, 1), 500)
-        case .until:
-            mode == .completed
-                ? min(max(max(groupLog?.completedIterations ?? 0, maxLoggedIteration), 1), 500)
-                : min(max((groupLog?.completedIterations ?? 0) + 1, 1), 500)
-        case .once: 1
-        }
-    }
-
-    private var maxLoggedIteration: Int {
-        store.currentLog?.exercises
-            .flatMap(\.setLogs)
-            .filter { $0.groupID == group.id }
-            .compactMap(\.iteration)
-            .max() ?? 0
+        group.iterationCount(log: store.currentLog, isLogging: mode != .completed)
     }
 
     var body: some View {
@@ -465,15 +450,7 @@ private struct WorkoutGroupLogger: View {
     }
 
     private func exercises(for iteration: Int) -> [PlannedExercise] {
-        let workload = group.children.filter { node in
-            if case .rest = node { return false }
-            return true
-        }
-        if group.execution.cadence?.scope == .child, !workload.isEmpty {
-            return workload[(iteration - 1) % workload.count]
-                .resolvedExercises(choiceSelections: choiceSelections)
-        }
-        return workload.flatMap { $0.resolvedExercises(choiceSelections: choiceSelections) }
+        group.exercises(forIteration: iteration, choiceSelections: choiceSelections)
     }
 
     private func roundIsComplete(_ iteration: Int) -> Bool {
@@ -2073,14 +2050,6 @@ private extension WorkoutNode {
 }
 
 private extension GroupExecution {
-    var isRepeated: Bool {
-        switch repetition {
-        case .once: false
-        case .count(let count): count > 1
-        case .until: true
-        }
-    }
-
     var symbol: String {
         if cadence != nil { return "metronome" }
         if repetition.durationSeconds != nil { return "timer" }

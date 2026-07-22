@@ -150,6 +150,40 @@ final class AgentTools {
         case duplicateSet(setID: UUID, expectedRevisionToken: UUID)
         case undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID)
         case getCurrentWorkout
+        // Performed logging. These mutate WorkoutLog only and use its independent revision token.
+        case getActiveSession
+        case upsertPerformedSet(
+            exerciseInstanceID: UUID,
+            plannedSetID: UUID,
+            groupID: UUID?,
+            iteration: Int?,
+            values: [PerformedMetricInput],
+            expectedRevisionToken: UUID
+        )
+        case setPerformedSetOutcome(
+            target: PerformedSetTarget,
+            outcome: SetLogOutcome,
+            expectedRevisionToken: UUID
+        )
+        case addExtraPerformedSet(
+            exerciseInstanceID: UUID,
+            groupID: UUID?,
+            iteration: Int?,
+            values: [PerformedMetricInput],
+            expectedRevisionToken: UUID
+        )
+        case updateExtraPerformedSet(
+            performedSetID: UUID,
+            values: [PerformedMetricInput],
+            expectedRevisionToken: UUID
+        )
+        case deleteExtraPerformedSet(performedSetID: UUID, expectedRevisionToken: UUID)
+        case addExerciseSessionNote(
+            exerciseInstanceID: UUID,
+            note: String,
+            expectedRevisionToken: UUID
+        )
+        case undoSessionMutation(mutationID: UUID, expectedRevisionToken: UUID)
         case startWorkout
         case completeWorkout(confirm: Bool)
         // Catalog retrieval - the model reads the ~900-exercise library instead of guessing names.
@@ -232,6 +266,14 @@ final class AgentTools {
             case .duplicateSet: return "Duplicated a planned set"
             case .undoWorkoutMutation: return "Undid a workout edit"
             case .getCurrentWorkout: return "Read the current workout"
+            case .getActiveSession: return "Read the active session"
+            case .upsertPerformedSet: return "Logged performed-set values"
+            case .setPerformedSetOutcome(_, let outcome, _): return "Marked a performed set \(outcome.rawValue)"
+            case .addExtraPerformedSet: return "Added an extra performed set"
+            case .updateExtraPerformedSet: return "Updated an extra performed set"
+            case .deleteExtraPerformedSet: return "Deleted an extra performed set"
+            case .addExerciseSessionNote: return "Added an exercise session note"
+            case .undoSessionMutation: return "Undid a session edit"
             case .startWorkout: return "Started the workout"
             case .completeWorkout: return "Completed the workout"
             case .searchExercises(let q, let mu, let eq, let mo, let pa, let ta, let lv):
@@ -263,7 +305,7 @@ final class AgentTools {
         /// Exhaustive by design: a new tool must classify itself here rather than inherit a `default:`.
         var showsInActivityFeed: Bool {
             switch self {
-            case .getToday, .explain, .getCurrentWorkout, .getWeekPlan, .explainModification,
+            case .getToday, .explain, .getCurrentWorkout, .getActiveSession, .getWeekPlan, .explainModification,
                  .searchExercises, .getExercise:
                 return false
             case .setTimeAvailable, .setEquipment, .setTraveling, .setIllness, .setSleep, .setCheckIn,
@@ -273,7 +315,9 @@ final class AgentTools {
                  .removeBlock, .moveBlock, .duplicateBlock, .moveExercise, .replaceExercise,
                  .requireAllOptions, .removeExercise, .reorderExercise, .duplicateExercise, .addSet,
                  .updateSet, .removeSet, .moveSet, .duplicateSet,
-                 .undoWorkoutMutation,
+                 .undoWorkoutMutation, .upsertPerformedSet, .setPerformedSetOutcome,
+                 .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
+                 .addExerciseSessionNote, .undoSessionMutation,
                  .startWorkout, .completeWorkout, .moveWorkout, .swapWorkouts, .skipWorkout,
                  .duplicateWorkout, .deleteWorkout, .saveAsTemplate, .createFromTemplate,
                  .updateTemplate, .updateLoggingConfig, .updateExercisePreference, .setMetricValue,
@@ -291,7 +335,9 @@ final class AgentTools {
                  .removeBlock, .moveBlock, .duplicateBlock, .removeExercise, .reorderExercise,
                  .duplicateExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
                  .undoWorkoutMutation, .updateLoggingConfig,
-                 .setMetricValue, .removeMetric:
+                 .setMetricValue, .removeMetric, .upsertPerformedSet, .setPerformedSetOutcome,
+                 .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
+                 .addExerciseSessionNote, .undoSessionMutation:
                 return true
             default:
                 return false
@@ -716,6 +762,102 @@ final class AgentTools {
         case .getCurrentWorkout:
             guard workouts != nil else { return workoutUnavailable() }
             return Response(text: currentWorkoutSummary ?? "No workout has been created yet.", decision: nil, plan: nil)
+        case .getActiveSession:
+            guard let workouts else { return workoutUnavailable() }
+            guard let snapshot = activeSessionText(workouts) else {
+                return Response(
+                    text: "There isn't an active workout session. Start the workout before logging performed sets.",
+                    decision: nil,
+                    plan: nil
+                )
+            }
+            return Response(text: snapshot, decision: nil, plan: nil)
+        case .upsertPerformedSet(
+            let exerciseInstanceID,
+            let plannedSetID,
+            let groupID,
+            let iteration,
+            let values,
+            let expectedRevisionToken
+        ):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.upsertPerformedSet(
+                    exerciseInstanceID: exerciseInstanceID,
+                    plannedSetID: plannedSetID,
+                    groupID: groupID,
+                    iteration: iteration,
+                    values: values,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Logged the performed-set values."
+            )
+        case .setPerformedSetOutcome(let target, let outcome, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.setPerformedSetOutcome(
+                    target: target,
+                    outcome: outcome,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Marked the performed set \(outcome.rawValue)."
+            )
+        case .addExtraPerformedSet(
+            let exerciseInstanceID,
+            let groupID,
+            let iteration,
+            let values,
+            let expectedRevisionToken
+        ):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.addExtraPerformedSet(
+                    exerciseInstanceID: exerciseInstanceID,
+                    groupID: groupID,
+                    iteration: iteration,
+                    values: values,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Added the extra performed set."
+            )
+        case .updateExtraPerformedSet(let performedSetID, let values, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.updateExtraPerformedSet(
+                    performedSetID: performedSetID,
+                    values: values,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the extra performed set."
+            )
+        case .deleteExtraPerformedSet(let performedSetID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.deleteExtraPerformedSet(
+                    performedSetID: performedSetID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Deleted the extra performed set."
+            )
+        case .addExerciseSessionNote(let exerciseInstanceID, let note, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.addExerciseSessionNote(
+                    exerciseInstanceID: exerciseInstanceID,
+                    note: note,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Added the exercise session note."
+            )
+        case .undoSessionMutation(let mutationID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return sessionOutcome(
+                workouts.undoSessionMutation(
+                    mutationID: mutationID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Undid that session edit."
+            )
         case .startWorkout:
             guard let workouts else { return workoutUnavailable() }
             guard currentWorkout != nil else {
@@ -1066,6 +1208,44 @@ final class AgentTools {
         }
         let text = [prefix, receiptText, currentWorkoutSummary].compactMap { $0 }.joined(separator: "\n")
         return Response(text: text, decision: nil, plan: nil, mutationReceipt: receipt, userFacingText: prefix)
+    }
+
+    private func sessionOutcome(_ outcome: WorkoutStore.EditOutcome, success: String) -> Response {
+        switch outcome {
+        case .done:
+            return sessionResponse(prefix: success)
+        case .mutated(let receipt):
+            return sessionResponse(prefix: success, receipt: receipt)
+        case .notFound(let message), .ambiguous(let message):
+            return Response(text: message, decision: nil, plan: nil)
+        }
+    }
+
+    private func sessionResponse(prefix: String, receipt: WorkoutMutationReceipt? = nil) -> Response {
+        let receiptText = receipt.flatMap { value -> String? in
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(value) else { return nil }
+            return "MUTATION RECEIPT: " + String(decoding: data, as: UTF8.self)
+        }
+        let snapshot = workouts.flatMap(activeSessionText)
+        let text = [prefix, receiptText, snapshot].compactMap { $0 }.joined(separator: "\n")
+        return Response(
+            text: text,
+            decision: nil,
+            plan: nil,
+            mutationReceipt: receipt,
+            userFacingText: prefix
+        )
+    }
+
+    private func activeSessionText(_ workouts: WorkoutStore) -> String? {
+        guard let snapshot = workouts.activeSessionSnapshot() else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(snapshot) else { return nil }
+        return "ACTIVE SESSION: " + String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - Helpers
