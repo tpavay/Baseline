@@ -309,49 +309,70 @@ extension Workout {
 
     @discardableResult
     mutating func removeExercise(_ id: UUID) -> Bool {
-        for index in blocks.indices {
-            if blocks[index].nodes.removeExercise(id) { return true }
+        guard case .exercise? = findNode(id), let source = locateNode(id) else { return false }
+        guard extractNode(id) != nil else { return false }
+        if case .choice = source.container {
+            updateChoice(source.container.id) { choice in
+                choice.selectionCount = min(choice.selectionCount, max(choice.options.count, 1))
+            }
         }
-        return false
+        return true
     }
 
     /// Move an exercise to another block (or reposition within one). An explicit position is the
     /// zero-based final index and is validated before extraction, so a rejected move is atomic.
+    /// Deliberately looser than `moveNode`: the manual "Move to Block" action may empty a choice,
+    /// and the selection count is clamped to keep the choice invariant intact.
     @discardableResult
     mutating func moveExercise(_ id: UUID, toBlock blockID: UUID, at index: Int? = nil) -> Bool {
-        guard let dest = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
+        guard case .exercise? = findNode(id), let source = locateNode(id) else { return false }
+        guard let destinationCount = blocks.first(where: { $0.id == blockID })?.nodes.count else {
+            return false
+        }
         if let index {
-            let sourceIsTopLevelInDestination = blocks[dest].nodes.contains { node in
-                if case .exercise(let exercise) = node { return exercise.id == id }
-                return false
-            }
-            let finalCount = blocks[dest].nodes.count - (sourceIsTopLevelInDestination ? 1 : 0)
+            let finalCount = destinationCount - (source.container == .block(blockID) ? 1 : 0)
             guard index >= 0, index <= finalCount else { return false }
         }
-        var extracted: PlannedExercise?
-        for source in blocks.indices where extracted == nil {
-            extracted = blocks[source].nodes.extractExercise(id)
+        guard let extracted = extractNode(id) else { return false }
+        guard insertNode(extracted, into: blockID, at: index) else {
+            // Unreachable after the validation above; restore so a bug can never orphan the node.
+            _ = insertNode(extracted, into: source.container.id, at: nil)
+            return false
         }
-        guard let exercise = extracted else { return false }
-        let target = index ?? blocks[dest].nodes.endIndex
-        blocks[dest].nodes.insert(.exercise(exercise), at: target)
+        if case .choice = source.container {
+            updateChoice(source.container.id) { choice in
+                choice.selectionCount = min(choice.selectionCount, max(choice.options.count, 1))
+            }
+        }
         return true
     }
 
     @discardableResult
     mutating func reorderExercise(_ id: UUID, to index: Int) -> Bool {
-        for block in blocks.indices {
-            if blocks[block].nodes.reorderExercise(id, to: index) { return true }
-        }
-        return false
+        mutateNodeLists { nodes, _ in
+            guard let source = nodes.firstIndex(where: { node in
+                if case .exercise(let exercise) = node { return exercise.id == id }
+                return false
+            }) else { return nil }
+            guard index >= 0, index < nodes.count else { return false }
+            let node = nodes.remove(at: source)
+            nodes.insert(node, at: index)
+            return true
+        } ?? false
     }
 
     @discardableResult
     mutating func duplicateExercise(_ id: UUID) -> UUID? {
-        for block in blocks.indices {
-            if let copyID = blocks[block].nodes.duplicateExercise(id) { return copyID }
+        mutateNodeLists { nodes, _ in
+            guard let index = nodes.firstIndex(where: { node in
+                if case .exercise(let exercise) = node { return exercise.id == id }
+                return false
+            }) else { return nil }
+            var copy = nodes[index]
+            copy.regenerateIDs()
+            nodes.insert(copy, at: index + 1)
+            return copy.id
         }
-        return nil
     }
 
     /// Swap the movement while keeping the exercise's identity + position (so history/undo stay
@@ -446,31 +467,9 @@ extension Workout {
         }
     }
 
-    @discardableResult
-    mutating func updateExercise(_ id: UUID, _ transform: (inout PlannedExercise) -> Void) -> Bool {
-        for index in blocks.indices {
-            if blocks[index].nodes.updateExercise(id, transform) { return true }
-        }
-        return false
-    }
-
-    @discardableResult
-    mutating func updateGroup(_ id: UUID, _ transform: (inout WorkoutGroup) -> Void) -> Bool {
-        for index in blocks.indices {
-            if blocks[index].nodes.updateGroup(id, transform) { return true }
-        }
-        return false
-    }
-
-    /// Converts a parser/user choice into one required sequence without changing child identities.
-    /// This is the lossless correction for text such as "B. Deadlifts + lateral burpees."
-    @discardableResult
-    mutating func convertChoiceToRequiredGroup(_ id: UUID) -> Bool {
-        for index in blocks.indices {
-            if blocks[index].nodes.convertChoiceToRequiredGroup(id) { return true }
-        }
-        return false
-    }
+    // `updateExercise`, `updateGroup`, `updateChoice`, `updateRest`, and
+    // `convertChoiceToRequiredGroup` live in WorkoutNode.swift, implemented on the one shared
+    // recursive node API alongside the generic locate/extract/insert/move/remove operations.
 
     @discardableResult
     mutating func addNode(_ node: WorkoutNode, toBlock blockID: UUID) -> Bool {

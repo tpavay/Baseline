@@ -254,7 +254,7 @@ struct UnitSystemReachTests {
         let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
         store.create(title: "Conditioning", goal: nil)
         store.addExercise(name: "Sled Push",
-                          toBlockID: try #require(store.current?.blocks.first?.id),
+                          toContainerID: try #require(store.current?.blocks.first?.id),
                           atIndex: nil, sets: 1, reps: nil, load: nil,
                           durationSeconds: nil, distanceMeters: 121,
                           expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken))
@@ -283,7 +283,7 @@ struct UnitSystemReachTests {
         let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
         store.create(title: "Engine", goal: nil)
         store.addExercise(name: "Run",
-                          toBlockID: try #require(store.current?.blocks.first?.id),
+                          toContainerID: try #require(store.current?.blocks.first?.id),
                           atIndex: nil, sets: 1, reps: nil, load: nil,
                           durationSeconds: nil, distanceMeters: 1609.344,
                           expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken))

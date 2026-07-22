@@ -29,7 +29,7 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "replace_existing": true, "expected_revision_token": inputRevision]) == .createWorkout(title: "Push", goal: nil, replaceExisting: true, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength", "expected_revision_token": inputRevision]) == .addBlock(name: "Strength", intent: nil, guidance: nil, atIndex: nil, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "add_exercise", input: ["block_id": blockID.uuidString, "name": "Overhead carry", "distance_m": 150, "expected_revision_token": inputRevision])
-                == .addExercise(blockID: blockID, name: "Overhead carry", atIndex: nil, sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150, expectedRevisionToken: revision))
+                == .addExercise(containerID: blockID, name: "Overhead carry", atIndex: nil, sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "move_exercise", input: ["exercise_instance_id": exerciseID.uuidString, "to_block_id": blockID.uuidString, "to_index": 0, "expected_revision_token": inputRevision])
                 == .moveExercise(exerciseInstanceID: exerciseID, toBlockID: blockID, toIndex: 0, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "replace_exercise", input: [

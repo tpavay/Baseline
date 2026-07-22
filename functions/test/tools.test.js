@@ -5,6 +5,7 @@ const {
   TOOLS,
   WAVE5_TOOLS,
   WAVE6_TOOLS,
+  WAVE7_TOOLS,
   servedToolsetForClientSchema,
   toolsForClientSchema,
 } = require("../lib/tools");
@@ -28,7 +29,6 @@ test("workout tools expose stable ID targeting", () => {
   assert.match(currentWorkout.description, /block, exercise instance, and set/i);
 
   const targetFields = {
-    add_exercise: ["block_id"],
     move_exercise: ["exercise_instance_id", "to_block_id"],
     replace_exercise: ["exercise_instance_id"],
     remove_exercise: ["exercise_instance_id"],
@@ -46,6 +46,11 @@ test("workout tools expose stable ID targeting", () => {
     }
   }
 
+  const addExercise = TOOLS.find((candidate) => candidate.name === "add_exercise");
+  assert.equal(addExercise.input_schema.properties.block_id.type, "string");
+  assert.equal(addExercise.input_schema.properties.parent_id.type, "string");
+  assert.match(addExercise.input_schema.properties.block_id.description, /get_current_workout/i);
+  assert.match(addExercise.input_schema.properties.parent_id.description, /get_current_workout/i);
   assert.deepEqual(
     TOOLS.find((candidate) => candidate.name === "remove_exercise").input_schema.required,
     ["exercise_instance_id", "expected_revision_token"]
@@ -86,8 +91,10 @@ test("Wave 5 structure schemas are ID-only, positioned, purge-aware, and undoabl
   assert.deepEqual(removeBlock.input_schema.required, ["block_id", "expected_revision_token"]);
   assert.deepEqual(moveBlock.input_schema.required, ["block_id", "to_index", "expected_revision_token"]);
   assert.deepEqual(duplicateBlock.input_schema.required, ["block_id", "expected_revision_token"]);
-  assert.deepEqual(addExercise.input_schema.required, [
-    "block_id", "name", "expected_revision_token",
+  assert.deepEqual(addExercise.input_schema.required, ["name", "expected_revision_token"]);
+  assert.deepEqual(addExercise.input_schema.oneOf, [
+    { required: ["block_id"], not: { required: ["parent_id"] } },
+    { required: ["parent_id"], not: { required: ["block_id"] } },
   ]);
   assert.deepEqual(moveExercise.input_schema.required, [
     "exercise_instance_id", "to_block_id", "to_index", "expected_revision_token",
@@ -109,7 +116,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   // The gate is monotonic: a future client version bump keeps the current schema, while malformed
   // or pre-Wave-5 versions fall back to the legacy schema.
   assert.equal(toolsForClientSchema("6"), WAVE6_TOOLS);
-  assert.equal(toolsForClientSchema("7"), TOOLS);
+  assert.equal(toolsForClientSchema("7"), WAVE7_TOOLS);
+  assert.equal(toolsForClientSchema("8"), TOOLS);
   assert.equal(toolsForClientSchema("12"), TOOLS);
   assert.equal(toolsForClientSchema("4"), LEGACY_TOOLS);
   assert.equal(toolsForClientSchema("0"), LEGACY_TOOLS);
@@ -122,7 +130,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(servedToolsetForClientSchema("5"), "wave5");
   assert.equal(servedToolsetForClientSchema("6"), "wave6");
   assert.equal(servedToolsetForClientSchema("7"), "wave7");
-  assert.equal(servedToolsetForClientSchema("12"), "wave7");
+  assert.equal(servedToolsetForClientSchema("8"), "wave8");
+  assert.equal(servedToolsetForClientSchema("12"), "wave8");
   assert.equal(servedToolsetForClientSchema("4"), "legacy");
   assert.equal(servedToolsetForClientSchema(undefined), "legacy");
 
@@ -335,6 +344,17 @@ test("workout mutations require revision tokens and expose targeted undo", () =>
     "update_logging_config",
     "set_metric_value",
     "remove_metric",
+    "update_group",
+    "update_choice",
+    "convert_choice_to_group",
+    "update_rest",
+    "add_rest",
+    "move_node",
+    "remove_node",
+    "add_set_alternative",
+    "update_set_alternative",
+    "remove_set_alternative",
+    "update_exercise_prescription",
   ];
 
   for (const name of mutationNames) {
@@ -423,4 +443,138 @@ test("tool names are unique and map to the on-device executor", () => {
   assert.ok(names.includes("update_workout_metadata"));
   assert.ok(names.includes("update_block_metadata"));
   assert.ok(names.includes("update_exercise_metadata"));
+});
+
+test("Wave 8 advanced node and prescription schemas are ID-only, typed, and capability-gated", () => {
+  const wave8Names = [
+    "update_group",
+    "update_choice",
+    "convert_choice_to_group",
+    "update_rest",
+    "add_rest",
+    "move_node",
+    "remove_node",
+    "add_set_alternative",
+    "update_set_alternative",
+    "remove_set_alternative",
+    "update_exercise_prescription",
+  ];
+  const allNames = new Set(TOOLS.map((tool) => tool.name));
+  const wave7Names = new Set(WAVE7_TOOLS.map((tool) => tool.name));
+
+  for (const name of wave8Names) {
+    assert.equal(allNames.has(name), true, `${name} should be served to Wave 8 clients`);
+    assert.equal(wave7Names.has(name), false, `${name} should not leak to Wave 7 clients`);
+  }
+
+  const group = TOOLS.find((tool) => tool.name === "update_group");
+  assert.deepEqual(group.input_schema.required, ["group_id", "expected_revision_token"]);
+  assert.deepEqual(group.input_schema.properties.repetition.properties.type.enum, ["once", "count", "until"]);
+  assert.deepEqual(group.input_schema.properties.cadence.properties.scope.enum, ["child", "cycle"]);
+  assert.deepEqual(group.input_schema.properties.phase.enum, ["warmup", "main", "cooldown", "transition", null]);
+  assert.deepEqual(group.input_schema.properties.dose.enum, ["med", "hpl", "mdv", null]);
+  assert.deepEqual(group.input_schema.properties.total_targets.type, ["object", "null"]);
+  assert.deepEqual(group.input_schema.properties.adjustments.type, ["array", "null"]);
+  assert.match(group.description, /can't be cleared/i);
+
+  const choice = TOOLS.find((tool) => tool.name === "update_choice");
+  assert.deepEqual(choice.input_schema.required, ["choice_id", "expected_revision_token"]);
+  assert.equal(choice.input_schema.properties.selection_count.minimum, 1);
+  assert.match(choice.description, /1 and the choice's option count/i);
+
+  const convert = TOOLS.find((tool) => tool.name === "convert_choice_to_group");
+  assert.deepEqual(convert.input_schema.required, ["choice_id", "expected_revision_token"]);
+  assert.match(convert.description, /required ordered group/i);
+  assert.match(convert.description, /undo_workout_mutation/i);
+
+  const rest = TOOLS.find((tool) => tool.name === "update_rest");
+  assert.deepEqual(rest.input_schema.required, ["rest_id", "expected_revision_token"]);
+  assert.deepEqual(rest.input_schema.properties.placement.enum, [
+    "inline", "betweenRepetitions", "afterEveryRepetition", "afterFinalRepetition",
+  ]);
+  assert.deepEqual(rest.input_schema.properties.duration_seconds.type, ["integer", "null"]);
+
+  const addRest = TOOLS.find((tool) => tool.name === "add_rest");
+  assert.deepEqual(addRest.input_schema.required, ["parent_id", "expected_revision_token"]);
+  assert.match(addRest.description, /can't be a choice option/i);
+
+  const moveNode = TOOLS.find((tool) => tool.name === "move_node");
+  assert.deepEqual(moveNode.input_schema.required, [
+    "node_id", "to_parent_id", "to_index", "expected_revision_token",
+  ]);
+  assert.match(moveNode.description, /never move into itself or its own subtree/i);
+  assert.match(moveNode.description, /rest can't become a choice option/i);
+  assert.match(moveNode.description, /only option can't be moved out/i);
+
+  const removeNode = TOOLS.find((tool) => tool.name === "remove_node");
+  assert.deepEqual(removeNode.input_schema.required, ["node_id", "expected_revision_token"]);
+  assert.match(removeNode.description, /purged through the logged-work safeguard/i);
+  assert.match(removeNode.description, /undo restores/i);
+
+  const addAlternative = TOOLS.find((tool) => tool.name === "add_set_alternative");
+  assert.deepEqual(addAlternative.input_schema.required, ["set_id", "label", "expected_revision_token"]);
+  const updateAlternative = TOOLS.find((tool) => tool.name === "update_set_alternative");
+  assert.deepEqual(updateAlternative.input_schema.required, ["alternative_id", "expected_revision_token"]);
+  assert.deepEqual(updateAlternative.input_schema.properties.values.type, ["object", "null"]);
+  const removeAlternative = TOOLS.find((tool) => tool.name === "remove_set_alternative");
+  assert.deepEqual(removeAlternative.input_schema.required, ["alternative_id", "expected_revision_token"]);
+
+  const prescription = TOOLS.find((tool) => tool.name === "update_exercise_prescription");
+  assert.deepEqual(prescription.input_schema.required, ["exercise_instance_id", "expected_revision_token"]);
+  assert.deepEqual(prescription.input_schema.properties.target_zone.type, ["integer", "null"]);
+  assert.equal(prescription.input_schema.properties.target_zone.maximum, 5);
+  const targetTypes = prescription.input_schema.properties.intensity_targets.items.properties.type.enum;
+  assert.deepEqual(targetTypes, [
+    "heartRateZone", "rpe", "pace", "power", "thresholdPercentage", "namedZone", "descriptive",
+  ]);
+  assert.deepEqual(
+    prescription.input_schema.properties.intensity_targets.items.properties.unit.enum,
+    ["watts"]
+  );
+
+  // update_set gained progressions in Wave 8.
+  const updateSet = TOOLS.find((tool) => tool.name === "update_set");
+  const progressions = updateSet.input_schema.properties.patch.properties.progressions;
+  assert.deepEqual(progressions.type, ["array", "null"]);
+  assert.deepEqual(progressions.items.properties.unit.enum, ["set", "round", "interval", "cycle"]);
+
+  // The batch accepts every Wave 8 op for Wave 8 clients.
+  const batch = TOOLS.find((tool) => tool.name === "apply_workout_edits");
+  const opNames = batch.input_schema.properties.operations.items.properties.op.enum;
+  for (const name of wave8Names) {
+    assert.equal(opNames.includes(name), true, `${name} should be batch-eligible`);
+  }
+
+  assert.equal(toolsForClientSchema("8"), TOOLS);
+  assert.equal(servedToolsetForClientSchema("8"), "wave8");
+});
+
+test("Wave 7 and older clients keep exactly the schemas their mappers understand", () => {
+  // add_exercise: no nested parent target before Wave 8.
+  const wave7AddExercise = WAVE7_TOOLS.find((tool) => tool.name === "add_exercise");
+  assert.deepEqual(wave7AddExercise.input_schema.required, ["block_id", "name", "expected_revision_token"]);
+  assert.equal(wave7AddExercise.input_schema.properties.parent_id, undefined);
+  assert.equal(wave7AddExercise.input_schema.oneOf, undefined);
+
+  // update_set: no progressions before Wave 8.
+  const wave7UpdateSet = WAVE7_TOOLS.find((tool) => tool.name === "update_set");
+  assert.equal(wave7UpdateSet.input_schema.properties.patch.properties.progressions, undefined);
+  const wave6UpdateSet = WAVE6_TOOLS.find((tool) => tool.name === "update_set");
+  assert.equal(wave6UpdateSet.input_schema.properties.patch.properties.progressions, undefined);
+
+  // apply_workout_edits: the op enum stays the Wave 7 list.
+  const wave7Batch = WAVE7_TOOLS.find((tool) => tool.name === "apply_workout_edits");
+  const wave7Ops = wave7Batch.input_schema.properties.operations.items.properties.op.enum;
+  assert.equal(wave7Ops.includes("update_group"), false);
+  assert.equal(wave7Ops.includes("move_node"), false);
+  assert.equal(wave7Ops.includes("update_set"), true);
+
+  // The Wave 8 upgrades never mutate the shared base schemas.
+  const wave8AddExercise = TOOLS.find((tool) => tool.name === "add_exercise");
+  assert.ok(wave8AddExercise.input_schema.properties.parent_id);
+  const wave8Batch = TOOLS.find((tool) => tool.name === "apply_workout_edits");
+  assert.equal(
+    wave8Batch.input_schema.properties.operations.items.properties.op.enum.includes("update_group"),
+    true
+  );
 });
