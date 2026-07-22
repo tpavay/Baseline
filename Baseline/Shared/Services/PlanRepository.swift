@@ -455,10 +455,10 @@ final class SwiftDataPlanRepository: PlanRepository {
 
         let after = UUID()
         let mutationReceipt = receipt(request, before: currentToken, after: after, undoAvailable: true)
-        var purged: [PurgedSetLog] = []
+        var purge = WorkoutLogPurge()
         if let log {
             if let beforeLog = PlanCoding.value(WorkoutLog.self, sd.logJSON) {
-                purged = WorkoutLog.purgedSetLogs(before: beforeLog, after: log)
+                purge = WorkoutLog.purgedContent(before: beforeLog, after: log)
             }
             sd.logJSON = PlanCoding.data(log)
             sd.performedLogRevisionID = UUID()
@@ -469,9 +469,9 @@ final class SwiftDataPlanRepository: PlanRepository {
             request,
             sessionID: sessionID,
             kind: .sessionWorkout,
-            beforeSnapshot: purged.isEmpty
+            beforeSnapshot: purge.isEmpty
                 ? .sessionWorkout(before)
-                : .sessionWorkoutAndPurgedSetLogs(before, purged),
+                : .sessionWorkoutAndPurgedLogContent(before, purge),
             afterRevisionToken: after,
             receipt: mutationReceipt
         )
@@ -628,14 +628,17 @@ final class SwiftDataPlanRepository: PlanRepository {
             return .rejected(.staleRevision)
         }
         let restored: Workout
-        let purged: [PurgedSetLog]
+        let purge: WorkoutLogPurge
         switch applied.beforeSnapshot {
         case .sessionWorkout(let workout):
             restored = workout
-            purged = []
+            purge = WorkoutLogPurge()
         case .sessionWorkoutAndPurgedSetLogs(let workout, let rows):
             restored = workout
-            purged = rows
+            purge = WorkoutLogPurge(setLogs: rows)
+        case .sessionWorkoutAndPurgedLogContent(let workout, let content):
+            restored = workout
+            purge = content
         case .performedLog:
             return .rejected(.staleRevision)
         }
@@ -670,8 +673,8 @@ final class SwiftDataPlanRepository: PlanRepository {
         )
         session.sessionWorkoutJSON = PlanCoding.data(restored)
         session.sessionWorkoutRevisionID = applied.receipt.beforeRevisionToken
-        if !purged.isEmpty, var log = PlanCoding.value(WorkoutLog.self, session.logJSON) {
-            log.restore(purged)
+        if !purge.isEmpty, var log = PlanCoding.value(WorkoutLog.self, session.logJSON) {
+            log.restore(purge)
             session.logJSON = PlanCoding.data(log)
             session.performedLogRevisionID = UUID()
         }

@@ -529,7 +529,7 @@ struct WorkoutSessionEditingTests {
     /// The confirmation must describe the workout the tool actually changed. Echoing the declined
     /// session content back — while omitting what was just added — would be the coach stating something
     /// false about the athlete's own plan.
-    @Test func anAgentConfirmationAfterDecliningDescribesThePlanNotTheDeclinedSession() async {
+    @Test func anAgentConfirmationAfterDecliningDescribesThePlanNotTheDeclinedSession() async throws {
         let (plan, exec, id) = planTabSession()
         let appLevel = buffer()
         appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
@@ -538,7 +538,14 @@ struct WorkoutSessionEditingTests {
         await finishAndDecline(exec)
         appLevel.reloadFromPlan()
 
-        let response = agentTools(appLevel).dispatch(.addBlock(name: "Finisher", intent: nil))
+        let token = try #require(appLevel.mutationTarget(appLevel.agentScope)?.revisionToken)
+        let response = agentTools(appLevel).dispatch(.addBlock(
+            name: "Finisher",
+            intent: nil,
+            guidance: nil,
+            atIndex: nil,
+            expectedRevisionToken: token
+        ))
 
         #expect(response.text.contains("Finisher"))
         #expect(!response.text.contains("Bench press"))
@@ -582,7 +589,7 @@ struct WorkoutSessionEditingTests {
     }
 
     /// The mirror: while the session owns the editing surface, the coach reads and echoes the session.
-    @Test func anAgentConfirmationDuringALiveSessionDescribesTheSession() {
+    @Test func anAgentConfirmationDuringALiveSessionDescribesTheSession() throws {
         let (plan, exec, id) = planTabSession()
         let appLevel = buffer()
         appLevel.bind(plan.sink(forScheduled: id), coalesceContent: false)
@@ -590,7 +597,14 @@ struct WorkoutSessionEditingTests {
         exec.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
         appLevel.reloadFromPlan()
 
-        let response = agentTools(appLevel).dispatch(.addBlock(name: "Finisher", intent: nil))
+        let token = try #require(appLevel.mutationTarget(appLevel.agentScope)?.revisionToken)
+        let response = agentTools(appLevel).dispatch(.addBlock(
+            name: "Finisher",
+            intent: nil,
+            guidance: nil,
+            atIndex: nil,
+            expectedRevisionToken: token
+        ))
 
         #expect(response.text.contains("Finisher"))
         #expect(response.text.contains("Bench press"))

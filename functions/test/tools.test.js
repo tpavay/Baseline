@@ -1,14 +1,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { TOOLS } = require("../lib/tools");
+const { LEGACY_TOOLS, TOOLS, toolsForClientSchema } = require("../lib/tools");
 
 test("replace_exercise is an atomic duplicate-safe tool", () => {
   const tool = TOOLS.find((candidate) => candidate.name === "replace_exercise");
 
   assert.ok(tool);
-  assert.deepEqual(tool.input_schema.required, ["exercise", "replacement", "expected_revision_token"]);
-  assert.equal(tool.input_schema.properties.replace_all.type, "boolean");
-  assert.equal(tool.input_schema.properties.block.type, "string");
+  assert.deepEqual(tool.input_schema.required, [
+    "exercise_instance_id", "replacement", "expected_revision_token",
+  ]);
+  assert.equal(tool.input_schema.properties.exercise_instance_id.type, "string");
+  assert.equal(tool.input_schema.properties.replace_all, undefined);
   assert.match(tool.description, /never simulate replacement/i);
 });
 
@@ -18,26 +20,28 @@ test("workout tools expose stable ID targeting", () => {
   assert.match(currentWorkout.description, /stable ids/i);
   assert.match(currentWorkout.description, /block, exercise instance, and set/i);
 
-  const legacyTargetFields = {
-    move_exercise: ["exercise_id", "to_block_id"],
-    replace_exercise: ["exercise_id"],
-    remove_exercise: ["exercise_id"],
+  const targetFields = {
+    add_exercise: ["block_id"],
+    move_exercise: ["exercise_instance_id", "to_block_id"],
+    replace_exercise: ["exercise_instance_id"],
+    remove_exercise: ["exercise_instance_id"],
+    reorder_exercise: ["exercise_instance_id"],
+    duplicate_exercise: ["exercise_instance_id"],
   };
 
-  for (const [name, fields] of Object.entries(legacyTargetFields)) {
+  for (const [name, fields] of Object.entries(targetFields)) {
     const tool = TOOLS.find((candidate) => candidate.name === name);
     assert.ok(tool, `${name} should exist`);
     for (const field of fields) {
       assert.equal(tool.input_schema.properties[field].type, "string", `${name}.${field}`);
       assert.match(tool.input_schema.properties[field].description, /get_current_workout/i);
-      assert.match(tool.input_schema.properties[field].description, /takes precedence/i);
-      assert.equal(tool.input_schema.required.includes(field), false, `${name}.${field} stays optional`);
+      assert.equal(tool.input_schema.required.includes(field), true, `${name}.${field} is required`);
     }
   }
 
   assert.deepEqual(
     TOOLS.find((candidate) => candidate.name === "remove_exercise").input_schema.required,
-    ["exercise", "expected_revision_token"]
+    ["exercise_instance_id", "expected_revision_token"]
   );
   assert.deepEqual(
     TOOLS.find((candidate) => candidate.name === "update_logging_config").input_schema.required,
@@ -50,6 +54,62 @@ test("workout tools expose stable ID targeting", () => {
   assert.deepEqual(
     TOOLS.find((candidate) => candidate.name === "remove_metric").input_schema.required,
     ["exercise_instance_id", "metric", "expected_revision_token"]
+  );
+});
+
+test("Wave 5 structure schemas are ID-only, positioned, purge-aware, and undoable", () => {
+  const addBlock = TOOLS.find((candidate) => candidate.name === "add_block");
+  const removeBlock = TOOLS.find((candidate) => candidate.name === "remove_block");
+  const moveBlock = TOOLS.find((candidate) => candidate.name === "move_block");
+  const duplicateBlock = TOOLS.find((candidate) => candidate.name === "duplicate_block");
+  const addExercise = TOOLS.find((candidate) => candidate.name === "add_exercise");
+  const moveExercise = TOOLS.find((candidate) => candidate.name === "move_exercise");
+  const reorderExercise = TOOLS.find((candidate) => candidate.name === "reorder_exercise");
+  const duplicateExercise = TOOLS.find((candidate) => candidate.name === "duplicate_exercise");
+
+  for (const tool of [
+    addBlock, removeBlock, moveBlock, duplicateBlock,
+    addExercise, moveExercise, reorderExercise, duplicateExercise,
+  ]) {
+    assert.ok(tool);
+    assert.ok(tool.input_schema.required.includes("expected_revision_token"));
+  }
+  assert.equal(addBlock.input_schema.properties.guidance.type, "string");
+  assert.equal(addBlock.input_schema.properties.at_index.minimum, 0);
+  assert.deepEqual(removeBlock.input_schema.required, ["block_id", "expected_revision_token"]);
+  assert.deepEqual(moveBlock.input_schema.required, ["block_id", "to_index", "expected_revision_token"]);
+  assert.deepEqual(duplicateBlock.input_schema.required, ["block_id", "expected_revision_token"]);
+  assert.deepEqual(addExercise.input_schema.required, [
+    "block_id", "name", "expected_revision_token",
+  ]);
+  assert.deepEqual(moveExercise.input_schema.required, [
+    "exercise_instance_id", "to_block_id", "to_index", "expected_revision_token",
+  ]);
+  assert.match(removeBlock.description, /performed exercise, group, and choice record/i);
+  assert.match(removeBlock.description, /undo restores/i);
+  assert.match(
+    TOOLS.find((candidate) => candidate.name === "remove_exercise").description,
+    /exact purged performed content/i
+  );
+  assert.match(duplicateBlock.description, /fresh block, node, exercise, set, and alternative IDs/i);
+  assert.match(duplicateExercise.description, /fresh exercise, set, and alternative IDs/i);
+});
+
+test("Wave 5 schemas are capability-gated for installed clients", () => {
+  assert.equal(toolsForClientSchema("5"), TOOLS);
+  assert.equal(toolsForClientSchema(undefined), LEGACY_TOOLS);
+
+  const legacyNames = new Set(LEGACY_TOOLS.map((tool) => tool.name));
+  for (const name of ["remove_block", "move_block", "duplicate_block", "reorder_exercise", "duplicate_exercise"]) {
+    assert.equal(legacyNames.has(name), false);
+  }
+  assert.deepEqual(
+    LEGACY_TOOLS.find((tool) => tool.name === "add_exercise").input_schema.required,
+    ["block", "name", "expected_revision_token"]
+  );
+  assert.deepEqual(
+    LEGACY_TOOLS.find((tool) => tool.name === "remove_exercise").input_schema.required,
+    ["exercise", "expected_revision_token"]
   );
 });
 
@@ -106,10 +166,15 @@ test("workout mutations require revision tokens and expose targeted undo", () =>
     "update_block_metadata",
     "update_exercise_metadata",
     "add_block",
+    "remove_block",
+    "move_block",
+    "duplicate_block",
     "add_exercise",
     "move_exercise",
     "replace_exercise",
     "remove_exercise",
+    "reorder_exercise",
+    "duplicate_exercise",
     "require_all_options",
     "add_set",
     "update_set",

@@ -159,9 +159,9 @@ final class WorkoutStore {
     private struct TransientMutationUndo {
         let receipt: WorkoutMutationReceipt
         let before: Workout
-        /// The exact log rows the mutation purged — never a whole-log snapshot, so undo re-inserts
-        /// what was lost without clobbering anything logged after the mutation.
-        let purgedSetLogs: [PurgedSetLog]
+        /// Exact performed facts purged by the mutation. Undo merges these into the current log
+        /// without replacing work recorded after the mutation.
+        let purgedLogContent: WorkoutLogPurge
     }
     /// Only the newest transient receipt can ever undo (the token guard makes every older one
     /// permanently stale), so only its snapshot is retained. Pruned receipts keep their IDs in
@@ -756,9 +756,9 @@ final class WorkoutStore {
                 latestTransientUndo = TransientMutationUndo(
                     receipt: receipt,
                     before: before,
-                    purgedSetLogs: currentLog.flatMap { beforeLog in
-                        updatedLog.map { WorkoutLog.purgedSetLogs(before: beforeLog, after: $0) }
-                    } ?? []
+                    purgedLogContent: currentLog.flatMap { beforeLog in
+                        updatedLog.map { WorkoutLog.purgedContent(before: beforeLog, after: $0) }
+                    } ?? WorkoutLogPurge()
                 )
             }
             if scope == .session || displayWasAuthoritative { current = authoritative }
@@ -834,8 +834,8 @@ final class WorkoutStore {
                 undoAvailable: false
             )
             self.current = applied.before
-            if !applied.purgedSetLogs.isEmpty, var log = currentLog {
-                log.restore(applied.purgedSetLogs)
+            if !applied.purgedLogContent.isEmpty, var log = currentLog {
+                log.restore(applied.purgedLogContent)
                 currentLog = log
             }
             transientRevisionToken = undoReceipt.afterRevisionToken
@@ -1131,7 +1131,13 @@ final class WorkoutStore {
     }
 
     @discardableResult
-    func addBlock(name: String, intent: String?, expectedRevisionToken: UUID? = nil) -> EditOutcome {
+    func addBlock(
+        name: String,
+        intent: String?,
+        guidance: String? = nil,
+        atIndex: Int? = nil,
+        expectedRevisionToken: UUID? = nil
+    ) -> EditOutcome {
         var affectedID: UUID?
         return mutate(
             expectedRevisionToken: expectedRevisionToken,
@@ -1139,9 +1145,111 @@ final class WorkoutStore {
             diff: .init(changes: [.init(kind: .add, summary: "Add block \(name)", entityID: nil)]),
             resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
         ) { workout in
-            affectedID = workout.addBlock(name: name, intent: intent)
+            affectedID = workout.addBlock(
+                name: name,
+                intent: intent,
+                guidance: guidance.map { CoachGuidance(formCues: [$0]) },
+                at: atIndex
+            )
+            guard affectedID != nil else {
+                return .notFound("Block position must be between 0 and \(workout.blocks.count).")
+            }
             return nil
         }
+    }
+
+    @discardableResult
+    func removeBlock(blockID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
+        var removedExerciseIDs: [UUID] = []
+        var removedGroupIDs: Set<UUID> = []
+        var removedChoiceIDs: Set<UUID> = []
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Remove block",
+            diff: .init(changes: [.init(kind: .remove, summary: "Remove block", entityID: blockID)]),
+            logTransform: { log in
+                for exerciseID in removedExerciseIDs {
+                    log.removePerformed(forPlanned: exerciseID)
+                }
+                log.removeGroups(forPlanned: removedGroupIDs)
+                log.removeChoices(forPlanned: removedChoiceIDs)
+            }
+        ) { workout in
+            guard let block = workout.blocks.first(where: { $0.id == blockID }) else {
+                return .notFound(missingTarget("block", name: "", id: blockID))
+            }
+            removedExerciseIDs = block.exercises.map(\.id)
+            removedGroupIDs = Set(block.groups.map(\.id))
+            removedChoiceIDs = Set(block.choices.map(\.id))
+            guard workout.removeBlock(blockID) else {
+                return .notFound(missingTarget("block", name: "", id: blockID))
+            }
+            if workout.blocks.isEmpty {
+                workout.blocks.append(WorkoutBlock(name: "", isDefault: true))
+            }
+            return nil
+        }
+    }
+
+    @discardableResult
+    func moveBlock(blockID: UUID, toIndex: Int, expectedRevisionToken: UUID) -> EditOutcome {
+        mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Move block",
+            diff: .init(changes: [.init(kind: .move, summary: "Move block", entityID: blockID)])
+        ) { workout in
+            guard workout.moveBlock(blockID, to: toIndex) else {
+                return .notFound("The block doesn't exist or to_index is outside its final order.")
+            }
+            return nil
+        }
+    }
+
+    @discardableResult
+    func duplicateBlock(blockID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
+        var duplicateID: UUID?
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Duplicate block",
+            diff: .init(changes: [.init(kind: .add, summary: "Duplicate block", entityID: nil)]),
+            resolvedEntityIDs: { duplicateID.map { [$0] } ?? [] }
+        ) { workout in
+            guard let copiedID = workout.duplicateBlock(blockID) else {
+                return .notFound(missingTarget("block", name: "", id: blockID))
+            }
+            duplicateID = copiedID
+            return nil
+        }
+    }
+
+    private func plannedExercise(
+        name: String,
+        sets: Int?,
+        reps: Int?,
+        load: Double?,
+        durationSeconds: Int?,
+        distanceMeters: Double?
+    ) -> PlannedExercise {
+        let count = max(1, sets ?? 1)
+        var exercise = PlannedExercise(exerciseName: name)
+        let definition = resolveDefinition(name)
+        exercise.definitionId = definition.id == ExerciseCatalog.generic.id ? nil : definition.id
+        var selected = Set(preferences.selectedByExercise[definition.id] ?? definition.defaults)
+        if reps != nil { selected.insert(.reps) }
+        if load != nil { selected.insert(.load) }
+        if durationSeconds != nil { selected.insert(.duration) }
+        if distanceMeters != nil { selected.insert(.distance) }
+        if selected.isEmpty { selected = [.reps, .load] }
+        exercise.selectedMetrics = MetricType.allCases.filter { selected.contains($0) }
+        exercise.prescription.sets = (0..<count).map { _ in
+            PlannedSet(
+                reps: clampReps(reps),
+                load: clampLoad(load),
+                duration: clampDuration(durationSeconds),
+                distance: clampLoad(distanceMeters)
+            )
+        }
+        return exercise
     }
 
     @discardableResult
@@ -1166,31 +1274,57 @@ final class WorkoutStore {
             case .one(let id): blockID = id
             case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
             }
-            let count = max(1, sets ?? 1)
-            var exercise = PlannedExercise(exerciseName: name)
-
-            // Resolve stable identity and the metrics this instance should log: the definition's
-            // defaults plus any metric actually provided. Uncurated movements use reps and load.
-            let definition = resolveDefinition(name)
-            exercise.definitionId = definition.id == ExerciseCatalog.generic.id ? nil : definition.id
-            // A saved per-exercise metric preference wins over the catalog default for new instances.
-            var selected = Set(preferences.selectedByExercise[definition.id] ?? definition.defaults)
-            if reps != nil { selected.insert(.reps) }
-            if load != nil { selected.insert(.load) }
-            if durationSeconds != nil { selected.insert(.duration) }
-            if distanceMeters != nil { selected.insert(.distance) }
-            if selected.isEmpty { selected = [.reps, .load] }
-            exercise.selectedMetrics = MetricType.allCases.filter { selected.contains($0) }
-
-            exercise.prescription.sets = (0..<count).map { _ in
-                PlannedSet(
-                    reps: clampReps(reps),
-                    load: clampLoad(load),
-                    duration: clampDuration(durationSeconds),
-                    distance: clampLoad(distanceMeters)
-                )
-            }
+            let exercise = plannedExercise(
+                name: name,
+                sets: sets,
+                reps: reps,
+                load: load,
+                durationSeconds: durationSeconds,
+                distanceMeters: distanceMeters
+            )
             _ = w.addExercise(exercise, toBlock: blockID)
+            recentDefinitionID = exercise.definitionId
+            affectedID = exercise.id
+            return nil
+        }
+        if outcome.succeeded, let recentDefinitionID { noteRecent(recentDefinitionID) }
+        return outcome
+    }
+
+    @discardableResult
+    func addExercise(
+        name: String,
+        toBlockID blockID: UUID,
+        atIndex: Int?,
+        sets: Int?,
+        reps: Int?,
+        load: Double?,
+        durationSeconds: Int?,
+        distanceMeters: Double? = nil,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        var recentDefinitionID: String?
+        var affectedID: UUID?
+        let outcome = mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Add \(name) to block",
+            diff: .init(changes: [.init(kind: .add, summary: "Add \(name) to block", entityID: nil)]),
+            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
+        ) { workout in
+            guard let block = workout.blocks.first(where: { $0.id == blockID }) else {
+                return .notFound(missingTarget("block", name: "", id: blockID))
+            }
+            let exercise = plannedExercise(
+                name: name,
+                sets: sets,
+                reps: reps,
+                load: load,
+                durationSeconds: durationSeconds,
+                distanceMeters: distanceMeters
+            )
+            guard workout.addExercise(exercise, toBlock: blockID, at: atIndex) else {
+                return .notFound("Exercise position must be between 0 and \(block.nodes.count).")
+            }
             recentDefinitionID = exercise.definitionId
             affectedID = exercise.id
             return nil
@@ -1318,6 +1452,138 @@ final class WorkoutStore {
                 }
             }
             affectedIDs = targets.map(\.id)
+            recentDefinitionID = definition.id
+            return nil
+        }
+        if outcome.succeeded, let recentDefinitionID { noteRecent(recentDefinitionID) }
+        return outcome
+    }
+
+    @discardableResult
+    func moveExercise(
+        exerciseInstanceID: UUID,
+        toBlockID: UUID,
+        toIndex: Int,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        var removedChoiceOptionIDs: Set<UUID> = []
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Move exercise",
+            diff: .init(changes: [
+                .init(kind: .move, summary: "Move exercise", entityID: exerciseInstanceID),
+            ]),
+            logTransform: { log in
+                log.removeChoiceSelections(optionIDs: removedChoiceOptionIDs)
+            }
+        ) { workout in
+            guard workout.exercise(exerciseInstanceID) != nil else {
+                return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+            }
+            guard workout.blocks.contains(where: { $0.id == toBlockID }) else {
+                return .notFound(missingTarget("block", name: "", id: toBlockID))
+            }
+            removedChoiceOptionIDs = Set(
+                workout.choiceOptionIDs(containingExercise: exerciseInstanceID)
+            )
+            guard workout.moveExercise(exerciseInstanceID, toBlock: toBlockID, at: toIndex) else {
+                return .notFound("to_index is outside the destination block's final order.")
+            }
+            return nil
+        }
+    }
+
+    @discardableResult
+    func removeExercise(
+        exerciseInstanceID: UUID,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        var removedChoiceOptionIDs: Set<UUID> = []
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Remove exercise",
+            diff: .init(changes: [
+                .init(kind: .remove, summary: "Remove exercise", entityID: exerciseInstanceID),
+            ]),
+            logTransform: { log in
+                log.removePerformed(forPlanned: exerciseInstanceID)
+                log.removeChoiceSelections(optionIDs: removedChoiceOptionIDs)
+            }
+        ) { workout in
+            removedChoiceOptionIDs = Set(
+                workout.choiceOptionIDs(containingExercise: exerciseInstanceID)
+            )
+            guard workout.removeExercise(exerciseInstanceID) else {
+                return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+            }
+            return nil
+        }
+    }
+
+    @discardableResult
+    func reorderExercise(
+        exerciseInstanceID: UUID,
+        toIndex: Int,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Reorder exercise",
+            diff: .init(changes: [
+                .init(kind: .move, summary: "Reorder exercise", entityID: exerciseInstanceID),
+            ])
+        ) { workout in
+            guard workout.reorderExercise(exerciseInstanceID, to: toIndex) else {
+                return .notFound("The exercise doesn't exist or to_index is outside its container.")
+            }
+            return nil
+        }
+    }
+
+    @discardableResult
+    func duplicateExercise(
+        exerciseInstanceID: UUID,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        var duplicateID: UUID?
+        return mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Duplicate exercise",
+            diff: .init(changes: [.init(kind: .add, summary: "Duplicate exercise", entityID: nil)]),
+            resolvedEntityIDs: { duplicateID.map { [$0] } ?? [] }
+        ) { workout in
+            guard let copiedID = workout.duplicateExercise(exerciseInstanceID) else {
+                return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+            }
+            duplicateID = copiedID
+            return nil
+        }
+    }
+
+    @discardableResult
+    func replaceExercise(
+        exerciseInstanceID: UUID,
+        with replacement: String,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        var recentDefinitionID: String?
+        let outcome = mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Replace exercise with \(replacement)",
+            diff: .init(changes: [
+                .init(kind: .replace, summary: "Replace exercise with \(replacement)", entityID: exerciseInstanceID),
+            ])
+        ) { workout in
+            guard workout.exercise(exerciseInstanceID) != nil else {
+                return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+            }
+            let definition = resolveDefinition(replacement)
+            guard definition.id != ExerciseCatalog.generic.id else {
+                return .notFound("I couldn't find \"\(replacement)\" in the exercise catalog.")
+            }
+            guard applyReplacement(definition, to: exerciseInstanceID, in: &workout) else {
+                return .notFound("I couldn't replace that exercise.")
+            }
             recentDefinitionID = definition.id
             return nil
         }

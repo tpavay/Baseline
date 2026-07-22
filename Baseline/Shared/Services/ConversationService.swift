@@ -294,6 +294,7 @@ final class ConversationService {
             "roundIndex": String(roundIndex),
             "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             "appBuild": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            "clientToolSchemaVersion": "5",
             "iosVersion": Self.operatingSystemVersion,
             "deviceClass": Self.deviceClass,
         ]
@@ -307,8 +308,9 @@ final class ConversationService {
         guard scope == .workoutImport else { return true }
         switch call {
         case .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
-             .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
-             .removeExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+             .addBlock, .removeBlock, .moveBlock, .duplicateBlock, .addExercise, .moveExercise,
+             .replaceExercise, .requireAllOptions, .removeExercise, .reorderExercise,
+             .duplicateExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
              .getCurrentWorkout, .updateLoggingConfig,
              .setMetricValue, .removeMetric, .undoWorkoutMutation, .searchExercises, .getExercise:
             return true

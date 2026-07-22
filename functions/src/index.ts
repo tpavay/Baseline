@@ -12,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { AnthropicProvider } from "./provider";
 import { buildSystem } from "./prompt";
-import { TOOLS } from "./tools";
+import { toolsForClientSchema } from "./tools";
 import {
   buildWorkoutImportProviderRequest,
   countParsedExercises,
@@ -118,6 +118,7 @@ export const conversation = onCall(
       iosVersion?: unknown;
       deviceClass?: unknown;
       toolEvents?: unknown;
+      clientToolSchemaVersion?: unknown;
     };
     // The app sends the heterogeneous transcript as a JSON string (Sendable across Swift's callable).
     let messages: unknown = data.messages;
@@ -140,7 +141,7 @@ export const conversation = onCall(
         try {
           const content = await provider.complete({
             system: buildSystem(contextSummary),
-            tools: TOOLS,
+            tools: toolsForClientSchema(data.clientToolSchemaVersion),
             messages: messages,
             roundIndex: trace.roundIndex,
           });

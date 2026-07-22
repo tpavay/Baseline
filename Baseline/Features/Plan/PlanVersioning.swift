@@ -193,6 +193,9 @@ enum SessionMutationSnapshot: Codable, Equatable, Sendable {
     /// purged rows are captured — never the whole log — so undo re-inserts exactly what was lost
     /// into the *current* log and cannot clobber work logged after the mutation.
     case sessionWorkoutAndPurgedSetLogs(Workout, [PurgedSetLog])
+    /// A structural content mutation that removed a whole performed exercise or adjustment in
+    /// addition to set rows. Undo merges only the purged facts back into the current log.
+    case sessionWorkoutAndPurgedLogContent(Workout, WorkoutLogPurge)
 }
 
 /// Append-only persisted history for workout content and performed facts owned by one session.
