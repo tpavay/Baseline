@@ -341,6 +341,100 @@ struct WorkoutImportFastPathTests {
         #expect(job.draft?.workout.allExercises.isEmpty == false)
     }
 
+    /// A job persisted at `.assembling` with no prepared sections means section preparation failed
+    /// and the process died mid-stream. Restore must give the pixels a fresh streaming attempt
+    /// instead of handing the durable job an empty payload the server would reject.
+    @Test("Restoring a killed stream without sections retries the stream", .bug(id: 40))
+    func restoringAKilledStreamWithoutSectionsRetriesTheFastPath() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportFastPathRestore-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileWorkoutImportJobRepository(root: root)
+        let job = try await Self.persistedAssemblingJobWithoutSections(in: repository)
+        let parser = RecordingWorkoutImportJobParser()
+        let streamer = RecordingStreamer(
+            events: Self.fragments(of: Self.response) + [.completed(model: "test-model")]
+        )
+        let coordinator = WorkoutImportCoordinator(
+            repository: repository,
+            normalizer: PassthroughWorkoutImageNormalizer(),
+            recognizer: NoTextWorkoutTextRecognizer(),
+            parser: parser,
+            streamer: streamer,
+            configuration: .init(pollingDelay: {})
+        )
+
+        let restored = try #require(await coordinator.restoreLatest(
+            catalog: ExerciseCatalog.definitions,
+            progress: { _ in }
+        ))
+
+        #expect(await streamer.imageCounts == [1], "the persisted normalized image must reach the retry stream")
+        #expect(await parser.startCallCount() == 0)
+        #expect(restored.id == job.id)
+        #expect(restored.stage == .reviewing)
+        #expect(restored.draft?.workout.allExercises.isEmpty == false)
+    }
+
+    /// When the restore-time retry also yields no skeleton, the job fails locally with the original
+    /// section-preparation reason. An empty sections array must never be sent to the server, which
+    /// rejects it and would misreport an unreadable input as a server failure.
+    @Test("A failed retry without sections fails locally, never with empty sections on the wire", .bug(id: 40))
+    func aFailedRestoreRetryWithoutSectionsKeepsTheLocalNoTextFailure() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "WorkoutImportFastPathRestoreFail-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileWorkoutImportJobRepository(root: root)
+        let job = try await Self.persistedAssemblingJobWithoutSections(in: repository)
+        let parser = RecordingWorkoutImportJobParser()
+        let streamer = RecordingStreamer(events: [.failed(code: "rate_limited")])
+        let coordinator = WorkoutImportCoordinator(
+            repository: repository,
+            normalizer: PassthroughWorkoutImageNormalizer(),
+            recognizer: NoTextWorkoutTextRecognizer(),
+            parser: parser,
+            streamer: streamer,
+            configuration: .init(pollingDelay: {})
+        )
+
+        let restored = try #require(await coordinator.restoreLatest(
+            catalog: ExerciseCatalog.definitions,
+            progress: { _ in }
+        ))
+
+        #expect(await streamer.imageCounts == [1], "the retry must still be attempted before failing")
+        #expect(await parser.startCallCount() == 0, "an empty sections payload must never reach the server")
+        #expect(restored.stage == .failed)
+        #expect(restored.failure?.reasonCode == "no_text")
+        #expect(restored.failure?.stage == "local_restore")
+        #expect(restored.failure?.isRetryable == false)
+        let persisted = try #require(try await repository.load(job.id))
+        #expect(persisted.stage == .failed)
+        #expect(persisted.failure?.reasonCode == "no_text")
+    }
+
+    /// The state a process death mid-stream leaves behind when every page OCR'd to no text:
+    /// `.assembling`, a normalized image on disk, and no prepared sections.
+    private static func persistedAssemblingJobWithoutSections(
+        in repository: FileWorkoutImportJobRepository
+    ) async throws -> WorkoutImportJob {
+        var job = WorkoutImportJob(stage: .assembling, expectedPageCount: 1)
+        try await repository.create(job)
+        let image = ImportedWorkoutImage(data: Data([1]), pixelWidth: 100, pixelHeight: 100)
+        let filename = try await repository.writeImage(image, jobID: job.id, pageIndex: 0)
+        job.pages = [WorkoutImportSourcePage(
+            index: 0,
+            relativeFilename: filename,
+            digest: WorkoutImportStableIdentity.page(data: image.data),
+            pixelWidth: 100,
+            pixelHeight: 100,
+            stage: .noText,
+            failureCode: "no_text"
+        )]
+        try await repository.save(job)
+        return job
+    }
+
     /// A stream that ended early still opens the editor, but says so rather than letting the
     /// athlete discover a missing exercise on their own.
     @Test func aTruncatedStreamReachesReviewCarryingAWarning() async throws {

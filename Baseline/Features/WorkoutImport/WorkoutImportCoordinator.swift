@@ -170,9 +170,34 @@ actor WorkoutImportCoordinator {
                 job = await handOffAndWait(job, catalog: catalog, progress: progress)
             case .assembling:
                 // The fast path streams to this process and nothing on a server owns it, so a job
-                // killed mid-stream cannot be resumed. The sections are already prepared, so the
-                // durable job picks it up — which is exactly its role as the retry.
-                job = await handOffAndWait(job, catalog: catalog, progress: progress)
+                // killed mid-stream cannot be resumed. With prepared sections the durable job picks
+                // it up, which is exactly its role as the retry. Without them section preparation
+                // had failed before the stream began, so the durable job has nothing valid to
+                // submit; the pixels get a fresh streaming attempt and the original preparation
+                // failure stands when that still yields no skeleton.
+                if job.sections.isEmpty {
+                    let attempt = await assembleOnFastPath(job, catalog: catalog, progress: progress)
+                    if let assembled = attempt.assembled {
+                        job = assembled
+                    } else {
+                        job.diagnostics.parserMilliseconds += attempt.elapsedMilliseconds
+                        do {
+                            job = try await prepareSections(job, progress: progress)
+                            job = await handOffAndWait(job, catalog: catalog, progress: progress)
+                        } catch {
+                            let retained = (try? await repository.load(job.id)) ?? job
+                            job = await fail(
+                                retained,
+                                stage: "local_restore",
+                                reason: localFailureCode(error),
+                                retryable: false,
+                                progress: progress
+                            )
+                        }
+                    }
+                } else {
+                    job = await handOffAndWait(job, catalog: catalog, progress: progress)
+                }
             case .reviewing:
                 if hasInvalidReviewDraft {
                     job = await fail(
