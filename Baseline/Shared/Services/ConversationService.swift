@@ -301,7 +301,7 @@ final class ConversationService {
             "roundIndex": String(roundIndex),
             "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             "appBuild": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
-            "clientToolSchemaVersion": "7",
+            "clientToolSchemaVersion": "8",
             "iosVersion": Self.operatingSystemVersion,
             "deviceClass": Self.deviceClass,
         ]
@@ -318,6 +318,9 @@ final class ConversationService {
              .addBlock, .removeBlock, .moveBlock, .duplicateBlock, .addExercise, .moveExercise,
              .replaceExercise, .requireAllOptions, .removeExercise, .reorderExercise,
              .duplicateExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+             .updateGroup, .updateChoice, .convertChoiceToGroup, .updateRest, .addRest,
+             .moveNode, .removeNode, .addSetAlternative, .updateSetAlternative,
+             .removeSetAlternative, .updateExercisePrescription,
              .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
              .getCurrentWorkout, .updateLoggingConfig,
              .setMetricValue, .removeMetric, .undoWorkoutMutation, .searchExercises, .getExercise:

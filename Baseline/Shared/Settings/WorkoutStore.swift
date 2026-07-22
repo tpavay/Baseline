@@ -1167,7 +1167,7 @@ final class WorkoutStore {
     @discardableResult
     func addExercise(
         name: String,
-        toBlockID blockID: UUID,
+        toContainerID containerID: UUID,
         atIndex: Int?,
         sets: Int?,
         reps: Int?,
@@ -1178,7 +1178,7 @@ final class WorkoutStore {
     ) -> EditOutcome {
         perform(
             .addExercise(
-                blockID: blockID,
+                containerID: containerID,
                 name: name,
                 atIndex: atIndex,
                 sets: sets,
@@ -1288,6 +1288,118 @@ final class WorkoutStore {
     ) -> EditOutcome {
         perform(
             .moveSet(setID: setID, beforeSetID: beforeSetID, toIndex: toIndex),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    // MARK: - Wave 8: advanced nodes and prescriptions (thin wrappers over the one edit factory)
+
+    @discardableResult
+    func updateGroup(groupID: UUID, patch: WorkoutGroupPatch, expectedRevisionToken: UUID) -> EditOutcome {
+        perform(.updateGroup(groupID: groupID, patch: patch), expectedRevisionToken: expectedRevisionToken)
+    }
+
+    @discardableResult
+    func updateChoice(
+        choiceID: UUID,
+        label: MetadataPatch<String>,
+        selectionCount: MetadataPatch<Int>,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        perform(
+            .updateChoice(choiceID: choiceID, label: label, selectionCount: selectionCount),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    @discardableResult
+    func convertChoiceToGroup(choiceID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
+        perform(.convertChoiceToGroup(choiceID: choiceID), expectedRevisionToken: expectedRevisionToken)
+    }
+
+    @discardableResult
+    func updateRest(restID: UUID, patch: PlannedRestPatch, expectedRevisionToken: UUID) -> EditOutcome {
+        perform(.updateRest(restID: restID, patch: patch), expectedRevisionToken: expectedRevisionToken)
+    }
+
+    @discardableResult
+    func addRest(
+        parentID: UUID,
+        atIndex: Int?,
+        durationSeconds: Int?,
+        placement: RestPlacement,
+        label: String?,
+        guidance: String?,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        perform(
+            .addRest(
+                parentID: parentID,
+                atIndex: atIndex,
+                durationSeconds: durationSeconds,
+                placement: placement,
+                label: label,
+                guidance: guidance
+            ),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    @discardableResult
+    func moveNode(nodeID: UUID, toParentID: UUID, toIndex: Int, expectedRevisionToken: UUID) -> EditOutcome {
+        perform(
+            .moveNode(nodeID: nodeID, toParentID: toParentID, toIndex: toIndex),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    @discardableResult
+    func removeNode(nodeID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
+        perform(.removeNode(nodeID: nodeID), expectedRevisionToken: expectedRevisionToken)
+    }
+
+    @discardableResult
+    func addSetAlternative(
+        setID: UUID,
+        label: String,
+        values: PlannedSetValues,
+        ranges: [MetricTargetRange],
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        perform(
+            .addSetAlternative(setID: setID, label: label, values: values, ranges: ranges),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    @discardableResult
+    func updateSetAlternative(
+        alternativeID: UUID,
+        patch: SetAlternativePatch,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        perform(
+            .updateSetAlternative(alternativeID: alternativeID, patch: patch),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    @discardableResult
+    func removeSetAlternative(alternativeID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
+        perform(
+            .removeSetAlternative(alternativeID: alternativeID),
+            expectedRevisionToken: expectedRevisionToken
+        )
+    }
+
+    @discardableResult
+    func updateExercisePrescription(
+        exerciseInstanceID: UUID,
+        patch: ExercisePrescriptionPatch,
+        expectedRevisionToken: UUID
+    ) -> EditOutcome {
+        perform(
+            .updateExercisePrescription(exerciseInstanceID: exerciseInstanceID, patch: patch),
             expectedRevisionToken: expectedRevisionToken
         )
     }
@@ -1754,15 +1866,15 @@ final class WorkoutStore {
                 resolvedEntityIDs: { duplicateID.map { [$0] } ?? [] }
             ))
 
-        case .addExercise(let blockID, let name, let atIndex, let sets, let reps, let load, let durationSeconds, let distanceMeters):
+        case .addExercise(let containerID, let name, let atIndex, let sets, let reps, let load, let durationSeconds, let distanceMeters):
             var recentDefinitionID: String?
             var affectedID: UUID?
             return .success(PreparedEdit(
-                reason: "Add \(name) to block",
-                changes: [.init(kind: .add, summary: "Add \(name) to block", entityID: nil)],
+                reason: "Add \(name)",
+                changes: [.init(kind: .add, summary: "Add \(name)", entityID: nil)],
                 transform: { [self] workout in
-                    guard let block = workout.blocks.first(where: { $0.id == blockID }) else {
-                        return .notFound(missingTarget("block", name: "", id: blockID))
+                    guard let container = workout.nodeContainer(containerID) else {
+                        return .notFound(missingTarget("block, group, or choice", name: "", id: containerID))
                     }
                     let exercise = plannedExercise(
                         name: name,
@@ -1772,8 +1884,9 @@ final class WorkoutStore {
                         durationSeconds: durationSeconds,
                         distanceMeters: distanceMeters
                     )
-                    guard workout.addExercise(exercise, toBlock: blockID, at: atIndex) else {
-                        return .notFound("Exercise position must be between 0 and \(block.nodes.count).")
+                    let count = workout.nodes(in: container)?.count ?? 0
+                    guard workout.insertNode(.exercise(exercise), into: containerID, at: atIndex) else {
+                        return .notFound("Exercise position must be between 0 and \(count).")
                     }
                     recentDefinitionID = exercise.definitionId
                     affectedID = exercise.id
@@ -1966,6 +2079,13 @@ final class WorkoutStore {
                             addedMetrics.formUnion(ranges.map(\.metric))
                         }
                     }
+                    if case .set(let progressions) = patch.progressions {
+                        for progression in progressions {
+                            if let failure = invalidProgression(progression, exercise: exercise) {
+                                return .notFound(failure)
+                            }
+                        }
+                    }
 
                     guard workout.updateSet(setID, { updated in
                         switch patch.values {
@@ -2000,6 +2120,11 @@ final class WorkoutStore {
                             case .set(let ranges): updated.ranges = ranges
                             case .clear: updated.ranges = []
                             }
+                        }
+                        switch patch.progressions {
+                        case .unchanged: break
+                        case .set(let progressions): updated.progressions = progressions
+                        case .clear: updated.progressions = []
                         }
                     }) else {
                         return .notFound(missingTarget("set", name: "", id: setID))
@@ -2165,6 +2290,547 @@ final class WorkoutStore {
                     return nil
                 }
             ))
+
+        // MARK: Wave 8 — advanced nodes and prescriptions (all on the shared recursive node API)
+
+        case .updateGroup(let groupID, let patch):
+            guard patch.isUnchanged == false else {
+                return .failure(.notFound("Include at least one group detail to change."))
+            }
+            guard patch.label != .clear else {
+                return .failure(.notFound("A group label can't be cleared. Set a new label or omit it."))
+            }
+            guard patch.repetition != .clear else {
+                return .failure(.notFound(
+                    "A group's repetition can't be cleared. Set once, a count, or a duration."
+                ))
+            }
+            return .success(PreparedEdit(
+                reason: "Update group",
+                changes: [.init(kind: .edit, summary: "Update group", entityID: groupID)],
+                transform: { [self] workout in
+                    guard case .group(let group)? = workout.findNode(groupID) else {
+                        return .notFound(missingTarget("group", name: "", id: groupID))
+                    }
+                    if case .set(let valuesPatch) = patch.totalTargets {
+                        for (metric, metricPatch) in valuesPatch.metrics {
+                            if case .set(let value) = metricPatch,
+                               let failure = invalidGroupMetricValue(metric: metric, value: value) {
+                                return .notFound(failure)
+                            }
+                        }
+                    }
+                    if case .set(let adjustments) = patch.adjustments {
+                        for adjustment in adjustments {
+                            if let failure = invalidAdjustment(adjustment) { return .notFound(failure) }
+                        }
+                    }
+                    guard workout.updateGroup(groupID, { updated in
+                        if case .set(let label) = patch.label { updated.label = label }
+                        updated.guidance = applyingGuidance(patch.guidance, to: group.guidance)
+                        switch patch.phase {
+                        case .unchanged: break
+                        case .set(let value): updated.phase = value
+                        case .clear: updated.phase = nil
+                        }
+                        switch patch.doseLayer {
+                        case .unchanged: break
+                        case .set(let value): updated.doseLayer = value
+                        case .clear: updated.doseLayer = nil
+                        }
+                        if case .set(let value) = patch.isOptional { updated.isOptional = value }
+                        if case .set(let value) = patch.repetition { updated.execution.repetition = value }
+                        switch patch.cadence {
+                        case .unchanged: break
+                        case .set(let value): updated.execution.cadence = value
+                        case .clear: updated.execution.cadence = nil
+                        }
+                        switch patch.totalTargets {
+                        case .unchanged:
+                            break
+                        case .clear:
+                            updated.execution.totalTargets = MetricValues()
+                        case .set(let valuesPatch):
+                            for (metric, metricPatch) in valuesPatch.metrics {
+                                switch metricPatch {
+                                case .unchanged: break
+                                case .set(let value): updated.execution.totalTargets[metric] = value
+                                case .clear: updated.execution.totalTargets[metric] = nil
+                                }
+                            }
+                        }
+                        switch patch.adjustments {
+                        case .unchanged: break
+                        case .set(let value): updated.execution.adjustments = value
+                        case .clear: updated.execution.adjustments = []
+                        }
+                    }) else {
+                        return .notFound(missingTarget("group", name: "", id: groupID))
+                    }
+                    return nil
+                }
+            ))
+
+        case .updateChoice(let choiceID, let label, let selectionCount):
+            guard !label.isUnchanged || !selectionCount.isUnchanged else {
+                return .failure(.notFound("Include a label or selection count to change."))
+            }
+            guard label != .clear else {
+                return .failure(.notFound("A choice label can't be cleared. Set a new label or omit it."))
+            }
+            guard selectionCount != .clear else {
+                return .failure(.notFound(
+                    "A choice's selection count can't be cleared. Set a value between 1 and its option count."
+                ))
+            }
+            return .success(PreparedEdit(
+                reason: "Update choice",
+                changes: [.init(kind: .edit, summary: "Update choice", entityID: choiceID)],
+                transform: { [self] workout in
+                    guard case .choice(let choice)? = workout.findNode(choiceID) else {
+                        return .notFound(missingTarget("choice", name: "", id: choiceID))
+                    }
+                    if case .set(let count) = selectionCount {
+                        guard count >= 1, count <= choice.options.count else {
+                            return .notFound(
+                                "selection_count must be between 1 and \(choice.options.count) for \"\(choice.label)\"."
+                            )
+                        }
+                    }
+                    guard workout.updateChoice(choiceID, { updated in
+                        if case .set(let value) = label { updated.label = value }
+                        if case .set(let count) = selectionCount { updated.selectionCount = count }
+                    }) else {
+                        return .notFound(missingTarget("choice", name: "", id: choiceID))
+                    }
+                    return nil
+                }
+            ))
+
+        case .convertChoiceToGroup(let choiceID):
+            return .success(PreparedEdit(
+                reason: "Convert choice to required group",
+                changes: [
+                    .init(kind: .replace, summary: "Convert choice to required group", entityID: choiceID),
+                ],
+                transform: { [self] workout in
+                    guard case .choice? = workout.findNode(choiceID) else {
+                        return .notFound(missingTarget("choice", name: "", id: choiceID))
+                    }
+                    guard workout.convertChoiceToRequiredGroup(choiceID) else {
+                        return .notFound(missingTarget("choice", name: "", id: choiceID))
+                    }
+                    return nil
+                }
+            ))
+
+        case .updateRest(let restID, let patch):
+            guard patch.isUnchanged == false else {
+                return .failure(.notFound("Include at least one rest detail to change."))
+            }
+            guard patch.label != .clear else {
+                return .failure(.notFound("A rest label can't be cleared. Set a new label or omit it."))
+            }
+            guard patch.placement != .clear else {
+                return .failure(.notFound(
+                    "A rest placement can't be cleared. Set inline, betweenRepetitions, "
+                        + "afterEveryRepetition, or afterFinalRepetition."
+                ))
+            }
+            return .success(PreparedEdit(
+                reason: "Update rest",
+                changes: [.init(kind: .edit, summary: "Update rest", entityID: restID)],
+                transform: { [self] workout in
+                    guard case .rest? = workout.findNode(restID) else {
+                        return .notFound(missingTarget("rest", name: "", id: restID))
+                    }
+                    if case .set(let seconds) = patch.durationSeconds, seconds < 0 {
+                        return .notFound("A rest duration must be zero or more seconds.")
+                    }
+                    guard workout.updateRest(restID, { updated in
+                        if case .set(let value) = patch.label { updated.label = value }
+                        if case .set(let value) = patch.placement { updated.placement = value }
+                        switch patch.durationSeconds {
+                        case .unchanged: break
+                        case .set(let value): updated.durationSeconds = value
+                        case .clear: updated.durationSeconds = nil
+                        }
+                        switch patch.guidance {
+                        case .unchanged: break
+                        case .set(let value): updated.guidance = value
+                        case .clear: updated.guidance = nil
+                        }
+                    }) else {
+                        return .notFound(missingTarget("rest", name: "", id: restID))
+                    }
+                    return nil
+                }
+            ))
+
+        case .addRest(let parentID, let atIndex, let durationSeconds, let placement, let label, let guidance):
+            if let durationSeconds, durationSeconds < 0 {
+                return .failure(.notFound("A rest duration must be zero or more seconds."))
+            }
+            var addedRestID: UUID?
+            return .success(PreparedEdit(
+                reason: "Add rest",
+                changes: [.init(kind: .add, summary: "Add rest", entityID: nil)],
+                transform: { [self] workout in
+                    guard let container = workout.nodeContainer(parentID) else {
+                        return .notFound(missingTarget("block or group", name: "", id: parentID))
+                    }
+                    if case .choice = container {
+                        return .notFound("A rest can't be a choice option. Add it to a block or group instead.")
+                    }
+                    let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let rest = PlannedRest(
+                        durationSeconds: durationSeconds,
+                        placement: placement,
+                        label: trimmedLabel?.isEmpty == false ? trimmedLabel! : "Rest",
+                        guidance: guidance
+                    )
+                    let count = workout.nodes(in: container)?.count ?? 0
+                    guard workout.insertNode(.rest(rest), into: parentID, at: atIndex) else {
+                        return .notFound("Rest position must be between 0 and \(count).")
+                    }
+                    addedRestID = rest.id
+                    return nil
+                },
+                resolvedEntityIDs: { addedRestID.map { [$0] } ?? [] }
+            ))
+
+        case .moveNode(let nodeID, let toParentID, let toIndex):
+            var movedOptionIDs: Set<UUID> = []
+            return .success(PreparedEdit(
+                reason: "Move workout node",
+                changes: [.init(kind: .move, summary: "Move workout node", entityID: nodeID)],
+                transform: { [self] workout in
+                    let source = workout.locateNode(nodeID)
+                    if let failure = workout.moveNode(nodeID, into: toParentID, at: toIndex) {
+                        return .notFound(
+                            nodeStructureMessage(failure, nodeID: nodeID, containerID: toParentID)
+                        )
+                    }
+                    if case .choice(let choiceID)? = source?.container, choiceID != toParentID {
+                        movedOptionIDs = [nodeID]
+                    }
+                    return nil
+                },
+                logTransform: { log in
+                    log.removeChoiceSelections(optionIDs: movedOptionIDs)
+                }
+            ))
+
+        case .removeNode(let nodeID):
+            var removedExerciseIDs: [UUID] = []
+            var removedGroupIDs: Set<UUID> = []
+            var removedChoiceIDs: Set<UUID> = []
+            var removedOptionIDs: Set<UUID> = []
+            return .success(PreparedEdit(
+                reason: "Remove workout node",
+                changes: [.init(kind: .remove, summary: "Remove workout node", entityID: nodeID)],
+                transform: { [self] workout in
+                    let source = workout.locateNode(nodeID)
+                    switch workout.removeNode(nodeID) {
+                    case .failure(let failure):
+                        return .notFound(nodeStructureMessage(failure, nodeID: nodeID, containerID: nil))
+                    case .success(let removed):
+                        removedExerciseIDs = removed.exercises.map(\.id)
+                        removedGroupIDs = Set(removed.groups.map(\.id))
+                        removedChoiceIDs = Set(removed.choices.map(\.id))
+                        if case .choice? = source?.container { removedOptionIDs = [nodeID] }
+                        return nil
+                    }
+                },
+                logTransform: { log in
+                    for exerciseID in removedExerciseIDs { log.removePerformed(forPlanned: exerciseID) }
+                    log.removeGroups(forPlanned: removedGroupIDs)
+                    log.removeChoices(forPlanned: removedChoiceIDs)
+                    log.removeChoiceSelections(optionIDs: removedOptionIDs)
+                }
+            ))
+
+        case .addSetAlternative(let setID, let label, let values, let ranges):
+            let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedLabel.isEmpty == false else {
+                return .failure(.notFound("A set alternative needs a non-empty label."))
+            }
+            var addedAlternativeID: UUID?
+            return .success(PreparedEdit(
+                reason: "Add set alternative",
+                changes: [.init(kind: .add, summary: "Add set alternative", entityID: nil)],
+                transform: { [self] workout in
+                    guard let exercise = workout.allExercises.first(where: { exercise in
+                        exercise.prescription.sets.contains { $0.id == setID }
+                    }) else {
+                        return .notFound(missingTarget("set", name: "", id: setID))
+                    }
+                    for (metric, value) in values.metrics {
+                        if let failure = invalidMetricValue(metric: metric, value: value, exercise: exercise) {
+                            return .notFound(failure)
+                        }
+                    }
+                    if let failure = invalidTargets(.init(ranges: ranges), exercise: exercise) {
+                        return .notFound(failure)
+                    }
+                    let alternative = PlannedSetAlternative(
+                        label: trimmedLabel,
+                        values: metricValues(values),
+                        ranges: ranges
+                    )
+                    guard workout.updateSet(setID, { updated in
+                        updated.alternatives.append(alternative)
+                    }) else {
+                        return .notFound(missingTarget("set", name: "", id: setID))
+                    }
+                    addedAlternativeID = alternative.id
+                    return nil
+                },
+                resolvedEntityIDs: { addedAlternativeID.map { [$0] } ?? [] }
+            ))
+
+        case .updateSetAlternative(let alternativeID, let patch):
+            guard patch.isUnchanged == false else {
+                return .failure(.notFound("Include at least one alternative detail to change."))
+            }
+            guard patch.label != .clear else {
+                return .failure(.notFound("An alternative label can't be cleared. Set a new label or omit it."))
+            }
+            return .success(PreparedEdit(
+                reason: "Update set alternative",
+                changes: [.init(kind: .edit, summary: "Update set alternative", entityID: alternativeID)],
+                transform: { [self] workout in
+                    guard let owner = setAlternativeOwner(alternativeID, in: workout) else {
+                        return .notFound(missingTarget("set alternative", name: "", id: alternativeID))
+                    }
+                    if case .set(let valuesPatch) = patch.values {
+                        for (metric, metricPatch) in valuesPatch.metrics {
+                            if case .set(let value) = metricPatch,
+                               let failure = invalidMetricValue(
+                                   metric: metric,
+                                   value: value,
+                                   exercise: owner.exercise
+                               ) {
+                                return .notFound(failure)
+                            }
+                        }
+                    }
+                    if case .set(let ranges) = patch.ranges,
+                       let failure = invalidTargets(.init(ranges: ranges), exercise: owner.exercise) {
+                        return .notFound(failure)
+                    }
+                    guard workout.updateSet(owner.setID, { updated in
+                        guard let index = updated.alternatives.firstIndex(where: { $0.id == alternativeID })
+                        else { return }
+                        if case .set(let value) = patch.label { updated.alternatives[index].label = value }
+                        switch patch.values {
+                        case .unchanged:
+                            break
+                        case .clear:
+                            updated.alternatives[index].values = MetricValues()
+                        case .set(let valuesPatch):
+                            for (metric, metricPatch) in valuesPatch.metrics {
+                                switch metricPatch {
+                                case .unchanged: break
+                                case .set(let value): updated.alternatives[index].values[metric] = value
+                                case .clear: updated.alternatives[index].values[metric] = nil
+                                }
+                            }
+                        }
+                        switch patch.ranges {
+                        case .unchanged: break
+                        case .set(let value): updated.alternatives[index].ranges = value
+                        case .clear: updated.alternatives[index].ranges = []
+                        }
+                    }) else {
+                        return .notFound(missingTarget("set alternative", name: "", id: alternativeID))
+                    }
+                    return nil
+                }
+            ))
+
+        case .removeSetAlternative(let alternativeID):
+            return .success(PreparedEdit(
+                reason: "Remove set alternative",
+                changes: [.init(kind: .remove, summary: "Remove set alternative", entityID: alternativeID)],
+                transform: { [self] workout in
+                    guard let owner = setAlternativeOwner(alternativeID, in: workout) else {
+                        return .notFound(missingTarget("set alternative", name: "", id: alternativeID))
+                    }
+                    guard workout.updateSet(owner.setID, { updated in
+                        updated.alternatives.removeAll { $0.id == alternativeID }
+                    }) else {
+                        return .notFound(missingTarget("set alternative", name: "", id: alternativeID))
+                    }
+                    return nil
+                }
+            ))
+
+        case .updateExercisePrescription(let exerciseInstanceID, let patch):
+            guard patch.isUnchanged == false else {
+                return .failure(.notFound("Include at least one prescription detail to change."))
+            }
+            return .success(PreparedEdit(
+                reason: "Update exercise prescription",
+                changes: [
+                    .init(kind: .edit, summary: "Update exercise prescription", entityID: exerciseInstanceID),
+                ],
+                transform: { [self] workout in
+                    guard workout.exercise(exerciseInstanceID) != nil else {
+                        return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+                    }
+                    if case .set(let seconds) = patch.restSeconds, seconds < 0 {
+                        return .notFound("rest_seconds must be zero or more.")
+                    }
+                    if case .set(let zone) = patch.targetZone, (1...5).contains(zone) == false {
+                        return .notFound("target_zone must be a heart-rate zone between 1 and 5.")
+                    }
+                    if case .set(let targets) = patch.intensityTargets {
+                        for target in targets {
+                            if let failure = invalidIntensityTarget(target) {
+                                return .notFound(failure)
+                            }
+                        }
+                    }
+                    guard workout.updateExercise(exerciseInstanceID, { updated in
+                        switch patch.restSeconds {
+                        case .unchanged: break
+                        case .set(let value): updated.prescription.restSeconds = value
+                        case .clear: updated.prescription.restSeconds = nil
+                        }
+                        switch patch.tempo {
+                        case .unchanged: break
+                        case .set(let value): updated.prescription.tempo = value
+                        case .clear: updated.prescription.tempo = nil
+                        }
+                        switch patch.targetZone {
+                        case .unchanged: break
+                        case .set(let value): updated.prescription.targetZone = value
+                        case .clear: updated.prescription.targetZone = nil
+                        }
+                        switch patch.intent {
+                        case .unchanged: break
+                        case .set(let value): updated.prescription.intent = value
+                        case .clear: updated.prescription.intent = nil
+                        }
+                        switch patch.intensityTargets {
+                        case .unchanged: break
+                        case .set(let value): updated.prescription.intensityTargets = value
+                        case .clear: updated.prescription.intensityTargets = []
+                        }
+                    }) else {
+                        return .notFound(missingTarget("exercise", name: "", id: exerciseInstanceID))
+                    }
+                    return nil
+                }
+            ))
+        }
+    }
+
+    // MARK: - Wave 8 validation helpers
+
+    /// Group totals aren't scoped to one exercise's supported metrics, so only value sanity applies.
+    private func invalidGroupMetricValue(metric: MetricType, value: Double) -> String? {
+        guard value.isFinite, value >= 0 else {
+            return "\(metric.label) must be a finite value of zero or greater."
+        }
+        if metric == .rpe, value > 10 {
+            return "RPE must be between 0 and 10."
+        }
+        if metric.isInteger, value.rounded() != value {
+            return "\(metric.label) must be a whole number."
+        }
+        return nil
+    }
+
+    private func invalidAdjustment(_ adjustment: MetricAdjustment) -> String? {
+        guard adjustment.step.isFinite, adjustment.step != 0 else {
+            return "An adjustment step must be a finite non-zero value."
+        }
+        if let minimum = adjustment.minimum, let maximum = adjustment.maximum, minimum > maximum {
+            return "An adjustment's minimum can't exceed its maximum."
+        }
+        return nil
+    }
+
+    private func invalidProgression(_ progression: MetricProgression, exercise: PlannedExercise) -> String? {
+        guard exercise.supportedMetrics.contains(progression.metric) else {
+            return "\(exercise.exerciseName) doesn't support \(progression.metric.label.lowercased())."
+        }
+        guard progression.delta.isFinite, progression.delta != 0 else {
+            return "A progression delta must be a finite non-zero value."
+        }
+        guard progression.every >= 1 else {
+            return "A progression's every must be at least 1."
+        }
+        return nil
+    }
+
+    private func invalidIntensityTarget(_ target: IntensityTarget) -> String? {
+        switch target {
+        case .heartRateZone(let zone):
+            guard (1...5).contains(zone) else {
+                return "A heart-rate zone target must be between 1 and 5."
+            }
+        case .rpe(let lower, let upper):
+            guard lower.isFinite, upper.isFinite, lower >= 0, upper <= 10, lower <= upper else {
+                return "An RPE intensity range must be within 0-10 with lower not above upper."
+            }
+        case .power(let lower, let upper, let unit):
+            guard lower.isFinite, upper.isFinite, lower >= 0, lower <= upper else {
+                return "A power range must be non-negative with lower not above upper."
+            }
+            guard unit == .watts else { return "Power targets are stated in watts." }
+        case .thresholdPercentage(let lower, let upper):
+            guard lower.isFinite, upper.isFinite, lower > 0, lower <= upper else {
+                return "A threshold percentage range must be positive with lower not above upper."
+            }
+        case .pace(let text), .descriptive(let text):
+            guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return "An intensity target description can't be empty."
+            }
+        case .namedZone(let system, let range):
+            guard system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+                  range.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return "A named zone target needs both a system and a range."
+            }
+        }
+        return nil
+    }
+
+    /// Where an alternative lives: the owning exercise (for metric validation) and its set ID.
+    private func setAlternativeOwner(
+        _ alternativeID: UUID,
+        in workout: Workout
+    ) -> (exercise: PlannedExercise, setID: UUID)? {
+        for exercise in workout.allExercises {
+            for set in exercise.prescription.sets
+            where set.alternatives.contains(where: { $0.id == alternativeID }) {
+                return (exercise, set.id)
+            }
+        }
+        return nil
+    }
+
+    private func nodeStructureMessage(
+        _ failure: WorkoutNodeStructureError,
+        nodeID: UUID,
+        containerID: UUID?
+    ) -> String {
+        switch failure {
+        case .nodeNotFound:
+            missingTarget("node", name: "", id: nodeID)
+        case .containerNotFound:
+            missingTarget("block, group, or choice", name: "", id: containerID)
+        case .cycle:
+            "A node can't be moved into itself or its own children."
+        case .invalidChild:
+            "A rest can't be a choice option. Move it into a block or group instead."
+        case .indexOutOfBounds(let max):
+            "to_index is outside the destination's final order (0 to \(max))."
+        case .lastChoiceOption:
+            "That's the choice's only option, so moving or removing it would leave the choice empty. "
+                + "Remove or convert the choice itself instead."
         }
     }
 
@@ -3122,7 +3788,7 @@ final class WorkoutStore {
                         guard let value = alternative.values[metric] else { return nil }
                         return "\(metric.label)=\(MetricFormat.value(value, metric, unit: displayUnit(metric, for: exercise)))"
                     }
-                    lines.append("\(indent)    Alternative \(alternative.label): \(alternateValues.isEmpty ? "no values" : alternateValues.joined(separator: ", "))")
+                    lines.append("\(indent)    Alternative \(alternative.label) [id: \(alternative.id.uuidString)]: \(alternateValues.isEmpty ? "no values" : alternateValues.joined(separator: ", "))")
                     for range in alternative.ranges {
                         let unit = displayUnit(range.metric, for: exercise)
                         lines.append("\(indent)      Range: \(range.metric.label) \(MetricFormat.value(range.lower, range.metric, unit: unit))–\(MetricFormat.value(range.upper, range.metric, unit: unit))")
@@ -3147,7 +3813,7 @@ final class WorkoutStore {
             if let phase = group.phase { execution.append("phase \(phase.rawValue)") }
             if let dose = group.doseLayer { execution.append("dose \(dose.rawValue.uppercased())") }
             if group.isOptional { execution.append("optional") }
-            lines.append("\(indent)REQUIRED GROUP: \(group.label) — \(execution.joined(separator: "; "))")
+            lines.append("\(indent)REQUIRED GROUP [id: \(group.id.uuidString)]: \(group.label) — \(execution.joined(separator: "; "))")
             if !group.execution.totalTargets.isEmpty {
                 let totals = group.execution.totalTargets.present.compactMap { metric -> String? in
                     guard let value = group.execution.totalTargets[metric] else { return nil }
@@ -3167,15 +3833,15 @@ final class WorkoutStore {
             for child in group.children { appendSummary(child, indent: "\(indent)  ", to: &lines) }
 
         case .choice(let choice):
-            lines.append("\(indent)CHOICE: \(choice.label) — choose \(choice.selectionCount) of \(choice.options.count)")
+            lines.append("\(indent)CHOICE [id: \(choice.id.uuidString)]: \(choice.label) — choose \(choice.selectionCount) of \(choice.options.count)")
             for (index, option) in choice.options.enumerated() {
-                lines.append("\(indent)  OPTION \(index + 1):")
+                lines.append("\(indent)  OPTION \(index + 1) [node id: \(option.id.uuidString)]:")
                 appendSummary(option, indent: "\(indent)    ", to: &lines)
             }
 
         case .rest(let rest):
             let duration = rest.durationSeconds.map { MetricFormat.duration(Double($0)) } ?? "unspecified duration"
-            lines.append("\(indent)REST: \(rest.label) — \(duration), \(rest.placement.rawValue)")
+            lines.append("\(indent)REST [id: \(rest.id.uuidString)]: \(rest.label) — \(duration), \(rest.placement.rawValue)")
             if let guidance = rest.guidance, !guidance.isEmpty { lines.append("\(indent)  Note: \(guidance)") }
         }
     }

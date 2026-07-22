@@ -104,6 +104,75 @@ const setTargets = {
   additionalProperties: false,
 };
 
+/** Wave 8: how a group's work repeats — once, N rounds, or a time cap. */
+const groupRepetition = {
+  type: "object",
+  description: "How the group's work repeats. {type:'once'} runs it straight through, {type:'count',count:N} runs N rounds, {type:'until',duration_seconds:S} repeats for a time cap (AMRAP-style).",
+  properties: {
+    type: { type: "string", enum: ["once", "count", "until"] },
+    count: { type: "integer", minimum: 1, description: "Rounds. Required when type is 'count'." },
+    duration_seconds: { type: "integer", minimum: 1, description: "Time cap in seconds. Required when type is 'until'." },
+  },
+  required: ["type"],
+  additionalProperties: false,
+};
+
+/** Wave 8: EMOM-style start cadence for a group. */
+const groupCadence = {
+  type: ["object", "null"],
+  description: "Start cadence: scope 'child' starts the next child every interval (EMOM), 'cycle' restarts the whole sequence every interval. Pass null to clear.",
+  properties: {
+    interval_seconds: { type: "integer", minimum: 1 },
+    scope: { type: "string", enum: ["child", "cycle"] },
+  },
+  required: ["interval_seconds", "scope"],
+  additionalProperties: false,
+};
+
+/** Wave 8: a round-to-round metric adjustment on a group. */
+const groupAdjustment = {
+  type: "object",
+  properties: {
+    metric: { type: "string", enum: Object.keys(setMetricProperties) },
+    step: { type: "number", description: "Canonical non-zero step per round; negative to decrease." },
+    minimum: { type: "number", description: "Optional canonical floor." },
+    maximum: { type: "number", description: "Optional canonical ceiling." },
+  },
+  required: ["metric", "step"],
+  additionalProperties: false,
+};
+
+/** Wave 8: a per-set metric progression across sets/rounds/intervals. */
+const setProgression = {
+  type: "object",
+  properties: {
+    metric: { type: "string", enum: Object.keys(setMetricProperties) },
+    delta: { type: "number", description: "Canonical non-zero change per step; negative to decrease." },
+    every: { type: "integer", minimum: 1, description: "Apply the delta every N units. Defaults to 1." },
+    unit: { type: "string", enum: ["set", "round", "interval", "cycle"] },
+  },
+  required: ["metric", "delta", "unit"],
+  additionalProperties: false,
+};
+
+/** Wave 8: one typed exercise intensity target. Exactly the fields for its type. */
+const intensityTarget = {
+  type: "object",
+  description: "One typed intensity target. heartRateZone uses zone; rpe/power/thresholdPercentage use lower and upper (lower ≤ upper); power is stated in watts; pace and descriptive use text; namedZone uses system and range.",
+  properties: {
+    type: { type: "string", enum: ["heartRateZone", "rpe", "pace", "power", "thresholdPercentage", "namedZone", "descriptive"] },
+    zone: { type: "integer", minimum: 1, maximum: 5, description: "heartRateZone only: HR zone 1-5." },
+    lower: { type: "number", minimum: 0, description: "Lower bound for rpe, power, or thresholdPercentage." },
+    upper: { type: "number", minimum: 0, description: "Upper bound, at least lower." },
+    unit: { type: "string", enum: ["watts"], description: "power only. Watts is the only power unit." },
+    text: { type: "string", minLength: 1, description: "pace or descriptive wording, e.g. '5k pace'." },
+    system: { type: "string", minLength: 1, description: "namedZone only, e.g. 'Coggan'." },
+    range: { type: "string", minLength: 1, description: "namedZone only, e.g. 'Z2'." },
+  },
+  required: ["type"],
+  additionalProperties: false,
+};
+
 /**
  * Explicit taxonomy selector shared by the Wave 7 bulk tools. Fields AND together. Instances without
  * catalog identity can never match a taxonomy field — the tool reports them instead of silently
@@ -126,14 +195,22 @@ const exerciseSelector = {
   additionalProperties: false,
 };
 
-/** The single tools whose payloads may appear as one operation of an atomic apply_workout_edits batch. */
-const batchOperationNames = [
+/** The batch-eligible operations Wave 7 clients already understand. */
+const waveSevenBatchOperationNames = [
   "update_workout_metadata", "update_block_metadata", "update_exercise_metadata",
   "add_block", "remove_block", "move_block", "duplicate_block",
   "add_exercise", "move_exercise", "replace_exercise", "remove_exercise",
   "reorder_exercise", "duplicate_exercise",
   "add_set", "update_set", "remove_set", "move_set", "duplicate_set",
   "set_metric_value", "remove_metric", "update_logging_config",
+];
+
+/** The single tools whose payloads may appear as one operation of an atomic apply_workout_edits batch. */
+const batchOperationNames = [
+  ...waveSevenBatchOperationNames,
+  "update_group", "update_choice", "convert_choice_to_group", "update_rest", "add_rest",
+  "move_node", "remove_node", "add_set_alternative", "update_set_alternative",
+  "remove_set_alternative", "update_exercise_prescription",
 ];
 
 type ToolSchema = {
@@ -302,7 +379,7 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "get_current_workout",
-    description: "Read the current structured workout, including its mutation scope, stable IDs for every block, exercise instance, and set, plus revision_token. Call before editing and pass the IDs plus revision_token to mutation tools. A stale token is rejected without writing.",
+    description: "Read the current structured workout, including its mutation scope, stable IDs for every block, exercise instance, and set — plus every group, choice, choice option, rest, and set alternative — and revision_token. Call before editing and pass the IDs plus revision_token to mutation tools. A stale token is rejected without writing.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -723,13 +800,14 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "add_exercise",
-    description: "Add an exercise to an ID-targeted block at an optional zero-based position, optionally with a uniform set scheme. Omit at_index to append. Nested-parent insertion is not supported by this tool.",
+    description: "Add an exercise at an optional zero-based position, optionally with a uniform set scheme. Target EXACTLY ONE destination: block_id for a block's top level, or parent_id for a nested group (as a child) or choice (as a new option). Omit at_index to append.",
     input_schema: {
       type: "object",
       properties: {
-        block_id: { type: "string", description: "Stable destination block ID from get_current_workout." },
+        block_id: { type: "string", description: "Stable destination block ID from get_current_workout. Use this OR parent_id, never both." },
+        parent_id: { type: "string", description: "Stable destination group or choice ID from get_current_workout for nested insertion. Use this OR block_id, never both." },
         name: { type: "string", description: "Exercise name." },
-        at_index: { type: "integer", minimum: 0, description: "Optional zero-based insertion position among the block's top-level nodes." },
+        at_index: { type: "integer", minimum: 0, description: "Optional zero-based insertion position among the destination container's nodes." },
         sets: { type: "integer", minimum: 1, description: "How many sets (default 1)." },
         reps: { type: "integer" },
         load: { type: "number", description: "Resistance per set." },
@@ -737,7 +815,11 @@ export const TOOLS: ToolSchema[] = [
         distance_m: { type: "number", description: "Distance in METERS (e.g. 150 for a 150m carry, 1000 for a 1km row). Use this for distance work — never put the distance in the exercise name." },
         expected_revision_token: expectedRevisionToken,
       },
-      required: ["block_id", "name", "expected_revision_token"],
+      required: ["name", "expected_revision_token"],
+      oneOf: [
+        { required: ["block_id"], not: { required: ["parent_id"] } },
+        { required: ["parent_id"], not: { required: ["block_id"] } },
+      ],
     },
   },
   {
@@ -834,7 +916,7 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "update_set",
-    description: "Patch one planned set by stable ID. Omitted fields stay unchanged, values set fields, and null explicitly clears nullable values or targets. A set role is required state and cannot be cleared.",
+    description: "Patch one planned set by stable ID. Omitted fields stay unchanged, values set fields, and null explicitly clears nullable values, targets, or progressions. A set role is required state and cannot be cleared.",
     input_schema: {
       type: "object",
       properties: {
@@ -853,6 +935,7 @@ export const TOOLS: ToolSchema[] = [
               additionalProperties: false,
               description: "Pass null to clear all effort and range targets.",
             },
+            progressions: { type: ["array", "null"], items: setProgression, description: "Replaces the set's full progression list ('add 5 kg every round'). Pass null to clear all progressions." },
           },
           minProperties: 1,
           additionalProperties: false,
@@ -960,6 +1043,176 @@ export const TOOLS: ToolSchema[] = [
       required: ["selector", "replacement_definition_id", "expected_revision_token"],
     },
   },
+  {
+    name: "update_group",
+    description: "Patch one group by stable group ID: label, guidance, phase, dose layer, optional flag, repetition (once / N rounds / a time cap), start cadence, whole-group total targets, and round-to-round adjustments. Omit a field to leave it; pass null to clear a nullable field. Label and repetition are required group state and can't be cleared. Values are canonical (kg, meters, seconds).",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        group_id: { type: "string", description: "Stable group ID from get_current_workout." },
+        label: { type: "string", minLength: 1, description: "New group label. Omit to leave unchanged." },
+        guidance: { type: ["string", "null"], description: "Coach guidance for the group, null to clear, or omit to leave unchanged." },
+        phase: { type: ["string", "null"], enum: ["warmup", "main", "cooldown", "transition", null], description: "Workout phase, null to clear." },
+        dose: { type: ["string", "null"], enum: ["med", "hpl", "mdv", null], description: "Dose layer (MED / HPL / MDV), null to clear." },
+        is_optional: { type: "boolean", description: "Whether the group is optional for the athlete." },
+        repetition: groupRepetition,
+        cadence: groupCadence,
+        total_targets: { type: ["object", "null"], properties: nullableSetMetricProperties, additionalProperties: false, description: "Whole-group canonical totals (e.g. total calories for the block). null clears all; null for one metric clears only that metric." },
+        adjustments: { type: ["array", "null"], items: groupAdjustment, description: "Replaces the full adjustment list; null clears it." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["group_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "update_choice",
+    description: "Update one either/or choice by stable choice ID: rename its label or set how many options the athlete picks. selection_count must be between 1 and the choice's option count.",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        choice_id: { type: "string", description: "Stable choice ID from get_current_workout." },
+        label: { type: "string", minLength: 1, description: "New choice label. Omit to leave unchanged." },
+        selection_count: { type: "integer", minimum: 1, description: "How many options the athlete performs." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["choice_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "convert_choice_to_group",
+    description: "Convert one either/or choice into a required ordered group containing every existing option, by stable choice ID. Keeps the choice's ID, label, and child prescriptions, and one undo_workout_mutation call reverses it. Prefer this ID-targeted tool over require_all_options.",
+    input_schema: {
+      type: "object",
+      properties: {
+        choice_id: { type: "string", description: "Stable choice ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["choice_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "update_rest",
+    description: "Patch one rest node by stable rest ID: label, placement, duration, or note. Omit a field to leave it; null clears duration or guidance. Label and placement are required rest state and can't be cleared.",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        rest_id: { type: "string", description: "Stable rest ID from get_current_workout." },
+        label: { type: "string", minLength: 1, description: "New rest label. Omit to leave unchanged." },
+        placement: { type: "string", enum: ["inline", "betweenRepetitions", "afterEveryRepetition", "afterFinalRepetition"] },
+        duration_seconds: { type: ["integer", "null"], minimum: 0, description: "Rest length in seconds, null to clear (unspecified duration)." },
+        guidance: { type: ["string", "null"], description: "Rest note, null to clear." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["rest_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "add_rest",
+    description: "Insert a rest node into a block or group at an optional zero-based position (omit at_index to append). A rest can't be a choice option. Returns a versioned receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        parent_id: { type: "string", description: "Stable destination block or group ID from get_current_workout." },
+        at_index: { type: "integer", minimum: 0, description: "Optional zero-based insertion position. Omit to append." },
+        duration_seconds: { type: "integer", minimum: 0, description: "Rest length in seconds. Omit for an unspecified duration." },
+        placement: { type: "string", enum: ["inline", "betweenRepetitions", "afterEveryRepetition", "afterFinalRepetition"], description: "Defaults to inline." },
+        label: { type: "string", description: "Defaults to 'Rest'." },
+        guidance: { type: "string", description: "Optional rest note." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["parent_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "move_node",
+    description: "Move or reorder ANY node — exercise, group, choice, or rest — by stable node ID into a destination container (block, group, or choice) at a zero-based final position. This is the general nesting tool: put an exercise inside a group, pull one out, reorder a choice's options, or reposition a whole group subtree. Everything validates against one snapshot before anything changes: the destination must exist, a node can never move into itself or its own subtree, a rest can't become a choice option, and a choice's only option can't be moved out. Returns a receipt and is undoable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        node_id: { type: "string", description: "Stable ID of the node to move (exercise instance, group, choice, or rest) from get_current_workout." },
+        to_parent_id: { type: "string", description: "Stable destination container ID: a block, group (children), or choice (options)." },
+        to_index: { type: "integer", minimum: 0, description: "Zero-based final position inside the destination." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["node_id", "to_parent_id", "to_index", "expected_revision_token"],
+    },
+  },
+  {
+    name: "remove_node",
+    description: "Remove ANY node by stable node ID, including a whole group or choice subtree. In a live session every performed exercise, group, and choice record owned by the removed subtree is purged through the logged-work safeguard, and targeted undo restores the node and the exact purged performed content. A choice's only option can't be removed — remove or convert the choice itself instead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        node_id: { type: "string", description: "Stable node ID from get_current_workout (exercise instance, group, choice, or rest)." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["node_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "add_set_alternative",
+    description: "Add an alternative prescription to one planned set by stable set ID (e.g. '20 cal row OR 15 cal ski'). Values and range bounds are canonical (kg, meters, seconds).",
+    input_schema: {
+      type: "object",
+      properties: {
+        set_id: { type: "string", description: "Stable set ID from get_current_workout." },
+        label: { type: "string", minLength: 1, description: "What the alternative is, e.g. 'Ski erg'." },
+        values: { type: "object", properties: setMetricProperties, additionalProperties: false },
+        ranges: { type: "array", items: setRangeTarget },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["set_id", "label", "expected_revision_token"],
+    },
+  },
+  {
+    name: "update_set_alternative",
+    description: "Patch one set alternative by stable alternative ID: label, canonical values (null clears one metric or the whole map), or ranges (null clears). The label is required state and can't be cleared.",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        alternative_id: { type: "string", description: "Stable alternative ID from get_current_workout." },
+        label: { type: "string", minLength: 1, description: "New alternative label. Omit to leave unchanged." },
+        values: { type: ["object", "null"], properties: nullableSetMetricProperties, additionalProperties: false, description: "null clears every value; null for one metric clears only that value." },
+        ranges: { type: ["array", "null"], items: setRangeTarget, description: "Replaces the full range list; null clears it." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["alternative_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "remove_set_alternative",
+    description: "Remove one set alternative by stable alternative ID. The planned set itself is unchanged.",
+    input_schema: {
+      type: "object",
+      properties: {
+        alternative_id: { type: "string", description: "Stable alternative ID from get_current_workout." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["alternative_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "update_exercise_prescription",
+    description: "Patch one exercise instance's prescription-level targets by stable exercise instance ID: rest between sets, tempo, training intent, target heart-rate zone (1-5), and typed intensity targets. Omit a field to leave it; pass null to clear it. intensity_targets replaces the whole list. Set-level values, roles, and ranges belong to update_set instead.",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        rest_seconds: { type: ["integer", "null"], minimum: 0, description: "Rest between sets in seconds, null to clear." },
+        tempo: { type: ["string", "null"], description: "Tempo string such as '3-1-1-0', null to clear." },
+        target_zone: { type: ["integer", "null"], minimum: 1, maximum: 5, description: "Target heart-rate zone 1-5, null to clear." },
+        intent: { type: ["string", "null"], enum: ["easy", "threshold", "intervals", "vo2", "speed", "long", "race", "strength", "recovery", "mobility", null], description: "Training intent, null to clear." },
+        intensity_targets: { type: ["array", "null"], items: intensityTarget, description: "Replaces the full intensity-target list; null clears it." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise_instance_id", "expected_revision_token"],
+    },
+  },
 ];
 
 const legacyWaveFiveOverrides = new Map<string, ToolSchema>([
@@ -1065,7 +1318,74 @@ const waveSevenOnlyToolNames = new Set([
   "bulk_replace_exercises",
 ]);
 
-export const WAVE6_TOOLS: ToolSchema[] = TOOLS.filter(
+const waveEightOnlyToolNames = new Set([
+  "update_group",
+  "update_choice",
+  "convert_choice_to_group",
+  "update_rest",
+  "add_rest",
+  "move_node",
+  "remove_node",
+  "add_set_alternative",
+  "update_set_alternative",
+  "remove_set_alternative",
+  "update_exercise_prescription",
+]);
+
+function toolNamed(name: string): ToolSchema {
+  const tool = TOOLS.find((candidate) => candidate.name === name);
+  if (!tool) throw new Error(`missing tool schema: ${name}`);
+  return tool;
+}
+
+function cloneSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+}
+
+/**
+ * Wave 8 upgraded three existing schemas (nested add_exercise targets, update_set progressions, and
+ * the wider batch op enum). Installed Wave 7 and older clients cannot map those payloads, so their
+ * served schemas must stay exactly what their mapper understands.
+ */
+const waveSevenOverrides = new Map<string, ToolSchema>([
+  ["add_exercise", (() => {
+    const base = toolNamed("add_exercise");
+    const schema = cloneSchema(base.input_schema);
+    delete (schema.properties as Record<string, unknown>).parent_id;
+    delete schema.oneOf;
+    schema.required = ["block_id", "name", "expected_revision_token"];
+    return {
+      ...base,
+      description: "Add an exercise to an ID-targeted block at an optional zero-based position, optionally with a uniform set scheme. Omit at_index to append. Nested-parent insertion is not supported by this tool.",
+      input_schema: schema,
+    };
+  })()],
+  ["update_set", (() => {
+    const base = toolNamed("update_set");
+    const schema = cloneSchema(base.input_schema);
+    const patch = (schema.properties as Record<string, Record<string, unknown>>).patch;
+    delete (patch.properties as Record<string, unknown>).progressions;
+    return {
+      ...base,
+      description: base.description.replace("nullable values, targets, or progressions", "nullable values or targets"),
+      input_schema: schema,
+    };
+  })()],
+  ["apply_workout_edits", (() => {
+    const base = toolNamed("apply_workout_edits");
+    const schema = cloneSchema(base.input_schema);
+    const operations = (schema.properties as Record<string, Record<string, unknown>>).operations;
+    const items = operations.items as Record<string, Record<string, Record<string, unknown>>>;
+    items.properties.op.enum = [...waveSevenBatchOperationNames];
+    return { ...base, input_schema: schema };
+  })()],
+]);
+
+export const WAVE7_TOOLS: ToolSchema[] = TOOLS
+  .filter((tool) => !waveEightOnlyToolNames.has(tool.name))
+  .map((tool) => waveSevenOverrides.get(tool.name) ?? tool);
+
+export const WAVE6_TOOLS: ToolSchema[] = WAVE7_TOOLS.filter(
   (tool) => !waveSevenOnlyToolNames.has(tool.name),
 );
 
@@ -1077,15 +1397,17 @@ export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
   .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
   .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
 
-export type ServedToolset = "wave7" | "wave6" | "wave5" | "legacy";
+export type ServedToolset = "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
 
 /**
- * Monotonic capability gate: Wave 7 clients receive atomic composite/bulk mutations, Wave 6 clients
- * keep performed logging, Wave 5 clients keep their ID-targeted structure schema, and older clients
- * keep the name-based legacy schema.
+ * Monotonic capability gate: Wave 8 clients receive advanced node and prescription editing, Wave 7
+ * clients keep atomic composite/bulk mutations, Wave 6 clients keep performed logging, Wave 5
+ * clients keep their ID-targeted structure schema, and older clients keep the name-based legacy
+ * schema.
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  if (Number(version) >= 8) return "wave8";
   if (Number(version) >= 7) return "wave7";
   if (Number(version) >= 6) return "wave6";
   return Number(version) >= 5 ? "wave5" : "legacy";
@@ -1093,7 +1415,8 @@ export function servedToolsetForClientSchema(version: unknown): ServedToolset {
 
 export function toolsForClientSchema(version: unknown): ToolSchema[] {
   switch (servedToolsetForClientSchema(version)) {
-  case "wave7": return TOOLS;
+  case "wave8": return TOOLS;
+  case "wave7": return WAVE7_TOOLS;
   case "wave6": return WAVE6_TOOLS;
   case "wave5": return WAVE5_TOOLS;
   case "legacy": return LEGACY_TOOLS;

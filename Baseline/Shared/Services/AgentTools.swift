@@ -60,18 +60,138 @@ struct PlannedSetPatch: Equatable, Sendable {
     var values: MetadataPatch<PlannedSetValuesPatch>
     var role: MetadataPatch<SetRole>
     var targets: MetadataPatch<PlannedSetTargetsPatch>
+    var progressions: MetadataPatch<[MetricProgression]>
 
     init(
         values: MetadataPatch<PlannedSetValuesPatch> = .unchanged,
         role: MetadataPatch<SetRole> = .unchanged,
-        targets: MetadataPatch<PlannedSetTargetsPatch> = .unchanged
+        targets: MetadataPatch<PlannedSetTargetsPatch> = .unchanged,
+        progressions: MetadataPatch<[MetricProgression]> = .unchanged
     ) {
         self.values = values
         self.role = role
         self.targets = targets
+        self.progressions = progressions
     }
 
-    var isUnchanged: Bool { values.isUnchanged && role.isUnchanged && targets.isUnchanged }
+    var isUnchanged: Bool {
+        values.isUnchanged && role.isUnchanged && targets.isUnchanged && progressions.isUnchanged
+    }
+}
+
+/// Wave 8 group patch. Label and repetition are required group state (set-only); everything else
+/// follows the three-state convention: omitted = leave, set = change, null = clear.
+struct WorkoutGroupPatch: Equatable, Sendable {
+    var label: MetadataPatch<String>
+    var guidance: MetadataPatch<String>
+    var phase: MetadataPatch<WorkoutPhase>
+    var doseLayer: MetadataPatch<DoseLayer>
+    var isOptional: MetadataPatch<Bool>
+    var repetition: MetadataPatch<RepetitionRule>
+    var cadence: MetadataPatch<StartCadence>
+    var totalTargets: MetadataPatch<PlannedSetValuesPatch>
+    var adjustments: MetadataPatch<[MetricAdjustment]>
+
+    init(
+        label: MetadataPatch<String> = .unchanged,
+        guidance: MetadataPatch<String> = .unchanged,
+        phase: MetadataPatch<WorkoutPhase> = .unchanged,
+        doseLayer: MetadataPatch<DoseLayer> = .unchanged,
+        isOptional: MetadataPatch<Bool> = .unchanged,
+        repetition: MetadataPatch<RepetitionRule> = .unchanged,
+        cadence: MetadataPatch<StartCadence> = .unchanged,
+        totalTargets: MetadataPatch<PlannedSetValuesPatch> = .unchanged,
+        adjustments: MetadataPatch<[MetricAdjustment]> = .unchanged
+    ) {
+        self.label = label
+        self.guidance = guidance
+        self.phase = phase
+        self.doseLayer = doseLayer
+        self.isOptional = isOptional
+        self.repetition = repetition
+        self.cadence = cadence
+        self.totalTargets = totalTargets
+        self.adjustments = adjustments
+    }
+
+    var isUnchanged: Bool {
+        label.isUnchanged && guidance.isUnchanged && phase.isUnchanged && doseLayer.isUnchanged
+            && isOptional.isUnchanged && repetition.isUnchanged && cadence.isUnchanged
+            && totalTargets.isUnchanged && adjustments.isUnchanged
+    }
+}
+
+/// Wave 8 rest patch. Label and placement are required rest state (set-only); duration and guidance
+/// are clearable.
+struct PlannedRestPatch: Equatable, Sendable {
+    var label: MetadataPatch<String>
+    var placement: MetadataPatch<RestPlacement>
+    var durationSeconds: MetadataPatch<Int>
+    var guidance: MetadataPatch<String>
+
+    init(
+        label: MetadataPatch<String> = .unchanged,
+        placement: MetadataPatch<RestPlacement> = .unchanged,
+        durationSeconds: MetadataPatch<Int> = .unchanged,
+        guidance: MetadataPatch<String> = .unchanged
+    ) {
+        self.label = label
+        self.placement = placement
+        self.durationSeconds = durationSeconds
+        self.guidance = guidance
+    }
+
+    var isUnchanged: Bool {
+        label.isUnchanged && placement.isUnchanged && durationSeconds.isUnchanged
+            && guidance.isUnchanged
+    }
+}
+
+/// Wave 8 set-alternative patch. The label is required alternative state (set-only).
+struct SetAlternativePatch: Equatable, Sendable {
+    var label: MetadataPatch<String>
+    var values: MetadataPatch<PlannedSetValuesPatch>
+    var ranges: MetadataPatch<[MetricTargetRange]>
+
+    init(
+        label: MetadataPatch<String> = .unchanged,
+        values: MetadataPatch<PlannedSetValuesPatch> = .unchanged,
+        ranges: MetadataPatch<[MetricTargetRange]> = .unchanged
+    ) {
+        self.label = label
+        self.values = values
+        self.ranges = ranges
+    }
+
+    var isUnchanged: Bool { label.isUnchanged && values.isUnchanged && ranges.isUnchanged }
+}
+
+/// Wave 8 exercise-prescription patch: the per-exercise targets that sit beside the set list.
+struct ExercisePrescriptionPatch: Equatable, Sendable {
+    var restSeconds: MetadataPatch<Int>
+    var tempo: MetadataPatch<String>
+    var targetZone: MetadataPatch<Int>
+    var intent: MetadataPatch<TrainingIntent>
+    var intensityTargets: MetadataPatch<[IntensityTarget]>
+
+    init(
+        restSeconds: MetadataPatch<Int> = .unchanged,
+        tempo: MetadataPatch<String> = .unchanged,
+        targetZone: MetadataPatch<Int> = .unchanged,
+        intent: MetadataPatch<TrainingIntent> = .unchanged,
+        intensityTargets: MetadataPatch<[IntensityTarget]> = .unchanged
+    ) {
+        self.restSeconds = restSeconds
+        self.tempo = tempo
+        self.targetZone = targetZone
+        self.intent = intent
+        self.intensityTargets = intensityTargets
+    }
+
+    var isUnchanged: Bool {
+        restSeconds.isUnchanged && tempo.isUnchanged && targetZone.isUnchanged
+            && intent.isUnchanged && intensityTargets.isUnchanged
+    }
 }
 
 /// One typed operation inside an atomic `apply_workout_edits` batch. Each case carries exactly the
@@ -100,7 +220,7 @@ enum WorkoutEditOperation: Equatable, Sendable {
     case moveBlock(blockID: UUID, toIndex: Int)
     case duplicateBlock(blockID: UUID)
     case addExercise(
-        blockID: UUID,
+        containerID: UUID,
         name: String,
         atIndex: Int?,
         sets: Int?,
@@ -114,6 +234,25 @@ enum WorkoutEditOperation: Equatable, Sendable {
     case removeExercise(exerciseInstanceID: UUID)
     case reorderExercise(exerciseInstanceID: UUID, toIndex: Int)
     case duplicateExercise(exerciseInstanceID: UUID)
+    // Wave 8: advanced nodes and prescriptions, all on the one recursive node API.
+    case updateGroup(groupID: UUID, patch: WorkoutGroupPatch)
+    case updateChoice(choiceID: UUID, label: MetadataPatch<String>, selectionCount: MetadataPatch<Int>)
+    case convertChoiceToGroup(choiceID: UUID)
+    case updateRest(restID: UUID, patch: PlannedRestPatch)
+    case addRest(
+        parentID: UUID,
+        atIndex: Int?,
+        durationSeconds: Int?,
+        placement: RestPlacement,
+        label: String?,
+        guidance: String?
+    )
+    case moveNode(nodeID: UUID, toParentID: UUID, toIndex: Int)
+    case removeNode(nodeID: UUID)
+    case addSetAlternative(setID: UUID, label: String, values: PlannedSetValues, ranges: [MetricTargetRange])
+    case updateSetAlternative(alternativeID: UUID, patch: SetAlternativePatch)
+    case removeSetAlternative(alternativeID: UUID)
+    case updateExercisePrescription(exerciseInstanceID: UUID, patch: ExercisePrescriptionPatch)
     case addSet(
         exerciseInstanceID: UUID,
         afterSetID: UUID?,
@@ -153,6 +292,17 @@ enum WorkoutEditOperation: Equatable, Sendable {
         case .setMetricValue: "set_metric_value"
         case .removeMetric: "remove_metric"
         case .updateLoggingConfig: "update_logging_config"
+        case .updateGroup: "update_group"
+        case .updateChoice: "update_choice"
+        case .convertChoiceToGroup: "convert_choice_to_group"
+        case .updateRest: "update_rest"
+        case .addRest: "add_rest"
+        case .moveNode: "move_node"
+        case .removeNode: "remove_node"
+        case .addSetAlternative: "add_set_alternative"
+        case .updateSetAlternative: "update_set_alternative"
+        case .removeSetAlternative: "remove_set_alternative"
+        case .updateExercisePrescription: "update_exercise_prescription"
         }
     }
 }
@@ -251,7 +401,7 @@ final class AgentTools {
         case removeBlock(blockID: UUID, expectedRevisionToken: UUID)
         case moveBlock(blockID: UUID, toIndex: Int, expectedRevisionToken: UUID)
         case duplicateBlock(blockID: UUID, expectedRevisionToken: UUID)
-        case addExercise(blockID: UUID, name: String, atIndex: Int?, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, expectedRevisionToken: UUID)
+        case addExercise(containerID: UUID, name: String, atIndex: Int?, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, expectedRevisionToken: UUID)
         case moveExercise(exerciseInstanceID: UUID, toBlockID: UUID, toIndex: Int, expectedRevisionToken: UUID)
         case replaceExercise(exerciseInstanceID: UUID, replacement: String, expectedRevisionToken: UUID)
         case requireAllOptions(choice: String, expectedRevisionToken: UUID? = nil)
@@ -270,6 +420,42 @@ final class AgentTools {
         case removeSet(setID: UUID, expectedRevisionToken: UUID)
         case moveSet(setID: UUID, beforeSetID: UUID?, toIndex: Int?, expectedRevisionToken: UUID)
         case duplicateSet(setID: UUID, expectedRevisionToken: UUID)
+        // Wave 8: advanced nodes and prescriptions — groups, choices, rests, generic nested-node
+        // moves, set alternatives, and per-exercise prescription targets.
+        case updateGroup(groupID: UUID, patch: WorkoutGroupPatch, expectedRevisionToken: UUID)
+        case updateChoice(
+            choiceID: UUID,
+            label: MetadataPatch<String>,
+            selectionCount: MetadataPatch<Int>,
+            expectedRevisionToken: UUID
+        )
+        case convertChoiceToGroup(choiceID: UUID, expectedRevisionToken: UUID)
+        case updateRest(restID: UUID, patch: PlannedRestPatch, expectedRevisionToken: UUID)
+        case addRest(
+            parentID: UUID,
+            atIndex: Int?,
+            durationSeconds: Int?,
+            placement: RestPlacement,
+            label: String?,
+            guidance: String?,
+            expectedRevisionToken: UUID
+        )
+        case moveNode(nodeID: UUID, toParentID: UUID, toIndex: Int, expectedRevisionToken: UUID)
+        case removeNode(nodeID: UUID, expectedRevisionToken: UUID)
+        case addSetAlternative(
+            setID: UUID,
+            label: String,
+            values: PlannedSetValues,
+            ranges: [MetricTargetRange],
+            expectedRevisionToken: UUID
+        )
+        case updateSetAlternative(alternativeID: UUID, patch: SetAlternativePatch, expectedRevisionToken: UUID)
+        case removeSetAlternative(alternativeID: UUID, expectedRevisionToken: UUID)
+        case updateExercisePrescription(
+            exerciseInstanceID: UUID,
+            patch: ExercisePrescriptionPatch,
+            expectedRevisionToken: UUID
+        )
         // Wave 7: one atomic batch of the primitive edits above, and selector-driven bulk mutations.
         case applyWorkoutEdits(operations: [WorkoutEditOperation], expectedRevisionToken: UUID)
         case convertWorkoutUnits(
@@ -400,6 +586,17 @@ final class AgentTools {
             case .removeSet: return "Removed a planned set"
             case .moveSet: return "Moved a planned set"
             case .duplicateSet: return "Duplicated a planned set"
+            case .updateGroup: return "Updated a group"
+            case .updateChoice: return "Updated a choice"
+            case .convertChoiceToGroup: return "Made every option required in a choice"
+            case .updateRest: return "Updated a rest"
+            case .addRest: return "Added a rest"
+            case .moveNode: return "Moved a workout node"
+            case .removeNode: return "Removed a workout node"
+            case .addSetAlternative: return "Added a set alternative"
+            case .updateSetAlternative: return "Updated a set alternative"
+            case .removeSetAlternative: return "Removed a set alternative"
+            case .updateExercisePrescription: return "Updated an exercise's prescription"
             case .applyWorkoutEdits(let operations, _):
                 return "Applied \(operations.count) workout edit\(operations.count == 1 ? "" : "s") atomically"
             case .convertWorkoutUnits: return "Converted workout display units"
@@ -456,6 +653,9 @@ final class AgentTools {
                  .removeBlock, .moveBlock, .duplicateBlock, .moveExercise, .replaceExercise,
                  .requireAllOptions, .removeExercise, .reorderExercise, .duplicateExercise, .addSet,
                  .updateSet, .removeSet, .moveSet, .duplicateSet,
+                 .updateGroup, .updateChoice, .convertChoiceToGroup, .updateRest, .addRest,
+                 .moveNode, .removeNode, .addSetAlternative, .updateSetAlternative,
+                 .removeSetAlternative, .updateExercisePrescription,
                  .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
                  .undoWorkoutMutation, .upsertPerformedSet, .setPerformedSetOutcome,
                  .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
@@ -476,6 +676,9 @@ final class AgentTools {
                  .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
                  .removeBlock, .moveBlock, .duplicateBlock, .removeExercise, .reorderExercise,
                  .duplicateExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+                 .updateGroup, .updateChoice, .convertChoiceToGroup, .updateRest, .addRest,
+                 .moveNode, .removeNode, .addSetAlternative, .updateSetAlternative,
+                 .removeSetAlternative, .updateExercisePrescription,
                  .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
                  .undoWorkoutMutation, .updateLoggingConfig,
                  .setMetricValue, .removeMetric, .upsertPerformedSet, .setPerformedSetOutcome,
@@ -760,7 +963,7 @@ final class AgentTools {
                 success: "Duplicated the block."
             )
         case .addExercise(
-            let blockID,
+            let containerID,
             let name,
             let atIndex,
             let sets,
@@ -774,7 +977,7 @@ final class AgentTools {
             return outcome(
                 workouts.addExercise(
                     name: name,
-                    toBlockID: blockID,
+                    toContainerID: containerID,
                     atIndex: atIndex,
                     sets: sets,
                     reps: reps,
@@ -892,6 +1095,126 @@ final class AgentTools {
             return outcome(
                 workouts.duplicateSet(setID: setID, expectedRevisionToken: expectedRevisionToken),
                 success: "Duplicated the planned set."
+            )
+        case .updateGroup(let groupID, let patch, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateGroup(
+                    groupID: groupID,
+                    patch: patch,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the group."
+            )
+        case .updateChoice(let choiceID, let label, let selectionCount, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateChoice(
+                    choiceID: choiceID,
+                    label: label,
+                    selectionCount: selectionCount,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the choice."
+            )
+        case .convertChoiceToGroup(let choiceID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.convertChoiceToGroup(
+                    choiceID: choiceID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Converted the choice into one required sequence."
+            )
+        case .updateRest(let restID, let patch, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateRest(
+                    restID: restID,
+                    patch: patch,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the rest."
+            )
+        case .addRest(
+            let parentID,
+            let atIndex,
+            let durationSeconds,
+            let placement,
+            let label,
+            let guidance,
+            let expectedRevisionToken
+        ):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.addRest(
+                    parentID: parentID,
+                    atIndex: atIndex,
+                    durationSeconds: durationSeconds,
+                    placement: placement,
+                    label: label,
+                    guidance: guidance,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Added the rest."
+            )
+        case .moveNode(let nodeID, let toParentID, let toIndex, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.moveNode(
+                    nodeID: nodeID,
+                    toParentID: toParentID,
+                    toIndex: toIndex,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Moved the workout node."
+            )
+        case .removeNode(let nodeID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.removeNode(nodeID: nodeID, expectedRevisionToken: expectedRevisionToken),
+                success: "Removed the workout node."
+            )
+        case .addSetAlternative(let setID, let label, let values, let ranges, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.addSetAlternative(
+                    setID: setID,
+                    label: label,
+                    values: values,
+                    ranges: ranges,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Added the set alternative."
+            )
+        case .updateSetAlternative(let alternativeID, let patch, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateSetAlternative(
+                    alternativeID: alternativeID,
+                    patch: patch,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the set alternative."
+            )
+        case .removeSetAlternative(let alternativeID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.removeSetAlternative(
+                    alternativeID: alternativeID,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Removed the set alternative."
+            )
+        case .updateExercisePrescription(let exerciseInstanceID, let patch, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateExercisePrescription(
+                    exerciseInstanceID: exerciseInstanceID,
+                    patch: patch,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the exercise's prescription."
             )
         case .applyWorkoutEdits(let operations, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }

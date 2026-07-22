@@ -1,10 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { buildSystem } = require("../lib/prompt");
-const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS } = require("../lib/tools");
+const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS, WAVE7_TOOLS } = require("../lib/tools");
 
 const SERVED_PAIRS = [
-  ["wave7", TOOLS],
+  ["wave8", TOOLS],
+  ["wave7", WAVE7_TOOLS],
   ["wave6", WAVE6_TOOLS],
   ["wave5", WAVE5_TOOLS],
   ["legacy", LEGACY_TOOLS],
@@ -111,5 +112,43 @@ test("shared guidance and the state block survive in both variants", () => {
     assert.match(prompt, /MUTATION RECEIPT/);
     assert.match(prompt, /Today's current state \(from the engine\):\nathlete state here$/);
     assert.equal(buildSystem(toolset).includes("Today's current state (from the engine):"), false);
+  }
+});
+
+test("Wave 8 prompt teaches advanced node editing and canonical prescription units", () => {
+  const prompt = buildSystem("wave8");
+
+  for (const name of [
+    "update_group",
+    "update_choice",
+    "convert_choice_to_group",
+    "update_rest",
+    "add_rest",
+    "move_node",
+    "remove_node",
+    "add_set_alternative",
+    "update_set_alternative",
+    "remove_set_alternative",
+    "update_exercise_prescription",
+  ]) {
+    assert.match(prompt, new RegExp(name), `wave8 prompt must list ${name}`);
+  }
+  assert.match(prompt, /move_node is the ONE tool for restructuring/);
+  assert.match(prompt, /never move into its own subtree/i);
+  assert.match(prompt, /only option can neither move out nor be removed/i);
+  assert.match(prompt, /rest can never be a choice option/i);
+  assert.match(prompt, /CANONICAL values \(kg, meters, seconds\)/);
+  assert.match(prompt, /progressions/);
+  assert.match(prompt, /selection_count/);
+  // The batch and performed-log contracts survive alongside the node guidance.
+  assert.match(prompt, /apply_workout_edits/);
+  assert.match(prompt, /upsert_performed_set/);
+
+  for (const toolset of ["wave7", "wave6", "wave5", "legacy"]) {
+    const older = buildSystem(toolset);
+    assert.doesNotMatch(older, /move_node/, `${toolset} must not advertise move_node`);
+    assert.doesNotMatch(older, /update_group/);
+    assert.doesNotMatch(older, /update_exercise_prescription/);
+    assert.doesNotMatch(older, /add_set_alternative/);
   }
 });

@@ -61,7 +61,10 @@ enum ToolCallMapper {
              "add_exercise", "move_exercise", "replace_exercise", "remove_exercise",
              "reorder_exercise", "duplicate_exercise",
              "add_set", "update_set", "remove_set", "move_set", "duplicate_set",
-             "set_metric_value", "remove_metric", "update_logging_config":
+             "set_metric_value", "remove_metric", "update_logging_config",
+             "update_group", "update_choice", "convert_choice_to_group", "update_rest", "add_rest",
+             "move_node", "remove_node", "add_set_alternative", "update_set_alternative",
+             "remove_set_alternative", "update_exercise_prescription":
             // Every batch-eligible single tool parses through the same operation parser the batch
             // uses, so a payload that is valid standalone is valid inside apply_workout_edits and
             // vice versa — one contract, not two that usually agree.
@@ -292,11 +295,17 @@ enum ToolCallMapper {
             guard let blockID = requiredUUID(input["block_id"]) else { return nil }
             return .duplicateBlock(blockID: blockID)
         case "add_exercise":
-            guard let blockID = requiredUUID(input["block_id"]),
+            // Exactly one destination: a block's top level, or a nested group/choice container.
+            guard validOptionalUUID(input["block_id"]), validOptionalUUID(input["parent_id"]),
                   let name = input["name"] as? String,
                   validOptionalIndex(input["at_index"]) else { return nil }
+            let blockID = uuid(input["block_id"])
+            let parentID = uuid(input["parent_id"])
+            guard (blockID != nil) != (parentID != nil), let containerID = parentID ?? blockID else {
+                return nil
+            }
             return .addExercise(
-                blockID: blockID,
+                containerID: containerID,
                 name: name,
                 atIndex: exactIntOrNil(input["at_index"]),
                 sets: intOrNil(input["sets"]),
@@ -382,6 +391,126 @@ enum ToolCallMapper {
                 enabledMetrics: metricList(input["enabled_metrics"]),
                 units: units
             )
+        case "update_group":
+            guard let groupID = requiredUUID(input["group_id"]),
+                  let label = stringPatch(input, key: "label", nullable: false),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  let phase = enumPatch(input, key: "phase", nullable: true, parse: WorkoutPhase.init(rawValue:)),
+                  let dose = enumPatch(input, key: "dose", nullable: true, parse: DoseLayer.init(rawValue:)),
+                  let isOptional = boolSetPatch(input, key: "is_optional"),
+                  let repetition = repetitionPatch(input, key: "repetition"),
+                  let cadence = cadencePatch(input, key: "cadence"),
+                  let totalTargets = plannedSetValuesPatch(input, key: "total_targets"),
+                  let adjustments = adjustmentsPatch(input, key: "adjustments") else { return nil }
+            let patch = WorkoutGroupPatch(
+                label: label,
+                guidance: guidance,
+                phase: phase,
+                doseLayer: dose,
+                isOptional: isOptional,
+                repetition: repetition,
+                cadence: cadence,
+                totalTargets: totalTargets,
+                adjustments: adjustments
+            )
+            guard patch.isUnchanged == false else { return nil }
+            return .updateGroup(groupID: groupID, patch: patch)
+        case "update_choice":
+            guard let choiceID = requiredUUID(input["choice_id"]),
+                  let label = stringPatch(input, key: "label", nullable: false),
+                  let selectionCount = intPatch(input, key: "selection_count", nullable: false, minimum: 1),
+                  !label.isUnchanged || !selectionCount.isUnchanged else { return nil }
+            return .updateChoice(choiceID: choiceID, label: label, selectionCount: selectionCount)
+        case "convert_choice_to_group":
+            guard let choiceID = requiredUUID(input["choice_id"]) else { return nil }
+            return .convertChoiceToGroup(choiceID: choiceID)
+        case "update_rest":
+            guard let restID = requiredUUID(input["rest_id"]),
+                  let label = stringPatch(input, key: "label", nullable: false),
+                  let placement = enumPatch(
+                      input,
+                      key: "placement",
+                      nullable: false,
+                      parse: RestPlacement.init(rawValue:)
+                  ),
+                  let durationSeconds = intPatch(input, key: "duration_seconds", nullable: true, minimum: 0),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true) else { return nil }
+            let patch = PlannedRestPatch(
+                label: label,
+                placement: placement,
+                durationSeconds: durationSeconds,
+                guidance: guidance
+            )
+            guard patch.isUnchanged == false else { return nil }
+            return .updateRest(restID: restID, patch: patch)
+        case "add_rest":
+            guard let parentID = requiredUUID(input["parent_id"]),
+                  validOptionalIndex(input["at_index"]),
+                  input["duration_seconds"] == nil
+                      || exactIntOrNil(input["duration_seconds"]).map({ $0 >= 0 }) == true,
+                  input["placement"] == nil || restPlacement(input["placement"]) != nil else { return nil }
+            return .addRest(
+                parentID: parentID,
+                atIndex: exactIntOrNil(input["at_index"]),
+                durationSeconds: exactIntOrNil(input["duration_seconds"]),
+                placement: restPlacement(input["placement"]) ?? .inline,
+                label: trimmedOrNil(input["label"]),
+                guidance: trimmedOrNil(input["guidance"])
+            )
+        case "move_node":
+            guard let nodeID = requiredUUID(input["node_id"]),
+                  let toParentID = requiredUUID(input["to_parent_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0 else { return nil }
+            return .moveNode(nodeID: nodeID, toParentID: toParentID, toIndex: toIndex)
+        case "remove_node":
+            guard let nodeID = requiredUUID(input["node_id"]) else { return nil }
+            return .removeNode(nodeID: nodeID)
+        case "add_set_alternative":
+            guard let setID = requiredUUID(input["set_id"]),
+                  let label = trimmedOrNil(input["label"]) else { return nil }
+            let values: PlannedSetValues
+            if input["values"] == nil {
+                values = PlannedSetValues()
+            } else {
+                guard let parsed = plannedSetValues(input["values"]) else { return nil }
+                values = parsed
+            }
+            let ranges: [MetricTargetRange]
+            if input["ranges"] == nil {
+                ranges = []
+            } else {
+                guard let parsed = rangeTargets(input["ranges"]) else { return nil }
+                ranges = parsed
+            }
+            return .addSetAlternative(setID: setID, label: label, values: values, ranges: ranges)
+        case "update_set_alternative":
+            guard let alternativeID = requiredUUID(input["alternative_id"]),
+                  let label = stringPatch(input, key: "label", nullable: false),
+                  let values = plannedSetValuesPatch(input, key: "values"),
+                  let ranges = rangesPatch(input, key: "ranges") else { return nil }
+            let patch = SetAlternativePatch(label: label, values: values, ranges: ranges)
+            guard patch.isUnchanged == false else { return nil }
+            return .updateSetAlternative(alternativeID: alternativeID, patch: patch)
+        case "remove_set_alternative":
+            guard let alternativeID = requiredUUID(input["alternative_id"]) else { return nil }
+            return .removeSetAlternative(alternativeID: alternativeID)
+        case "update_exercise_prescription":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let restSeconds = intPatch(input, key: "rest_seconds", nullable: true, minimum: 0),
+                  let tempo = stringPatch(input, key: "tempo", nullable: true),
+                  let targetZone = intPatch(input, key: "target_zone", nullable: true, minimum: 1),
+                  let intent = enumPatch(input, key: "intent", nullable: true, parse: TrainingIntent.init(rawValue:)),
+                  let intensityTargets = intensityTargetsPatch(input, key: "intensity_targets")
+            else { return nil }
+            let patch = ExercisePrescriptionPatch(
+                restSeconds: restSeconds,
+                tempo: tempo,
+                targetZone: targetZone,
+                intent: intent,
+                intensityTargets: intensityTargets
+            )
+            guard patch.isUnchanged == false else { return nil }
+            return .updateExercisePrescription(exerciseInstanceID: exerciseID, patch: patch)
         default:
             return nil
         }
@@ -419,9 +548,9 @@ enum ToolCallMapper {
             .moveBlock(blockID: blockID, toIndex: toIndex, expectedRevisionToken: expected)
         case .duplicateBlock(let blockID):
             .duplicateBlock(blockID: blockID, expectedRevisionToken: expected)
-        case .addExercise(let blockID, let name, let atIndex, let sets, let reps, let load, let durationSeconds, let distanceMeters):
+        case .addExercise(let containerID, let name, let atIndex, let sets, let reps, let load, let durationSeconds, let distanceMeters):
             .addExercise(
-                blockID: blockID,
+                containerID: containerID,
                 name: name,
                 atIndex: atIndex,
                 sets: sets,
@@ -479,6 +608,51 @@ enum ToolCallMapper {
                 exerciseInstanceID: exerciseID,
                 enabledMetrics: enabledMetrics,
                 units: units,
+                expectedRevisionToken: expected
+            )
+        case .updateGroup(let groupID, let patch):
+            .updateGroup(groupID: groupID, patch: patch, expectedRevisionToken: expected)
+        case .updateChoice(let choiceID, let label, let selectionCount):
+            .updateChoice(
+                choiceID: choiceID,
+                label: label,
+                selectionCount: selectionCount,
+                expectedRevisionToken: expected
+            )
+        case .convertChoiceToGroup(let choiceID):
+            .convertChoiceToGroup(choiceID: choiceID, expectedRevisionToken: expected)
+        case .updateRest(let restID, let patch):
+            .updateRest(restID: restID, patch: patch, expectedRevisionToken: expected)
+        case .addRest(let parentID, let atIndex, let durationSeconds, let placement, let label, let guidance):
+            .addRest(
+                parentID: parentID,
+                atIndex: atIndex,
+                durationSeconds: durationSeconds,
+                placement: placement,
+                label: label,
+                guidance: guidance,
+                expectedRevisionToken: expected
+            )
+        case .moveNode(let nodeID, let toParentID, let toIndex):
+            .moveNode(nodeID: nodeID, toParentID: toParentID, toIndex: toIndex, expectedRevisionToken: expected)
+        case .removeNode(let nodeID):
+            .removeNode(nodeID: nodeID, expectedRevisionToken: expected)
+        case .addSetAlternative(let setID, let label, let values, let ranges):
+            .addSetAlternative(
+                setID: setID,
+                label: label,
+                values: values,
+                ranges: ranges,
+                expectedRevisionToken: expected
+            )
+        case .updateSetAlternative(let alternativeID, let patch):
+            .updateSetAlternative(alternativeID: alternativeID, patch: patch, expectedRevisionToken: expected)
+        case .removeSetAlternative(let alternativeID):
+            .removeSetAlternative(alternativeID: alternativeID, expectedRevisionToken: expected)
+        case .updateExercisePrescription(let exerciseID, let patch):
+            .updateExercisePrescription(
+                exerciseInstanceID: exerciseID,
+                patch: patch,
                 expectedRevisionToken: expected
             )
         }
@@ -739,8 +913,221 @@ enum ToolCallMapper {
     private static func plannedSetPatch(_ input: [String: Any]) -> PlannedSetPatch? {
         guard let values = plannedSetValuesPatch(input, key: "values"),
               let role = setRolePatch(input, key: "role"),
-              let targets = plannedSetTargetsPatch(input, key: "targets") else { return nil }
-        return PlannedSetPatch(values: values, role: role, targets: targets)
+              let targets = plannedSetTargetsPatch(input, key: "targets"),
+              let progressions = progressionsPatch(input, key: "progressions") else { return nil }
+        return PlannedSetPatch(values: values, role: role, targets: targets, progressions: progressions)
+    }
+
+    // MARK: - Wave 8 parsing (groups, choices, rests, alternatives, prescriptions)
+
+    /// A string-enum field: omitted = unchanged, null = clear (when nullable), a known raw value =
+    /// set. Any other payload rejects the call.
+    private static func enumPatch<Value: Equatable & Sendable>(
+        _ input: [String: Any],
+        key: String,
+        nullable: Bool,
+        parse: (String) -> Value?
+    ) -> MetadataPatch<Value>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return nullable ? .clear : nil }
+        guard let string = raw as? String, let value = parse(string) else { return nil }
+        return .set(value)
+    }
+
+    /// A set-only boolean field (required state, so null never clears it).
+    private static func boolSetPatch(_ input: [String: Any], key: String) -> MetadataPatch<Bool>? {
+        guard let raw = input[key] else { return .unchanged }
+        guard raw is NSNull == false, let value = boolOrNil(raw) else { return nil }
+        return .set(value)
+    }
+
+    private static func intPatch(
+        _ input: [String: Any],
+        key: String,
+        nullable: Bool,
+        minimum: Int
+    ) -> MetadataPatch<Int>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return nullable ? .clear : nil }
+        guard let value = exactIntOrNil(raw), value >= minimum else { return nil }
+        return .set(value)
+    }
+
+    private static func repetitionRule(_ value: Any?) -> RepetitionRule? {
+        guard let object = value as? [String: Any], let type = object["type"] as? String else {
+            return nil
+        }
+        switch type {
+        case "once":
+            return .once
+        case "count":
+            guard let count = exactIntOrNil(object["count"]), count >= 1 else { return nil }
+            return .count(count)
+        case "until":
+            guard let seconds = exactIntOrNil(object["duration_seconds"]), seconds >= 1 else { return nil }
+            return .until(seconds: seconds)
+        default:
+            return nil
+        }
+    }
+
+    /// Repetition is required group state: omitted = unchanged, an object = set, null rejects.
+    private static func repetitionPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<RepetitionRule>? {
+        guard let raw = input[key] else { return .unchanged }
+        guard raw is NSNull == false, let rule = repetitionRule(raw) else { return nil }
+        return .set(rule)
+    }
+
+    private static func startCadence(_ value: Any?) -> StartCadence? {
+        guard let object = value as? [String: Any],
+              let interval = exactIntOrNil(object["interval_seconds"]), interval >= 1,
+              let scopeRaw = object["scope"] as? String,
+              let scope = CadenceScope(rawValue: scopeRaw) else { return nil }
+        return StartCadence(intervalSeconds: interval, scope: scope)
+    }
+
+    private static func cadencePatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<StartCadence>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return .clear }
+        guard let cadence = startCadence(raw) else { return nil }
+        return .set(cadence)
+    }
+
+    private static func metricAdjustments(_ value: Any?) -> [MetricAdjustment]? {
+        guard let array = value as? [[String: Any]] else { return nil }
+        return array.reduce(into: [MetricAdjustment]?([])) { result, object in
+            guard result != nil,
+                  let metric = metric(object["metric"]),
+                  let step = doubleOrNil(object["step"]),
+                  object["minimum"] == nil || object["minimum"] is NSNull
+                      || doubleOrNil(object["minimum"]) != nil,
+                  object["maximum"] == nil || object["maximum"] is NSNull
+                      || doubleOrNil(object["maximum"]) != nil else {
+                result = nil
+                return
+            }
+            result?.append(.init(
+                metric: metric,
+                step: step,
+                minimum: doubleOrNil(object["minimum"]),
+                maximum: doubleOrNil(object["maximum"])
+            ))
+        }
+    }
+
+    private static func adjustmentsPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<[MetricAdjustment]>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return .clear }
+        guard let adjustments = metricAdjustments(raw) else { return nil }
+        return .set(adjustments)
+    }
+
+    private static func metricProgressions(_ value: Any?) -> [MetricProgression]? {
+        guard let array = value as? [[String: Any]] else { return nil }
+        return array.reduce(into: [MetricProgression]?([])) { result, object in
+            guard result != nil,
+                  let metric = metric(object["metric"]),
+                  let delta = doubleOrNil(object["delta"]),
+                  let unitRaw = object["unit"] as? String,
+                  let unit = ProgressionUnit(rawValue: unitRaw),
+                  object["every"] == nil || exactIntOrNil(object["every"]).map({ $0 >= 1 }) == true
+            else {
+                result = nil
+                return
+            }
+            result?.append(.init(
+                metric: metric,
+                delta: delta,
+                every: exactIntOrNil(object["every"]) ?? 1,
+                unit: unit
+            ))
+        }
+    }
+
+    private static func progressionsPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<[MetricProgression]>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return .clear }
+        guard let progressions = metricProgressions(raw) else { return nil }
+        return .set(progressions)
+    }
+
+    private static func rangesPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<[MetricTargetRange]>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return .clear }
+        guard let ranges = rangeTargets(raw) else { return nil }
+        return .set(ranges)
+    }
+
+    private static func restPlacement(_ value: Any?) -> RestPlacement? {
+        guard let raw = value as? String else { return nil }
+        return RestPlacement(rawValue: raw)
+    }
+
+    private static func intensityTarget(_ value: Any?) -> IntensityTarget? {
+        guard let object = value as? [String: Any], let type = object["type"] as? String else {
+            return nil
+        }
+        switch type {
+        case "heartRateZone":
+            guard let zone = exactIntOrNil(object["zone"]), (1...5).contains(zone) else { return nil }
+            return .heartRateZone(zone)
+        case "rpe":
+            guard let lower = doubleOrNil(object["lower"]), let upper = doubleOrNil(object["upper"]),
+                  lower <= upper else { return nil }
+            return .rpe(lower: lower, upper: upper)
+        case "pace":
+            guard let text = trimmedOrNil(object["text"]) else { return nil }
+            return .pace(text)
+        case "power":
+            guard let lower = doubleOrNil(object["lower"]), let upper = doubleOrNil(object["upper"]),
+                  lower <= upper,
+                  object["unit"] == nil || (object["unit"] as? String) == "watts" else { return nil }
+            return .power(lower: lower, upper: upper, unit: .watts)
+        case "thresholdPercentage":
+            guard let lower = doubleOrNil(object["lower"]), let upper = doubleOrNil(object["upper"]),
+                  lower <= upper else { return nil }
+            return .thresholdPercentage(lower: lower, upper: upper)
+        case "namedZone":
+            guard let system = trimmedOrNil(object["system"]),
+                  let range = trimmedOrNil(object["range"]) else { return nil }
+            return .namedZone(system: system, range: range)
+        case "descriptive":
+            guard let text = trimmedOrNil(object["text"]) else { return nil }
+            return .descriptive(text)
+        default:
+            return nil
+        }
+    }
+
+    private static func intensityTargetList(_ value: Any?) -> [IntensityTarget]? {
+        guard let array = value as? [Any] else { return nil }
+        let targets = array.compactMap { intensityTarget($0) }
+        return targets.count == array.count ? targets : nil
+    }
+
+    private static func intensityTargetsPatch(
+        _ input: [String: Any],
+        key: String
+    ) -> MetadataPatch<[IntensityTarget]>? {
+        guard let raw = input[key] else { return .unchanged }
+        if raw is NSNull { return .clear }
+        guard let targets = intensityTargetList(raw) else { return nil }
+        return .set(targets)
     }
 
     /// Optional UUID fields may be omitted or null. A supplied malformed ID always rejects the call.
