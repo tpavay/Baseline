@@ -102,15 +102,38 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Row radius | `BaselineRadius.row` | 12 pt |
 | Floating tab bar radius | `BaselineRadius.tabBar` | 30 pt |
 | Form row vertical padding | `BaselineSpacing.formRowVertical` | 14 pt |
+| Sleep ring | `BaselineSize.sleepRing` | 84 pt |
+| Sleep ring line width | `BaselineSize.sleepRingLineWidth` | 5 pt |
+| Sleep ring segment gap | `BaselineSize.sleepRingGapDegrees` | 8 degrees |
+| Heart-rate-zone ring | `BaselineSize.zoneRing` | 118 pt |
+| Heart-rate-zone ring line width | `BaselineSize.zoneRingLineWidth` | 11 pt |
+| Heart-rate-zone segment gap | `BaselineSize.zoneRingGapDegrees` | 1.2 degrees |
+| Weekly body figure max width | `BaselineSize.weeklyFigure` | 132 pt |
+| Weekly heat legend | `BaselineSize.heatLegendWidth` by `BaselineSize.heatLegendHeight` | 34 by 7 pt |
+| Movement label width | `BaselineSize.movementLabelWidth` | 74 pt |
+| Movement value width | `BaselineSize.movementValueWidth` | 56 pt |
+| Movement bar height | `BaselineSize.movementBarHeight` | 8 pt |
+| Zone legend marker | `BaselineSize.zoneMarkerWidth` by `BaselineSize.zoneMarkerHeight` | 3 by 15 pt |
+| Zone legend label width | `BaselineSize.zoneLabelWidth` | 17 pt |
+| Zone legend time width | `BaselineSize.zoneTimeWidth` | 32 pt |
+| Two-up reading card height | `BaselineSize.readingCardFullHeight` | 154 pt |
+| Solo reading card height | `BaselineSize.readingCardSoloHeight` | 118 pt |
+| Floating tab bar height | `BaselineSize.floatingTabBarHeight` | 60 pt |
+| Floating tab bar bottom inset | `BaselineSize.floatingTabBarBottom` | 15 pt |
+| Floating tab bar horizontal inset | `BaselineSize.floatingTabBarHorizontal` | 40 pt |
+| Floating tab selection height | `BaselineSize.floatingTabSelectionHeight` | 46 pt |
+| Floating tab page clearance | `BaselineSize.floatingTabClearance` | bar height + bottom inset (75 pt) |
+| Compact internal gap | `BaselineSpacing.compact` | 6 pt |
+| Tile gap | `BaselineSpacing.tile` | 9 pt |
+| Section stack gap | `BaselineSpacing.section` | 14 pt |
 | Card content padding | `BaselineSpacing.cardContent` | 15 pt |
-| Compact gap | `BaselineSpacing.compact` | 6 pt |
 | Row padding | `BaselineSpacing.row` | 13 pt |
-| Section gap | `BaselineSpacing.section` | 18 pt |
 | Extra-large gap | `BaselineSpacing.xLarge` | 20 pt |
+| Scroll-end breathing room | `BaselineSpacing.scrollBottom` | 20 pt |
 | Screen margin | `BaselineSpacing.screen` | 24 pt |
 | Screen bottom clearance | `BaselineSpacing.screenBottom` | 90 pt |
 | Profile avatar | `BaselineSize.avatar` | 58 pt |
-| Floating tab bar height | `BaselineSize.tabBarHeight` | 60 pt |
+| Plan calendar row minimum height | `BaselineSize.tabBarHeight` | 60 pt |
 | Compact muscle map | `BaselineSize.miniMuscleMapHeight` | 30 pt |
 | Full muscle map | `BaselineSize.muscleMapHeight` | 180 pt |
 | Heart-rate chart | `BaselineSize.chartHeight` | 108 pt |
@@ -148,10 +171,11 @@ The sleep dial and heart-rate donut must use this same renderer.
 The approved zone order is blue, green, violet, amber, and red.
 Domain calculations remain outside the component.
 
-### `BaselineTabBar`
+### `BaselineFloatingTabBar`
 
-`BaselineTabBar` is the shared floating three-tab navigation surface for Today, Plan, and Profile.
-It owns the selected-item fill, tab icon and label styling, approved pill geometry, and accessibility selection state.
+`BaselineFloatingTabBar` (in `MainTabView.swift`) is the shell's floating capsule tab bar: four tabs (Today, Plan, Train, Profile), icon plus caption label, and an accent-tinted capsule behind the active tab with the `isSelected` accessibility trait.
+Its geometry comes from the floating-tab tokens in the table above.
+A `safeAreaInset` applied outside a `NavigationStack` never crosses its UIKit hosting boundary, so every screen hosted in the shell reserves bottom space itself with `.floatingTabBarClearance()` inside its own stack, or with `BaselineSpacing.screenBottom` content padding when its content should scroll behind the bar.
 
 ### `MuscleMapView`
 
@@ -186,7 +210,7 @@ See [`app-icon/README.md`](app-icon/README.md) - how large the mark can go, why 
 - **Dose Scale** — MED / HPL / MDV stepped bar, filled to the cleared level.
 - **Prescription Card** — outlined spec sheet: header + session + dose + footer ("WHY →").
 - **Button / Primary** — accent fill, mono label, accent glow.
-- **Tab Bar** — hairline top, mono caps labels, accent tick on active.
+- **Tab Bar** - legacy hairline-top treatment; production ships `BaselineFloatingTabBar` (see Shared components).
 - **Tag** — small state-colored pill, mono caps.
 - **Hairline** — 1px rule.
 

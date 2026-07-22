@@ -24,6 +24,7 @@ struct ReadingHistoryView: View {
                             ForEach(readings) { reading in
                                 NavigationLink {
                                     ReadingDetailView(reading: reading)
+                                        .floatingTabBarClearance()
                                 } label: {
                                     ReadingRow(reading: reading)
                                 }

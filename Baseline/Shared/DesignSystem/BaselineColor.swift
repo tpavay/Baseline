@@ -44,13 +44,15 @@ enum BaselineSpacing {
     static let xxSmall: CGFloat = 4
     static let compact: CGFloat = 6
     static let xSmall: CGFloat = 8
+    static let tile: CGFloat = 9
     static let small: CGFloat = 10
     static let medium: CGFloat = 12
     static let row: CGFloat = 13
     static let formRowVertical: CGFloat = 14
+    static let section: CGFloat = 14
     static let cardContent: CGFloat = 15
     static let large: CGFloat = 16
-    static let section: CGFloat = 18
+    static let scrollBottom: CGFloat = 20
     static let xLarge: CGFloat = 20
     static let screen: CGFloat = 24
     static let screenBottom: CGFloat = 90
@@ -85,6 +87,29 @@ enum BaselineSize {
     static let muscleMapHeight: CGFloat = 180
     static let chartHeight: CGFloat = 108
     static let actionSheetHeight: CGFloat = 274
+    static let sleepRing: CGFloat = 84
+    static let sleepRingLineWidth: CGFloat = 5
+    static let sleepRingGapDegrees: Double = 8
+    static let zoneRing: CGFloat = 118
+    static let zoneRingLineWidth: CGFloat = 11
+    static let zoneRingGapDegrees: Double = 1.2
+    static let weeklyFigure: CGFloat = 132
+    static let heatLegendWidth: CGFloat = 34
+    static let heatLegendHeight: CGFloat = 7
+    static let movementLabelWidth: CGFloat = 74
+    static let movementValueWidth: CGFloat = 56
+    static let movementBarHeight: CGFloat = 8
+    static let zoneMarkerWidth: CGFloat = 3
+    static let zoneMarkerHeight: CGFloat = 15
+    static let zoneLabelWidth: CGFloat = 17
+    static let zoneTimeWidth: CGFloat = 32
+    static let readingCardFullHeight: CGFloat = 154
+    static let readingCardSoloHeight: CGFloat = 118
+    static let floatingTabBarHeight: CGFloat = 60
+    static let floatingTabBarBottom: CGFloat = 15
+    static let floatingTabBarHorizontal: CGFloat = 40
+    static let floatingTabSelectionHeight: CGFloat = 46
+    static var floatingTabClearance: CGFloat { floatingTabBarHeight + floatingTabBarBottom }
 }
 
 extension Color {

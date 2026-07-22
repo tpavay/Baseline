@@ -6,17 +6,17 @@ Legend: **[E]** Evidence · **[C]** Context · **[D]** Decision · **[P]** Plann
 
 ---
 
-## Navigation model - three modes, three tabs
-The app is **three modes** the athlete is never in two of at once — *Decide, Plan, Train* — plus setup. "Workout" is an overloaded word for three different objects, so the execution surface is **Train**; it is entered by starting a session from **Plan**, not from a tab of its own.
+## Navigation model - three modes, four tabs
+The app is **three modes** the athlete is never in two of at once — *Decide, Plan, Train* — plus setup. "Workout" is an overloaded word for three different objects, so the execution surface is **Train**; it is entered by starting a session from **Plan** or from the Train tab itself.
 
 ```
-Today            Plan                  Profile
-= Decide         = Plan → Train        = setup
-"what should     "what am I scheduled
- I do?"           for?" → start it
+Today            Plan                  Train            Profile
+= Decide         = the calendar        = execute        = setup
+"what should     "what am I scheduled  "log what I'm
+ I do?"           for?" → start it      doing"
 ```
 
-*Follow-up: the Today/home tab-shell redesign (PR #56) is still in flight, so this section is corrected minimally for the shipped shell; consolidating the navigation model into its owner (`docs/implementation/plan-tab.md`) is tracked in issue #57.*
+*Follow-up: consolidating the navigation model into its owner (`docs/implementation/plan-tab.md`) is tracked in issue #57.*
 
 **Three objects, never conflated:**
 - **Program** — long-term training (HYROX Dallas, Marathon Base, Shoulder Rehab). An athlete can have several at once; Today reasons across all of them.
@@ -34,10 +34,10 @@ Today            Plan                  Profile
 *Status: Today, Train (execution editor), the Plan calendar, and Workout Detail exist, and the Program object is modeled. The remaining Plan Engine slices are sequenced in `docs/implementation/plan-tab.md`.*
 - **Today** — the day's recommendation (readiness → plan). Opened every day.
 - **Plan** — the week/calendar of workout cards, each with its status (incl. "AI modified" badges); tap a card → **Workout Detail**. The primary action is **Talk to Baseline / Edit with Baseline** (not a generic "Adjust Plan"). *(Calendar and Workout Detail shipped; remaining behavior is sequenced in `docs/implementation/plan-tab.md`.)*
-- **Workout (execution, not a tab)** — the **current** session being executed (not a library). Collapsible blocks; per-exercise `•••` menu; set logging. Opened every workout, entered from Plan.
+- **Train** — the **current** session being executed (not a library). Collapsible blocks; per-exercise `•••` menu; set logging. Opened every workout.
 - **Profile** — setup, devices, integrations. Occasional.
 
-**History is a capability, not a destination.** It's reached *through* the surfaces that need it (reading history from Today; exercise history from Exercise Detail; workout history from Plan), never the tab bar. The shipped shell is the floating **Today / Plan / Profile** bar (`MainTabView`); the standalone Workout tab is retired because Plan opens/starts/resumes any workout (`docs/implementation/plan-tab.md`).
+**History is a capability, not a destination.** It's reached *through* the surfaces that need it (reading history from Today; exercise history from Exercise Detail; workout history from Plan), never the tab bar. The shell is **Today / Plan / Train / Profile** - `MainTabView`'s floating tab bar, per the approved taxonomy prototype. Plan also opens/starts/resumes any workout (`docs/implementation/plan-tab.md`), so Train is the live execution surface, not a workout library.
 
 **The chat never navigates away.** "Talk to Baseline" is always a **bottom sheet / floating panel** over the current screen — drag-to-peek, dismiss back to where you were — so you can ask "should I add weight?" on Set 3 without leaving the workout.
 
@@ -46,9 +46,9 @@ Today            Plan                  Profile
 - **Workout (execution)** — blocks **collapsed by default** (long sessions don't become enormous), one expanded at a time; each exercise `•••` → Talk about this exercise · Skip · Substitute · Move · Coach Notes · History · Delete · Duplicate. So the chat doesn't have to do everything.
 - **Exercise Detail** (the missing screen) — tap an exercise → History · Best · Recent · Coach Guidance · Current Prescription · Video · Notes · Progression · Talk to Baseline. The home for "how much did I deadlift last month? compare today. should I increase?" — cleaner than burying it in a History tab.
 
-**Naming:** consider renaming **Workout → Train / Session** — "Workout" sounds static; "Train" reads as intent. Deferred.
+**Naming:** the execution tab is named **Train** - "Workout" sounds static and is overloaded; "Train" reads as intent. Landed with the taxonomy shell.
 
-*Status: the Today and Workout (execution) surfaces, the Plan calendar, and the Workout Detail screen exist. The goal/context ordering above and Exercise Detail remain designed-only and build on the Plan Engine + workout-history persistence.*
+*Status: the Today, Plan, Train (execution), and Profile tabs and the Workout Detail screen exist. The goal/context ordering above and Exercise Detail remain designed-only and build on the Plan Engine + workout-history persistence.*
 
 ### Interaction density — steal Hevy's muscle memory
 Copy Hevy's *interaction density*, not its product. **Exercises are collapsible document rows, not cards** — a name row separated by whitespace/thin rules; collapsed by default, expanding inline into a **logging table** (`# · TIME · DIST · ⋯` — columns generated from the exercise's selected metrics). A 40-exercise workout is 40 rows, not 40 giant cards. **Blocks are lightweight section headers** (Apple-Notes style: a label + hairline rule), *not* cards — organization, not decoration; they let the exercises breathe, and the implicit default block shows nothing at all. Baseline layers its value *on expand*: today's goal · context · coach guidance appear only when an exercise is open (not always). *(Built: light rows, section-header blocks, collapse-by-default, dynamic metric columns, drag reorder via the workout ⋯ → **Reorder Workout** sheet. Follow-ons: coach-guidance-on-expand — needs the guidance model; per-row thumbnails.)*

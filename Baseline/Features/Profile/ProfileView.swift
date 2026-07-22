@@ -31,6 +31,15 @@ struct ProfileView: View {
         var yearSetCount = 0
     }
 
+    private enum ReadingFlowStep: String, Identifiable {
+        case start
+        case reading
+
+        var id: String { rawValue }
+    }
+
+    @State private var readingFlow: ReadingFlowStep?
+
     var body: some View {
         ZStack {
             BaselineColor.base.ignoresSafeArea()
@@ -108,6 +117,7 @@ struct ProfileView: View {
                         }
 
                         group("Reading") {
+                            takeReadingRow
                             cardToggle("Live preview", isOn: $settings.livePreviewEnabled)
                         }
 
@@ -132,6 +142,21 @@ struct ProfileView: View {
                     }
                     .tint(BaselineColor.accent)
                 }
+            }
+        }
+        .fullScreenCover(item: $readingFlow) { step in
+            switch step {
+            case .start:
+                SnapshotStartView(
+                    onStart: { readingFlow = .reading },
+                    onDismiss: { readingFlow = nil }
+                )
+            case .reading:
+                DailyReadingFlowView(
+                    type: .snapshot,
+                    config: profile.draft.config,
+                    duration: ReadingType.snapshot.duration
+                )
             }
         }
     }
@@ -357,6 +382,14 @@ struct ProfileView: View {
         }
         .buttonStyle(.plain)
         .disabled(health.requested)
+    }
+
+    private var takeReadingRow: some View {
+        Button { readingFlow = .start } label: {
+            rowBody(icon: "waveform.path.ecg", title: "Take a reading",
+                    subtitle: "One-minute HRV snapshot", trailing: .chevron)
+        }
+        .buttonStyle(.plain)
     }
 
     private func rowBody(icon: String, title: String, subtitle: String, trailing: Trailing) -> some View {

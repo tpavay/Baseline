@@ -29,4 +29,10 @@ enum PlanStatusStyle {
         case .reducedVolume(let p): return (p.map { "VOLUME −\($0)%" } ?? "REDUCED VOLUME", BaselineColor.zoneAmber)
         }
     }
+    static func modalityLabel(_ c: ActivityCategory) -> String {
+        switch c {
+        case .cycling: "Bike"; case .running: "Run"; case .erg: "Erg"; case .strength: "Strength"
+        case .carry: "Carry"; case .isometric: "Hold"; case .other: "Mixed"
+        }
+    }
 }

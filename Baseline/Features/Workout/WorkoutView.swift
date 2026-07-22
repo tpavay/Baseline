@@ -9,6 +9,10 @@ struct WorkoutView: View {
     /// "Remove Workout" that hands removal back to the presenter (Plan). Absent for standalone use.
     var onRequestDelete: (() -> Void)?
 
+    /// True only when hosted as the Train tab inside the floating-tab-bar shell; sheet presentations
+    /// from Plan leave it off so no phantom bottom inset appears there.
+    var showsFloatingTabBarClearance = false
+
     @Environment(WorkoutStore.self) private var store
     @Environment(PlanStore.self) private var plan
     @Environment(BluetoothManager.self) private var bluetooth
@@ -53,6 +57,7 @@ struct WorkoutView: View {
                     emptyState
                 }
             }
+            .floatingTabBarClearance(showsFloatingTabBarClearance)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
             .toolbar { workoutToolbar }
@@ -523,6 +528,14 @@ struct WorkoutView: View {
             Button("New Workout") { store.create(title: "Today's workout", goal: nil) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+            Button {
+                showChat = true
+            } label: {
+                Label("Talk to Baseline", systemImage: "sparkles")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .tint(BaselineColor.accent)
             Spacer()
             Spacer()
         }
