@@ -98,9 +98,23 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Action radius | `BaselineRadius.action` | 12 pt |
 | Card radius | `BaselineRadius.card` | 14 pt |
 | Pill radius | `BaselineRadius.pill` | 28 pt |
+| Compact radius | `BaselineRadius.small` | 8 pt |
+| Row radius | `BaselineRadius.row` | 12 pt |
+| Floating tab bar radius | `BaselineRadius.tabBar` | 30 pt |
 | Form row vertical padding | `BaselineSpacing.formRowVertical` | 14 pt |
 | Card content padding | `BaselineSpacing.cardContent` | 15 pt |
+| Compact gap | `BaselineSpacing.compact` | 6 pt |
+| Row padding | `BaselineSpacing.row` | 13 pt |
+| Section gap | `BaselineSpacing.section` | 18 pt |
+| Extra-large gap | `BaselineSpacing.xLarge` | 20 pt |
 | Screen margin | `BaselineSpacing.screen` | 24 pt |
+| Screen bottom clearance | `BaselineSpacing.screenBottom` | 90 pt |
+| Profile avatar | `BaselineSize.avatar` | 58 pt |
+| Floating tab bar height | `BaselineSize.tabBarHeight` | 60 pt |
+| Compact muscle map | `BaselineSize.miniMuscleMapHeight` | 30 pt |
+| Full muscle map | `BaselineSize.muscleMapHeight` | 180 pt |
+| Heart-rate chart | `BaselineSize.chartHeight` | 108 pt |
+| Workout action sheet | `BaselineSize.actionSheetHeight` | 274 pt |
 
 The reference canvas is 393 by 852 points.
 Shared views must remain flexible across device sizes and must not read `UIScreen.main.bounds`.
@@ -125,6 +139,17 @@ The component has no internal animation, so Reduce Motion requires no alternate 
 Its diameter and stroke scale with Dynamic Type.
 
 The sleep dial and heart-rate donut must use this same renderer.
+
+### `BaselineTabBar`
+
+`BaselineTabBar` is the shared floating three-tab navigation surface for Today, Plan, and Profile.
+It owns the selected-item fill, tab icon and label styling, approved pill geometry, and accessibility selection state.
+
+### `MuscleMapView`
+
+`MuscleMapView` summarizes the primary and secondary muscles from one or more structured workouts.
+Use its compact mode for workout rows and its full mode for workout detail rather than recreating muscle emphasis in feature code.
+Its native paths come from the MIT-licensed `react-native-body-highlighter` geometry stored in `.lavish/muscle-assets/` and bundled through `project.yml`.
 
 | Caller | Diameter | Stroke | Gap | Weights | Progress |
 |---|---:|---:|---:|---|---|

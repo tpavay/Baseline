@@ -36,6 +36,12 @@ targets:
         # as GoogleService-Info.plist by the build script — never bundled directly.
         excludes:
           - "App/Firebase/*.plist"
+      - path: .lavish/muscle-assets/bodyFront.json
+        buildPhase: resources
+      - path: .lavish/muscle-assets/bodyBack.json
+        buildPhase: resources
+      - path: .lavish/muscle-assets/react-native-body-highlighter-LICENSE.txt
+        buildPhase: resources
     dependencies:
       - package: Firebase
         product: FirebaseAuth

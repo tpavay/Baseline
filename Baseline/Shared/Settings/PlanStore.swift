@@ -37,6 +37,9 @@ final class PlanStore {
     // MARK: Reads
 
     func programs() -> [Program] { repo.programs() }
+    func days(from startDate: Date, through endDate: Date) -> [TrainingDay] {
+        repo.days(from: startDate, through: endDate, filter: filter)
+    }
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? { repo.scheduledWorkout(id) }
     func session(for id: UUID) -> WorkoutSession? { repo.session(forScheduled: id) }
     func completed(for id: UUID) -> CompletedWorkoutLog? { repo.completedLog(forScheduled: id) }

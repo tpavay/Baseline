@@ -42,23 +42,31 @@ enum BaselineColor {
 enum BaselineSpacing {
     static let xxxSmall: CGFloat = 2
     static let xxSmall: CGFloat = 4
+    static let compact: CGFloat = 6
     static let xSmall: CGFloat = 8
     static let small: CGFloat = 10
     static let medium: CGFloat = 12
+    static let row: CGFloat = 13
     static let formRowVertical: CGFloat = 14
     static let cardContent: CGFloat = 15
     static let large: CGFloat = 16
+    static let section: CGFloat = 18
+    static let xLarge: CGFloat = 20
     static let screen: CGFloat = 24
+    static let screenBottom: CGFloat = 90
 }
 
 /// Stable corner-radius tokens from the approved prototype.
 enum BaselineRadius {
+    static let small: CGFloat = 8
     static let icon: CGFloat = 9
     static let control: CGFloat = 10
     static let search: CGFloat = 11
     static let action: CGFloat = 12
+    static let row: CGFloat = 12
     static let card: CGFloat = 14
     static let pill: CGFloat = 28
+    static let tabBar: CGFloat = 30
 }
 
 /// Stable size tokens for shared controls and visual primitives.
@@ -71,6 +79,12 @@ enum BaselineSize {
     static let primaryActionHeight: CGFloat = 50
     static let pickerRowMinimumHeight: CGFloat = 62
     static let exerciseAsset: CGFloat = 92
+    static let avatar: CGFloat = 58
+    static let tabBarHeight: CGFloat = 60
+    static let miniMuscleMapHeight: CGFloat = 30
+    static let muscleMapHeight: CGFloat = 180
+    static let chartHeight: CGFloat = 108
+    static let actionSheetHeight: CGFloat = 274
 }
 
 extension Color {

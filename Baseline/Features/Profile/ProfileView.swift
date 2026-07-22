@@ -10,16 +10,56 @@ struct ProfileView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(BluetoothManager.self) private var bluetooth
     @Environment(HealthService.self) private var health
+    @Environment(PlanStore.self) private var plan
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
+    @State private var selectedSection = ProfileSection.workouts
+    @State private var showSettings = false
+    @State private var detailWorkout: ScheduledWorkout?
 
     var body: some View {
+        ZStack {
+            BaselineColor.base.ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: BaselineSpacing.large) {
+                    profileHeader
+
+                    HStack(spacing: BaselineSpacing.xSmall) {
+                        ProfileStatTile(value: "\(yearWorkouts.count)", label: "WORKOUTS")
+                        ProfileStatTile(value: "\(weekStreak)", label: "WEEK STREAK")
+                        ProfileStatTile(value: thisYearDuration, label: "THIS YEAR")
+                    }
+                    .padding(.bottom, BaselineSpacing.xxxSmall)
+
+                    ProfileSegmentedControl(selection: $selectedSection)
+
+                    if selectedSection == .workouts {
+                        workoutHistory
+                    } else {
+                        progressSummary
+                    }
+                }
+                .padding(.horizontal, BaselineSpacing.large)
+                .padding(.top, BaselineSpacing.compact)
+                .padding(.bottom, BaselineSpacing.screenBottom)
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            settingsScreen
+        }
+        .fullScreenCover(item: $detailWorkout) { scheduled in
+            WorkoutDetailView(scheduledWorkoutID: scheduled.id)
+        }
+    }
+
+    private var settingsScreen: some View {
         @Bindable var settings = settings
-        NavigationStack {
+        return NavigationStack {
             ZStack {
                 BaselineColor.base.ignoresSafeArea()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 26) {
-                        headerCard
+                    VStack(alignment: .leading, spacing: BaselineSpacing.screen) {
+                        settingsHeaderCard
 
                         group("Setup") {
                             row(icon: "circle.hexagongrid.fill", title: "Readiness Setup",
@@ -68,30 +108,216 @@ struct ProfileView: View {
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showSettings = false
+                    }
+                    .tint(BaselineColor.accent)
+                }
+            }
         }
     }
 
-    // MARK: - Header
+    // MARK: - Profile dashboard
 
-    private var headerCard: some View {
-        VStack(spacing: 12) {
+    private var profileHeader: some View {
+        HStack(spacing: BaselineSpacing.row) {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [BaselineColor.accent, BaselineColor.amethyst],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: BaselineSize.avatar, height: BaselineSize.avatar)
+                .overlay {
+                    Text(displayName.prefix(1).uppercased())
+                        .font(.title2.bold())
+                        .foregroundStyle(BaselineColor.base)
+                }
+                .accessibilityHidden(true)
+
+            Text(displayName)
+                .font(.title3.bold())
+                .foregroundStyle(BaselineColor.textHi)
+
+            Spacer()
+
+            Button("Settings", systemImage: "gearshape", action: { showSettings = true })
+                .labelStyle(.iconOnly)
+                .font(.title2)
+                .foregroundStyle(BaselineColor.textMid)
+                .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
+        }
+        .padding(.vertical, BaselineSpacing.compact)
+    }
+
+    private var workoutHistory: some View {
+        VStack(alignment: .leading, spacing: BaselineSpacing.xSmall) {
+            workoutSection("THIS WEEK", workouts: thisWeekWorkouts)
+            workoutSection("LAST WEEK", workouts: lastWeekWorkouts)
+
+            if thisWeekWorkouts.isEmpty && lastWeekWorkouts.isEmpty {
+                BaselineCard {
+                    VStack(alignment: .leading, spacing: BaselineSpacing.xxSmall) {
+                        Text("Your workouts will appear here")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BaselineColor.textHi)
+                        Text("Schedule or complete a session from Plan to build your history.")
+                            .font(.caption)
+                            .foregroundStyle(BaselineColor.textMid)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func workoutSection(_ title: String, workouts: [ScheduledWorkout]) -> some View {
+        if workouts.isEmpty == false {
+            InstrumentLabel(title, tracking: 1)
+                .padding(.top, BaselineSpacing.compact)
+
+            ForEach(workouts) { scheduled in
+                ProfileWorkoutRow(
+                    scheduled: scheduled,
+                    subtitle: workoutSubtitle(scheduled),
+                    action: { detailWorkout = scheduled }
+                )
+            }
+        }
+    }
+
+    private var progressSummary: some View {
+        VStack(alignment: .leading, spacing: BaselineSpacing.large) {
+            BaselineCard {
+                VStack(alignment: .leading, spacing: BaselineSpacing.medium) {
+                    InstrumentLabel("MUSCLE MAP", tracking: 1)
+                    MuscleMapView(workouts: yearWorkouts.map(\.workout))
+                }
+            }
+
+            BaselineCard {
+                VStack(alignment: .leading, spacing: BaselineSpacing.small) {
+                    InstrumentLabel("TRAINING SUMMARY", tracking: 1)
+                    summaryRow("Sessions this week", value: "\(thisWeekWorkouts.count)")
+                    Hairline()
+                    summaryRow("Exercises this year", value: "\(yearExerciseCount)")
+                    Hairline()
+                    summaryRow("Sets this year", value: "\(yearSetCount)")
+                }
+            }
+        }
+    }
+
+    private func summaryRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(BaselineColor.textMid)
+            Spacer()
+            Text(value)
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundStyle(BaselineColor.textHi)
+        }
+    }
+
+    private var calendar: Calendar { .planWeek }
+    private var today: Date { calendar.startOfDay(for: Date()) }
+    private var currentWeekStart: Date { calendar.weekStart(for: today) }
+
+    private var profileDays: [TrainingDay] {
+        let yearStart = calendar.date(from: calendar.dateComponents([.year], from: today)) ?? today
+        return plan.days(from: yearStart, through: today)
+    }
+
+    private var yearWorkouts: [ScheduledWorkout] {
+        profileDays.flatMap(\.sessions).filter { $0.date <= today }
+    }
+
+    private var thisWeekWorkouts: [ScheduledWorkout] {
+        let start = currentWeekStart
+        return yearWorkouts.filter { $0.date >= start }.sorted { $0.date > $1.date }
+    }
+
+    private var lastWeekWorkouts: [ScheduledWorkout] {
+        guard let start = calendar.date(byAdding: .day, value: -7, to: currentWeekStart) else { return [] }
+        return yearWorkouts.filter { $0.date >= start && $0.date < currentWeekStart }.sorted { $0.date > $1.date }
+    }
+
+    private var weekStreak: Int {
+        let occupiedWeeks = Set(yearWorkouts.map { calendar.weekStart(for: $0.date) })
+        guard occupiedWeeks.isEmpty == false else { return 0 }
+        var cursor = currentWeekStart
+        if occupiedWeeks.contains(cursor) == false {
+            cursor = calendar.date(byAdding: .day, value: -7, to: cursor) ?? cursor
+        }
+        var result = 0
+        while occupiedWeeks.contains(cursor) {
+            result += 1
+            guard let previous = calendar.date(byAdding: .day, value: -7, to: cursor) else { break }
+            cursor = previous
+        }
+        return result
+    }
+
+    private var thisYearDuration: String {
+        let seconds = yearWorkouts.reduce(0.0) { partial, scheduled in
+            let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }?.total ?? 0
+            return partial + duration
+        }
+        let hours = Int((seconds / 3600).rounded())
+        return "\(hours)h"
+    }
+
+    private var yearExerciseCount: Int { yearWorkouts.reduce(0) { $0 + $1.workout.allExercises.count } }
+    private var yearSetCount: Int {
+        yearWorkouts.reduce(0) { result, scheduled in
+            result + scheduled.workout.allExercises.reduce(0) { $0 + $1.prescription.sets.count }
+        }
+    }
+
+    private func workoutSubtitle(_ scheduled: ScheduledWorkout) -> String {
+        let descriptors = scheduled.workout.allExercises.prefix(2).map(\.exerciseName)
+        let work = descriptors.isEmpty ? (scheduled.workout.goal ?? "Training") : descriptors.joined(separator: " + ")
+        let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }
+            .map { MetricFormat.durationLong($0.total) } ?? "Planned"
+        let weekday = scheduled.date.formatted(.dateTime.weekday(.abbreviated))
+        return "\(work) · \(duration) · \(weekday)"
+    }
+
+    // MARK: - Settings
+
+    private var settingsHeaderCard: some View {
+        VStack(spacing: BaselineSpacing.medium) {
             Circle()
                 .fill(BaselineColor.amethyst)
-                .frame(width: 76, height: 76)
-                .overlay(Circle().strokeBorder(BaselineColor.accent, lineWidth: 2))
-                .overlay(Image(systemName: "person.fill").font(.system(size: 30)).foregroundStyle(BaselineColor.accent))
+                .frame(width: BaselineSize.avatar, height: BaselineSize.avatar)
+                .overlay {
+                    Circle()
+                        .strokeBorder(BaselineColor.accent, lineWidth: BaselineSize.hairline)
+                }
+                .overlay {
+                    Image(systemName: "person.fill")
+                        .font(.title3)
+                        .foregroundStyle(BaselineColor.accent)
+                }
             Text(displayName.uppercased())
-                .font(.system(size: 22, weight: .heavy)).italic()
+                .font(.title3.bold())
                 .foregroundStyle(BaselineColor.textHi)
-            HStack(spacing: 8) {
+            HStack(spacing: BaselineSpacing.xSmall) {
                 Text("\(readings.count) READINGS")
                 Text("·")
                 Text("\(streak)-DAY STREAK")
             }
-            .font(.bMono(11, .medium)).tracking(1).foregroundStyle(BaselineColor.textFaint)
+            .font(.caption.monospaced().weight(.medium))
+            .tracking(1)
+            .foregroundStyle(BaselineColor.textFaint)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 8)
+        .padding(.top, BaselineSpacing.xSmall)
     }
 
     // MARK: - Rows

@@ -4,6 +4,7 @@ struct WorkoutSwipeActionRow<Content: View>: View {
     let actionTitle: String
     let systemImage: String
     var actionColor = BaselineColor.zoneRed
+    var contentBackground = BaselineColor.base
     let action: () -> Void
     @ViewBuilder let content: Content
 
@@ -24,10 +25,11 @@ struct WorkoutSwipeActionRow<Content: View>: View {
                     .background(actionColor)
             }
             .buttonStyle(.plain)
+            .opacity(horizontalOffset < 0 ? 1 : 0)
             .accessibilityLabel(actionTitle)
 
             content
-                .background(BaselineColor.base)
+                .background(contentBackground)
                 .offset(x: horizontalOffset)
         }
         .clipped()

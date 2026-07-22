@@ -43,6 +43,21 @@ struct PlanRepositoryTests {
         #expect(week.days.flatMap(\.sessions).count == 2)
     }
 
+    @Test func dayRangeIsInclusiveAndPreservesEmptyDays() {
+        let repo = makeRepo()
+        let program = repo.addProgram(Program(name: "P", createdAt: monday))
+        let wednesday = cal.date(byAdding: .day, value: 2, to: monday)!
+        _ = seed(repo, date: wednesday, program: program.id)
+
+        let days = repo.days(from: monday, through: wednesday, filter: .allTraining)
+
+        #expect(days.count == 3)
+        #expect(days.map(\.date) == [monday, cal.date(byAdding: .day, value: 1, to: monday)!, wednesday])
+        #expect(days[0].sessions.isEmpty)
+        #expect(days[1].sessions.isEmpty)
+        #expect(days[2].sessions.count == 1)
+    }
+
     @Test func hydratesWorkoutContentFromRevision() {
         let repo = makeRepo()
         let prog = repo.addProgram(Program(name: "P", createdAt: monday))

@@ -18,6 +18,7 @@ protocol PlanRepository {
     func programs() -> [Program]
     func week(containing date: Date, filter: ProgramFilter) -> TrainingWeek
     func day(_ date: Date, filter: ProgramFilter) -> TrainingDay
+    func days(from startDate: Date, through endDate: Date, filter: ProgramFilter) -> [TrainingDay]
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout?
     func session(forScheduled id: UUID) -> WorkoutSession?
     func completedLog(forScheduled id: UUID) -> CompletedWorkoutLog?
@@ -146,6 +147,20 @@ final class SwiftDataPlanRepository: PlanRepository {
         let start = calendar.startOfDay(for: date)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!
         return TrainingDay(date: start, sessions: scheduled(in: start ..< end, filter: filter))
+    }
+
+    func days(from startDate: Date, through endDate: Date, filter: ProgramFilter) -> [TrainingDay] {
+        let start = calendar.startOfDay(for: min(startDate, endDate))
+        let last = calendar.startOfDay(for: max(startDate, endDate))
+        guard let end = calendar.date(byAdding: .day, value: 1, to: last) else { return [] }
+        let sessions = scheduled(in: start ..< end, filter: filter)
+        let sessionsByDate = Dictionary(grouping: sessions) { calendar.startOfDay(for: $0.date) }
+        let count = calendar.dateComponents([.day], from: start, to: last).day ?? 0
+
+        return (0...count).compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
+            return TrainingDay(date: date, sessions: sessionsByDate[date, default: []])
+        }
     }
 
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? {

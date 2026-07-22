@@ -5,18 +5,29 @@ import SwiftData
 /// surface that opens/starts/resumes any workout), **Profile** (setup). History and workout execution
 /// are *capabilities* reached through Plan, not primary destinations.
 struct MainTabView: View {
+    @State private var selection: MainTab
+
+    init(initialSelection: MainTab = .today) {
+        _selection = State(initialValue: initialSelection)
+    }
+
     var body: some View {
-        TabView {
-            TodayView()
-                .tabItem { Label("Today", systemImage: "square.grid.2x2") }
+        ZStack(alignment: .bottom) {
+            TabView(selection: $selection) {
+                TodayView()
+                    .tag(MainTab.today)
 
             PlanView()
-                .tabItem { Label("Plan", systemImage: "calendar") }
+                    .tag(MainTab.plan)
 
             ProfileView()
-                .tabItem { Label("Profile", systemImage: "person") }
+                    .tag(MainTab.profile)
+            }
+            .toolbar(.hidden, for: .tabBar)
+
+            BaselineTabBar(selection: $selection)
         }
-        .tint(BaselineColor.accent)
+        .ignoresSafeArea(.keyboard)
     }
 }
 

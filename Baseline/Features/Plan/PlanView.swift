@@ -26,6 +26,9 @@ struct PlanView: View {
     /// The option chosen inside the add sheet, run on its dismissal so the follow-on presentation (chat,
     /// editor, import) never races the dismissing sheet.
     @State private var pendingAdd: (date: Date, option: AddToDayOption)?
+    @State private var visibleDate = Calendar.planWeek.startOfDay(for: Date())
+    @State private var scrollPosition: Date?
+    @State private var detailWorkout: ScheduledWorkout?
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -47,22 +50,16 @@ struct PlanView: View {
         NavigationStack {
             ZStack {
                 BaselineColor.base.ignoresSafeArea()
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        weekNav
-                        SevenDayStrip(week: plan.week, today: today, selected: selectedDay) { selectedDay = $0 }
-                            .padding(.top, 8)
-                        aggregates.padding(.top, 10)
-                        timeline.padding(.top, 14)
-                        Color.clear.frame(height: 90)
-                    }
-                    .padding(.horizontal, 16)
-                }
-                chatBar
+
+                calendarList
+
                 if let msg = undoMessage { undoBar(msg) }
             }
-            .navigationTitle("").toolbar { toolbar }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { calendarToolbar }
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
         .sheet(item: $execContext, onDismiss: flushExecution) { ctx in
             WorkoutView(onRequestDelete: { queuedDeletionID = ctx.id }).environment(ctx.store)
@@ -76,6 +73,9 @@ struct PlanView: View {
         }
         .fullScreenCover(item: $importContext, onDismiss: { Task { await loadPendingImports() } }) { context in
             WorkoutImportView(suggestedDate: context.date) { scheduled in openExecution(scheduled) }
+        }
+        .fullScreenCover(item: $detailWorkout) { scheduled in
+            WorkoutDetailView(scheduledWorkoutID: scheduled.id)
         }
         .alert("Delete workout?", isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), presenting: deleteTarget) { t in
             Button("Delete", role: .destructive) { apply(plan.delete(t.sw.id, proposalID: t.proposalID), "Deleted"); deleteTarget = nil }
@@ -94,6 +94,231 @@ struct PlanView: View {
             undoMessage = nil
         }
         .task { await loadPendingImports() }
+    }
+
+    private var calendarList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(calendarDays.enumerated()), id: \.element.date) { index, day in
+                    if index == 0 || cal.component(.month, from: calendarDays[index - 1].date) != cal.component(.month, from: day.date) {
+                        calendarMonthHeader(day.date)
+                    }
+                    calendarDayRow(day)
+                        .id(day.date)
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal, BaselineSpacing.large)
+            .padding(.bottom, BaselineSpacing.screenBottom)
+        }
+        .scrollIndicators(.hidden)
+        .scrollPosition(id: $scrollPosition, anchor: .center)
+        .onAppear {
+            if scrollPosition == nil {
+                scrollPosition = today
+            }
+        }
+        .onChange(of: scrollPosition) { _, date in
+            if let date { visibleDate = date }
+        }
+    }
+
+    private var calendarDays: [TrainingDay] {
+        let start = cal.date(byAdding: .day, value: -60, to: today) ?? today
+        let end = cal.date(byAdding: .day, value: 120, to: today) ?? today
+        return plan.days(from: start, through: end)
+    }
+
+    @ToolbarContentBuilder
+    private var calendarToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Menu {
+                Button("Ask Baseline", systemImage: "sparkles") {
+                    showChat = true
+                }
+                Divider()
+                Button("All Training") { plan.setFilter(.allTraining) }
+                let programs = plan.programs().filter { $0.isActive && $0.isArchived == false }
+                if programs.isEmpty == false {
+                    Section("Programs") {
+                        ForEach(programs) { program in
+                            Button(program.name) { plan.setFilter(.program(program.id)) }
+                        }
+                    }
+                }
+            } label: {
+                Text(visibleDate.formatted(.dateTime.weekday(.abbreviated).day()).uppercased())
+                    .font(.caption.monospaced().weight(.semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(BaselineColor.textFaint)
+            }
+            .accessibilityLabel("Calendar options")
+        }
+
+        ToolbarItem(placement: .principal) {
+            Text(visibleDate.formatted(.dateTime.month(.wide).year()))
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(BaselineColor.textHi)
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+            Button("Today") {
+                visibleDate = today
+                scrollPosition = today
+                plan.showWeek(of: today)
+            }
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(BaselineColor.accent)
+        }
+    }
+
+    private func calendarMonthHeader(_ date: Date) -> some View {
+        InstrumentLabel(date.formatted(.dateTime.month(.wide).year()).uppercased(), tracking: 1.2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, BaselineSpacing.xxxSmall)
+            .padding(.top, BaselineSpacing.row)
+            .padding(.bottom, BaselineSpacing.compact)
+            .background(BaselineColor.base)
+            .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    private func calendarDayRow(_ day: TrainingDay) -> some View {
+        let isToday = cal.isDate(day.date, inSameDayAs: today)
+        let isFuture = day.date > today
+        let pendingReview = reviewableImport(for: day.date)
+
+        return HStack(alignment: .center, spacing: BaselineSpacing.medium) {
+            VStack(spacing: BaselineSpacing.xxxSmall) {
+                Text(day.date.formatted(.dateTime.day()))
+                    .font(.headline.monospacedDigit().weight(.bold))
+                Text(day.date.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                    .font(.caption2.monospaced().weight(.semibold))
+                    .tracking(0.8)
+            }
+            .foregroundStyle(isToday ? BaselineColor.accent : BaselineColor.textMid)
+            .frame(width: BaselineSize.minimumTapTarget - BaselineSpacing.xxSmall)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(day.date.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+
+            VStack(alignment: .leading, spacing: BaselineSpacing.compact) {
+                if let pendingReview {
+                    calendarImportButton(pendingReview, date: day.date)
+                }
+
+                if day.sessions.isEmpty && pendingReview == nil {
+                    Button {
+                        addContext = AddContext(date: day.date)
+                    } label: {
+                        Text("Rest day")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(BaselineColor.textFaint)
+                            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens options to add a workout")
+                } else {
+                    ForEach(day.sessions) { scheduled in
+                        WorkoutSwipeActionRow(
+                            actionTitle: "Delete",
+                            systemImage: "trash",
+                            contentBackground: isToday ? .clear : BaselineColor.base,
+                            action: { handle(.delete, scheduled) }
+                        ) {
+                            calendarSessionButton(scheduled)
+                        }
+                        .draggable(scheduled.id.uuidString)
+                    }
+                }
+            }
+
+            if let first = day.sessions.first {
+                Image(systemName: isCardio(first) ? "clock.arrow.circlepath" : "diamond.fill")
+                    .font(.caption)
+                    .foregroundStyle(isCardio(first) ? BaselineColor.zoneBlue : BaselineColor.accent)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, isToday ? BaselineSpacing.compact : BaselineSpacing.xxxSmall)
+        .padding(.vertical, BaselineSpacing.medium)
+        .frame(maxWidth: .infinity, minHeight: BaselineSize.tabBarHeight, alignment: .leading)
+        .background {
+            if isToday {
+                RoundedRectangle(cornerRadius: BaselineRadius.row)
+                    .fill(
+                        LinearGradient(
+                            colors: [BaselineColor.amethyst.opacity(0.5), BaselineColor.surface.opacity(0.35)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Hairline(color: isToday ? BaselineColor.accent.opacity(0.4) : BaselineColor.line.opacity(0.7))
+        }
+        .opacity(isFuture ? 0.68 : 1)
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in
+            guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
+            return drop(dragged, on: day.date)
+        } isTargeted: { targeted in
+            dropTargetDate = targeted ? day.date : nil
+        }
+    }
+
+    private func calendarSessionButton(_ scheduled: ScheduledWorkout) -> some View {
+        Button {
+            detailWorkout = scheduled
+        } label: {
+            VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                Text(scheduled.workout.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BaselineColor.textHi)
+                    .lineLimit(1)
+                Text(calendarSubtitle(scheduled))
+                    .font(.caption)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens workout details")
+    }
+
+    private func calendarImportButton(_ summary: WorkoutImportPendingSummary, date: Date) -> some View {
+        Button {
+            importContext = ImportContext(date: date)
+        } label: {
+            VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                Text("Import ready to review")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(BaselineColor.textHi)
+                Text("Tap to review and save")
+                    .font(.caption)
+                    .foregroundStyle(BaselineColor.textMid)
+            }
+            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the imported workout to review and save")
+    }
+
+    private func calendarSubtitle(_ scheduled: ScheduledWorkout) -> String {
+        let descriptors = scheduled.workout.allExercises.prefix(2).map(\.exerciseName)
+        let work = descriptors.isEmpty ? (scheduled.workout.goal ?? "Training") : descriptors.joined(separator: " + ")
+        let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }
+            .map { MetricFormat.durationLong($0.total) } ?? "Planned"
+        return "\(work) · \(duration)"
+    }
+
+    private func isCardio(_ scheduled: ScheduledWorkout) -> Bool {
+        let exercises = scheduled.workout.allExercises
+        return exercises.isEmpty == false && exercises.allSatisfy {
+            [.cycling, .running, .erg].contains($0.definition.category)
+        }
     }
 
     /// Refresh the unfinished-import snapshots that drive the per-day resume affordance. Delegates to the
