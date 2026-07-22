@@ -1,6 +1,6 @@
 # Baseline - Workout Execution Engine (design, future)
 
-*The future engine that turns an accepted plan into a performed workout log. This is a design document, not a build. It exists to keep the workout model, conversation tools, and future replanning work pointed at the same target.*
+*The engine that turns an accepted plan into a performed workout log. This began as a design document; parts are now built (see Status). It exists to keep the workout model, conversation tools, and future replanning work pointed at the same target.*
 
 ## 1. Requirement
 > Baseline must distinguish planned training from actual performed training and support starting a workout, logging sets/reps/load/duration/distance/pace, athlete notes at exercise and workout level, skipped or modified work, pain events, and mid-workout replanning. The conversational agent should expose validated tools over this model so natural-language logging updates structured workout data. Planned vs actual must remain separate, versioned, and feed the Learning and Plan Engines.
@@ -63,13 +63,14 @@ During execution, Baseline consumes both the Prescription and Coach Guidance fro
 The schema should support heterogeneous logging from day one: strength, holds, isometrics, intervals, distance, distance+load, calories, pace, power, run environment, and HR-zone time.
 
 ## 7. Agent tools
-The conversational layer should call validated tools over the workout model. Initial tool surface:
-- **Workout:** `startWorkout`, `completeWorkout`, `recomputeRemainingWorkout`
-- **Exercise:** `addExercise`, `removeExercise`, `substituteExercise`, `completeExercise`, `skipExercise`, `moveExerciseToLaterDate`
-- **Sets:** `logSet`, `updateSet`, `deleteSet`
-- **Intervals/cardio:** `logInterval`, `logDuration`, `logDistance`, `logPace`, `logPower`
+The conversational layer calls validated tools over the workout model.
+The core of this surface is built; `functions/src/tools.ts` owns the served schemas.
+That includes workout structure editing, start/complete, per-set outcomes (completed/skipped/pending), and the Wave 6 performed-logging tools: `get_active_session`, `upsert_performed_set`, `set_performed_set_outcome`, extra performed-set add/update/delete, `add_exercise_session_note`, and stale-safe `undo_session_mutation` (acceptance criteria in `docs/quality/contracts/issue-49-performed-set-logging.md`).
+Still design-only sketch:
+- **Workout:** `recomputeRemainingWorkout`
+- **Exercise:** `moveExerciseToLaterDate`
 - **Context/metadata:** `setWorkoutEnvironment`, `setExerciseIntent`, `logIsometric`
-- **Athlete Notes:** `addAthleteExerciseNote`, `addAthleteWorkoutNote`
+- **Athlete Notes:** `addAthleteWorkoutNote` (whole-workout notes)
 - **Constraints/replanning:** `createConstraint`, `updateConstraint`, `replanWeek`
 
 The AI proposes tool calls; the app validates exercise identity, units, ranges, workout state, plan links, and blast radius before applying them.
@@ -145,4 +146,7 @@ The Learning Engine uses these deltas to tune future planning and readiness inte
 8. Learning from planned vs performed.
 
 ## Status
-**Design only.** Sequenced after the readiness spine and Today Conversation. Companion to `docs/architecture.md`, `docs/engine-and-data-model.md`, and `docs/implementation/plan-engine.md`.
+**Partially built.**
+The structured workout model, manual logging, session lifecycle, and conversational logging (build-sequence steps 3-5) exist: `WorkoutStore` owns the active session, `PlanRepository` persists sessions and append-only completed logs, and the Wave 6 performed-log tools in `functions/src/tools.ts` expose ID-targeted, unit-safe, undoable set logging through conversation.
+Mid-workout adaptation, week replanning, and Learning-Engine consumption (steps 6-8) remain design.
+Companion to `docs/architecture.md`, `docs/engine-and-data-model.md`, and `docs/implementation/plan-engine.md`.

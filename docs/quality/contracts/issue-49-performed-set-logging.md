@@ -32,9 +32,9 @@ An athlete can use Baseline conversation to inspect an active session and record
 
 | State | Expected behavior | Verification |
 |---|---|---|
-| Happy path | Active-session reads and all performed-log mutations return precise payloads and mutation receipts. | `PerformedSetAgentToolsTests`, `WorkoutMutationEnvelopeTests`, and server schema tests. |
+| Happy path | Active-session reads and all performed-log mutations return precise payloads and mutation receipts. | `PerformedSetLoggingTests`, `WorkoutMutationEnvelopeTests`, and server schema tests. |
 | Loading | Not applicable: the subsystem executes synchronously against local authoritative state. | Code inspection and strict-concurrency build. |
-| Empty | No active session returns a correctable no-session result and performs no write. | `PerformedSetAgentToolsTests`. |
+| Empty | No active session returns a correctable no-session result and performs no write. | `PerformedSetLoggingTests`. |
 | Error/offline | Invalid quantities, stale revisions, missing IDs, discarded sessions, and persistence rejection return truthful errors without partial writes. Network availability is not required for local mutation execution. | Mapper, store, repository, and facade tests. |
 
 ## Test mapping
