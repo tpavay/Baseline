@@ -303,6 +303,7 @@ export const TOOLS: ToolSchema[] = [
         expected_revision_token: expectedPerformedLogRevisionToken,
       },
       required: ["exercise_instance_id", "planned_set_id", "values", "expected_revision_token"],
+      dependencies: { group_id: ["iteration"], iteration: ["group_id"] },
       additionalProperties: false,
     },
   },
@@ -320,10 +321,26 @@ export const TOOLS: ToolSchema[] = [
         expected_revision_token: expectedPerformedLogRevisionToken,
       },
       required: ["outcome", "expected_revision_token"],
+      // Mirrors the iOS mapper exactly: performed_set_id stands alone, and a planned target never
+      // carries it. A schema-valid call must never fail client-side target mapping.
       oneOf: [
-        { required: ["performed_set_id"] },
-        { required: ["exercise_instance_id", "planned_set_id"] },
+        {
+          required: ["performed_set_id"],
+          not: {
+            anyOf: [
+              { required: ["exercise_instance_id"] },
+              { required: ["planned_set_id"] },
+              { required: ["group_id"] },
+              { required: ["iteration"] },
+            ],
+          },
+        },
+        {
+          required: ["exercise_instance_id", "planned_set_id"],
+          not: { required: ["performed_set_id"] },
+        },
       ],
+      dependencies: { group_id: ["iteration"], iteration: ["group_id"] },
       additionalProperties: false,
     },
   },
@@ -339,6 +356,7 @@ export const TOOLS: ToolSchema[] = [
         expected_revision_token: expectedPerformedLogRevisionToken,
       },
       required: ["exercise_instance_id", "values", "expected_revision_token"],
+      dependencies: { group_id: ["iteration"], iteration: ["group_id"] },
       additionalProperties: false,
     },
   },

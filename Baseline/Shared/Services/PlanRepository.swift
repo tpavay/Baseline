@@ -64,7 +64,6 @@ protocol PlanRepository {
     /// undone together with the workout content; plan-scoped mutations never carry one.
     func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout, log: WorkoutLog?) -> WorkoutMutationResult
     func undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID, actor: PlanActor) -> WorkoutMutationResult
-    func applyPerformedLogMutation(_ request: WorkoutMutationRequest, log: WorkoutLog) -> WorkoutMutationResult
     func updateSessionLog(
         forScheduled id: UUID,
         request: WorkoutMutationRequest,
@@ -483,14 +482,6 @@ final class SwiftDataPlanRepository: PlanRepository {
         )
         guard commitWorkoutMutation() else { return .rejected(.persistenceFailure) }
         return .applied(mutationReceipt)
-    }
-
-    func applyPerformedLogMutation(
-        _ request: WorkoutMutationRequest,
-        log: WorkoutLog
-    ) -> WorkoutMutationResult {
-        guard let scheduledID = request.target.scheduledWorkoutID else { return .rejected(.invalidTarget) }
-        return updateSessionLog(forScheduled: scheduledID, request: request, log: log)
     }
 
     /// The receipt-backed performed-log write boundary.

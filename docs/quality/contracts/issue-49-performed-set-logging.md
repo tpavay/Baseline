@@ -63,6 +63,12 @@ All values remain local performed-log data and no new analytics, health authoriz
 Rollback is safe because the server capability gate can withhold Wave 6 tools from older clients and the persisted history format is already backward-compatible.
 The server schema and prompt must deploy with the client that advertises the new version.
 
+## Follow-ups
+
+- The direct-control `PlanRepository.updateSessionLog(forScheduled:transform:)` path replaces the whole performed log from a bound `WorkoutStore`'s in-memory copy without a revision-token check.
+  This is safe today because only one live surface binds a store to the active session: the Plan-tab execution store is recreated on open and the Today UI shares the agent's store, so a stale UI push cannot clobber agent-logged sets.
+  If a second concurrently bound store ever becomes reachable, thread the performed-log revision token through `WorkoutStore.PlanSink.pushLog` and reject stale direct writes the same way the receipt-backed `updateSessionLog(forScheduled:request:log:)` overload does.
+
 ## Human gates
 
 - None.

@@ -53,6 +53,17 @@ struct WorkoutImportConversionTests {
         #expect(ImportQuantityParser.canonicalValue(for: .heartRate, valueText: "150 bpm") == 150)
     }
 
+    @Test func powerParsesOnlyTheFullWattWordAndNeverLeaksIntoImport() {
+        #expect(ImportQuantityParser.canonicalValue(for: .power, valueText: "250 watts") == 250)
+        #expect(ImportQuantityParser.canonicalValue(for: .power, valueText: "250 Watt") == 250)
+        // Bare `w` is gym shorthand for "with", so it must stay ambiguous everywhere.
+        #expect(ImportQuantityParser.canonicalValue(for: .power, valueText: "250 w") == nil)
+        #expect(ImportQuantityParser.canonicalValue(for: .power, valueText: "250") == nil)
+        #expect(ImportQuantityParser.quantities(in: "Bike 10 w 30s sprints")
+            == [.init(metric: .duration, canonicalValue: 30)])
+        #expect(ImportQuantityParser.quantities(in: "250 watts").isEmpty)
+    }
+
     @Test func durationsBecomeCanonicalSecondsIncludingClockNotation() {
         #expect(ImportQuantityParser.quantities(in: "20 sec") == [.init(metric: .duration, canonicalValue: 20)])
         #expect(ImportQuantityParser.quantities(in: "4 min") == [.init(metric: .duration, canonicalValue: 240)])

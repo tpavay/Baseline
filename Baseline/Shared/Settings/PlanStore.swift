@@ -110,13 +110,6 @@ final class PlanStore {
             actor: actor
         )
     }
-    @discardableResult func applyPerformedLogMutation(
-        _ request: WorkoutMutationRequest,
-        log: WorkoutLog
-    ) -> WorkoutMutationResult {
-        defer { reload() }
-        return repo.applyPerformedLogMutation(request, log: log)
-    }
     @discardableResult func undoSessionMutation(
         mutationID: UUID,
         expectedRevisionToken: UUID,

@@ -377,7 +377,7 @@ struct WorkoutMutationEnvelopeTests {
             expectedRevisionToken: performedToken,
             summary: "Complete Squat set"
         )
-        guard case .applied(let logReceipt) = plan.applyPerformedLogMutation(logRequest, log: updatedLog) else {
+        guard case .applied(let logReceipt) = plan.updateSessionLog(scheduled.id, request: logRequest, log: updatedLog) else {
             Issue.record("Expected a performed-log mutation")
             return
         }

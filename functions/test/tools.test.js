@@ -167,6 +167,32 @@ test("Wave 6 performed logging is distinct, unit-safe, and capability-gated", ()
   assert.deepEqual(outcome.input_schema.properties.outcome.enum, ["pending", "completed", "skipped"]);
   assert.ok(outcome.input_schema.properties.planned_set_id);
   assert.ok(outcome.input_schema.properties.performed_set_id);
+
+  // The schema must reject exactly what the iOS mapper rejects: performed_set_id combined with any
+  // planned-target field, and group_id or iteration supplied alone.
+  assert.deepEqual(outcome.input_schema.oneOf, [
+    {
+      required: ["performed_set_id"],
+      not: {
+        anyOf: [
+          { required: ["exercise_instance_id"] },
+          { required: ["planned_set_id"] },
+          { required: ["group_id"] },
+          { required: ["iteration"] },
+        ],
+      },
+    },
+    {
+      required: ["exercise_instance_id", "planned_set_id"],
+      not: { required: ["performed_set_id"] },
+    },
+  ]);
+  const pairing = { group_id: ["iteration"], iteration: ["group_id"] };
+  for (const name of ["set_performed_set_outcome", "upsert_performed_set", "add_extra_performed_set"]) {
+    const tool = TOOLS.find((candidate) => candidate.name === name);
+    assert.deepEqual(tool.input_schema.dependencies, pairing, `${name} should pair group_id with iteration`);
+  }
+
   assert.equal(toolsForClientSchema("6"), TOOLS);
   assert.equal(servedToolsetForClientSchema("6"), "wave6");
 });

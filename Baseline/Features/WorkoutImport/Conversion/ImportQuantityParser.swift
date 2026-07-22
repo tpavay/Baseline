@@ -84,6 +84,8 @@ enum ImportQuantityParser {
             value = contextualRPE(in: text)
         case .heartRateZoneTime:
             value = exactQuantity(for: .duration, in: text)?.canonicalValue
+        case .power:
+            value = powerCanonicalValue(in: text)
         default:
             value = exactQuantity(for: metric, in: text)?.canonicalValue
         }
@@ -135,7 +137,7 @@ enum ImportQuantityParser {
     /// Longest tokens first inside each alternation so `min` never matches as `mi` + n, and the
     /// trailing `\b` keeps "400m" out of "40 min".
     private static let unitPattern =
-        #"(\d+(?:[.,]\d+)?)\s*(kilometres|kilometers|kilometre|kilometer|km|miles|mile|mi|metres|meters|metre|meter|yards|yard|yds|yd|m|hours|hour|hrs|hr|minutes|minute|mins|min|seconds|second|secs|sec|s|kilograms|kilogram|kilos|kilo|kgs|kg|pounds|pound|lbs|lb|calories|calorie|kcal|cals|cal|reps|rep|bpm|rpm|watts|watt|w)\b"#
+        #"(\d+(?:[.,]\d+)?)\s*(kilometres|kilometers|kilometre|kilometer|km|miles|mile|mi|metres|meters|metre|meter|yards|yard|yds|yd|m|hours|hour|hrs|hr|minutes|minute|mins|min|seconds|second|secs|sec|s|kilograms|kilogram|kilos|kilo|kgs|kg|pounds|pound|lbs|lb|calories|calorie|kcal|cals|cal|reps|rep|bpm|rpm)\b"#
     private static let clockPattern = #"(\d+):(\d{2})\b"#
     private static let rangePattern = #"\d\s*(?:-|–|—|/|\bto\b)\s*\d"#
 
@@ -157,7 +159,6 @@ enum ImportQuantityParser {
         put(["rep", "reps"], .reps, 1)
         put(["bpm"], .heartRate, 1)
         put(["rpm"], .cadence, 1)
-        put(["w", "watt", "watts"], .power, 1)
         return table
     }()
 
@@ -196,6 +197,15 @@ enum ImportQuantityParser {
             return duration * timeUnit.toCanonical / distance
         }
         return nil
+    }
+
+    /// Power stays out of the shared unit table: the natural abbreviation `w` is also gym shorthand
+    /// for "with" ("3x10 w 25lb vest"), so import never reads a power token and logging accepts
+    /// only the full word.
+    private static func powerCanonicalValue(in text: String) -> Double? {
+        guard let fields = captures(#"^\s*(\d+(?:\.\d+)?)\s*(?:watts|watt)\s*$"#, in: text),
+              let value = Double(fields[0]), value.isFinite else { return nil }
+        return value
     }
 
     private static func paceDistance(value: String, unit: String) -> Double? {

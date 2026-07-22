@@ -2305,7 +2305,7 @@ final class WorkoutStore {
         case .pace: example = "1:19 per 400 m or 4:30 per km"
         case .heartRate: example = "150 bpm"
         case .cadence: example = "90 rpm"
-        case .power: example = "250 W"
+        case .power: example = "250 watts"
         case .calories: example = "20 cal"
         case .reps: example = "8 reps"
         case .rpe: example = "RPE 8"
@@ -2366,44 +2366,12 @@ final class WorkoutStore {
                 case .choice(let choice):
                     appendTopLevel(selectedOptions(choice))
                 case .group(let group):
-                    let repeated: Bool
-                    switch group.execution.repetition {
-                    case .once: repeated = false
-                    case .count(let count): repeated = count > 1
-                    case .until: repeated = true
-                    }
-                    guard repeated else {
+                    guard group.execution.isRepeated else {
                         appendTopLevel(group.children)
                         continue
                     }
-
-                    let iterationCount: Int
-                    switch group.execution.repetition {
-                    case .count(let count):
-                        iterationCount = min(max(count, 1), 500)
-                    case .until:
-                        let groupLog = log.groups.first { $0.plannedGroupID == group.id }
-                        let maxLogged = log.exercises.flatMap(\.setLogs)
-                            .filter { $0.groupID == group.id }
-                            .compactMap(\.iteration)
-                            .max() ?? 0
-                        iterationCount = min(max(max(groupLog?.completedIterations ?? 0, maxLogged) + 1, 1), 500)
-                    case .once:
-                        iterationCount = 1
-                    }
-
-                    let workload = group.children.filter {
-                        if case .rest = $0 { return false }
-                        return true
-                    }
-                    for iteration in 1...iterationCount {
-                        let nodes: [WorkoutNode]
-                        if group.execution.cadence?.scope == .child, !workload.isEmpty {
-                            nodes = [workload[(iteration - 1) % workload.count]]
-                        } else {
-                            nodes = workload
-                        }
-                        let exercises = nodes.flatMap { $0.resolvedExercises(choiceSelections: selections) }
+                    for iteration in 1...group.iterationCount(log: log, isLogging: true) {
+                        let exercises = group.exercises(forIteration: iteration, choiceSelections: selections)
                         result.append(contentsOf: exercises.map {
                             .init(exercise: $0, groupID: group.id, iteration: iteration)
                         })
