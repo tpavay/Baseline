@@ -10,24 +10,27 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        ZStack {
-            page(.today) { TodayView() }
-            page(.plan) { PlanView() }
-            page(.train) { WorkoutView(showsFloatingTabBarClearance: true) }
-            page(.profile) { ProfileView() }
+        TabView(selection: $selection) {
+            TodayView()
+                .toolbar(.hidden, for: .tabBar)
+                .tag(MainTab.today)
+
+            PlanView()
+                .toolbar(.hidden, for: .tabBar)
+                .tag(MainTab.plan)
+
+            WorkoutView(showsFloatingTabBarClearance: true)
+                .toolbar(.hidden, for: .tabBar)
+                .tag(MainTab.train)
+
+            ProfileView()
+                .toolbar(.hidden, for: .tabBar)
+                .tag(MainTab.profile)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             BaselineFloatingTabBar(selection: $selection)
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
-    }
-
-    @ViewBuilder
-    private func page(_ tab: MainTab, @ViewBuilder content: () -> some View) -> some View {
-        content()
-            .opacity(selection == tab ? 1 : 0)
-            .allowsHitTesting(selection == tab)
-            .accessibilityHidden(selection != tab)
     }
 }
 

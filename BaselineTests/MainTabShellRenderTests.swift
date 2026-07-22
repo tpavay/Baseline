@@ -23,10 +23,36 @@ struct MainTabShellRenderTests {
         }
         if tab == .plan {
             let chat = try #require(screen.element(labelled: "Ask about your week"))
-            let barTop = try #require(screen.element(labelled: MainTab.today.title)).accessibilityFrame.minY
-            #expect(chat.accessibilityFrame.maxY <= barTop)
+            #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
         }
         try screen.capture("shell-\(tab.title.lowercased())")
+    }
+
+    @Test func theFloatingBarDrivesRealTabSelection() async throws {
+        let screen = try MainTabShellScreen(tab: .today)
+        defer { screen.tearDown() }
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "Ask about your week") == nil)
+        #expect(screen.activate(labelled: "Plan"))
+        try await screen.settle()
+
+        let chat = try #require(screen.element(labelled: "Ask about your week"))
+        #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
+        #expect(screen.visibleSystemTabBars.isEmpty)
+    }
+
+    @Test func aPushedProfileDestinationStaysClearOfTheBar() async throws {
+        let screen = try MainTabShellScreen(tab: .profile)
+        defer { screen.tearDown() }
+        try await screen.settle()
+
+        #expect(screen.activate(labelled: "Heart Rate Zones"))
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "MAX HR") != nil)
+        #expect(screen.visibleSystemTabBars.isEmpty)
+        try screen.capture("shell-profile-zones")
     }
 }
 
@@ -86,6 +112,16 @@ private final class MainTabShellScreen {
 
     func element(labelled text: String) -> NSObject? {
         Self.elements(in: window).first { $0.accessibilityLabel?.contains(text) ?? false }
+    }
+
+    func activate(labelled text: String) -> Bool {
+        element(labelled: text)?.accessibilityActivate() ?? false
+    }
+
+    var floatingBarTop: CGFloat {
+        MainTab.allCases
+            .compactMap { element(labelled: $0.title)?.accessibilityFrame.minY }
+            .min() ?? 0
     }
 
     func capture(_ name: String) throws {
