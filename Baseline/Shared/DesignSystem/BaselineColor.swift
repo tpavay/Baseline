@@ -109,6 +109,7 @@ enum BaselineSize {
     static let floatingTabBarBottom: CGFloat = 15
     static let floatingTabBarHorizontal: CGFloat = 40
     static let floatingTabSelectionHeight: CGFloat = 46
+    static var floatingTabClearance: CGFloat { floatingTabBarHeight + floatingTabBarBottom }
 }
 
 extension Color {

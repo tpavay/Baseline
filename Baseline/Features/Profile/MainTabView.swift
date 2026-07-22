@@ -10,24 +10,37 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        TabView(selection: $selection) {
-            TodayView()
-                .tag(MainTab.today)
-
-            PlanView()
-                .tag(MainTab.plan)
-
-            WorkoutView()
-                .tag(MainTab.train)
-
-            ProfileView()
-                .tag(MainTab.profile)
+        ZStack {
+            page(.today) { TodayView() }
+            page(.plan) { PlanView() }
+            page(.train) { WorkoutView(showsFloatingTabBarClearance: true) }
+            page(.profile) { ProfileView() }
         }
-        .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             BaselineFloatingTabBar(selection: $selection)
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+    }
+
+    @ViewBuilder
+    private func page(_ tab: MainTab, @ViewBuilder content: () -> some View) -> some View {
+        content()
+            .opacity(selection == tab ? 1 : 0)
+            .allowsHitTesting(selection == tab)
+            .accessibilityHidden(selection != tab)
+    }
+}
+
+/// Bottom clearance for content shown behind the floating tab bar. A `safeAreaInset` applied
+/// outside a `NavigationStack` never crosses its UIKit hosting boundary, so every screen that
+/// lives inside the shell applies this within its own stack.
+extension View {
+    func floatingTabBarClearance(_ enabled: Bool = true) -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            if enabled {
+                Color.clear.frame(height: BaselineSize.floatingTabClearance)
+            }
+        }
     }
 }
 

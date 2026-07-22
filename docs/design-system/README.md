@@ -122,7 +122,7 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Floating tab bar bottom inset | `BaselineSize.floatingTabBarBottom` | 15 pt |
 | Floating tab bar horizontal inset | `BaselineSize.floatingTabBarHorizontal` | 40 pt |
 | Floating tab selection height | `BaselineSize.floatingTabSelectionHeight` | 46 pt |
-| Floating tab content inset | `BaselineSize.floatingTabContentInset` | 90 pt |
+| Floating tab page clearance | `BaselineSize.floatingTabClearance` | bar height + bottom inset (75 pt) |
 | Compact internal gap | `BaselineSpacing.compact` | 6 pt |
 | Tile gap | `BaselineSpacing.tile` | 9 pt |
 | Section stack gap | `BaselineSpacing.section` | 14 pt |

@@ -61,6 +61,7 @@ struct TodayView: View {
                     }
                 }
             }
+            .floatingTabBarClearance()
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(BaselineColor.base, for: .navigationBar)
             .navigationDestination(for: TodayRoute.self, destination: destination)
@@ -99,9 +100,11 @@ struct TodayView: View {
                     analysis: todaySleep.analysis,
                     decision: todaySleep.decision
                 )
+                .floatingTabBarClearance()
             }
         case .hrv:
             ReadingHistoryView()
+                .floatingTabBarClearance()
         case .plan:
             PlanView()
         }
