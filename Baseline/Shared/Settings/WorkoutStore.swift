@@ -605,17 +605,22 @@ final class WorkoutStore {
         }
     }
 
-    /// True-remove a whole block, purging the performed record of every exercise it contained so the
-    /// same no-orphaned-sets guarantee as `removeExerciseFromWorkout` holds for block deletion.
+    /// True-remove a whole block, purging the performed record of every exercise it contained (nested
+    /// ones included) plus its owned group and choice logs, so the same no-orphaned-state guarantee as
+    /// the agent `removeBlock` holds for direct-control deletion.
     /// A workout always keeps at least one block, so deleting the last one leaves an empty default.
     func removeBlockFromWorkout(_ blockID: UUID, scope: WorkoutEditScope) {
-        let removedIDs = current?.blocks.first { $0.id == blockID }?.exercises.map(\.id) ?? []
+        let removed = current?.blocks.first { $0.id == blockID }
         edit(scope) { workout in
             workout.removeBlock(blockID)
             if workout.blocks.isEmpty { workout.blocks.append(WorkoutBlock(name: "", isDefault: true)) }
         }
-        if currentLog != nil, !removedIDs.isEmpty {
-            editLog { log in for id in removedIDs { log.removePerformed(forPlanned: id) } }
+        if currentLog != nil, let removed {
+            editLog { log in
+                for exercise in removed.exercises { log.removePerformed(forPlanned: exercise.id) }
+                log.removeGroups(forPlanned: Set(removed.groups.map(\.id)))
+                log.removeChoices(forPlanned: Set(removed.choices.map(\.id)))
+            }
         }
     }
 
@@ -1253,45 +1258,6 @@ final class WorkoutStore {
     }
 
     @discardableResult
-    func addExercise(name: String, toBlockNamed block: String,
-                     sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?,
-                     distanceMeters: Double? = nil,
-                     expectedRevisionToken: UUID? = nil) -> EditOutcome {
-        var recentDefinitionID: String?
-        var affectedID: UUID?
-        let outcome = mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Add \(name) to \(block)",
-            diff: .init(changes: [.init(kind: .add, summary: "Add \(name) to \(block)", entityID: nil)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            let blockID: UUID
-            switch resolveBlock(block, in: w) {
-            case .none:
-                // A simple workout has one implicit block, so put it there rather than failing on the name.
-                if w.blocks.count == 1 { blockID = w.blocks[0].id }
-                else { return .notFound("I couldn't find a block called \"\(block)\".") }
-            case .one(let id): blockID = id
-            case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
-            }
-            let exercise = plannedExercise(
-                name: name,
-                sets: sets,
-                reps: reps,
-                load: load,
-                durationSeconds: durationSeconds,
-                distanceMeters: distanceMeters
-            )
-            _ = w.addExercise(exercise, toBlock: blockID)
-            recentDefinitionID = exercise.definitionId
-            affectedID = exercise.id
-            return nil
-        }
-        if outcome.succeeded, let recentDefinitionID { noteRecent(recentDefinitionID) }
-        return outcome
-    }
-
-    @discardableResult
     func addExercise(
         name: String,
         toBlockID blockID: UUID,
@@ -1327,132 +1293,6 @@ final class WorkoutStore {
             }
             recentDefinitionID = exercise.definitionId
             affectedID = exercise.id
-            return nil
-        }
-        if outcome.succeeded, let recentDefinitionID { noteRecent(recentDefinitionID) }
-        return outcome
-    }
-
-    @discardableResult
-    func moveExercise(
-        named exercise: String,
-        exerciseID: UUID? = nil,
-        toBlockNamed block: String,
-        toBlockID: UUID? = nil,
-        expectedRevisionToken: UUID? = nil
-    ) -> EditOutcome {
-        var affectedID: UUID?
-        return mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Move \(exercise) to \(block)",
-            diff: .init(changes: [.init(kind: .move, summary: "Move \(exercise) to \(block)", entityID: exerciseID)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            let exID: UUID
-            switch resolveExercise(exercise, id: exerciseID, in: w) {
-            case .none: return .notFound(missingTarget("exercise", name: exercise, id: exerciseID))
-            case .one(let id): exID = id
-            case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
-            }
-            let blockID: UUID
-            switch resolveBlock(block, id: toBlockID, in: w) {
-            case .none: return .notFound(missingTarget("block", name: block, id: toBlockID))
-            case .one(let id): blockID = id
-            case .many(let opts): return .ambiguous(ambiguity(block, opts, kind: "blocks"))
-            }
-            guard w.moveExercise(exID, toBlock: blockID) else {
-                return .notFound("I couldn't move \(exercise) to \(block).")
-            }
-            affectedID = exID
-            return nil
-        }
-    }
-
-    @discardableResult
-    func removeExercise(
-        named exercise: String,
-        exerciseID: UUID? = nil,
-        expectedRevisionToken: UUID? = nil
-    ) -> EditOutcome {
-        var affectedID: UUID?
-        return mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Remove \(exercise)",
-            diff: .init(changes: [.init(kind: .remove, summary: "Remove \(exercise)", entityID: exerciseID)]),
-            resolvedEntityIDs: { affectedID.map { [$0] } ?? [] }
-        ) { w in
-            switch resolveExercise(exercise, id: exerciseID, in: w) {
-            case .none: return .notFound(missingTarget("exercise", name: exercise, id: exerciseID))
-            case .many(let opts): return .ambiguous(ambiguity(exercise, opts, kind: "exercises"))
-            case .one(let id):
-                guard w.removeExercise(id) else { return .notFound("I couldn't remove \(exercise).") }
-                affectedID = id
-                return nil
-            }
-        }
-    }
-
-    /// The agent-facing equivalent of the manual Replace Exercise action. A block can qualify one
-    /// duplicate, while `replaceAll` intentionally updates every matching instance atomically.
-    @discardableResult
-    func replaceExercise(
-        named exercise: String,
-        exerciseID: UUID? = nil,
-        with replacement: String,
-        inBlock block: String? = nil,
-        replaceAll: Bool = false,
-        expectedRevisionToken: UUID? = nil
-    ) -> EditOutcome {
-        var recentDefinitionID: String?
-        var affectedIDs: [UUID] = []
-        let outcome = mutate(
-            expectedRevisionToken: expectedRevisionToken,
-            reason: "Replace \(exercise) with \(replacement)",
-            diff: .init(changes: [.init(kind: .replace, summary: "Replace \(exercise) with \(replacement)", entityID: exerciseID)]),
-            resolvedEntityIDs: { affectedIDs }
-        ) { workout in
-            let definition = resolveDefinition(replacement)
-            guard definition.id != ExerciseCatalog.generic.id else {
-                return .notFound("I couldn't find \"\(replacement)\" in the exercise catalog.")
-            }
-
-            let matches: [Hit]
-            if let exerciseID {
-                guard let target = workout.exercise(exerciseID) else {
-                    return .notFound(missingTarget("exercise", name: exercise, id: exerciseID))
-                }
-                let blockName = workout.blocks.first { block in
-                    block.exercises.contains { $0.id == exerciseID }
-                }?.name ?? ""
-                matches = [Hit(id: exerciseID, label: target.exerciseName, block: blockName)]
-            } else {
-                let blocks: [WorkoutBlock]
-                if let block, !block.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    switch resolveBlock(block, in: workout) {
-                    case .none: return .notFound("I couldn't find a block called \"\(block)\".")
-                    case .many(let options): return .ambiguous(ambiguity(block, options, kind: "blocks"))
-                    case .one(let id): blocks = workout.blocks.filter { $0.id == id }
-                    }
-                } else {
-                    blocks = workout.blocks
-                }
-                matches = matchingExercises(exercise, in: blocks)
-                guard !matches.isEmpty else {
-                    return .notFound("I couldn't find \"\(exercise)\" in the workout.")
-                }
-            }
-            guard exerciseID != nil || replaceAll || matches.count == 1 else {
-                return .ambiguous(ambiguity(exercise, matches, kind: "exercises"))
-            }
-
-            let targets = replaceAll && exerciseID == nil ? matches : [matches[0]]
-            for target in targets {
-                guard applyReplacement(definition, to: target.id, in: &workout) else {
-                    return .notFound("I couldn't replace \"\(target.label)\".")
-                }
-            }
-            affectedIDs = targets.map(\.id)
-            recentDefinitionID = definition.id
             return nil
         }
         if outcome.succeeded, let recentDefinitionID { noteRecent(recentDefinitionID) }
@@ -2231,56 +2071,7 @@ final class WorkoutStore {
     }
 
 
-    // MARK: - Name resolution (exact case-insensitive, else contains) — ambiguity-aware
-
-    private struct Hit { let id: UUID; let label: String; let block: String }
-    private enum Match { case none; case one(UUID); case many([Hit]) }
-
-    /// Prefer exact matches; only fall back to substring matches if there are no exact ones. More
-    /// than one survivor → ambiguous (ask), never a silent first-match.
-    private func classify(_ hits: [Hit]) -> Match {
-        switch hits.count {
-        case 0: return .none
-        case 1: return .one(hits[0].id)
-        default: return .many(hits)
-        }
-    }
-
-    /// Stable workout-instance IDs always win over names. If an ID is stale or invalid, callers fail
-    /// instead of falling back to a name that could select a different instance.
-    private func resolveExercise(_ name: String, id: UUID? = nil, in w: Workout) -> Match {
-        if let id { return w.exercise(id) == nil ? .none : .one(id) }
-        return classify(matchingExercises(name, in: w.blocks))
-    }
-
-    private func matchingExercises(_ name: String, in blocks: [WorkoutBlock]) -> [Hit] {
-        let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        var exact: [Hit] = [], fuzzy: [Hit] = []
-        for b in blocks {
-            for ex in b.exercises {
-                if ex.exerciseName.localizedCaseInsensitiveCompare(key) == .orderedSame {
-                    exact.append(Hit(id: ex.id, label: ex.exerciseName, block: b.name))
-                } else if ex.exerciseName.localizedCaseInsensitiveContains(key) {
-                    fuzzy.append(Hit(id: ex.id, label: ex.exerciseName, block: b.name))
-                }
-            }
-        }
-        return exact.isEmpty ? fuzzy : exact
-    }
-
-    private func resolveBlock(_ name: String, id: UUID? = nil, in w: Workout) -> Match {
-        if let id { return w.blocks.contains(where: { $0.id == id }) ? .one(id) : .none }
-        let key = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        var exact: [Hit] = [], fuzzy: [Hit] = []
-        for b in w.blocks {
-            if b.name.localizedCaseInsensitiveCompare(key) == .orderedSame {
-                exact.append(Hit(id: b.id, label: b.name, block: b.name))
-            } else if b.name.localizedCaseInsensitiveContains(key) {
-                fuzzy.append(Hit(id: b.id, label: b.name, block: b.name))
-            }
-        }
-        return classify(exact.isEmpty ? fuzzy : exact)
-    }
+    // MARK: - Mutation-failure messages and shared edit mechanics
 
     private func missingTarget(_ kind: String, name: String, id: UUID?) -> String {
         if let id { return "I couldn't find the \(kind) with id \(id.uuidString) in the workout." }
@@ -2300,12 +2091,6 @@ final class WorkoutStore {
             if planned.selectedMetrics.isEmpty { planned.selectedMetrics = definition.defaults }
             planned.displayUnits = planned.displayUnits.filter { supported.contains($0.key) }
         }
-    }
-
-    private func ambiguity(_ name: String, _ opts: [Hit], kind: String) -> String {
-        let list = opts.map { kind == "exercises" ? "\"\($0.label)\" in \($0.block)" : "\"\($0.label)\"" }
-            .joined(separator: ", ")
-        return "There are \(opts.count) \(kind) matching \"\(name)\": \(list). Which one?"
     }
 
     // MARK: - Persistence

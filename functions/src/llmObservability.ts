@@ -21,6 +21,14 @@ export const LLM_OBSERVABILITY_VERSIONS = {
   importValidator: "workout-import-validator-v1",
 } as const;
 
+/**
+ * The conversation callable serves two materially different toolsets (Wave 5 vs the capability-gated
+ * legacy schema), so the trace records which one the model actually saw rather than one constant.
+ */
+export function conversationToolSchemaVersion(servedToolset: string): string {
+  return `${LLM_OBSERVABILITY_VERSIONS.conversationTools}-${servedToolset}`;
+}
+
 export type LLMSurface =
   | "chat.today"
   | "chat.plan"

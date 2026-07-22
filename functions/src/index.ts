@@ -12,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { AnthropicProvider } from "./provider";
 import { buildSystem } from "./prompt";
-import { toolsForClientSchema } from "./tools";
+import { servedToolsetForClientSchema, toolsForClientSchema } from "./tools";
 import {
   buildWorkoutImportProviderRequest,
   countParsedExercises,
@@ -57,6 +57,7 @@ import {
   LLM_OBSERVABILITY_VERSIONS,
   LLMSurface,
   configureLLMObservability,
+  conversationToolSchemaVersion,
   flushLLMObservability,
   parseClientToolObservations,
   recordClientToolObservations,
@@ -762,7 +763,9 @@ function conversationTraceContext(
     uid,
     model,
     promptVersion: LLM_OBSERVABILITY_VERSIONS.conversationPrompt,
-    toolSchemaVersion: LLM_OBSERVABILITY_VERSIONS.conversationTools,
+    toolSchemaVersion: conversationToolSchemaVersion(
+      servedToolsetForClientSchema(data.clientToolSchemaVersion),
+    ),
     outputSchemaVersion: LLM_OBSERVABILITY_VERSIONS.conversationOutput,
     validatorVersion: LLM_OBSERVABILITY_VERSIONS.conversationValidator,
     roundIndex: boundedInteger(data.roundIndex, 0, 12),

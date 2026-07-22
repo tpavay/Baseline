@@ -181,6 +181,41 @@ struct WorkoutSessionEditingTests {
         #expect(store.currentLog?.performed(forPlanned: curl.id) == nil)
     }
 
+    @Test func removingABlockPurgesItsGroupChoiceAndNestedExerciseLogs() {
+        // Direct-control block deletion must leave no orphaned state behind — nested performed
+        // records, group rounds, and choice selections all go with the block, the same guarantee
+        // the agent removeBlock path makes.
+        var w = workout("W", [exercise("Squat")])
+        let nested = exercise("Curl")
+        let group = WorkoutGroup(label: "Superset", children: [.exercise(nested)])
+        let selected = exercise("Row")
+        let choice = WorkoutChoice(label: "Finisher",
+                                   options: [.exercise(selected), .exercise(exercise("Bike"))])
+        w.blocks.append(WorkoutBlock(name: "Conditioning",
+                                     nodes: [.group(group), .choice(choice)],
+                                     isDefault: false))
+        let (_, store, _) = startedSession(w)
+
+        store.editLog { log in
+            log.upsertSetLog(forPlanned: nested.id, name: nested.exerciseName,
+                             plannedSetID: nested.prescription.sets[0].id) { set in
+                set.values[.reps] = 10
+                set.completed = true
+            }
+            log.upsertGroupLog(group.id) { $0.completedIterations = 2 }
+            log.selectOption(selected.id, for: choice.id, selectionCount: 1)
+        }
+        #expect(store.currentLog?.groups.isEmpty == false)
+        #expect(store.currentLog?.choices.isEmpty == false)
+
+        store.removeBlockFromWorkout(store.current!.blocks[1].id, scope: .session)
+
+        #expect(store.current?.blocks.count == 1)
+        #expect(store.currentLog?.performed(forPlanned: nested.id) == nil)
+        #expect(store.currentLog?.groups.isEmpty == true)
+        #expect(store.currentLog?.choices.isEmpty == true)
+    }
+
     @Test func removingTheOnlyBlockLeavesAnEmptyDefaultBlock() {
         let (_, store, _) = startedSession()
 

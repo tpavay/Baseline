@@ -169,9 +169,13 @@ struct WorkoutMutationEnvelopeTests {
             intent: nil,
             expectedRevisionToken: token
         ).mutationReceipt))
+        let accessory = try #require(plan.scheduledWorkout(scheduled.id)?.workout.blocks.first {
+            $0.name == "Accessory"
+        })
         record(try #require(store.addExercise(
             name: "Bench Press",
-            toBlockNamed: "Accessory",
+            toBlockID: accessory.id,
+            atIndex: nil,
             sets: 1,
             reps: 8,
             load: 60,
@@ -184,9 +188,9 @@ struct WorkoutMutationEnvelopeTests {
         })
         let benchSet = try #require(bench.prescription.sets.first)
         record(try #require(store.moveExercise(
-            named: bench.exerciseName,
-            exerciseID: bench.id,
-            toBlockNamed: "Main",
+            exerciseInstanceID: bench.id,
+            toBlockID: mainBlock.id,
+            toIndex: 0,
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.updateSet(
@@ -214,15 +218,12 @@ struct WorkoutMutationEnvelopeTests {
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.replaceExercise(
-            named: bench.exerciseName,
-            exerciseID: bench.id,
+            exerciseInstanceID: bench.id,
             with: "Deadlift",
-            replaceAll: false,
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.removeExercise(
-            named: "Deadlift",
-            exerciseID: bench.id,
+            exerciseInstanceID: bench.id,
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.requireAllOptions(

@@ -792,6 +792,18 @@ export const LEGACY_TOOLS: ToolSchema[] = TOOLS
   .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
   .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
 
+export type ServedToolset = "wave5" | "legacy";
+
+/**
+ * Monotonic capability gate: any well-formed schema version at or above 5 receives the current
+ * toolset, so a future client bump ("6", "7", ...) can never be silently downgraded to the legacy
+ * schema by a not-yet-updated server. Malformed or older versions stay on the legacy schema.
+ */
+export function servedToolsetForClientSchema(version: unknown): ServedToolset {
+  if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  return Number(version) >= 5 ? "wave5" : "legacy";
+}
+
 export function toolsForClientSchema(version: unknown): ToolSchema[] {
-  return version === "5" ? TOOLS : LEGACY_TOOLS;
+  return servedToolsetForClientSchema(version) === "wave5" ? TOOLS : LEGACY_TOOLS;
 }

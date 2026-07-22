@@ -249,12 +249,15 @@ struct UnitSystemReachTests {
 
     /// Storage stays canonical whatever the athlete is shown — the invariant `WorkoutStoreTests`
     /// asserts, restated here because this suite is what a future unit change gets read against.
-    @Test func switchingSystemsNeverTouchesTheStoredValue() {
+    @Test func switchingSystemsNeverTouchesTheStoredValue() throws {
         let units = StubUnitSystem(.metric)
         let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
         store.create(title: "Conditioning", goal: nil)
-        store.addExercise(name: "Sled Push", toBlockNamed: "", sets: 1, reps: nil, load: nil,
-                          durationSeconds: nil, distanceMeters: 121)
+        store.addExercise(name: "Sled Push",
+                          toBlockID: try #require(store.current?.blocks.first?.id),
+                          atIndex: nil, sets: 1, reps: nil, load: nil,
+                          durationSeconds: nil, distanceMeters: 121,
+                          expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken))
 
         func stored() -> Double? { store.current?.allExercises.first?.prescription.sets.first?.values[.distance] }
         let before = stored()
@@ -279,8 +282,11 @@ struct UnitSystemReachTests {
         let units = StubUnitSystem(.imperial)
         let store = WorkoutStore(units: units, defaults: UserDefaults(suiteName: "reach-\(UUID().uuidString)")!)
         store.create(title: "Engine", goal: nil)
-        store.addExercise(name: "Run", toBlockNamed: "", sets: 1, reps: nil, load: nil,
-                          durationSeconds: nil, distanceMeters: 1609.344)
+        store.addExercise(name: "Run",
+                          toBlockID: try #require(store.current?.blocks.first?.id),
+                          atIndex: nil, sets: 1, reps: nil, load: nil,
+                          durationSeconds: nil, distanceMeters: 1609.344,
+                          expectedRevisionToken: try #require(store.mutationTarget(.plan)?.revisionToken))
 
         let tools = AgentTools(store: TrainingContextStore(defaults: UserDefaults(suiteName: "reach-ctx-\(UUID().uuidString)")!),
                                base: DecisionEngine.Inputs(), workouts: store)

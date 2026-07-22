@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { LEGACY_TOOLS, TOOLS, toolsForClientSchema } = require("../lib/tools");
+const { LEGACY_TOOLS, TOOLS, servedToolsetForClientSchema, toolsForClientSchema } = require("../lib/tools");
 
 test("replace_exercise is an atomic duplicate-safe tool", () => {
   const tool = TOOLS.find((candidate) => candidate.name === "replace_exercise");
@@ -98,6 +98,23 @@ test("Wave 5 structure schemas are ID-only, positioned, purge-aware, and undoabl
 test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(toolsForClientSchema("5"), TOOLS);
   assert.equal(toolsForClientSchema(undefined), LEGACY_TOOLS);
+
+  // The gate is monotonic: a future client version bump keeps the current schema, while malformed
+  // or pre-Wave-5 versions fall back to the legacy schema.
+  assert.equal(toolsForClientSchema("6"), TOOLS);
+  assert.equal(toolsForClientSchema("12"), TOOLS);
+  assert.equal(toolsForClientSchema("4"), LEGACY_TOOLS);
+  assert.equal(toolsForClientSchema("0"), LEGACY_TOOLS);
+  assert.equal(toolsForClientSchema(""), LEGACY_TOOLS);
+  assert.equal(toolsForClientSchema("5.1"), LEGACY_TOOLS);
+  assert.equal(toolsForClientSchema("banana"), LEGACY_TOOLS);
+  assert.equal(toolsForClientSchema(5), LEGACY_TOOLS);
+  assert.equal(toolsForClientSchema(null), LEGACY_TOOLS);
+
+  assert.equal(servedToolsetForClientSchema("5"), "wave5");
+  assert.equal(servedToolsetForClientSchema("7"), "wave5");
+  assert.equal(servedToolsetForClientSchema("4"), "legacy");
+  assert.equal(servedToolsetForClientSchema(undefined), "legacy");
 
   const legacyNames = new Set(LEGACY_TOOLS.map((tool) => tool.name));
   for (const name of ["remove_block", "move_block", "duplicate_block", "reorder_exercise", "duplicate_exercise"]) {
