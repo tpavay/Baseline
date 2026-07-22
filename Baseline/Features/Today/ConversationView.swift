@@ -58,13 +58,20 @@ struct AskBaselineSheet: View {
                     .accessibilityLabel(mode == .workoutImport ? "Inspect imported workout context" : "Inspect Baseline context")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(BaselineColor.accent)
-                        .disabled(service?.isThinking == true)
+                    // Never disabled, and no `interactiveDismissDisabled` on the sheet: gating exit
+                    // on `isThinking` once trapped athletes on a stalled request with no way out.
+                    // Leaving cancels the in-flight turn; the service is sheet `@State`, so nothing
+                    // a dismissal keeps alive is lost by stopping the request too.
+                    Button("Done") {
+                        service?.cancelTurn()
+                        dismiss()
+                    }
+                    .foregroundStyle(BaselineColor.accent)
                 }
             }
         }
         .task { await setUp() }
+        .onDisappear { service?.cancelTurn() }   // swipe-dismiss must abort the request too
         .sheet(isPresented: $showInspector) {
             if let service { StateInspectorView(service: service, context: context, workouts: workouts) }
         }
@@ -74,7 +81,6 @@ struct AskBaselineSheet: View {
         .presentationBackgroundInteraction(
             mode == .workoutImport ? .disabled : .enabled(upThrough: .medium)
         )
-        .interactiveDismissDisabled(service?.isThinking == true)
     }
 
     private func setUp() async {
@@ -218,15 +224,21 @@ private struct ConversationView: View {
                 .padding(.horizontal, 15).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(BaselineColor.surface).overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(BaselineColor.line, lineWidth: 1)))
-            Button { send() } label: {
-                Image(systemName: "arrow.up")
+            // While a turn is in flight the send arrow becomes a stop button, so the athlete can
+            // always abandon a reply that is taking too long instead of waiting out the network.
+            Button {
+                if service.isThinking { service.cancelTurn() } else { send() }
+            } label: {
+                Image(systemName: service.isThinking ? "stop.fill" : "arrow.up")
                     .font(.headline.weight(.bold)).foregroundStyle(Color(hex: 0x120B21))
                     .frame(width: 44, height: 44)
-                    .background(Circle().fill(canSend ? BaselineColor.accent : BaselineColor.line))
+                    .background(Circle().fill(canSend || service.isThinking ? BaselineColor.accent : BaselineColor.line))
             }
-            .disabled(!canSend)
-            .accessibilityLabel("Send message")
-            .accessibilityHint("Sends your workout correction to Baseline")
+            .disabled(!canSend && !service.isThinking)
+            .accessibilityLabel(service.isThinking ? "Stop" : "Send message")
+            .accessibilityHint(service.isThinking
+                ? "Stops Baseline's reply so you can type again"
+                : "Sends your workout correction to Baseline")
         }
         .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 12)
         .background(BaselineColor.base)
