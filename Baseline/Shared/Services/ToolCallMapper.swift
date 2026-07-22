@@ -484,12 +484,15 @@ enum ToolCallMapper {
         }
     }
 
-    /// The bulk tools' explicit taxonomy selector. Every supplied field must be a string (block_id a
-    /// UUID) — a mistyped field rejects the call rather than silently dropping a constraint, which
-    /// would widen the match set behind the model's back. An empty object is rejected too.
+    /// The bulk tools' explicit taxonomy selector. Every supplied field must be a known key and a
+    /// string (block_id a UUID) — a mistyped or misspelled field rejects the call rather than
+    /// silently dropping a constraint, which would widen the match set behind the model's back. An
+    /// empty object is rejected too.
     private static func bulkSelector(_ value: Any?) -> BulkExerciseSelectorInput? {
         guard let object = value as? [String: Any] else { return nil }
-        for key in ["definition_id", "muscle", "equipment", "modality", "pattern", "tag", "level"] {
+        let stringKeys = ["definition_id", "muscle", "equipment", "modality", "pattern", "tag", "level"]
+        guard object.keys.allSatisfy({ stringKeys.contains($0) || $0 == "block_id" }) else { return nil }
+        for key in stringKeys {
             guard object[key] == nil || object[key] is NSNull || object[key] is String else { return nil }
         }
         guard validOptionalUUID(object["block_id"]) else { return nil }

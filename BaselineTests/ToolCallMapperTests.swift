@@ -805,8 +805,8 @@ struct ToolCallMapperTests {
             dryRun: true,
             expectedRevisionToken: revision
         ))
-        // No units, malformed unit, empty selector object, and mistyped selector values all reject —
-        // a dropped constraint would silently widen the match set.
+        // No units, malformed unit, empty selector object, mistyped selector values, and unknown
+        // selector keys all reject — a dropped constraint would silently widen the match set.
         #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
             "expected_revision_token": revision.uuidString,
         ]) == nil)
@@ -827,6 +827,11 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
             "distance_unit": "km",
             "selector": ["block_id": "not-a-uuid"],
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "km",
+            "selector": ["modality": "cardio", "equipmnt": "treadmill"],
             "expected_revision_token": revision.uuidString,
         ]) == nil)
     }
