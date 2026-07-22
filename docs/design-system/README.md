@@ -140,6 +140,14 @@ Its diameter and stroke scale with Dynamic Type.
 
 The sleep dial and heart-rate donut must use this same renderer.
 
+| Caller | Diameter | Stroke | Gap | Weights | Progress |
+|---|---:|---:|---:|---|---|
+| Sleep dial | 84 pt | 5 pt | 8 degrees | Three fixed bands | Independent per band |
+| Zone donut | 118 pt | 11 pt | 1.2 degrees | Five proportional zone totals | Fully completed |
+
+The approved zone order is blue, green, violet, amber, and red.
+Domain calculations remain outside the component.
+
 ### `BaselineTabBar`
 
 `BaselineTabBar` is the shared floating three-tab navigation surface for Today, Plan, and Profile.
@@ -150,14 +158,6 @@ It owns the selected-item fill, tab icon and label styling, approved pill geomet
 `MuscleMapView` summarizes the primary and secondary muscles from one or more structured workouts.
 Use its compact mode for workout rows and its full mode for workout detail rather than recreating muscle emphasis in feature code.
 Its native paths come from the MIT-licensed `react-native-body-highlighter` geometry stored in `.lavish/muscle-assets/` and bundled through `project.yml`.
-
-| Caller | Diameter | Stroke | Gap | Weights | Progress |
-|---|---:|---:|---:|---|---|
-| Sleep dial | 84 pt | 5 pt | 8 degrees | Three fixed bands | Independent per band |
-| Zone donut | 118 pt | 11 pt | 1.2 degrees | Five proportional zone totals | Fully completed |
-
-The approved zone order is blue, green, violet, amber, and red.
-Domain calculations remain outside the component.
 
 ### `TaxonomyPickerRow`
 
