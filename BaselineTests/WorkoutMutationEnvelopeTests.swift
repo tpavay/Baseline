@@ -431,7 +431,11 @@ struct WorkoutMutationEnvelopeTests {
             Issue.record("Expected the pre-edit workout snapshot")
         }
         if case .performedLog(let before) = history[1].beforeSnapshot {
-            #expect(before.performed(forPlanned: scheduled.workout.allExercises[0].id) == nil)
+            // startLog() seeds a pending performed record per planned exercise, so the pre-edit
+            // snapshot holds that record with nothing logged yet - not an absent one.
+            let preEdit = before.performed(forPlanned: scheduled.workout.allExercises[0].id)
+            #expect(preEdit?.setLogs.isEmpty == true)
+            #expect(preEdit?.status == .pending)
         } else {
             Issue.record("Expected the pre-edit performed-log snapshot")
         }
