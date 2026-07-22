@@ -12,23 +12,19 @@ test("replace_exercise is an atomic duplicate-safe tool", () => {
   assert.match(tool.description, /never simulate replacement/i);
 });
 
-test("workout tools expose stable ID targeting without breaking name calls", () => {
+test("workout tools expose stable ID targeting", () => {
   const currentWorkout = TOOLS.find((candidate) => candidate.name === "get_current_workout");
   assert.ok(currentWorkout);
   assert.match(currentWorkout.description, /stable ids/i);
   assert.match(currentWorkout.description, /block, exercise instance, and set/i);
 
-  const targetFields = {
+  const legacyTargetFields = {
     move_exercise: ["exercise_id", "to_block_id"],
     replace_exercise: ["exercise_id"],
     remove_exercise: ["exercise_id"],
-    update_set: ["set_id"],
-    update_logging_config: ["exercise_id"],
-    set_metric_value: ["set_id"],
-    remove_metric: ["exercise_id"],
   };
 
-  for (const [name, fields] of Object.entries(targetFields)) {
+  for (const [name, fields] of Object.entries(legacyTargetFields)) {
     const tool = TOOLS.find((candidate) => candidate.name === name);
     assert.ok(tool, `${name} should exist`);
     for (const field of fields) {
@@ -44,9 +40,55 @@ test("workout tools expose stable ID targeting without breaking name calls", () 
     ["exercise", "expected_revision_token"]
   );
   assert.deepEqual(
-    TOOLS.find((candidate) => candidate.name === "update_set").input_schema.required,
-    ["exercise", "set_number", "expected_revision_token"]
+    TOOLS.find((candidate) => candidate.name === "update_logging_config").input_schema.required,
+    ["exercise_instance_id", "expected_revision_token"]
   );
+  assert.deepEqual(
+    TOOLS.find((candidate) => candidate.name === "set_metric_value").input_schema.required,
+    ["exercise_instance_id", "set_id", "metric", "value", "expected_revision_token"]
+  );
+  assert.deepEqual(
+    TOOLS.find((candidate) => candidate.name === "remove_metric").input_schema.required,
+    ["exercise_instance_id", "metric", "expected_revision_token"]
+  );
+});
+
+test("Wave 4 planned-set schemas are ID-only and explicit about clearing", () => {
+  const add = TOOLS.find((candidate) => candidate.name === "add_set");
+  const update = TOOLS.find((candidate) => candidate.name === "update_set");
+  const remove = TOOLS.find((candidate) => candidate.name === "remove_set");
+  const move = TOOLS.find((candidate) => candidate.name === "move_set");
+  const duplicate = TOOLS.find((candidate) => candidate.name === "duplicate_set");
+
+  assert.ok(add);
+  assert.ok(update);
+  assert.ok(remove);
+  assert.ok(move);
+  assert.ok(duplicate);
+  assert.deepEqual(add.input_schema.required, [
+    "exercise_instance_id", "values", "role", "targets", "expected_revision_token",
+  ]);
+  assert.deepEqual(update.input_schema.required, ["set_id", "patch", "expected_revision_token"]);
+  assert.deepEqual(remove.input_schema.required, ["set_id", "expected_revision_token"]);
+  assert.deepEqual(move.input_schema.required, ["set_id", "expected_revision_token"]);
+  assert.deepEqual(duplicate.input_schema.required, ["set_id", "expected_revision_token"]);
+  assert.deepEqual(update.input_schema.properties.patch.properties.values.type, ["object", "null"]);
+  assert.deepEqual(update.input_schema.properties.patch.properties.targets.type, ["object", "null"]);
+  assert.match(update.description, /omitted/i);
+  assert.match(update.description, /null/i);
+  assert.match(remove.description, /logged-actual safeguard/i);
+  assert.match(duplicate.description, /fresh set ID/i);
+});
+
+test("Wave 4 metric schemas expose pace units and heart-rate zone time", () => {
+  const logging = TOOLS.find((candidate) => candidate.name === "update_logging_config");
+  const metricValue = TOOLS.find((candidate) => candidate.name === "set_metric_value");
+
+  assert.ok(logging.input_schema.properties.pace_unit);
+  assert.match(logging.input_schema.properties.pace_unit.description, /\/km/);
+  assert.match(logging.description, /heartRateZoneTime/);
+  assert.match(metricValue.input_schema.properties.metric.description, /heartRateZoneTime/);
+  assert.match(logging.description, /canonical stored values/i);
 });
 
 test("require_all_options preserves an imported choice's children", () => {
@@ -69,7 +111,11 @@ test("workout mutations require revision tokens and expose targeted undo", () =>
     "replace_exercise",
     "remove_exercise",
     "require_all_options",
+    "add_set",
     "update_set",
+    "remove_set",
+    "move_set",
+    "duplicate_set",
     "update_logging_config",
     "set_metric_value",
     "remove_metric",

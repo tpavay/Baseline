@@ -4419,7 +4419,7 @@ private actor GatedCreateWorkoutImportRepository: WorkoutImportJobStoring {
         try await base.mostRecentActiveJob(now: now)
     }
     func activeJobs(now: Date) async throws -> [WorkoutImportJob] {
-        try await base.activeJobs(now: now)
+        await base.activeJobs(now: now)
     }
     func save(_ job: WorkoutImportJob) async throws { try await base.save(job) }
     func writeSource(_ data: Data, jobID: UUID, pageIndex: Int) async throws -> String {
@@ -4455,7 +4455,7 @@ private actor FailingCancellationSaveWorkoutImportRepository: WorkoutImportJobSt
         try await base.mostRecentActiveJob(now: now)
     }
     func activeJobs(now: Date) async throws -> [WorkoutImportJob] {
-        try await base.activeJobs(now: now)
+        await base.activeJobs(now: now)
     }
     func save(_ job: WorkoutImportJob) async throws { try await base.save(job) }
     func writeSource(_ data: Data, jobID: UUID, pageIndex: Int) async throws -> String {
@@ -4496,7 +4496,7 @@ private actor FailingReviewSaveWorkoutImportRepository: WorkoutImportJobStoring 
         try await base.mostRecentActiveJob(now: now)
     }
     func activeJobs(now: Date) async throws -> [WorkoutImportJob] {
-        try await base.activeJobs(now: now)
+        await base.activeJobs(now: now)
     }
     func save(_ job: WorkoutImportJob) async throws {
         guard savesAreAllowed else { throw CocoaError(.fileWriteNoPermission) }

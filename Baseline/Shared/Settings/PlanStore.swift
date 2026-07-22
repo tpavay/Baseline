@@ -82,9 +82,13 @@ final class PlanStore {
     @discardableResult func addWorkout(_ sw: ScheduledWorkout, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.addWorkout(sw, actor: actor, reason: reason) }
     @discardableResult func duplicate(_ id: UUID, toDate: Date? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.duplicate(id, toDate: toDate, actor: actor, reason: reason) }
     @discardableResult func editContent(_ id: UUID, actor: PlanActor = .user, reason: String? = nil, _ transform: (inout Workout) -> Void) -> MutationResult { defer { reload() }; return repo.editContent(id, actor: actor, reason: reason, transform) }
-    @discardableResult func editContent(_ request: WorkoutMutationRequest, workout: Workout) -> WorkoutMutationResult {
+    @discardableResult func editContent(
+        _ request: WorkoutMutationRequest,
+        workout: Workout,
+        log: WorkoutLog? = nil
+    ) -> WorkoutMutationResult {
         defer { reload() }
-        return repo.applyWorkoutMutation(request, workout: workout)
+        return repo.applyWorkoutMutation(request, workout: workout, log: log)
     }
     @discardableResult func undoWorkoutMutation(
         mutationID: UUID,
@@ -156,8 +160,8 @@ final class PlanStore {
             pushSessionWorkout: { [weak self] w in self?.setSessionWorkout(id, w) },
             pushLog: { [weak self] l in self?.updateSessionLog(id) { $0 = l } },
             mutationTarget: { [weak self] scope in self?.mutationTarget(forScheduled: id, scope: scope) },
-            applyMutation: { [weak self] request, workout in
-                self?.editContent(request, workout: workout) ?? .rejected(.notFound)
+            applyMutation: { [weak self] request, workout, log in
+                self?.editContent(request, workout: workout, log: log) ?? .rejected(.notFound)
             },
             undoMutation: { [weak self] mutationID, expectedRevisionToken in
                 self?.undoWorkoutMutation(

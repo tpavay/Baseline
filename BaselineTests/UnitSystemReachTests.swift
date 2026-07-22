@@ -213,7 +213,7 @@ struct UnitSystemReachTests {
         #expect(MetricFormat.editText(0.275, .pace, unit: .secondsPerKilometer) == "4:35")
         #expect(MetricFormat.columnHeader(.pace, unit: .secondsPerMile) == "PACE /MI")
         // Typed in the display unit, stored per meter — and round-trips.
-        let canonical = try? #require(MetricFormat.parse("4:35", .pace, unit: .secondsPerKilometer))
+        let canonical = MetricFormat.parse("4:35", .pace, unit: .secondsPerKilometer)
         #expect(abs((canonical ?? 0) - 0.275) < 0.0001)
     }
 

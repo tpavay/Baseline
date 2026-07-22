@@ -36,8 +36,15 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "replace_exercise", input: [
             "exercise": "Treadmill Run", "replacement": "Run", "block": "Warm-up", "expected_revision_token": inputRevision,
         ]) == .replaceExercise(exercise: "Treadmill Run", exerciseID: nil, replacement: "Run", block: "Warm-up", replaceAll: false, expectedRevisionToken: revision))
-        #expect(ToolCallMapper.map(name: "update_set", input: ["exercise": "Row", "set_number": 1, "distance_m": 1000, "expected_revision_token": inputRevision])
-                == .updateSet(exercise: "Row", setNumber: 1, setID: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 1000, rpe: nil, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "update_set", input: [
+            "set_id": inputRevision,
+            "patch": ["values": ["distance": 1_000]],
+            "expected_revision_token": inputRevision,
+        ]) == .updateSet(
+            setID: revision,
+            patch: PlannedSetPatch(values: .set(.init(metrics: [.distance: .set(1_000)]))),
+            expectedRevisionToken: revision
+        ))
         #expect(ToolCallMapper.map(name: "require_all_options", input: ["choice": "Option B", "expected_revision_token": inputRevision])
                 == .requireAllOptions(choice: "Option B", expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "undo_workout_mutation", input: ["mutation_id": revision.uuidString, "expected_revision_token": inputRevision])
@@ -80,56 +87,219 @@ struct ToolCallMapperTests {
             "expected_revision_token": revision.uuidString,
         ]) == .removeExercise(exercise: "Run", exerciseID: exerciseID, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "update_set", input: [
-            "exercise": "Run",
-            "set_number": 2,
             "set_id": setID.uuidString,
-            "duration_seconds": 180,
+            "patch": ["values": ["duration": 180]],
             "expected_revision_token": revision.uuidString,
         ]) == .updateSet(
-            exercise: "Run",
-            setNumber: 2,
             setID: setID,
-            reps: nil,
-            load: nil,
-            durationSeconds: 180,
-            distanceMeters: nil,
-            rpe: nil,
+            patch: PlannedSetPatch(values: .set(.init(metrics: [.duration: .set(180)]))),
             expectedRevisionToken: revision
         ))
         #expect(ToolCallMapper.map(name: "update_logging_config", input: [
-            "exercise": "Run",
-            "exercise_id": exerciseID.uuidString,
-            "enabled_metrics": ["duration"],
+            "exercise_instance_id": exerciseID.uuidString,
+            "enabled_metrics": ["duration", "pace", "heartRateZoneTime"],
+            "pace_unit": "/mi",
             "expected_revision_token": revision.uuidString,
         ]) == .updateLoggingConfig(
-            exercise: "Run",
-            exerciseID: exerciseID,
-            enabledMetrics: [.duration],
-            units: [:],
+            exerciseInstanceID: exerciseID,
+            enabledMetrics: [.duration, .pace, .heartRateZoneTime],
+            units: [.pace: .secondsPerMile],
             expectedRevisionToken: revision
         ))
         #expect(ToolCallMapper.map(name: "set_metric_value", input: [
-            "exercise": "Run",
-            "set_number": 2,
+            "exercise_instance_id": exerciseID.uuidString,
             "set_id": setID.uuidString,
-            "metric": "distance",
-            "value": 1_000,
+            "metric": "pace",
+            "value": 275,
+            "unit": "/km",
             "expected_revision_token": revision.uuidString,
         ]) == .setMetricValue(
-            exercise: "Run",
-            setNumber: 2,
+            exerciseInstanceID: exerciseID,
             setID: setID,
-            metric: .distance,
-            value: 1_000,
-            unit: nil,
+            metric: .pace,
+            value: 275,
+            unit: .secondsPerKilometer,
             expectedRevisionToken: revision
         ))
         #expect(ToolCallMapper.map(name: "remove_metric", input: [
-            "exercise": "Run",
-            "exercise_id": exerciseID.uuidString,
+            "exercise_instance_id": exerciseID.uuidString,
             "metric": "pace",
             "expected_revision_token": revision.uuidString,
-        ]) == .removeMetric(exercise: "Run", exerciseID: exerciseID, metric: .pace, expectedRevisionToken: revision))
+        ]) == .removeMetric(exerciseInstanceID: exerciseID, metric: .pace, expectedRevisionToken: revision))
+    }
+
+    @Test func setMetricValueUnitsConvertMinutePacesAndAcceptCanonicalPace() throws {
+        let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let setID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        func map(value: Double, unit: String) -> AgentTools.Call? {
+            ToolCallMapper.map(name: "set_metric_value", input: [
+                "exercise_instance_id": exerciseID.uuidString,
+                "set_id": setID.uuidString,
+                "metric": "pace",
+                "value": value,
+                "unit": unit,
+                "expected_revision_token": revision.uuidString,
+            ])
+        }
+
+        // "4.5 min/km" means 270 seconds per kilometer — never 4.5 of them (a silent 60× corruption).
+        #expect(map(value: 4.5, unit: "min/km") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 270, unit: .secondsPerKilometer, expectedRevisionToken: revision
+        ))
+        #expect(map(value: 8, unit: "min/mi") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 480, unit: .secondsPerMile, expectedRevisionToken: revision
+        ))
+        // The canonical pace unit, exactly as MetricUnit.short renders it, is a valid input unit.
+        #expect(map(value: 0.27, unit: "s/m") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 0.27, unit: .secondsPerMeter, expectedRevisionToken: revision
+        ))
+        // Seconds-per forms pass through unchanged.
+        #expect(map(value: 275, unit: "/km") == .setMetricValue(
+            exerciseInstanceID: exerciseID, setID: setID, metric: .pace,
+            value: 275, unit: .secondsPerKilometer, expectedRevisionToken: revision
+        ))
+    }
+
+    @Test func mapsWaveFourSetToolsAndThreeStatePatches() throws {
+        let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let setID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        let siblingID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        #expect(ToolCallMapper.map(name: "add_set", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "after_set_id": siblingID.uuidString,
+            "values": ["reps": 8, "load": 100.0],
+            "role": "top",
+            "targets": [
+                "effort": ["type": "rpe", "value": 8.0],
+                "ranges": [["metric": "load", "lower": 95.0, "upper": 105.0]],
+            ],
+            "expected_revision_token": revision.uuidString,
+        ]) == .addSet(
+            exerciseInstanceID: exerciseID,
+            afterSetID: siblingID,
+            values: PlannedSetValues(metrics: [.reps: 8, .load: 100]),
+            role: .top,
+            targets: PlannedSetTargets(
+                effort: .rpe(8),
+                ranges: [.init(metric: .load, lower: 95, upper: 105)]
+            ),
+            expectedRevisionToken: revision
+        ))
+
+        #expect(ToolCallMapper.map(name: "update_set", input: [
+            "set_id": setID.uuidString,
+            "patch": [
+                "values": ["reps": NSNull(), "load": 102.5],
+                "role": "backoff",
+                "targets": [
+                    "effort": NSNull(),
+                    "ranges": [["metric": "load", "lower": 90.0, "upper": 100.0]],
+                ],
+            ],
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateSet(
+            setID: setID,
+            patch: PlannedSetPatch(
+                values: .set(.init(metrics: [.reps: .clear, .load: .set(102.5)])),
+                role: .set(.backoff),
+                targets: .set(.init(
+                    effort: .clear,
+                    ranges: .set([.init(metric: .load, lower: 90, upper: 100)])
+                ))
+            ),
+            expectedRevisionToken: revision
+        ))
+
+        #expect(ToolCallMapper.map(name: "update_set", input: [
+            "set_id": setID.uuidString,
+            "patch": ["values": NSNull(), "targets": NSNull()],
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateSet(
+            setID: setID,
+            patch: PlannedSetPatch(values: .clear, targets: .clear),
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "remove_set", input: [
+            "set_id": setID.uuidString,
+            "expected_revision_token": revision.uuidString,
+        ]) == .removeSet(setID: setID, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "move_set", input: [
+            "set_id": setID.uuidString,
+            "before_set_id": siblingID.uuidString,
+            "expected_revision_token": revision.uuidString,
+        ]) == .moveSet(
+            setID: setID,
+            beforeSetID: siblingID,
+            toIndex: nil,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "duplicate_set", input: [
+            "set_id": setID.uuidString,
+            "expected_revision_token": revision.uuidString,
+        ]) == .duplicateSet(setID: setID, expectedRevisionToken: revision))
+    }
+
+    @Test func rejectsMalformedWaveFourSetCalls() {
+        let id = UUID().uuidString
+
+        #expect(ToolCallMapper.map(name: "add_set", input: [
+            "exercise_instance_id": id,
+            "values": [:],
+            "role": "invalid",
+            "targets": [:],
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_set", input: [
+            "set_id": id,
+            "patch": ["role": NSNull()],
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_set", input: [
+            "set_id": id,
+            "patch": [:],
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "move_set", input: [
+            "set_id": id,
+            "before_set_id": id,
+            "to_index": 0,
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "move_set", input: [
+            "set_id": id,
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "move_set", input: [
+            "set_id": id,
+            "to_index": 1.5,
+            "expected_revision_token": id,
+        ]) == nil)
+        // 2^63 survives the old Double(Int.max) bound check but cannot be an Int — reject, never trap.
+        #expect(ToolCallMapper.map(name: "move_set", input: [
+            "set_id": id,
+            "to_index": 9_223_372_036_854_775_808.0,
+            "expected_revision_token": id,
+        ]) == nil)
+        // An inverted range would be silently normalized by MetricTargetRange past this boundary.
+        #expect(ToolCallMapper.map(name: "add_set", input: [
+            "exercise_instance_id": id,
+            "values": ["duration": 60],
+            "role": "working",
+            "targets": ["ranges": [["metric": "duration", "lower": 80.0, "upper": 40.0]]],
+            "expected_revision_token": id,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_logging_config", input: [
+            "exercise_instance_id": id,
+            "enabled_metrics": ["duration", "unknown"],
+            "expected_revision_token": id,
+        ]) == nil)
     }
 
     @Test func mapsMetadataPatchesWithoutCollapsingOmittedAndNull() throws {

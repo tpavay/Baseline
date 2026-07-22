@@ -60,7 +60,9 @@ protocol PlanRepository {
     func duplicate(_ id: UUID, toDate: Date?, actor: PlanActor, reason: String?) -> MutationResult
     func replaceContent(_ id: UUID, with workout: Workout, actor: PlanActor, reason: String?) -> MutationResult
     func editContent(_ id: UUID, actor: PlanActor, reason: String?, _ transform: (inout Workout) -> Void) -> MutationResult
-    func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout) -> WorkoutMutationResult
+    /// `log` is an optional session-scoped companion write (a purged logged actual) versioned and
+    /// undone together with the workout content; plan-scoped mutations never carry one.
+    func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout, log: WorkoutLog?) -> WorkoutMutationResult
     func undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID, actor: PlanActor) -> WorkoutMutationResult
     func applyPerformedLogMutation(_ request: WorkoutMutationRequest, log: WorkoutLog) -> WorkoutMutationResult
     func sessionMutationVersions(sessionID: UUID, limit: Int) -> [SessionMutationVersion]
@@ -358,16 +360,19 @@ final class SwiftDataPlanRepository: PlanRepository {
     /// The one repository transaction for conversational workout edits. The store has already resolved
     /// and validated domain IDs against one local value; this boundary repeats the identity and revision
     /// checks against persisted authoritative state immediately before its single save.
-    func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout) -> WorkoutMutationResult {
+    func applyWorkoutMutation(_ request: WorkoutMutationRequest, workout: Workout, log: WorkoutLog?) -> WorkoutMutationResult {
         guard validAgentMutation(request),
               request.dryRun || !mutationIDExists(request.mutationID) else {
             return .rejected(.invalidTarget)
         }
         switch request.target.scope {
         case .plan:
+            // Plan revisions never carry a session's performed log; the store only supplies one for
+            // session-scoped mutations.
+            guard log == nil else { return .rejected(.invalidTarget) }
             return applyPlanWorkoutMutation(request, workout: workout)
         case .sessionWorkout:
-            return applySessionWorkoutMutation(request, workout: workout)
+            return applySessionWorkoutMutation(request, workout: workout, log: log)
         case .performedLog, .transient:
             return .rejected(.invalidTarget)
         }
@@ -426,7 +431,8 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     private func applySessionWorkoutMutation(
         _ request: WorkoutMutationRequest,
-        workout: Workout
+        workout: Workout,
+        log: WorkoutLog?
     ) -> WorkoutMutationResult {
         guard let scheduledID = request.target.scheduledWorkoutID,
               let sessionID = request.target.sessionID,
@@ -449,13 +455,23 @@ final class SwiftDataPlanRepository: PlanRepository {
 
         let after = UUID()
         let mutationReceipt = receipt(request, before: currentToken, after: after, undoAvailable: true)
+        var purged: [PurgedSetLog] = []
+        if let log {
+            if let beforeLog = PlanCoding.value(WorkoutLog.self, sd.logJSON) {
+                purged = WorkoutLog.purgedSetLogs(before: beforeLog, after: log)
+            }
+            sd.logJSON = PlanCoding.data(log)
+            sd.performedLogRevisionID = UUID()
+        }
         sd.sessionWorkoutJSON = PlanCoding.data(workout)
         sd.sessionWorkoutRevisionID = after
         insertSessionMutation(
             request,
             sessionID: sessionID,
             kind: .sessionWorkout,
-            beforeSnapshot: .sessionWorkout(before),
+            beforeSnapshot: purged.isEmpty
+                ? .sessionWorkout(before)
+                : .sessionWorkoutAndPurgedSetLogs(before, purged),
             afterRevisionToken: after,
             receipt: mutationReceipt
         )
@@ -608,8 +624,19 @@ final class SwiftDataPlanRepository: PlanRepository {
             return .rejected(.staleRevision)
         }
         let currentToken = session.sessionWorkoutRevisionID ?? scheduled.workoutRevisionID
-        guard currentToken == expectedRevisionToken,
-              case .sessionWorkout(let restored) = applied.beforeSnapshot else {
+        guard currentToken == expectedRevisionToken else {
+            return .rejected(.staleRevision)
+        }
+        let restored: Workout
+        let purged: [PurgedSetLog]
+        switch applied.beforeSnapshot {
+        case .sessionWorkout(let workout):
+            restored = workout
+            purged = []
+        case .sessionWorkoutAndPurgedSetLogs(let workout, let rows):
+            restored = workout
+            purged = rows
+        case .performedLog:
             return .rejected(.staleRevision)
         }
         let current = PlanCoding.value(Workout.self, session.sessionWorkoutJSON) ?? scheduled.workout
@@ -643,6 +670,11 @@ final class SwiftDataPlanRepository: PlanRepository {
         )
         session.sessionWorkoutJSON = PlanCoding.data(restored)
         session.sessionWorkoutRevisionID = applied.receipt.beforeRevisionToken
+        if !purged.isEmpty, var log = PlanCoding.value(WorkoutLog.self, session.logJSON) {
+            log.restore(purged)
+            session.logJSON = PlanCoding.data(log)
+            session.performedLogRevisionID = UUID()
+        }
         insertSessionMutation(
             undoRequest,
             sessionID: sessionID,

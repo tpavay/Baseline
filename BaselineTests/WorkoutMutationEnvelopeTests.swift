@@ -15,13 +15,8 @@ struct WorkoutMutationEnvelopeTests {
         let before = scheduled.workoutRevisionID
 
         guard case .mutated(let receipt) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 8,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(8)]))),
             expectedRevisionToken: before
         ) else {
             Issue.record("Expected the agent mutation to apply")
@@ -49,13 +44,8 @@ struct WorkoutMutationEnvelopeTests {
         let originalRevision = scheduled.workoutRevisionID
 
         guard case .mutated(let editReceipt) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 8,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(8)]))),
             expectedRevisionToken: originalRevision
         ) else {
             Issue.record("Expected the edit to apply")
@@ -91,22 +81,12 @@ struct WorkoutMutationEnvelopeTests {
         let (plan, store, scheduled, setID) = harness.boundWorkout()
 
         guard case .mutated(let first) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 8,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(8)]))),
             expectedRevisionToken: scheduled.workoutRevisionID
         ), case .mutated(let second) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 10,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(10)]))),
             expectedRevisionToken: first.afterRevisionToken
         ) else {
             Issue.record("Expected both edits to apply")
@@ -132,13 +112,8 @@ struct WorkoutMutationEnvelopeTests {
         let (plan, store, scheduled, setID) = harness.boundWorkout()
 
         let result = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 8,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(8)]))),
             expectedRevisionToken: UUID()
         )
 
@@ -215,25 +190,18 @@ struct WorkoutMutationEnvelopeTests {
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.updateSet(
-            exerciseNamed: bench.exerciseName,
-            setNumber: 1,
             setID: benchSet.id,
-            reps: 10,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(10)]))),
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.setLoggingConfig(
-            exerciseNamed: bench.exerciseName,
-            exerciseID: bench.id,
+            exerciseInstanceID: bench.id,
             enabled: [.reps, .load, .rpe],
             units: [.load: .pounds],
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.setMetricValue(
-            exerciseNamed: bench.exerciseName,
-            setNumber: 1,
+            exerciseInstanceID: bench.id,
             setID: benchSet.id,
             metric: .rpe,
             value: 8,
@@ -241,8 +209,7 @@ struct WorkoutMutationEnvelopeTests {
             expectedRevisionToken: token
         ).mutationReceipt))
         record(try #require(store.removeMetric(
-            exerciseNamed: bench.exerciseName,
-            exerciseID: bench.id,
+            exerciseInstanceID: bench.id,
             metric: .rpe,
             expectedRevisionToken: token
         ).mutationReceipt))
@@ -291,13 +258,8 @@ struct WorkoutMutationEnvelopeTests {
         ))
 
         guard case .mutated(let receipt) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 8,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(8)]))),
             expectedRevisionToken: scheduled.workoutRevisionID
         ) else {
             Issue.record("Expected the agent edit to apply")
@@ -325,13 +287,8 @@ struct WorkoutMutationEnvelopeTests {
         let harness = makeHarness()
         let (plan, store, scheduled, setID) = harness.boundWorkout()
         guard case .mutated(let receipt) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 8,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(8)]))),
             expectedRevisionToken: scheduled.workoutRevisionID
         ) else {
             Issue.record("Expected the edit to apply")
@@ -391,13 +348,8 @@ struct WorkoutMutationEnvelopeTests {
         }
 
         guard case .mutated(let sessionReceipt) = store.updateSet(
-            exerciseNamed: "Squat",
-            setNumber: 1,
             setID: setID,
-            reps: 7,
-            load: nil,
-            durationSeconds: nil,
-            rpe: nil,
+            patch: .init(values: .set(.init(metrics: [.reps: .set(7)]))),
             expectedRevisionToken: scheduled.workoutRevisionID
         ) else {
             Issue.record("Expected a session-scoped workout mutation")
@@ -937,6 +889,354 @@ struct WorkoutMetadataToolTests {
     }
 }
 
+@Suite(.serialized) @MainActor
+struct WorkoutSetToolTests {
+    private func tools(for workouts: WorkoutStore) throws -> AgentTools {
+        AgentTools(
+            store: TrainingContextStore(
+                defaults: try #require(UserDefaults(suiteName: "wave-four-tools-\(UUID().uuidString)"))
+            ),
+            base: DecisionEngine.Inputs(),
+            workouts: workouts
+        )
+    }
+
+    @Test func addSetByExerciseIDReturnsReceiptAndUndoRestoresSnapshot() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+
+        let response = tools.dispatch(.addSet(
+            exerciseInstanceID: exerciseID,
+            afterSetID: setIDs[0],
+            values: .init(metrics: [.duration: 75, .distance: 500]),
+            role: .top,
+            targets: .init(
+                effort: .rpe(8),
+                ranges: [
+                    .init(metric: .duration, lower: 70, upper: 80),
+                    .init(metric: .heartRate, lower: 140, upper: 160),
+                ]
+            ),
+            expectedRevisionToken: scheduled.workoutRevisionID
+        ))
+        let receipt = try #require(response.mutationReceipt)
+        let addedID = try #require(receipt.diff.changes.first?.entityID)
+        let edited = try #require(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID))
+
+        #expect(response.text.contains("MUTATION RECEIPT:"))
+        #expect(receipt.undoAvailable)
+        #expect(edited.prescription.sets.map(\.id) == [setIDs[0], addedID, setIDs[1], setIDs[2]])
+        #expect(edited.prescription.sets[1].role == .top)
+        #expect(edited.prescription.sets[1].effortTarget == .rpe(8))
+        #expect(edited.selectedMetrics.contains(.heartRate))
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+    }
+
+    @Test func updateSetByIDAppliesExplicitClearsAndIsUndoable() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+
+        let response = tools.dispatch(.updateSet(
+            setID: setIDs[0],
+            patch: PlannedSetPatch(
+                values: .set(.init(metrics: [.duration: .set(75), .distance: .clear])),
+                role: .set(.top),
+                targets: .clear
+            ),
+            expectedRevisionToken: scheduled.workoutRevisionID
+        ))
+        let receipt = try #require(response.mutationReceipt)
+        let edited = try #require(
+            plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.first
+        )
+
+        #expect(edited.duration == 75)
+        #expect(edited.distance == nil)
+        #expect(edited.role == .top)
+        #expect(edited.effortTarget == nil)
+        #expect(edited.ranges.isEmpty)
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        let restored = try #require(
+            plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.first
+        )
+        #expect(restored.distance == 400)
+        #expect(restored.role == .warmup)
+        #expect(restored.effortTarget == .rpe(6))
+        #expect(restored.ranges == [.init(metric: .duration, lower: 50, upper: 70)])
+    }
+
+    @Test func moveSetByIDReturnsReceiptAndUndoRestoresOrder() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+
+        let response = tools.dispatch(.moveSet(
+            setID: setIDs[2],
+            beforeSetID: setIDs[0],
+            toIndex: nil,
+            expectedRevisionToken: scheduled.workoutRevisionID
+        ))
+        let receipt = try #require(response.mutationReceipt)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.map(\.id)
+                == [setIDs[2], setIDs[0], setIDs[1]])
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+    }
+
+    @Test func duplicateSetUsesFreshNestedIDsAndIsUndoable() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+
+        let response = tools.dispatch(.duplicateSet(
+            setID: setIDs[0],
+            expectedRevisionToken: scheduled.workoutRevisionID
+        ))
+        let receipt = try #require(response.mutationReceipt)
+        let duplicateID = try #require(receipt.diff.changes.first?.entityID)
+        let sets = try #require(
+            plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets
+        )
+        let source = try #require(sets.first { $0.id == setIDs[0] })
+        let duplicate = try #require(sets.first { $0.id == duplicateID })
+
+        #expect(duplicate.id != source.id)
+        #expect(duplicate.values == source.values)
+        #expect(duplicate.alternatives.first?.id != source.alternatives.first?.id)
+        #expect(sets.map(\.id).prefix(2).elementsEqual([setIDs[0], duplicateID]))
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+    }
+
+    @Test func liveSessionRemoveSetPurgesLoggedActualAndRemainsUndoable() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+        workouts.startWorkout()
+        workouts.editLog { log in
+            log.upsertSetLog(
+                forPlanned: exerciseID,
+                name: "Run",
+                plannedSetID: setIDs[0]
+            ) { performed in
+                performed.values[.distance] = 425
+                performed.completed = true
+            }
+        }
+        let token = try #require(workouts.mutationTarget(.session)?.revisionToken)
+
+        let response = tools.dispatch(.removeSet(
+            setID: setIDs[0],
+            expectedRevisionToken: token
+        ))
+        let receipt = try #require(response.mutationReceipt)
+
+        #expect(receipt.scope == .sessionWorkout)
+        #expect(receipt.undoAvailable)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+        #expect(plan.session(for: scheduled.id)?.workout?.exercise(exerciseID)?.prescription.sets.map(\.id)
+                == [setIDs[1], setIDs[2]])
+        #expect(plan.session(for: scheduled.id)?.log.performed(forPlanned: exerciseID)?.setLogs
+            .contains { $0.plannedSetID == setIDs[0] } == false)
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.session(for: scheduled.id)?.workout?.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+        // Undo is truthful: the purged logged actual comes back with the planned set it belonged to.
+        let restoredLog = plan.session(for: scheduled.id)?.log.performed(forPlanned: exerciseID)?.setLogs
+            .first { $0.plannedSetID == setIDs[0] }
+        #expect(restoredLog?.values[.distance] == 425)
+        #expect(restoredLog?.completed == true)
+        #expect(workouts.currentLog?.performed(forPlanned: exerciseID)?.setLogs
+            .contains { $0.plannedSetID == setIDs[0] } == true)
+    }
+
+    @Test func undoRemoveSetRestoresOnlyThePurgedRowAndKeepsWorkLoggedAfterwards() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+        workouts.startWorkout()
+        workouts.editLog { log in
+            log.upsertSetLog(forPlanned: exerciseID, name: "Run", plannedSetID: setIDs[0]) { performed in
+                performed.values[.distance] = 425
+                performed.completed = true
+            }
+        }
+        let token = try #require(workouts.mutationTarget(.session)?.revisionToken)
+        let response = tools.dispatch(.removeSet(setID: setIDs[0], expectedRevisionToken: token))
+        let receipt = try #require(response.mutationReceipt)
+
+        // The athlete keeps training between the removal and the undo.
+        workouts.editLog { log in
+            log.upsertSetLog(forPlanned: exerciseID, name: "Run", plannedSetID: setIDs[1]) { performed in
+                performed.values[.distance] = 610
+                performed.completed = true
+            }
+            log.upsertSetLog(forPlanned: exerciseID, name: "Run", plannedSetID: setIDs[2]) { performed in
+                performed.values[.distance] = 815
+            }
+        }
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.session(for: scheduled.id)?.workout?.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+
+        // The purged row is back — and everything logged after the removal survives untouched.
+        let logs = try #require(
+            plan.session(for: scheduled.id)?.log.performed(forPlanned: exerciseID)?.setLogs
+        )
+        #expect(logs.count == 3)
+        #expect(logs.first { $0.plannedSetID == setIDs[0] }?.values[.distance] == 425)
+        #expect(logs.first { $0.plannedSetID == setIDs[0] }?.completed == true)
+        #expect(logs.first { $0.plannedSetID == setIDs[1] }?.values[.distance] == 610)
+        #expect(logs.first { $0.plannedSetID == setIDs[1] }?.completed == true)
+        #expect(logs.first { $0.plannedSetID == setIDs[2] }?.values[.distance] == 815)
+        #expect(workouts.currentLog?.performed(forPlanned: exerciseID)?.setLogs.count == 3)
+    }
+
+    @Test func paceDisplayUnitChangeLeavesCanonicalValuesImmutableAndIsUndoable() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, _) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+        let beforeValues = try #require(
+            plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets.map(\.values)
+        )
+
+        let response = tools.dispatch(.updateLoggingConfig(
+            exerciseInstanceID: exerciseID,
+            enabledMetrics: nil,
+            units: [.pace: .secondsPerMile],
+            expectedRevisionToken: scheduled.workoutRevisionID
+        ))
+        let receipt = try #require(response.mutationReceipt)
+        let edited = try #require(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID))
+
+        #expect(edited.displayUnits[.pace] == .secondsPerMile)
+        #expect(edited.prescription.sets.map(\.values) == beforeValues)
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.displayUnits[.pace]
+                == .secondsPerKilometer)
+    }
+
+    @Test func IDBasedMetricSetAndRemoveMutationsReturnReceiptsAndUndo() throws {
+        do {
+            let harness = WorkoutMutationHarness()
+            let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+            let tools = try tools(for: workouts)
+            let response = tools.dispatch(.setMetricValue(
+                exerciseInstanceID: exerciseID,
+                setID: setIDs[0],
+                metric: .duration,
+                value: 2,
+                unit: .minutes,
+                expectedRevisionToken: scheduled.workoutRevisionID
+            ))
+            let receipt = try #require(response.mutationReceipt)
+            #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets[0].duration == 120)
+            let undo = tools.dispatch(.undoWorkoutMutation(
+                mutationID: receipt.mutationID,
+                expectedRevisionToken: receipt.afterRevisionToken
+            ))
+            #expect(undo.mutationReceipt != nil)
+            #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets[0].duration == 60)
+        }
+
+        do {
+            let harness = WorkoutMutationHarness()
+            let (plan, workouts, scheduled, exerciseID, _) = try harness.boundWaveFourWorkout()
+            let tools = try tools(for: workouts)
+            let response = tools.dispatch(.removeMetric(
+                exerciseInstanceID: exerciseID,
+                metric: .pace,
+                expectedRevisionToken: scheduled.workoutRevisionID
+            ))
+            let receipt = try #require(response.mutationReceipt)
+            #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.selectedMetrics.contains(.pace) == false)
+            #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets[0].values[.pace] == nil)
+            let undo = tools.dispatch(.undoWorkoutMutation(
+                mutationID: receipt.mutationID,
+                expectedRevisionToken: receipt.afterRevisionToken
+            ))
+            #expect(undo.mutationReceipt != nil)
+            #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.selectedMetrics.contains(.pace) == true)
+            #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.prescription.sets[0].values[.pace] == 0.25)
+        }
+    }
+
+    @Test func invalidSetRolesRangesTargetsAndPositionsRejectBeforePersistence() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let original = scheduled.workout
+        let versionCount = plan.versions().count
+
+        let invalidRange = workouts.addSet(
+            exerciseInstanceID: exerciseID,
+            afterSetID: nil,
+            values: .init(metrics: [.duration: 60]),
+            role: .working,
+            targets: .init(ranges: [.init(metric: .duration, lower: -40, upper: 40)]),
+            expectedRevisionToken: scheduled.workoutRevisionID
+        )
+        let invalidTarget = workouts.updateSet(
+            setID: setIDs[0],
+            patch: .init(targets: .set(.init(effort: .set(.rpe(11))))),
+            expectedRevisionToken: scheduled.workoutRevisionID
+        )
+        let invalidRoleClear = workouts.updateSet(
+            setID: setIDs[0],
+            patch: .init(role: .clear),
+            expectedRevisionToken: scheduled.workoutRevisionID
+        )
+        let invalidPosition = workouts.moveSet(
+            setID: setIDs[0],
+            beforeSetID: nil,
+            toIndex: 99,
+            expectedRevisionToken: scheduled.workoutRevisionID
+        )
+
+        #expect(invalidRange.succeeded == false)
+        #expect(invalidTarget.succeeded == false)
+        #expect(invalidRoleClear.succeeded == false)
+        #expect(invalidPosition.succeeded == false)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout == original)
+        #expect(plan.versions().count == versionCount)
+    }
+}
+
 @MainActor
 private final class WorkoutMutationHarness {
     let container: ModelContainer
@@ -1030,6 +1330,42 @@ private final class WorkoutMutationHarness {
             [firstBlock.id, secondBlock.id],
             [firstExercise.id, secondExercise.id]
         )
+    }
+
+    func boundWaveFourWorkout() throws -> (PlanStore, WorkoutStore, ScheduledWorkout, UUID, [UUID]) {
+        let program = plan.addProgram(Program(name: "Wave 4", createdAt: .now))
+        let firstSet = PlannedSet(
+            values: MetricValues([.duration: 60, .distance: 400, .pace: 0.25]),
+            role: .warmup,
+            effortTarget: .rpe(6),
+            ranges: [.init(metric: .duration, lower: 50, upper: 70)],
+            alternatives: [.init(label: "Short", values: MetricValues([.distance: 200]))]
+        )
+        let secondSet = PlannedSet(duration: 90, distance: 600, role: .working)
+        let thirdSet = PlannedSet(duration: 120, distance: 800, role: .working)
+        let exercise = PlannedExercise(
+            exerciseName: "Run",
+            definitionId: "run",
+            selectedMetrics: [.duration, .distance, .pace, .heartRateZoneTime],
+            displayUnits: [.pace: .secondsPerKilometer],
+            prescription: Prescription(sets: [firstSet, secondSet, thirdSet])
+        )
+        let workout = Workout(
+            title: "Intervals",
+            blocks: [WorkoutBlock(name: "Main", exercises: [exercise], isDefault: true)]
+        )
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id,
+            date: .now,
+            origin: .userCreated,
+            workoutID: workout.id,
+            workoutRevisionID: UUID(),
+            workout: workout
+        ))
+        let defaults = try #require(UserDefaults(suiteName: "mutation-wave-four-\(UUID().uuidString)"))
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        return (plan, store, scheduled, exercise.id, [firstSet.id, secondSet.id, thirdSet.id])
     }
 
     func request(

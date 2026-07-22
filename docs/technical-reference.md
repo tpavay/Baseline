@@ -93,7 +93,7 @@ Durable concept in `docs/engine-and-data-model.md` (three-layer identity/metrics
 - **Exercise Definition catalog:** stable ids, supported-metric sets, activity category (cycling, running, erg, carry, …), and an alias map (`free-exercise-db` + curated extension, hosted/versioned).
 - **Per-instance logging config:** each Planned Exercise selects which supported metrics are visible + preferred display units. Unselected metrics render no field.
 - **Preferences:** user-level per-exercise defaults ("use km for Stationary Bike from now on"), overridable per workout.
-- **New tools:** `update_logging_config(planned_exercise, enabled_metrics, distance_unit?)`, `update_exercise_preference(exercise_id, distance_unit?)`, plus history: `get_exercise_history(exercise_id, metric, unit)`, `get_category_history(category, date_range)`. The agent resolves aliases → ids and asks when scope (this workout / future default / this exercise / whole category) is ambiguous.
+- **Tools:** `update_logging_config` and `update_exercise_preference` are built and target stable IDs; history retrieval (`get_exercise_history(exercise_id, metric, unit)`, `get_category_history(category, date_range)`) is still planned. `functions/src/tools.ts` owns the tool schemas. The agent resolves aliases → ids and asks when scope (this workout / future default / this exercise / whole category) is ambiguous.
 - **Build order:** (1) canonical units + display conversion (done for distance/calories as raw metrics); (2) exercise-definition catalog + categories + aliases; (3) per-instance logging config + selectable fields in UI; (4) user preferences; (5) history persistence, then the history/category retrieval tools.
 
 ## Response Style By Intent

@@ -13,6 +13,67 @@ enum MetadataPatch<Value: Equatable & Sendable>: Equatable, Sendable {
     }
 }
 
+struct PlannedSetValues: Equatable, Sendable {
+    var metrics: [MetricType: Double]
+
+    init(metrics: [MetricType: Double] = [:]) {
+        self.metrics = metrics
+    }
+}
+
+struct PlannedSetValuesPatch: Equatable, Sendable {
+    var metrics: [MetricType: MetadataPatch<Double>]
+
+    init(metrics: [MetricType: MetadataPatch<Double>] = [:]) {
+        self.metrics = metrics
+    }
+
+    var isUnchanged: Bool { metrics.isEmpty }
+}
+
+struct PlannedSetTargets: Equatable, Sendable {
+    var effort: EffortTarget?
+    var ranges: [MetricTargetRange]
+
+    init(effort: EffortTarget? = nil, ranges: [MetricTargetRange] = []) {
+        self.effort = effort
+        self.ranges = ranges
+    }
+}
+
+struct PlannedSetTargetsPatch: Equatable, Sendable {
+    var effort: MetadataPatch<EffortTarget>
+    var ranges: MetadataPatch<[MetricTargetRange]>
+
+    init(
+        effort: MetadataPatch<EffortTarget> = .unchanged,
+        ranges: MetadataPatch<[MetricTargetRange]> = .unchanged
+    ) {
+        self.effort = effort
+        self.ranges = ranges
+    }
+
+    var isUnchanged: Bool { effort.isUnchanged && ranges.isUnchanged }
+}
+
+struct PlannedSetPatch: Equatable, Sendable {
+    var values: MetadataPatch<PlannedSetValuesPatch>
+    var role: MetadataPatch<SetRole>
+    var targets: MetadataPatch<PlannedSetTargetsPatch>
+
+    init(
+        values: MetadataPatch<PlannedSetValuesPatch> = .unchanged,
+        role: MetadataPatch<SetRole> = .unchanged,
+        targets: MetadataPatch<PlannedSetTargetsPatch> = .unchanged
+    ) {
+        self.values = values
+        self.role = role
+        self.targets = targets
+    }
+
+    var isUnchanged: Bool { values.isUnchanged && role.isUnchanged && targets.isUnchanged }
+}
+
 /// The Context Engine's **validated tool layer** — the deterministic operations the LLM *proposes*
 /// and this *executes*. The model understands language; this owns what actually happens: every call
 /// is typed and validated, mutates the structured state, and returns the **recomputed** plan so the
@@ -70,7 +131,18 @@ final class AgentTools {
         case replaceExercise(exercise: String, exerciseID: UUID?, replacement: String, block: String?, replaceAll: Bool, expectedRevisionToken: UUID? = nil)
         case requireAllOptions(choice: String, expectedRevisionToken: UUID? = nil)
         case removeExercise(exercise: String, exerciseID: UUID?, expectedRevisionToken: UUID? = nil)
-        case updateSet(exercise: String, setNumber: Int, setID: UUID?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?, expectedRevisionToken: UUID? = nil)
+        case addSet(
+            exerciseInstanceID: UUID,
+            afterSetID: UUID?,
+            values: PlannedSetValues,
+            role: SetRole,
+            targets: PlannedSetTargets,
+            expectedRevisionToken: UUID
+        )
+        case updateSet(setID: UUID, patch: PlannedSetPatch, expectedRevisionToken: UUID)
+        case removeSet(setID: UUID, expectedRevisionToken: UUID)
+        case moveSet(setID: UUID, beforeSetID: UUID?, toIndex: Int?, expectedRevisionToken: UUID)
+        case duplicateSet(setID: UUID, expectedRevisionToken: UUID)
         case undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID)
         case getCurrentWorkout
         case startWorkout
@@ -93,10 +165,10 @@ final class AgentTools {
         case createFromTemplate(name: String, day: String)
         case updateTemplate(name: String)
         // Metric system: configure which metrics an exercise logs + display units, and set values.
-        case updateLoggingConfig(exercise: String, exerciseID: UUID?, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit], expectedRevisionToken: UUID? = nil)
+        case updateLoggingConfig(exerciseInstanceID: UUID, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit], expectedRevisionToken: UUID)
         case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
-        case setMetricValue(exercise: String, setNumber: Int, setID: UUID?, metric: MetricType, value: Double, unit: MetricUnit?, expectedRevisionToken: UUID? = nil)
-        case removeMetric(exercise: String, exerciseID: UUID?, metric: MetricType, expectedRevisionToken: UUID? = nil)
+        case setMetricValue(exerciseInstanceID: UUID, setID: UUID, metric: MetricType, value: Double, unit: MetricUnit?, expectedRevisionToken: UUID)
+        case removeMetric(exerciseInstanceID: UUID, metric: MetricType, expectedRevisionToken: UUID)
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
         /// inspector's activity feed, so the behind-the-scenes mutations are visible.
@@ -143,7 +215,11 @@ final class AgentTools {
             case .replaceExercise(let e, let id, let r, _, let all, _): return "Replaced \(all && id == nil ? "all \(e)" : e) → \(r)"
             case .requireAllOptions(let choice, _): return "Made every option required in \(choice)"
             case .removeExercise(let e, _, _): return "Removed \(e)"
-            case .updateSet(let e, let n, _, _, _, _, _, _, _): return "Updated set \(n) of \(e)"
+            case .addSet: return "Added a planned set"
+            case .updateSet: return "Updated a planned set"
+            case .removeSet: return "Removed a planned set"
+            case .moveSet: return "Moved a planned set"
+            case .duplicateSet: return "Duplicated a planned set"
             case .undoWorkoutMutation: return "Undid a workout edit"
             case .getCurrentWorkout: return "Read the current workout"
             case .startWorkout: return "Started the workout"
@@ -162,10 +238,10 @@ final class AgentTools {
             case .saveAsTemplate(let n): return "Saved template \(n)"
             case .createFromTemplate(let n, let d): return "Added \(n) → \(d)"
             case .updateTemplate(let n): return "Updated template \(n)"
-            case .updateLoggingConfig(let e, _, _, _, _): return "Configured metrics for \(e)"
+            case .updateLoggingConfig: return "Configured exercise metrics"
             case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
-            case .setMetricValue(let e, let n, _, let m, _, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
-            case .removeMetric(let e, _, let m, _): return "Removed \(m.label.lowercased()) from \(e)"
+            case .setMetricValue(_, _, let metric, _, _, _): return "Set \(metric.label.lowercased()) on a planned set"
+            case .removeMetric(_, let metric, _): return "Removed \(metric.label.lowercased()) from an exercise"
             }
         }
 
@@ -184,7 +260,8 @@ final class AgentTools {
                  .setNote, .upsertConstraint, .resolveConstraint, .openAppleHealthSetup, .getSleep,
                  .getHRVReadings, .getRestingHeartRate, .createWorkout, .addBlock, .addExercise,
                  .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
-                 .moveExercise, .replaceExercise, .requireAllOptions, .removeExercise, .updateSet,
+                 .moveExercise, .replaceExercise, .requireAllOptions, .removeExercise, .addSet,
+                 .updateSet, .removeSet, .moveSet, .duplicateSet,
                  .undoWorkoutMutation,
                  .startWorkout, .completeWorkout, .moveWorkout, .swapWorkouts, .skipWorkout,
                  .duplicateWorkout, .deleteWorkout, .saveAsTemplate, .createFromTemplate,
@@ -200,7 +277,8 @@ final class AgentTools {
             switch self {
             case .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
                  .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
-                 .removeExercise, .updateSet, .undoWorkoutMutation, .updateLoggingConfig,
+                 .removeExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+                 .undoWorkoutMutation, .updateLoggingConfig,
                  .setMetricValue, .removeMetric:
                 return true
             default:
@@ -479,10 +557,59 @@ final class AgentTools {
         case .removeExercise(let exercise, let exerciseID, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.removeExercise(named: exercise, exerciseID: exerciseID, expectedRevisionToken: expectedRevisionToken), success: "Removed \(exercise).")
-        case .updateSet(let exercise, let n, let setID, let reps, let load, let dur, let dist, let rpe, let expectedRevisionToken):
+        case .addSet(
+            let exerciseInstanceID,
+            let afterSetID,
+            let values,
+            let role,
+            let targets,
+            let expectedRevisionToken
+        ):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.updateSet(exerciseNamed: exercise, setNumber: n, setID: setID, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist, rpe: rpe, expectedRevisionToken: expectedRevisionToken),
-                           success: "Updated set \(n) of \(exercise).")
+            return outcome(
+                workouts.addSet(
+                    exerciseInstanceID: exerciseInstanceID,
+                    afterSetID: afterSetID,
+                    values: values,
+                    role: role,
+                    targets: targets,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Added a planned set."
+            )
+        case .updateSet(let setID, let patch, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateSet(
+                    setID: setID,
+                    patch: patch,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the planned set."
+            )
+        case .removeSet(let setID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.removeSet(setID: setID, expectedRevisionToken: expectedRevisionToken),
+                success: "Removed the planned set."
+            )
+        case .moveSet(let setID, let beforeSetID, let toIndex, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.moveSet(
+                    setID: setID,
+                    beforeSetID: beforeSetID,
+                    toIndex: toIndex,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Moved the planned set."
+            )
+        case .duplicateSet(let setID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.duplicateSet(setID: setID, expectedRevisionToken: expectedRevisionToken),
+                success: "Duplicated the planned set."
+            )
         case .undoWorkoutMutation(let mutationID, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             return outcome(
@@ -597,9 +724,17 @@ final class AgentTools {
                 return Response(text: "Added \(sw.workout.title) on \(dayLabel(date)) from the \(matches[0].name) template.", decision: nil, plan: nil)
             default: return Response(text: templateAmbiguity(name, matches), decision: nil, plan: nil)
             }
-        case .updateLoggingConfig(let ex, let exerciseID, let enabled, let units, let expectedRevisionToken):
+        case .updateLoggingConfig(let exerciseInstanceID, let enabled, let units, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.setLoggingConfig(exerciseNamed: ex, exerciseID: exerciseID, enabled: enabled, units: units, expectedRevisionToken: expectedRevisionToken), success: "Updated what \(ex) logs.")
+            return outcome(
+                workouts.setLoggingConfig(
+                    exerciseInstanceID: exerciseInstanceID,
+                    enabled: enabled,
+                    units: units,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Updated the exercise logging configuration."
+            )
         case .updateExercisePreference(let ex, let scope, let units, let selected):
             guard let workouts else { return workoutUnavailable() }
             let r = workouts.setExercisePreference(exerciseNamed: ex, scope: scope, units: units, selected: selected)
@@ -607,12 +742,29 @@ final class AgentTools {
                 return Response(text: "Saved that as your \(scope == .category ? "category" : "default") preference for \(ex) — it applies to future \(ex) instances, not today's.", decision: nil, plan: nil)
             }
             return outcome(r, success: "")
-        case .setMetricValue(let ex, let n, let setID, let m, let v, let u, let expectedRevisionToken):
+        case .setMetricValue(let exerciseInstanceID, let setID, let metric, let value, let unit, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.setMetricValue(exerciseNamed: ex, setNumber: n, setID: setID, metric: m, value: v, unit: u, expectedRevisionToken: expectedRevisionToken), success: "Set \(m.label.lowercased()) on set \(n) of \(ex).")
-        case .removeMetric(let ex, let exerciseID, let m, let expectedRevisionToken):
+            return outcome(
+                workouts.setMetricValue(
+                    exerciseInstanceID: exerciseInstanceID,
+                    setID: setID,
+                    metric: metric,
+                    value: value,
+                    unit: unit,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Set \(metric.label.lowercased()) on the planned set."
+            )
+        case .removeMetric(let exerciseInstanceID, let metric, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.removeMetric(exerciseNamed: ex, exerciseID: exerciseID, metric: m, expectedRevisionToken: expectedRevisionToken), success: "Removed \(m.label.lowercased()) from \(ex).")
+            return outcome(
+                workouts.removeMetric(
+                    exerciseInstanceID: exerciseInstanceID,
+                    metric: metric,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Removed \(metric.label.lowercased()) from the exercise."
+            )
         case .searchExercises(let query, let muscle, let equipment, let modality, let pattern, let tag, let level):
             switch ExerciseSearch.parse(text: query, muscle: muscle, equipment: equipment, modality: modality,
                                         pattern: pattern, tag: tag, level: level) {

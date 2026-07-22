@@ -88,6 +88,21 @@ struct PlannedSet: Identifiable, Codable, Equatable, Sendable {
     var distance: Double? { get { values[.distance] } set { values[.distance] = newValue } }
     var calories: Double? { get { values[.calories] } set { values[.calories] = newValue } }
     var rpe: Double? { get { values[.rpe] } set { values[.rpe] = newValue } }
+
+    /// Copy a planned set for reuse without sharing any addressable identity with the source.
+    func deepCopyWithFreshIDs() -> PlannedSet {
+        var copy = self
+        copy.id = UUID()
+        for index in copy.alternatives.indices {
+            copy.alternatives[index].id = UUID()
+        }
+        return copy
+    }
+}
+
+enum PlannedSetMoveDestination: Equatable, Sendable {
+    case before(UUID)
+    case index(Int)
 }
 
 /// The structured target for a planned exercise — never free text.
@@ -328,6 +343,58 @@ extension Workout {
         return updateExercise(exerciseID) { $0.prescription.sets.removeAll { $0.id == setID } }
     }
 
+    /// Move a set within its owning exercise after validating the complete destination.
+    /// Set IDs cannot cross exercises through this helper.
+    @discardableResult
+    mutating func moveSet(_ setID: UUID, to destination: PlannedSetMoveDestination) -> Bool {
+        guard let exerciseID = allExercises.first(where: { exercise in
+            exercise.prescription.sets.contains { $0.id == setID }
+        })?.id, let exercise = exercise(exerciseID) else { return false }
+
+        let sets = exercise.prescription.sets
+        guard let sourceIndex = sets.firstIndex(where: { $0.id == setID }) else { return false }
+        switch destination {
+        case .before(let beforeSetID):
+            guard beforeSetID != setID, sets.contains(where: { $0.id == beforeSetID }) else {
+                return false
+            }
+        case .index(let index):
+            guard sets.indices.contains(index) else { return false }
+        }
+
+        return updateExercise(exerciseID) { updated in
+            let moved = updated.prescription.sets.remove(at: sourceIndex)
+            switch destination {
+            case .before(let beforeSetID):
+                guard let destinationIndex = updated.prescription.sets.firstIndex(where: {
+                    $0.id == beforeSetID
+                }) else { return }
+                updated.prescription.sets.insert(moved, at: destinationIndex)
+            case .index(let index):
+                updated.prescription.sets.insert(
+                    moved,
+                    at: min(index, updated.prescription.sets.endIndex)
+                )
+            }
+        }
+    }
+
+    /// Duplicate a planned set immediately after its source using fresh set and alternative IDs.
+    @discardableResult
+    mutating func duplicateSet(_ setID: UUID) -> UUID? {
+        guard let exerciseID = allExercises.first(where: { exercise in
+            exercise.prescription.sets.contains { $0.id == setID }
+        })?.id, let exercise = exercise(exerciseID),
+              let sourceIndex = exercise.prescription.sets.firstIndex(where: { $0.id == setID }) else {
+            return nil
+        }
+        let copy = exercise.prescription.sets[sourceIndex].deepCopyWithFreshIDs()
+        guard updateExercise(exerciseID, { updated in
+            updated.prescription.sets.insert(copy, at: sourceIndex + 1)
+        }) else { return nil }
+        return copy.id
+    }
+
     @discardableResult
     mutating func updateSet(_ setID: UUID, _ transform: (inout PlannedSet) -> Void) -> Bool {
         guard let exerciseID = allExercises.first(where: { exercise in
@@ -473,6 +540,16 @@ struct PerformedExercise: Identifiable, Codable, Equatable, Sendable {
     var reason: String?
     var setLogs: [SetLog] = []
     var athleteNotes: [String] = []
+}
+
+/// One logged actual removed by a structural session edit, with enough context to re-insert exactly
+/// this row into whatever the log has become by the time the edit is undone.
+struct PurgedSetLog: Codable, Equatable, Sendable {
+    var plannedExerciseID: UUID
+    var exerciseName: String
+    /// The row's position in its exercise's `setLogs` at purge time, so undo restores it in place.
+    var index: Int
+    var setLog: SetLog
 }
 
 struct GroupLog: Identifiable, Codable, Equatable, Sendable {
@@ -655,6 +732,44 @@ extension WorkoutLog {
     /// before a destructive true-remove would discard real logged work.
     func hasLoggedWork(forPlanned plannedID: UUID) -> Bool {
         performed(forPlanned: plannedID)?.setLogs.contains { !$0.values.isEmpty || $0.completed } ?? false
+    }
+
+    /// The set-log rows present in `before` but gone from `after` — the exact actuals a structural
+    /// purge (e.g. remove_set) discarded. Captured row-by-row rather than as a whole-log snapshot so
+    /// an undo can put these rows back without clobbering work logged after the purge.
+    static func purgedSetLogs(before: WorkoutLog, after: WorkoutLog) -> [PurgedSetLog] {
+        before.exercises.flatMap { exercise -> [PurgedSetLog] in
+            guard let plannedID = exercise.plannedExerciseID else { return [] }
+            let surviving = Set(
+                after.exercises.first { $0.plannedExerciseID == plannedID }?.setLogs.map(\.id) ?? []
+            )
+            return exercise.setLogs.enumerated().compactMap { index, row in
+                surviving.contains(row.id) ? nil : PurgedSetLog(
+                    plannedExerciseID: plannedID,
+                    exerciseName: exercise.exerciseName,
+                    index: index,
+                    setLog: row
+                )
+            }
+        }
+    }
+
+    /// Re-insert purged rows into the log **as it stands now**, near their original positions.
+    /// Everything logged since the purge is preserved; a row is skipped rather than duplicated if the
+    /// same actual (by id) or a newer actual for the same planned set has appeared meanwhile.
+    mutating func restore(_ purged: [PurgedSetLog]) {
+        for row in purged {
+            let i = index(forPlanned: row.plannedExerciseID, name: row.exerciseName)
+            guard !exercises[i].setLogs.contains(where: { existing in
+                existing.id == row.setLog.id || (
+                    row.setLog.plannedSetID != nil
+                        && existing.plannedSetID == row.setLog.plannedSetID
+                        && existing.groupID == row.setLog.groupID
+                        && existing.iteration == row.setLog.iteration
+                )
+            }) else { continue }
+            exercises[i].setLogs.insert(row.setLog, at: min(row.index, exercises[i].setLogs.count))
+        }
     }
 
     func exerciseAdjustment(

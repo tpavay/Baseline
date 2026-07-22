@@ -347,10 +347,15 @@ private final class ScriptedConversationServer: @unchecked Sendable {
         case 1:
             // Read the revision token off the MUTATION TARGET line get_current_workout returned,
             // then edit against exactly that revision - the contract every mutation tool enforces.
-            guard let token = Self.revisionToken(in: messagesJSON) else { return nil }
+            guard let token = Self.revisionToken(in: messagesJSON),
+                  let setID = Self.firstSetID(in: messagesJSON) else { return nil }
             return ["content": [[
                 "type": "tool_use", "id": "tool_edit", "name": "update_set",
-                "input": ["exercise": "Squat", "set_number": 1, "reps": 8, "expected_revision_token": token],
+                "input": [
+                    "set_id": setID,
+                    "patch": ["values": ["reps": 8]],
+                    "expected_revision_token": token,
+                ],
             ]]]
         default:
             return ["content": [["type": "text", "text": "Done - Squat set 1 is now 8 reps. Tap Undo last edit if you want the original back."]]]
@@ -360,6 +365,14 @@ private final class ScriptedConversationServer: @unchecked Sendable {
     private static func revisionToken(in transcript: String) -> String? {
         guard let range = transcript.range(of: "revision_token=[0-9A-Fa-f-]{36}", options: .regularExpression) else { return nil }
         return String(transcript[range].dropFirst("revision_token=".count))
+    }
+
+    private static func firstSetID(in transcript: String) -> String? {
+        guard let range = transcript.range(of: #"Set 1 \[id: [0-9A-Fa-f-]{36}\]"#, options: .regularExpression),
+              let idRange = transcript[range].range(of: #"[0-9A-Fa-f-]{36}"#, options: .regularExpression) else {
+            return nil
+        }
+        return String(transcript[idRange])
     }
 
     private static func http(_ status: Int, json: [String: Any]) -> Data {

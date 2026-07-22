@@ -4,6 +4,7 @@ import Testing
 /// The screen should stay awake only while actively logging a workout, so a user can glance at their
 /// live heart rate without the display dimming or locking. Viewing a template or reviewing the
 /// completed summary keeps normal idle behavior.
+@MainActor
 struct WorkoutKeepAwakeTests {
     @Test func keepsScreenAwakeWhileLogging() {
         #expect(WorkoutView.shouldKeepScreenAwake(for: .log))

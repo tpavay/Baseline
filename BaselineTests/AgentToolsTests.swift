@@ -308,10 +308,10 @@ struct AgentToolsTests {
             replaceAll: false
         )))
         #expect(service.permits(.updateLoggingConfig(
-            exercise: "Sled Pull",
-            exerciseID: nil,
+            exerciseInstanceID: UUID(),
             enabledMetrics: [.distance, .load],
-            units: [.load: .pounds]
+            units: [.load: .pounds],
+            expectedRevisionToken: UUID()
         )))
         #expect(service.permits(.updateWorkoutMetadata(
             title: .set("Imported workout"),

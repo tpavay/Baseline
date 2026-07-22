@@ -40,7 +40,7 @@ struct DesignSystemRenderTests {
             harness.accessibilityElements.first { $0.accessibilityLabel == "Lats" }
         )
         #expect(lats.accessibilityFrame.height >= BaselineSize.minimumTapTarget)
-        #expect((lats.accessibilityValue as? String)?.contains("Unavailable") == true)
+        #expect(lats.accessibilityValue?.contains("Unavailable") == true)
 
         let selected = try #require(
             harness.accessibilityElements.first { $0.accessibilityLabel == "Biceps" }
