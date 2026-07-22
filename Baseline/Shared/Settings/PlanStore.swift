@@ -11,6 +11,13 @@ final class PlanStore {
     var filter: ProgramFilter = .allTraining
     private(set) var focusedDate: Date
     private(set) var week: TrainingWeek
+    /// Monotonic change counter, bumped by `reload()` on schedule-affecting mutations. Views that
+    /// cache expensive repository projections in `@State` (the Plan calendar, Profile history,
+    /// Workout detail) watch this with `.onChange` so they re-fetch exactly once per mutation
+    /// instead of once per body evaluation. Live set-log write-throughs deliberately do not bump
+    /// it: a logged rep changes no scheduled content, and invalidating the 181-day calendar and
+    /// year-history caches per set would re-hydrate them continuously during execution.
+    private(set) var revision = 0
 
     init(repo: PlanRepository, today: Date = Date()) {
         self.repo = repo
@@ -24,7 +31,12 @@ final class PlanStore {
 
     // MARK: Navigation
 
-    func reload() { week = repo.week(containing: focusedDate, filter: filter) }
+    func reload() {
+        refreshWeek()
+        revision &+= 1
+    }
+    /// Republish the focused-week projection without invalidating schedule-level caches.
+    private func refreshWeek() { week = repo.week(containing: focusedDate, filter: filter) }
     func setFilter(_ f: ProgramFilter) { filter = f; reload() }
     func showWeek(of date: Date) { focusedDate = date; reload() }
     func nextWeek() { shiftWeeks(1) }
@@ -37,9 +49,14 @@ final class PlanStore {
     // MARK: Reads
 
     func programs() -> [Program] { repo.programs() }
+    func days(from startDate: Date, through endDate: Date) -> [TrainingDay] {
+        repo.days(from: startDate, through: endDate, filter: filter)
+    }
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? { repo.scheduledWorkout(id) }
     func session(for id: UUID) -> WorkoutSession? { repo.session(forScheduled: id) }
     func completed(for id: UUID) -> CompletedWorkoutLog? { repo.completedLog(forScheduled: id) }
+    /// The subset of `ids` with a completed log, resolved in one fetch (never one query per session).
+    func completedScheduledWorkoutIDs(among ids: [UUID]) -> Set<UUID> { repo.completedScheduledWorkoutIDs(among: ids) }
     /// Previous completed actuals for an exercise identity — the Hevy "previous" column.
     func previousPerformance(exerciseDefinitionID: String, before: Date = Date()) -> ExercisePerformance? {
         repo.mostRecentPerformance(exerciseDefinitionID: exerciseDefinitionID, before: before)
@@ -58,6 +75,20 @@ final class PlanStore {
                                       completed: completed(for: sw.id), todayModification: todayModification)
     }
 
+    /// Derived statuses for a whole range of sessions. Completion resolves through one batched
+    /// fetch; only sessions not yet completed fall back to a per-session live-session lookup.
+    func statuses(for sessions: [ScheduledWorkout], today: Date = Date()) -> [UUID: ScheduleStatus] {
+        let completedIDs = completedScheduledWorkoutIDs(among: sessions.map(\.id))
+        return sessions.reduce(into: [:]) { result, sw in
+            if completedIDs.contains(sw.id) {
+                result[sw.id] = .completed
+            } else {
+                result[sw.id] = ScheduleStatusResolver.status(for: sw, today: today,
+                                                              session: session(for: sw.id), completed: nil)
+            }
+        }
+    }
+
     // MARK: Lifecycle
 
     @discardableResult func start(_ id: UUID) -> WorkoutSession? { defer { reload() }; return repo.startSession(forScheduled: id, now: Date()) }
@@ -69,13 +100,13 @@ final class PlanStore {
     func sessionDecisionPending(_ id: UUID) -> Bool { repo.sessionDecisionPending(forScheduled: id) }
     func resolveSessionDecision(_ id: UUID) { repo.resolveSessionDecision(forScheduled: id); reload() }
     func resolveAbandonedSessionDecision(_ id: UUID) { repo.resolveAbandonedSessionDecision(forScheduled: id); reload() }
-    func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); reload() }
+    func updateSessionLog(_ id: UUID, _ transform: (inout WorkoutLog) -> Void) { repo.updateSessionLog(forScheduled: id, transform); refreshWeek() }
     @discardableResult func updateSessionLog(
         _ id: UUID,
         request: WorkoutMutationRequest,
         log: WorkoutLog
     ) -> WorkoutMutationResult {
-        defer { reload() }
+        defer { refreshWeek() }
         return repo.updateSessionLog(forScheduled: id, request: request, log: log)
     }
     /// Store the session's own copy of the planned workout (a session-scoped mid-workout edit; no revision).
