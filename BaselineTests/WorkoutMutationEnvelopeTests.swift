@@ -1077,6 +1077,52 @@ struct WorkoutSetToolTests {
             .contains { $0.plannedSetID == setIDs[0] } == true)
     }
 
+    @Test func undoRemoveSetRestoresOnlyThePurgedRowAndKeepsWorkLoggedAfterwards() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, exerciseID, setIDs) = try harness.boundWaveFourWorkout()
+        let tools = try tools(for: workouts)
+        workouts.startWorkout()
+        workouts.editLog { log in
+            log.upsertSetLog(forPlanned: exerciseID, name: "Run", plannedSetID: setIDs[0]) { performed in
+                performed.values[.distance] = 425
+                performed.completed = true
+            }
+        }
+        let token = try #require(workouts.mutationTarget(.session)?.revisionToken)
+        let response = tools.dispatch(.removeSet(setID: setIDs[0], expectedRevisionToken: token))
+        let receipt = try #require(response.mutationReceipt)
+
+        // The athlete keeps training between the removal and the undo.
+        workouts.editLog { log in
+            log.upsertSetLog(forPlanned: exerciseID, name: "Run", plannedSetID: setIDs[1]) { performed in
+                performed.values[.distance] = 610
+                performed.completed = true
+            }
+            log.upsertSetLog(forPlanned: exerciseID, name: "Run", plannedSetID: setIDs[2]) { performed in
+                performed.values[.distance] = 815
+            }
+        }
+
+        let undo = tools.dispatch(.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ))
+        #expect(undo.mutationReceipt != nil)
+        #expect(plan.session(for: scheduled.id)?.workout?.exercise(exerciseID)?.prescription.sets.map(\.id) == setIDs)
+
+        // The purged row is back — and everything logged after the removal survives untouched.
+        let logs = try #require(
+            plan.session(for: scheduled.id)?.log.performed(forPlanned: exerciseID)?.setLogs
+        )
+        #expect(logs.count == 3)
+        #expect(logs.first { $0.plannedSetID == setIDs[0] }?.values[.distance] == 425)
+        #expect(logs.first { $0.plannedSetID == setIDs[0] }?.completed == true)
+        #expect(logs.first { $0.plannedSetID == setIDs[1] }?.values[.distance] == 610)
+        #expect(logs.first { $0.plannedSetID == setIDs[1] }?.completed == true)
+        #expect(logs.first { $0.plannedSetID == setIDs[2] }?.values[.distance] == 815)
+        #expect(workouts.currentLog?.performed(forPlanned: exerciseID)?.setLogs.count == 3)
+    }
+
     @Test func paceDisplayUnitChangeLeavesCanonicalValuesImmutableAndIsUndoable() throws {
         let harness = WorkoutMutationHarness()
         let (plan, workouts, scheduled, exerciseID, _) = try harness.boundWaveFourWorkout()

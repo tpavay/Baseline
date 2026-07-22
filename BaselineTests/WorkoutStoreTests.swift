@@ -153,6 +153,46 @@ struct WorkoutStoreTests {
         #expect(store.current?.exercise(second.id)?.prescription.sets.first?.distance == 1_000)
     }
 
+    @Test func transientUndoRemoveSetRestoresPurgedRowAndKeepsLaterLogs() throws {
+        let s = store()
+        s.create(title: "Intervals", goal: nil)
+        s.addExercise(name: "Run", toBlockNamed: "Main", sets: 3, reps: nil, load: nil, durationSeconds: 60)
+        let run = try #require(s.current?.allExercises.first)
+        let setIDs = run.prescription.sets.map(\.id)
+        s.startWorkout()
+        s.editLog { log in
+            log.upsertSetLog(forPlanned: run.id, name: "Run", plannedSetID: setIDs[0]) { performed in
+                performed.values[.duration] = 61
+                performed.completed = true
+            }
+        }
+        let token = try #require(s.mutationTarget(.plan)?.revisionToken)
+        guard case .mutated(let receipt) = s.removeSet(setID: setIDs[0], expectedRevisionToken: token) else {
+            Issue.record("expected the removal to apply"); return
+        }
+        #expect(s.currentLog?.performed(forPlanned: run.id)?.setLogs
+            .contains { $0.plannedSetID == setIDs[0] } == false)
+
+        // Work logged after the removal must survive the undo.
+        s.editLog { log in
+            log.upsertSetLog(forPlanned: run.id, name: "Run", plannedSetID: setIDs[1]) { performed in
+                performed.values[.duration] = 62
+                performed.completed = true
+            }
+        }
+
+        #expect(s.undoMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ).succeeded)
+        #expect(s.current?.allExercises.first?.prescription.sets.map(\.id) == setIDs)
+        let logs = try #require(s.currentLog?.performed(forPlanned: run.id)?.setLogs)
+        #expect(logs.count == 2)
+        #expect(logs.first { $0.plannedSetID == setIDs[0] }?.values[.duration] == 61)
+        #expect(logs.first { $0.plannedSetID == setIDs[0] }?.completed == true)
+        #expect(logs.first { $0.plannedSetID == setIDs[1] }?.values[.duration] == 62)
+    }
+
     @Test func replaceAllExercisesPreservesIdentityAndPrescription() throws {
         let s = store()
         s.create(title: "Outdoor Run", goal: nil)

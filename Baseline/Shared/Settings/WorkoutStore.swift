@@ -159,9 +159,9 @@ final class WorkoutStore {
     private struct TransientMutationUndo {
         let receipt: WorkoutMutationReceipt
         let before: Workout
-        /// Non-nil only when the mutation also rewrote the performed log (a purge); undo must put
-        /// that log back or it would restore a planned set whose logged actual stayed lost.
-        let beforeLog: WorkoutLog?
+        /// The exact log rows the mutation purged — never a whole-log snapshot, so undo re-inserts
+        /// what was lost without clobbering anything logged after the mutation.
+        let purgedSetLogs: [PurgedSetLog]
     }
     /// Only the newest transient receipt can ever undo (the token guard makes every older one
     /// permanently stale), so only its snapshot is retained. Pruned receipts keep their IDs in
@@ -676,6 +676,11 @@ final class WorkoutStore {
 
     /// Validate and transform one authoritative workout value, then cross the persistence boundary once.
     /// Every ID and domain input is checked by `transform` before this function writes anything.
+    ///
+    /// `logTransform` is a companion **row purge** of the performed log, applied only after `transform`
+    /// succeeds — it runs second by contract, so it may read identifiers the transform resolved. It must
+    /// only remove rows: undo re-inserts exactly the rows that disappeared into whatever the log has
+    /// become by then, so an in-place modification here would not be undoable.
     private func mutate(
         expectedRevisionToken: UUID?,
         reason: String,
@@ -751,7 +756,9 @@ final class WorkoutStore {
                 latestTransientUndo = TransientMutationUndo(
                     receipt: receipt,
                     before: before,
-                    beforeLog: updatedLog == nil ? nil : currentLog
+                    purgedSetLogs: currentLog.flatMap { beforeLog in
+                        updatedLog.map { WorkoutLog.purgedSetLogs(before: beforeLog, after: $0) }
+                    } ?? []
                 )
             }
             if scope == .session || displayWasAuthoritative { current = authoritative }
@@ -827,7 +834,10 @@ final class WorkoutStore {
                 undoAvailable: false
             )
             self.current = applied.before
-            if let beforeLog = applied.beforeLog { currentLog = beforeLog }
+            if !applied.purgedSetLogs.isEmpty, var log = currentLog {
+                log.restore(applied.purgedSetLogs)
+                currentLog = log
+            }
             transientRevisionToken = undoReceipt.afterRevisionToken
             invalidateLatestTransientUndo()
             return .mutated(undoReceipt)

@@ -455,18 +455,23 @@ final class SwiftDataPlanRepository: PlanRepository {
 
         let after = UUID()
         let mutationReceipt = receipt(request, before: currentToken, after: after, undoAvailable: true)
-        let beforeLog = log == nil ? nil : PlanCoding.value(WorkoutLog.self, sd.logJSON)
-        sd.sessionWorkoutJSON = PlanCoding.data(workout)
-        sd.sessionWorkoutRevisionID = after
+        var purged: [PurgedSetLog] = []
         if let log {
+            if let beforeLog = PlanCoding.value(WorkoutLog.self, sd.logJSON) {
+                purged = WorkoutLog.purgedSetLogs(before: beforeLog, after: log)
+            }
             sd.logJSON = PlanCoding.data(log)
             sd.performedLogRevisionID = UUID()
         }
+        sd.sessionWorkoutJSON = PlanCoding.data(workout)
+        sd.sessionWorkoutRevisionID = after
         insertSessionMutation(
             request,
             sessionID: sessionID,
             kind: .sessionWorkout,
-            beforeSnapshot: beforeLog.map { .sessionWorkoutAndLog(before, $0) } ?? .sessionWorkout(before),
+            beforeSnapshot: purged.isEmpty
+                ? .sessionWorkout(before)
+                : .sessionWorkoutAndPurgedSetLogs(before, purged),
             afterRevisionToken: after,
             receipt: mutationReceipt
         )
@@ -623,19 +628,18 @@ final class SwiftDataPlanRepository: PlanRepository {
             return .rejected(.staleRevision)
         }
         let restored: Workout
-        let restoredLog: WorkoutLog?
+        let purged: [PurgedSetLog]
         switch applied.beforeSnapshot {
         case .sessionWorkout(let workout):
             restored = workout
-            restoredLog = nil
-        case .sessionWorkoutAndLog(let workout, let log):
+            purged = []
+        case .sessionWorkoutAndPurgedSetLogs(let workout, let rows):
             restored = workout
-            restoredLog = log
+            purged = rows
         case .performedLog:
             return .rejected(.staleRevision)
         }
         let current = PlanCoding.value(Workout.self, session.sessionWorkoutJSON) ?? scheduled.workout
-        let currentLog = restoredLog == nil ? nil : PlanCoding.value(WorkoutLog.self, session.logJSON)
         let undoDiff = WorkoutMutationDiff(changes: [
             .init(
                 kind: .edit,
@@ -666,15 +670,16 @@ final class SwiftDataPlanRepository: PlanRepository {
         )
         session.sessionWorkoutJSON = PlanCoding.data(restored)
         session.sessionWorkoutRevisionID = applied.receipt.beforeRevisionToken
-        if let restoredLog {
-            session.logJSON = PlanCoding.data(restoredLog)
+        if !purged.isEmpty, var log = PlanCoding.value(WorkoutLog.self, session.logJSON) {
+            log.restore(purged)
+            session.logJSON = PlanCoding.data(log)
             session.performedLogRevisionID = UUID()
         }
         insertSessionMutation(
             undoRequest,
             sessionID: sessionID,
             kind: .sessionWorkout,
-            beforeSnapshot: currentLog.map { .sessionWorkoutAndLog(current, $0) } ?? .sessionWorkout(current),
+            beforeSnapshot: .sessionWorkout(current),
             afterRevisionToken: undoReceipt.afterRevisionToken,
             receipt: undoReceipt
         )

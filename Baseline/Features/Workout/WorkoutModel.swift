@@ -542,6 +542,16 @@ struct PerformedExercise: Identifiable, Codable, Equatable, Sendable {
     var athleteNotes: [String] = []
 }
 
+/// One logged actual removed by a structural session edit, with enough context to re-insert exactly
+/// this row into whatever the log has become by the time the edit is undone.
+struct PurgedSetLog: Codable, Equatable, Sendable {
+    var plannedExerciseID: UUID
+    var exerciseName: String
+    /// The row's position in its exercise's `setLogs` at purge time, so undo restores it in place.
+    var index: Int
+    var setLog: SetLog
+}
+
 struct GroupLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var plannedGroupID: UUID
@@ -722,6 +732,44 @@ extension WorkoutLog {
     /// before a destructive true-remove would discard real logged work.
     func hasLoggedWork(forPlanned plannedID: UUID) -> Bool {
         performed(forPlanned: plannedID)?.setLogs.contains { !$0.values.isEmpty || $0.completed } ?? false
+    }
+
+    /// The set-log rows present in `before` but gone from `after` — the exact actuals a structural
+    /// purge (e.g. remove_set) discarded. Captured row-by-row rather than as a whole-log snapshot so
+    /// an undo can put these rows back without clobbering work logged after the purge.
+    static func purgedSetLogs(before: WorkoutLog, after: WorkoutLog) -> [PurgedSetLog] {
+        before.exercises.flatMap { exercise -> [PurgedSetLog] in
+            guard let plannedID = exercise.plannedExerciseID else { return [] }
+            let surviving = Set(
+                after.exercises.first { $0.plannedExerciseID == plannedID }?.setLogs.map(\.id) ?? []
+            )
+            return exercise.setLogs.enumerated().compactMap { index, row in
+                surviving.contains(row.id) ? nil : PurgedSetLog(
+                    plannedExerciseID: plannedID,
+                    exerciseName: exercise.exerciseName,
+                    index: index,
+                    setLog: row
+                )
+            }
+        }
+    }
+
+    /// Re-insert purged rows into the log **as it stands now**, near their original positions.
+    /// Everything logged since the purge is preserved; a row is skipped rather than duplicated if the
+    /// same actual (by id) or a newer actual for the same planned set has appeared meanwhile.
+    mutating func restore(_ purged: [PurgedSetLog]) {
+        for row in purged {
+            let i = index(forPlanned: row.plannedExerciseID, name: row.exerciseName)
+            guard !exercises[i].setLogs.contains(where: { existing in
+                existing.id == row.setLog.id || (
+                    row.setLog.plannedSetID != nil
+                        && existing.plannedSetID == row.setLog.plannedSetID
+                        && existing.groupID == row.setLog.groupID
+                        && existing.iteration == row.setLog.iteration
+                )
+            }) else { continue }
+            exercises[i].setLogs.insert(row.setLog, at: min(row.index, exercises[i].setLogs.count))
+        }
     }
 
     func exerciseAdjustment(
