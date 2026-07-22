@@ -562,6 +562,101 @@ struct ToolCallMapperTests {
         #expect(ToolCallMapper.map(name: "set_equipment", input: ["equipment": NSNull()]) == .setEquipment(nil))
     }
 
+    @Test func mapsPerformedLoggingWithoutInterpretingAthleteQuantities() {
+        let exerciseID = UUID()
+        let setID = UUID()
+        let groupID = UUID()
+        let performedSetID = UUID()
+        let mutationID = UUID()
+        let revision = UUID()
+
+        #expect(ToolCallMapper.map(name: "get_active_session", input: [:]) == .getActiveSession)
+        #expect(ToolCallMapper.map(name: "upsert_performed_set", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "planned_set_id": setID.uuidString,
+            "group_id": groupID.uuidString,
+            "iteration": 2,
+            "values": [
+                ["metric": "load", "value_text": "185 lb"],
+                ["metric": "reps", "value_text": "8"],
+            ],
+            "expected_revision_token": revision.uuidString,
+        ]) == .upsertPerformedSet(
+            exerciseInstanceID: exerciseID,
+            plannedSetID: setID,
+            groupID: groupID,
+            iteration: 2,
+            values: [
+                .init(metric: .load, valueText: "185 lb"),
+                .init(metric: .reps, valueText: "8"),
+            ],
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "set_performed_set_outcome", input: [
+            "performed_set_id": performedSetID.uuidString,
+            "outcome": "skipped",
+            "expected_revision_token": revision.uuidString,
+        ]) == .setPerformedSetOutcome(
+            target: .extra(performedSetID: performedSetID),
+            outcome: .skipped,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "add_extra_performed_set", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "values": [["metric": "pace", "value_text": "1:19 per 400 m"]],
+            "expected_revision_token": revision.uuidString,
+        ]) == .addExtraPerformedSet(
+            exerciseInstanceID: exerciseID,
+            groupID: nil,
+            iteration: nil,
+            values: [.init(metric: .pace, valueText: "1:19 per 400 m")],
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "update_extra_performed_set", input: [
+            "performed_set_id": performedSetID.uuidString,
+            "values": [["metric": "load", "value_text": "180 lb"]],
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateExtraPerformedSet(
+            performedSetID: performedSetID,
+            values: [.init(metric: .load, valueText: "180 lb")],
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "delete_extra_performed_set", input: [
+            "performed_set_id": performedSetID.uuidString,
+            "expected_revision_token": revision.uuidString,
+        ]) == .deleteExtraPerformedSet(
+            performedSetID: performedSetID,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "add_exercise_session_note", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "note": "Felt controlled",
+            "expected_revision_token": revision.uuidString,
+        ]) == .addExerciseSessionNote(
+            exerciseInstanceID: exerciseID,
+            note: "Felt controlled",
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "undo_session_mutation", input: [
+            "mutation_id": mutationID.uuidString,
+            "expected_revision_token": revision.uuidString,
+        ]) == .undoSessionMutation(mutationID: mutationID, expectedRevisionToken: revision))
+
+        #expect(ToolCallMapper.map(name: "upsert_performed_set", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "planned_set_id": setID.uuidString,
+            "values": [["metric": "load", "value_text": 185]],
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "set_performed_set_outcome", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "planned_set_id": setID.uuidString,
+            "group_id": groupID.uuidString,
+            "outcome": "completed",
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+    }
+
     @Test func mapsUpsertConstraint() {
         let call = ToolCallMapper.map(name: "upsert_constraint",
                                       input: ["kind": "injury", "location": "right Achilles",

@@ -65,6 +65,35 @@ enum ImportQuantityParser {
         return value
     }
 
+    /// Parse one athlete-stated value for a known metric into canonical storage.
+    ///
+    /// The metric supplies context only for dimensionless values such as reps and RPE.
+    /// Dimensional values still require a spoken or written unit, so `185` can never become 185 kg.
+    /// Pace is parsed here too because it combines a duration and a distance into seconds per meter.
+    static func canonicalValue(for metric: MetricType, valueText: String) -> Double? {
+        let text = valueText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        let value: Double?
+        switch metric {
+        case .pace:
+            value = paceCanonicalValue(in: text)
+        case .reps:
+            value = exactQuantity(for: .reps, in: text)?.canonicalValue ?? bareCount(in: text)
+        case .rpe:
+            value = contextualRPE(in: text)
+        case .heartRateZoneTime:
+            value = exactQuantity(for: .duration, in: text)?.canonicalValue
+        default:
+            value = exactQuantity(for: metric, in: text)?.canonicalValue
+        }
+
+        guard let value, value.isFinite, value >= 0 else { return nil }
+        if metric.isInteger, value != value.rounded() { return nil }
+        if metric == .rpe, value > 10 { return nil }
+        return value
+    }
+
     /// True when the text is language rather than a quantity, and must survive verbatim as coach text.
     static func isCoachText(_ text: String) -> Bool {
         let value = text.lowercased()
@@ -106,7 +135,7 @@ enum ImportQuantityParser {
     /// Longest tokens first inside each alternation so `min` never matches as `mi` + n, and the
     /// trailing `\b` keeps "400m" out of "40 min".
     private static let unitPattern =
-        #"(\d+(?:[.,]\d+)?)\s*(kilometres|kilometers|kilometre|kilometer|km|miles|mile|mi|metres|meters|metre|meter|yards|yard|yds|yd|m|hours|hour|hrs|hr|minutes|minute|mins|min|seconds|second|secs|sec|s|kilograms|kilogram|kilos|kilo|kgs|kg|pounds|pound|lbs|lb|calories|calorie|kcal|cals|cal|reps|rep)\b"#
+        #"(\d+(?:[.,]\d+)?)\s*(kilometres|kilometers|kilometre|kilometer|km|miles|mile|mi|metres|meters|metre|meter|yards|yard|yds|yd|m|hours|hour|hrs|hr|minutes|minute|mins|min|seconds|second|secs|sec|s|kilograms|kilogram|kilos|kilo|kgs|kg|pounds|pound|lbs|lb|calories|calorie|kcal|cals|cal|reps|rep|bpm|rpm|watts|watt|w)\b"#
     private static let clockPattern = #"(\d+):(\d{2})\b"#
     private static let rangePattern = #"\d\s*(?:-|–|—|/|\bto\b)\s*\d"#
 
@@ -126,8 +155,55 @@ enum ImportQuantityParser {
         put(["lb", "lbs", "pound", "pounds"], .load, MetricConvert.kgPerPound)
         put(["cal", "cals", "kcal", "calorie", "calories"], .calories, 1)
         put(["rep", "reps"], .reps, 1)
+        put(["bpm"], .heartRate, 1)
+        put(["rpm"], .cadence, 1)
+        put(["w", "watt", "watts"], .power, 1)
         return table
     }()
+
+    private static func exactQuantity(for metric: MetricType, in text: String) -> ImportQuantity? {
+        let found = quantities(in: text)
+        guard found.count == 1, found[0].metric == metric, residualText(in: text).isEmpty else { return nil }
+        return found[0]
+    }
+
+    private static func contextualRPE(in text: String) -> Double? {
+        guard let captures = captures(
+            #"^\s*(?:rpe\s*)?(\d+(?:\.\d+)?)\s*(?:rpe)?\s*$"#,
+            in: text
+        ), let value = Double(captures[0]), value.isFinite, (0...10).contains(value) else {
+            return nil
+        }
+        return value
+    }
+
+    /// Parse forms athletes naturally say, including `1:19 per 400 m`, `4:30 /km`, and `8 min/mi`.
+    private static func paceCanonicalValue(in text: String) -> Double? {
+        if let fields = captures(
+            #"^\s*(\d+):([0-5]\d)\s*(?:per|/)\s*(\d+(?:\.\d+)?)?\s*(kilometres|kilometers|kilometre|kilometer|km|miles|mile|mi|metres|meters|metre|meter|m)\s*$"#,
+            in: text
+        ), let minutes = Double(fields[0]), let seconds = Double(fields[1]),
+           let distance = paceDistance(value: fields[2], unit: fields[3]) {
+            return (minutes * secondsPerMinute + seconds) / distance
+        }
+
+        if let fields = captures(
+            #"^\s*(\d+(?:\.\d+)?)\s*(minutes|minute|mins|min|seconds|second|secs|sec|s)\s*(?:per|/)\s*(\d+(?:\.\d+)?)?\s*(kilometres|kilometers|kilometre|kilometer|km|miles|mile|mi|metres|meters|metre|meter|m)\s*$"#,
+            in: text
+        ), let duration = Double(fields[0]),
+           let timeUnit = unitTable[fields[1].lowercased()],
+           let distance = paceDistance(value: fields[2], unit: fields[3]) {
+            return duration * timeUnit.toCanonical / distance
+        }
+        return nil
+    }
+
+    private static func paceDistance(value: String, unit: String) -> Double? {
+        let amount = value.isEmpty ? 1 : Double(value)
+        guard let amount, amount.isFinite, amount > 0,
+              let meaning = unitTable[unit.lowercased()], meaning.metric == .distance else { return nil }
+        return amount * meaning.toCanonical
+    }
 
     /// A plain "does this pattern occur" test, for patterns that capture nothing.
     private static func contains(_ pattern: String, in value: String) -> Bool {
@@ -149,6 +225,19 @@ enum ImportQuantityParser {
                   let first = Range(result.range(at: 1), in: value),
                   let second = Range(result.range(at: 2), in: value) else { return nil }
             return Capture(value: String(value[first]), unit: String(value[second]))
+        }
+    }
+
+    private static func captures(_ pattern: String, in value: String) -> [String]? {
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = expression.firstMatch(
+                  in: value,
+                  range: NSRange(value.startIndex..<value.endIndex, in: value)
+              ) else { return nil }
+        return (1..<match.numberOfRanges).map { index in
+            guard match.range(at: index).location != NSNotFound,
+                  let range = Range(match.range(at: index), in: value) else { return "" }
+            return String(value[range])
         }
     }
 }

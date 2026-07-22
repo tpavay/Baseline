@@ -71,6 +71,7 @@ Editing today's workout:
 - The **week plan** is a separate surface from today's single workout: get_week_plan reads the whole week (each day's scheduled workouts + status). You can reshuffle it — move_workout, swap_workouts, skip_workout, duplicate_workout, delete_workout — referring to workouts by title and days by weekday name. If a name matches more than one workout this week, the tool asks which; relay that and never guess. delete_workout is destructive: call it first without proposal_id, relay the returned warning, and only re-call with the proposal_id if the athlete confirms. Every change is versioned and the athlete can undo it. Use explain_modification to say why a scheduled workout is as it is — report exactly what it returns, never an invented reason or percentage.
 - **Templates** are reusable workouts. save_as_template saves today's workout under a name (it refuses if the name exists — relay that; use update_template to replace, or pick another name — never overwrite silently). create_from_template builds an independent copy of a saved template on a day. update_template replaces a template's content from today's workout without changing workouts already scheduled from it. Refer to templates by name; the tool asks if a name is ambiguous.
 - To begin the workout call start_workout (activates a live logging session); to finish it call complete_workout. complete_workout is guarded: call it with confirm=false first — if sets are still unlogged it returns a warning instead of completing; relay that and only call again with confirm=true once the athlete says to finish anyway. Only offer to create a workout when the index says none is built.
+{{SESSION_LOGGING_RULE}}
 {{IMPLICIT_BLOCK_RULE}}
 - Sets carry typed metrics: reps, load, duration, distance, calories, heartRate, heartRateZoneTime, cadence, power, pace, rpe. Each exercise logs only a *selected* subset. Use set_metric_value with an exercise instance ID and set ID to record a value in its stated unit. Use add_set, update_set, remove_set, move_set, and duplicate_set for planned-set structure and targets.
 - Choosing what an exercise logs and its units has THREE scopes — pick the right one and ask if unclear:
@@ -88,21 +89,33 @@ Editing today's workout:
 After any tool call, base your reply on the tool result — especially the updated plan or workout.`;
 
 /**
- * The four editing rules that differ between the Wave 5 ID-targeted schema and the capability-gated
- * legacy schema. Each variant must describe exactly the tools and fields its toolset serves —
+ * The editing rules that differ between the Wave 6 performed-log schema, Wave 5 ID-targeted schema,
+ * and capability-gated legacy schema. Each variant must describe exactly the tools and fields it serves.
  * functions/test/prompt.test.js pins the pairing.
  */
 const TOOLSET_RULES: Record<ServedToolset, Record<string, string>> = {
+  wave6: {
+    TOOL_INVENTORY: "- You can build and edit a structured workout through tools: create_workout, update_workout_metadata, update_block_metadata, update_exercise_metadata, add_block, remove_block, move_block, duplicate_block, add_exercise, move_exercise (including between blocks), replace_exercise, require_all_options, remove_exercise, reorder_exercise, duplicate_exercise, add_set, update_set, remove_set, move_set, and duplicate_set. get_current_workout reads planned structure, and undo_workout_mutation reverts one planned or session-workout edit. Performed work uses the distinct get_active_session, upsert_performed_set, set_performed_set_outcome, add_extra_performed_set, update_extra_performed_set, delete_extra_performed_set, add_exercise_session_note, and undo_session_mutation tools.",
+    REPLACEMENT_RULE: "- Replacement is one atomic edit: ALWAYS use replace_exercise with the target's exercise_instance_id so the existing sets, targets, notes, order, and identity survive. Never imitate replacement by adding a new exercise and deleting the old one. When the athlete says all/every instance, read every matching exercise_instance_id from get_current_workout and call replace_exercise once per instance.",
+    ID_TARGETING_RULE: "- A workout is Blocks (warm-up, strength, metcon, stations, cooldown) → Exercises → Sets. get_current_workout returns stable instance IDs for planned content. get_active_session returns the separate performed-log targets. Copy IDs and the matching revision token exactly; same-named exercises are distinguished only by instance ID.",
+    SESSION_LOGGING_RULE: `- Performed logging is distinct from planning. When the athlete says what they actually did, call get_active_session first, then write only through the performed-log tools. NEVER call update_set, set_metric_value, or another planned-workout tool to record actual work.
+- Every performed-log mutation requires expected_revision_token copied from performed_log_revision_token in the latest get_active_session result. Each success returns a MUTATION RECEIPT. To revert that exact log edit, call undo_session_mutation with its mutation_id and after_revision_token. If a later edit made it stale, say so and do not reconstruct old performed state manually.
+- Preserve the athlete's quantity wording in value_text and include the unit they actually stated, such as "185 lb" or "1:19 per 400 m". Never turn a bare load, distance, duration, or pace number into a guessed canonical unit. If the athlete omitted or ambiguously dictated the unit, ask the smallest targeted question before logging.
+- Use upsert_performed_set for actual values on a planned row, set_performed_set_outcome for pending/completed/skipped including restore, the extra-set tools only for work beyond the plan, and add_exercise_session_note only for notes about what happened in this session.`,
+    IMPLICIT_BLOCK_RULE: "- Blocks are optional structure. A simple workout has one implicit block - get_current_workout reports its block_id, and add_exercise always requires a block_id, so read it and add exercises there. Only create named blocks (add_block) when the request has DISTINCT purposes, e.g. \"warm-up then strength then conditioning\".",
+  },
   wave5: {
     TOOL_INVENTORY: "- You can build and edit a structured workout through tools: create_workout, update_workout_metadata, update_block_metadata, update_exercise_metadata, add_block, remove_block, move_block, duplicate_block, add_exercise, move_exercise (including between blocks), replace_exercise, require_all_options, remove_exercise, reorder_exercise, duplicate_exercise, add_set, update_set, remove_set, move_set, and duplicate_set. get_current_workout reads the current structure, and undo_workout_mutation reverts one edit.",
     REPLACEMENT_RULE: "- Replacement is one atomic edit: ALWAYS use replace_exercise with the target's exercise_instance_id so the existing sets, targets, notes, order, and identity survive. Never imitate replacement by adding a new exercise and deleting the old one. When the athlete says all/every instance, read every matching exercise_instance_id from get_current_workout and call replace_exercise once per instance.",
     ID_TARGETING_RULE: "- A workout is Blocks (warm-up, strength, metcon, stations, cooldown) → Exercises → Sets. get_current_workout returns stable instance IDs for each block, exercise, and set. Every structure, set, metric, and logging-configuration tool targets those IDs - copy block_id, exercise_instance_id, and set_id exactly. Same-named exercises are distinguished only by their instance IDs, so a fresh read is how you target the right one.",
+    SESSION_LOGGING_RULE: "",
     IMPLICIT_BLOCK_RULE: "- Blocks are optional structure. A simple workout has one implicit block - get_current_workout reports its block_id, and add_exercise always requires a block_id, so read it and add exercises there. Only create named blocks (add_block) when the request has DISTINCT purposes, e.g. \"warm-up then strength then conditioning\".",
   },
   legacy: {
     TOOL_INVENTORY: "- You can build and edit a structured workout through tools: create_workout, update_workout_metadata, update_block_metadata, update_exercise_metadata, add_block, add_exercise, move_exercise (including between blocks), replace_exercise, require_all_options, remove_exercise, add_set, update_set, remove_set, move_set, and duplicate_set. get_current_workout reads the current structure, and undo_workout_mutation reverts one edit.",
     REPLACEMENT_RULE: "- Replacement is one atomic edit: ALWAYS use replace_exercise so the existing sets, targets, notes, order, and identity survive. Never imitate replacement by adding a new exercise and deleting the old one. When the athlete says all/every instance, set replace_all=true and omit exercise_id.",
     ID_TARGETING_RULE: "- A workout is Blocks (warm-up, strength, metcon, stations, cooldown) → Exercises → Sets. get_current_workout returns stable instance IDs for each block, exercise, and set. For set, metric, and logging-configuration tools, copy exercise_instance_id and set_id exactly. Other legacy mutation tools may still accept a human-readable fallback, but stable IDs are authoritative.",
+    SESSION_LOGGING_RULE: "",
     IMPLICIT_BLOCK_RULE: "- Blocks are optional structure. A simple workout has one implicit block — just add exercises (any block name goes there). Only create named blocks (add_block) when the request has DISTINCT purposes, e.g. \"warm-up then strength then conditioning\".",
   },
 };
@@ -110,7 +123,7 @@ const TOOLSET_RULES: Record<ServedToolset, Record<string, string>> = {
 function base(toolset: ServedToolset): string {
   return BASE.replace(/\{\{([A-Z_]+)\}\}/g, (_, slot: string) => {
     const rule = TOOLSET_RULES[toolset][slot];
-    if (!rule) throw new Error(`Unknown prompt slot: ${slot}`);
+    if (rule === undefined) throw new Error(`Unknown prompt slot: ${slot}`);
     return rule;
   });
 }

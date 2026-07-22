@@ -102,10 +102,17 @@ final class ConversationService {
         isThinking = true
         Task { [weak self] in
             guard let self else { return }
-            let call = AgentTools.Call.undoWorkoutMutation(
-                mutationID: receipt.mutationID,
-                expectedRevisionToken: receipt.afterRevisionToken
-            )
+            let call: AgentTools.Call = if receipt.scope == .performedLog {
+                .undoSessionMutation(
+                    mutationID: receipt.mutationID,
+                    expectedRevisionToken: receipt.afterRevisionToken
+                )
+            } else {
+                .undoWorkoutMutation(
+                    mutationID: receipt.mutationID,
+                    expectedRevisionToken: receipt.afterRevisionToken
+                )
+            }
             let response = await tools.execute(call)
             record(call, response)
             if response.mutationReceipt == nil {
@@ -294,7 +301,7 @@ final class ConversationService {
             "roundIndex": String(roundIndex),
             "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             "appBuild": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
-            "clientToolSchemaVersion": "5",
+            "clientToolSchemaVersion": "6",
             "iosVersion": Self.operatingSystemVersion,
             "deviceClass": Self.deviceClass,
         ]

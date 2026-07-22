@@ -222,6 +222,74 @@ enum ToolCallMapper {
             guard let mutationID = requiredUUID(input["mutation_id"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .undoWorkoutMutation(mutationID: mutationID, expectedRevisionToken: expected)
+        case "get_active_session":
+            return .getActiveSession
+        case "upsert_performed_set":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let plannedSetID = requiredUUID(input["planned_set_id"]),
+                  let target = performedContext(input),
+                  let values = performedMetricInputs(input["values"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .upsertPerformedSet(
+                exerciseInstanceID: exerciseID,
+                plannedSetID: plannedSetID,
+                groupID: target.groupID,
+                iteration: target.iteration,
+                values: values,
+                expectedRevisionToken: expected
+            )
+        case "set_performed_set_outcome":
+            guard let outcomeRaw = input["outcome"] as? String,
+                  let outcome = SetLogOutcome(rawValue: outcomeRaw),
+                  let target = performedSetTarget(input),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .setPerformedSetOutcome(
+                target: target,
+                outcome: outcome,
+                expectedRevisionToken: expected
+            )
+        case "add_extra_performed_set":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let target = performedContext(input),
+                  let values = performedMetricInputs(input["values"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .addExtraPerformedSet(
+                exerciseInstanceID: exerciseID,
+                groupID: target.groupID,
+                iteration: target.iteration,
+                values: values,
+                expectedRevisionToken: expected
+            )
+        case "update_extra_performed_set":
+            guard let performedSetID = requiredUUID(input["performed_set_id"]),
+                  let values = performedMetricInputs(input["values"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .updateExtraPerformedSet(
+                performedSetID: performedSetID,
+                values: values,
+                expectedRevisionToken: expected
+            )
+        case "delete_extra_performed_set":
+            guard let performedSetID = requiredUUID(input["performed_set_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .deleteExtraPerformedSet(
+                performedSetID: performedSetID,
+                expectedRevisionToken: expected
+            )
+        case "add_exercise_session_note":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let note = input["note"] as? String,
+                  !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .addExerciseSessionNote(
+                exerciseInstanceID: exerciseID,
+                note: note,
+                expectedRevisionToken: expected
+            )
+        case "undo_session_mutation":
+            guard let mutationID = requiredUUID(input["mutation_id"]),
+                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+            return .undoSessionMutation(mutationID: mutationID, expectedRevisionToken: expected)
         case "search_exercises":
             // Every field is optional - an all-empty search is a valid "what do you have?" browse.
             // Filter *values* aren't validated here: the taxonomy knows them, so ExerciseSearch parses
@@ -338,6 +406,48 @@ enum ToolCallMapper {
     }
 
     private static func requiredUUID(_ value: Any?) -> UUID? { uuid(value) }
+
+    private static func performedContext(_ input: [String: Any]) -> (groupID: UUID?, iteration: Int?)? {
+        guard validOptionalUUID(input["group_id"]), validOptionalIndex(input["iteration"]) else { return nil }
+        let groupID = uuid(input["group_id"])
+        let iteration = exactIntOrNil(input["iteration"])
+        guard (groupID == nil) == (iteration == nil), iteration.map({ $0 > 0 }) ?? true else { return nil }
+        return (groupID, iteration)
+    }
+
+    private static func performedSetTarget(_ input: [String: Any]) -> PerformedSetTarget? {
+        if let performedSetID = requiredUUID(input["performed_set_id"]) {
+            guard input["exercise_instance_id"] == nil,
+                  input["planned_set_id"] == nil,
+                  input["group_id"] == nil,
+                  input["iteration"] == nil else { return nil }
+            return .extra(performedSetID: performedSetID)
+        }
+        guard input["performed_set_id"] == nil,
+              let exerciseID = requiredUUID(input["exercise_instance_id"]),
+              let setID = requiredUUID(input["planned_set_id"]),
+              let context = performedContext(input) else { return nil }
+        return .planned(
+            exerciseInstanceID: exerciseID,
+            plannedSetID: setID,
+            groupID: context.groupID,
+            iteration: context.iteration
+        )
+    }
+
+    private static func performedMetricInputs(_ value: Any?) -> [PerformedMetricInput]? {
+        guard let rows = value as? [[String: Any]], !rows.isEmpty else { return nil }
+        var seen: Set<MetricType> = []
+        var result: [PerformedMetricInput] = []
+        for row in rows {
+            guard let metric = metric(row["metric"]),
+                  seen.insert(metric).inserted,
+                  let valueText = row["value_text"] as? String,
+                  !valueText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            result.append(.init(metric: metric, valueText: valueText))
+        }
+        return result
+    }
 
     private static func stringPatch(
         _ input: [String: Any],

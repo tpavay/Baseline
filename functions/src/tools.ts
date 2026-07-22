@@ -14,6 +14,45 @@ const expectedRevisionToken = {
   description: "Exact revision_token from get_current_workout. The mutation is rejected as stale if the workout changed since that read.",
 };
 
+const expectedPerformedLogRevisionToken = {
+  type: "string",
+  description: "Exact performed_log_revision_token from get_active_session. The log mutation is rejected as stale if any performed state changed since that read.",
+};
+
+const expectedSessionMutationRevisionToken = {
+  type: "string",
+  description: "The after_revision_token from the exact session mutation receipt being undone.",
+};
+
+const performedMetricValue = {
+  type: "object",
+  properties: {
+    metric: {
+      type: "string",
+      enum: ["reps", "load", "duration", "distance", "calories", "heartRate", "heartRateZoneTime", "cadence", "power", "pace", "rpe"],
+    },
+    value_text: {
+      type: "string",
+      minLength: 1,
+      description: "The athlete's quantity wording with its unit, for example '185 lb' or '1:19 per 400 m'. Never send a bare dimensional number.",
+    },
+  },
+  required: ["metric", "value_text"],
+  additionalProperties: false,
+};
+
+const performedContextProperties = {
+  group_id: {
+    type: "string",
+    description: "Repeated group ID from get_active_session. Supply together with iteration, or omit both for an ordinary set.",
+  },
+  iteration: {
+    type: "integer",
+    minimum: 1,
+    description: "One-based round or interval from get_active_session. Supply together with group_id, or omit both.",
+  },
+};
+
 const setMetricProperties = {
   reps: { type: "integer", minimum: 0, description: "Canonical repetition count." },
   load: { type: "number", minimum: 0, description: "Canonical kilograms." },
@@ -244,6 +283,117 @@ export const TOOLS: ToolSchema[] = [
         expected_revision_token: expectedRevisionToken,
       },
       required: ["mutation_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "get_active_session",
+    description: "Read the active performed-log session as structured JSON. Returns session, workout-log, exercise instance, planned-set, group, iteration, performed-set, outcome, and independent workout/log revision IDs. Call before every performed-log edit and target only IDs from this result.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "upsert_performed_set",
+    description: "Record or revise actual metric values for one planned set in the active session. This writes WorkoutLog only and never changes the planned set. Preserve the athlete's quantity wording in value_text so deterministic code can parse and convert explicit units. A bare dimensional number such as 185 for load is rejected rather than treated as kilograms.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise_instance_id: { type: "string", description: "Exercise instance ID from get_active_session." },
+        planned_set_id: { type: "string", description: "Planned set ID from get_active_session." },
+        ...performedContextProperties,
+        values: { type: "array", minItems: 1, items: performedMetricValue },
+        expected_revision_token: expectedPerformedLogRevisionToken,
+      },
+      required: ["exercise_instance_id", "planned_set_id", "values", "expected_revision_token"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_performed_set_outcome",
+    description: "Set a performed row to pending, completed, or skipped. Use the planned target IDs to create or restore a planned-set actual, or use performed_set_id alone for an existing extra set. Pending restores a completed or skipped row without deleting its actual values.",
+    input_schema: {
+      type: "object",
+      properties: {
+        performed_set_id: { type: "string", description: "Existing extra performed-set ID from get_active_session. Use alone instead of planned target IDs." },
+        exercise_instance_id: { type: "string", description: "Exercise instance ID for a planned-set target." },
+        planned_set_id: { type: "string", description: "Planned set ID for a planned-set target." },
+        ...performedContextProperties,
+        outcome: { type: "string", enum: ["pending", "completed", "skipped"] },
+        expected_revision_token: expectedPerformedLogRevisionToken,
+      },
+      required: ["outcome", "expected_revision_token"],
+      oneOf: [
+        { required: ["performed_set_id"] },
+        { required: ["exercise_instance_id", "planned_set_id"] },
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add_extra_performed_set",
+    description: "Add actual work beyond the plan for one exercise, optionally in one repeated group iteration. Values use athlete-provided value_text with explicit units and are stored only in WorkoutLog.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise_instance_id: { type: "string", description: "Exercise instance ID from get_active_session." },
+        ...performedContextProperties,
+        values: { type: "array", minItems: 1, items: performedMetricValue },
+        expected_revision_token: expectedPerformedLogRevisionToken,
+      },
+      required: ["exercise_instance_id", "values", "expected_revision_token"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_extra_performed_set",
+    description: "Revise actual metric values on one extra performed set by performed-set ID. This never creates or changes a planned set.",
+    input_schema: {
+      type: "object",
+      properties: {
+        performed_set_id: { type: "string", description: "Extra performed-set ID from get_active_session." },
+        values: { type: "array", minItems: 1, items: performedMetricValue },
+        expected_revision_token: expectedPerformedLogRevisionToken,
+      },
+      required: ["performed_set_id", "values", "expected_revision_token"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_extra_performed_set",
+    description: "Delete one extra performed set by its performed-set ID. Planned-set actuals cannot be deleted through this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        performed_set_id: { type: "string", description: "Extra performed-set ID from get_active_session." },
+        expected_revision_token: expectedPerformedLogRevisionToken,
+      },
+      required: ["performed_set_id", "expected_revision_token"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add_exercise_session_note",
+    description: "Append an athlete note to one exercise's performed record in the active session. This is session history, not planned workout guidance.",
+    input_schema: {
+      type: "object",
+      properties: {
+        exercise_instance_id: { type: "string", description: "Exercise instance ID from get_active_session." },
+        note: { type: "string", minLength: 1 },
+        expected_revision_token: expectedPerformedLogRevisionToken,
+      },
+      required: ["exercise_instance_id", "note", "expected_revision_token"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "undo_session_mutation",
+    description: "Undo exactly one session mutation using its receipt. The stored before-snapshot is restored only while the session's current revision token still matches that receipt's after_revision_token. A later user or agent edit makes the request stale and nothing is changed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mutation_id: { type: "string", description: "mutation_id from the exact session mutation receipt." },
+        expected_revision_token: expectedSessionMutationRevisionToken,
+      },
+      required: ["mutation_id", "expected_revision_token"],
+      additionalProperties: false,
     },
   },
   {
@@ -788,22 +938,41 @@ const waveFiveOnlyToolNames = new Set([
   "duplicate_exercise",
 ]);
 
-export const LEGACY_TOOLS: ToolSchema[] = TOOLS
+const waveSixOnlyToolNames = new Set([
+  "get_active_session",
+  "upsert_performed_set",
+  "set_performed_set_outcome",
+  "add_extra_performed_set",
+  "update_extra_performed_set",
+  "delete_extra_performed_set",
+  "add_exercise_session_note",
+  "undo_session_mutation",
+]);
+
+export const WAVE5_TOOLS: ToolSchema[] = TOOLS.filter(
+  (tool) => !waveSixOnlyToolNames.has(tool.name),
+);
+
+export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
   .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
   .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
 
-export type ServedToolset = "wave5" | "legacy";
+export type ServedToolset = "wave6" | "wave5" | "legacy";
 
 /**
- * Monotonic capability gate: any well-formed schema version at or above 5 receives the current
- * toolset, so a future client bump ("6", "7", ...) can never be silently downgraded to the legacy
- * schema by a not-yet-updated server. Malformed or older versions stay on the legacy schema.
+ * Monotonic capability gate: Wave 6 clients receive performed logging, Wave 5 clients keep their
+ * ID-targeted structure schema, and older clients keep the name-based legacy schema.
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  if (Number(version) >= 6) return "wave6";
   return Number(version) >= 5 ? "wave5" : "legacy";
 }
 
 export function toolsForClientSchema(version: unknown): ToolSchema[] {
-  return servedToolsetForClientSchema(version) === "wave5" ? TOOLS : LEGACY_TOOLS;
+  switch (servedToolsetForClientSchema(version)) {
+  case "wave6": return TOOLS;
+  case "wave5": return WAVE5_TOOLS;
+  case "legacy": return LEGACY_TOOLS;
+  }
 }

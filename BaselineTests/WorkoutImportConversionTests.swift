@@ -37,6 +37,22 @@ struct WorkoutImportConversionTests {
         #expect(abs(pounds.canonicalValue - (135 * MetricConvert.kgPerPound)) < 0.0001)
     }
 
+    @Test func performedLoggingRequiresUnitsAndPreservesAthletePhrasingUntilConversion() {
+        let pounds = try! #require(ImportQuantityParser.canonicalValue(for: .load, valueText: "185 lb"))
+        #expect(abs(pounds - (185 * MetricConvert.kgPerPound)) < 0.0001)
+        #expect(ImportQuantityParser.canonicalValue(for: .load, valueText: "185") == nil)
+
+        let pace = try! #require(
+            ImportQuantityParser.canonicalValue(for: .pace, valueText: "1:19 per 400 m")
+        )
+        #expect(abs(pace - (79.0 / 400.0)) < 0.000_001)
+        #expect(ImportQuantityParser.canonicalValue(for: .pace, valueText: "79") == nil)
+
+        #expect(ImportQuantityParser.canonicalValue(for: .reps, valueText: "8") == 8)
+        #expect(ImportQuantityParser.canonicalValue(for: .rpe, valueText: "RPE 8.5") == 8.5)
+        #expect(ImportQuantityParser.canonicalValue(for: .heartRate, valueText: "150 bpm") == 150)
+    }
+
     @Test func durationsBecomeCanonicalSecondsIncludingClockNotation() {
         #expect(ImportQuantityParser.quantities(in: "20 sec") == [.init(metric: .duration, canonicalValue: 20)])
         #expect(ImportQuantityParser.quantities(in: "4 min") == [.init(metric: .duration, canonicalValue: 240)])
