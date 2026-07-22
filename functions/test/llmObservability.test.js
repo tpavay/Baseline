@@ -13,27 +13,27 @@ const { servedToolsetForClientSchema } = require("../lib/tools");
 test("conversation traces record the toolset the model actually saw", () => {
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("9")),
-    "conversation-tools-v5-wave9",
+    "conversation-tools-v6-wave9",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("8")),
-    "conversation-tools-v5-wave8",
+    "conversation-tools-v6-wave8",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("7")),
-    "conversation-tools-v5-wave7",
+    "conversation-tools-v6-wave7",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("6")),
-    "conversation-tools-v5-wave6",
+    "conversation-tools-v6-wave6",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("5")),
-    "conversation-tools-v5-wave5",
+    "conversation-tools-v6-wave5",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema(undefined)),
-    "conversation-tools-v5-legacy",
+    "conversation-tools-v6-legacy",
   );
 });
 

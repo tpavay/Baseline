@@ -93,10 +93,12 @@ test("Wave 5 structure schemas are ID-only, positioned, purge-aware, and undoabl
   assert.deepEqual(moveBlock.input_schema.required, ["block_id", "to_index", "expected_revision_token"]);
   assert.deepEqual(duplicateBlock.input_schema.required, ["block_id", "expected_revision_token"]);
   assert.deepEqual(addExercise.input_schema.required, ["name", "expected_revision_token"]);
-  assert.deepEqual(addExercise.input_schema.oneOf, [
-    { required: ["block_id"], not: { required: ["parent_id"] } },
-    { required: ["parent_id"], not: { required: ["block_id"] } },
-  ]);
+  // Mutual exclusion is expressed as schema-form dependencies, never a top-level oneOf — the
+  // Anthropic API rejects top-level combinators in input_schema with a 400.
+  assert.deepEqual(addExercise.input_schema.dependencies, {
+    block_id: { not: { required: ["parent_id"] } },
+    parent_id: { not: { required: ["block_id"] } },
+  });
   assert.deepEqual(moveExercise.input_schema.required, [
     "exercise_instance_id", "to_block_id", "to_index", "expected_revision_token",
   ]);
@@ -184,27 +186,31 @@ test("Wave 6 performed logging is distinct, unit-safe, and capability-gated", ()
   assert.ok(outcome.input_schema.properties.planned_set_id);
   assert.ok(outcome.input_schema.properties.performed_set_id);
 
-  // The schema must reject exactly what the iOS mapper rejects: performed_set_id combined with any
-  // planned-target field, and group_id or iteration supplied alone.
-  assert.deepEqual(outcome.input_schema.oneOf, [
-    {
-      required: ["performed_set_id"],
-      not: {
-        anyOf: [
-          { required: ["exercise_instance_id"] },
-          { required: ["planned_set_id"] },
-          { required: ["group_id"] },
-          { required: ["iteration"] },
-        ],
-      },
-    },
-    {
-      required: ["exercise_instance_id", "planned_set_id"],
+  // The schema mirrors what the iOS mapper rejects: performed_set_id combined with any
+  // planned-target field, split targets, and group_id or iteration supplied alone. It is
+  // expressed as schema-form dependencies because the Anthropic API 400s on top-level
+  // oneOf/allOf/anyOf; "at least one target" is unexpressible without those, so the mapper
+  // remains the deterministic backstop for a call with no target at all.
+  assert.deepEqual(outcome.input_schema.dependencies, {
+    exercise_instance_id: {
+      required: ["planned_set_id"],
       not: { required: ["performed_set_id"] },
     },
-  ]);
+    planned_set_id: {
+      required: ["exercise_instance_id"],
+      not: { required: ["performed_set_id"] },
+    },
+    group_id: {
+      required: ["iteration"],
+      not: { required: ["performed_set_id"] },
+    },
+    iteration: {
+      required: ["group_id"],
+      not: { required: ["performed_set_id"] },
+    },
+  });
   const pairing = { group_id: ["iteration"], iteration: ["group_id"] };
-  for (const name of ["set_performed_set_outcome", "upsert_performed_set", "add_extra_performed_set"]) {
+  for (const name of ["upsert_performed_set", "add_extra_performed_set"]) {
     const tool = TOOLS.find((candidate) => candidate.name === name);
     assert.deepEqual(tool.input_schema.dependencies, pairing, `${name} should pair group_id with iteration`);
   }
@@ -626,4 +632,33 @@ test("Wave 7 and older clients keep exactly the schemas their mappers understand
     wave8Batch.input_schema.properties.operations.items.properties.op.enum.includes("update_group"),
     true
   );
+});
+
+test("no served toolset carries a top-level schema combinator the Anthropic API rejects", () => {
+  // Anthropic rejects oneOf/allOf/anyOf at the TOP LEVEL of a tool input_schema with a 400
+  // before the model runs, which takes down every conversation request that ships the tool
+  // (2026-07: set_performed_set_outcome's oneOf broke the whole conversation feature).
+  // Nested combinators (inside properties, dependencies, etc.) are fine.
+  const servedToolsets = {
+    LEGACY_TOOLS,
+    WAVE5_TOOLS,
+    WAVE6_TOOLS,
+    WAVE7_TOOLS,
+    WAVE8_TOOLS,
+    TOOLS,
+  };
+  for (const version of ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", undefined, null, "garbage"]) {
+    servedToolsets[`toolsForClientSchema(${String(version)})`] = toolsForClientSchema(version);
+  }
+  for (const [setName, tools] of Object.entries(servedToolsets)) {
+    for (const tool of tools) {
+      for (const banned of ["oneOf", "allOf", "anyOf"]) {
+        assert.equal(
+          tool.input_schema[banned],
+          undefined,
+          `${setName} → ${tool.name} has top-level ${banned}`
+        );
+      }
+    }
+  }
 });

@@ -430,26 +430,28 @@ export const TOOLS: ToolSchema[] = [
         expected_revision_token: expectedPerformedLogRevisionToken,
       },
       required: ["outcome", "expected_revision_token"],
-      // Mirrors the iOS mapper exactly: performed_set_id stands alone, and a planned target never
-      // carries it. A schema-valid call must never fail client-side target mapping.
-      oneOf: [
-        {
-          required: ["performed_set_id"],
-          not: {
-            anyOf: [
-              { required: ["exercise_instance_id"] },
-              { required: ["planned_set_id"] },
-              { required: ["group_id"] },
-              { required: ["iteration"] },
-            ],
-          },
-        },
-        {
-          required: ["exercise_instance_id", "planned_set_id"],
+      // Mirrors the iOS mapper: performed_set_id stands alone, and a planned target never carries
+      // it. Anthropic rejects oneOf/allOf/anyOf at the top level of input_schema (every request
+      // 400s before the model runs), so the exclusivity lives in schema-form `dependencies` plus
+      // the description; the mapper still deterministically rejects any call that slips through.
+      dependencies: {
+        exercise_instance_id: {
+          required: ["planned_set_id"],
           not: { required: ["performed_set_id"] },
         },
-      ],
-      dependencies: { group_id: ["iteration"], iteration: ["group_id"] },
+        planned_set_id: {
+          required: ["exercise_instance_id"],
+          not: { required: ["performed_set_id"] },
+        },
+        group_id: {
+          required: ["iteration"],
+          not: { required: ["performed_set_id"] },
+        },
+        iteration: {
+          required: ["group_id"],
+          not: { required: ["performed_set_id"] },
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -816,10 +818,12 @@ export const TOOLS: ToolSchema[] = [
         expected_revision_token: expectedRevisionToken,
       },
       required: ["name", "expected_revision_token"],
-      oneOf: [
-        { required: ["block_id"], not: { required: ["parent_id"] } },
-        { required: ["parent_id"], not: { required: ["block_id"] } },
-      ],
+      // Top-level oneOf is rejected by the Anthropic API; pairwise schema-form `dependencies`
+      // keep block_id/parent_id mutually exclusive, and the iOS mapper enforces exactly-one.
+      dependencies: {
+        block_id: { not: { required: ["parent_id"] } },
+        parent_id: { not: { required: ["block_id"] } },
+      },
     },
   },
   {
@@ -1406,7 +1410,7 @@ const waveSevenOverrides = new Map<string, ToolSchema>([
     const base = toolNamed("add_exercise");
     const schema = cloneSchema(base.input_schema);
     delete (schema.properties as Record<string, unknown>).parent_id;
-    delete schema.oneOf;
+    delete schema.dependencies;
     schema.required = ["block_id", "name", "expected_revision_token"];
     return {
       ...base,
