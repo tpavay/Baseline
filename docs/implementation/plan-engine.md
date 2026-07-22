@@ -120,7 +120,7 @@ A training plan is an **evolving document, not a static object.** Every meaningf
 
 Each version records:
 - **timestamp**
-- **actor** — user · Baseline · imported
+- **actor** — user · agent · Baseline · imported (see `PlanActor` in `Baseline/Features/Plan/PlanResolvers.swift`)
 - **reason**
 - **supporting evidence** — the readiness, context, and rules that drove it
 - **diff**
@@ -137,6 +137,9 @@ The agent pattern is reused, but this introduces: program **schema** · **calend
 So the Today Conversation slice doesn't become a dead end, design its tool layer to generalize — without over-building the small stuff:
 - Tool calls are **typed and validated** from day one — even the small Today tools (update context, update constraint).
 - **Versioning and proposed-vs-accepted scale with blast radius (§7).** Low-risk, today-scoped, single-item mutations (daily context, one constraint) **apply directly** and are trivially reversible — no version wrapper needed. The **version history + proposed-vs-accepted** machinery is required for **Plan edits** (structural / multi-session / future-affecting) and is owned by the **Plan Repository** (§2), not bolted onto every micro-mutation.
+  *Update (issue #39):* conversational **workout-content** mutations are no longer in the unversioned bucket.
+  They route through one revision-checked `WorkoutMutationRequest` envelope in `WorkoutStore`/`PlanRepository`, append an immutable revision plus a `PlanVersion` with actor `agent`, and return a durable receipt that backs targeted undo.
+  Daily-context and constraint micro-mutations still apply directly.
 - The `ConversationService` + tool-dispatch abstraction is schema-agnostic, so pointing it at Program-editing tools later is additive.
 - Preserve the planned-vs-performed boundary from the first workout model. Even a simple manual logger should link actuals back to a planned prescription rather than mutating the prescription in place.
 

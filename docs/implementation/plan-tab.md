@@ -224,7 +224,7 @@ status; on completion it **freezes** an immutable `CompletedWorkoutLog` (and the
 Append-only versioning (§6):
 
 ```
-enum PlanActor            { case user, baseline, imported }
+enum PlanActor            { case user, agent, baseline, imported }
 enum PlanOpKind           { move, swap, reorder, add, duplicate, replace, skip, delete, lifecycle, undo, restore }
 struct PlanOperation      { id; kind: PlanOpKind; actor: PlanActor; reason?; timestamp; diff: ScheduleDiff }
 struct ScheduleDiff       { changes: [DayChange] }             // human-renderable + carries the inverse
