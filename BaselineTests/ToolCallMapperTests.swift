@@ -681,4 +681,198 @@ struct ToolCallMapperTests {
         ]) == nil)
         #expect(ToolCallMapper.map(name: "delete_everything", input: [:]) == nil)                          // unknown tool
     }
+
+    // MARK: - Wave 7: atomic batch and bulk selector tools
+
+    @Test func mapsApplyWorkoutEditsPreservingOperationOrder() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let blockID = try #require(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+        let exerciseID = try #require(UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc"))
+        let setID = try #require(UUID(uuidString: "dddddddd-dddd-dddd-dddd-dddddddddddd"))
+
+        let call = ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [
+                ["op": "update_block_metadata", "block_id": blockID.uuidString, "name": "Upper Body"],
+                ["op": "move_exercise", "exercise_instance_id": exerciseID.uuidString,
+                 "to_block_id": blockID.uuidString, "to_index": 1],
+                ["op": "update_set", "set_id": setID.uuidString, "patch": ["values": ["distance": 1_000]]],
+            ],
+            "expected_revision_token": revision.uuidString,
+        ])
+        #expect(call == .applyWorkoutEdits(
+            operations: [
+                .updateBlockMetadata(blockID: blockID, name: .set("Upper Body"), intent: .unchanged, guidance: .unchanged),
+                .moveExercise(exerciseInstanceID: exerciseID, toBlockID: blockID, toIndex: 1),
+                .updateSet(setID: setID, patch: PlannedSetPatch(values: .set(.init(metrics: [.distance: .set(1_000)])))),
+            ],
+            expectedRevisionToken: revision
+        ))
+    }
+
+    @Test func applyWorkoutEditsRejectsWhenAnyOperationIsMalformed() throws {
+        let revision = UUID().uuidString
+        let blockID = UUID().uuidString
+        // A single malformed operation rejects the entire call: batch mapping is all-or-nothing too.
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [
+                ["op": "update_block_metadata", "block_id": blockID, "name": "Upper Body"],
+                ["op": "remove_set", "set_id": "not-a-uuid"],
+            ],
+            "expected_revision_token": revision,
+        ]) == nil)
+        // Unknown op names, non-batchable tools, and empty batches reject.
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [["op": "detonate_workout"]],
+            "expected_revision_token": revision,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [["op": "create_workout", "title": "New"]],
+            "expected_revision_token": revision,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [["op": "undo_workout_mutation", "mutation_id": UUID().uuidString]],
+            "expected_revision_token": revision,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [[String: Any]()],
+            "expected_revision_token": revision,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [[String: Any]]() as Any,
+            "expected_revision_token": revision,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [["op": "remove_set", "set_id": UUID().uuidString]],
+        ]) == nil)   // missing batch token
+    }
+
+    @Test func batchOperationsParseExactlyLikeTheirStandaloneTools() throws {
+        // The same payload (minus the token) must produce the same typed operation both ways, so a
+        // schema-valid single call can always be lifted into a batch.
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let exerciseID = try #require(UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc"))
+        let payload: [String: Any] = [
+            "exercise_instance_id": exerciseID.uuidString,
+            "values": ["reps": 8, "load": 60],
+            "role": "working",
+            "targets": [String: Any](),
+        ]
+
+        var standaloneInput = payload
+        standaloneInput["expected_revision_token"] = revision.uuidString
+        let standalone = ToolCallMapper.map(name: "add_set", input: standaloneInput)
+
+        var batchOperation = payload
+        batchOperation["op"] = "add_set"
+        let batch = ToolCallMapper.map(name: "apply_workout_edits", input: [
+            "operations": [batchOperation],
+            "expected_revision_token": revision.uuidString,
+        ])
+        guard case .addSet(let a, let b, let c, let d, let e, let token) = try #require(standalone),
+              case .applyWorkoutEdits(let operations, let batchToken) = try #require(batch) else {
+            Issue.record("Expected both mappings to succeed")
+            return
+        }
+        #expect(operations == [.addSet(exerciseInstanceID: a, afterSetID: b, values: c, role: d, targets: e)])
+        #expect(token == revision)
+        #expect(batchToken == revision)
+    }
+
+    @Test func mapsConvertWorkoutUnits() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let blockID = try #require(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+
+        // No selector, dry_run defaults to false — the whole-workout case applies directly.
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "km",
+            "pace_unit": "/km",
+            "expected_revision_token": revision.uuidString,
+        ]) == .convertWorkoutUnits(
+            units: [.distance: .kilometers, .pace: .secondsPerKilometer],
+            selector: nil,
+            dryRun: false,
+            expectedRevisionToken: revision
+        ))
+        // Selector + explicit dry run.
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "mi",
+            "selector": ["pattern": "gait", "block_id": blockID.uuidString],
+            "dry_run": true,
+            "expected_revision_token": revision.uuidString,
+        ]) == .convertWorkoutUnits(
+            units: [.distance: .miles],
+            selector: BulkExerciseSelectorInput(pattern: "gait", blockID: blockID),
+            dryRun: true,
+            expectedRevisionToken: revision
+        ))
+        // No units, malformed unit, empty selector object, mistyped selector values, and unknown
+        // selector keys all reject — a dropped constraint would silently widen the match set.
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "furlongs",
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "km",
+            "selector": [String: Any](),
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "km",
+            "selector": ["muscle": 3],
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "km",
+            "selector": ["block_id": "not-a-uuid"],
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "convert_workout_units", input: [
+            "distance_unit": "km",
+            "selector": ["modality": "cardio", "equipmnt": "treadmill"],
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+    }
+
+    @Test func mapsBulkReplaceExercisesWithDryRunAsTheDefault() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        // Omitted dry_run maps to TRUE: only an explicit false can apply.
+        #expect(ToolCallMapper.map(name: "bulk_replace_exercises", input: [
+            "selector": ["definition_id": "run"],
+            "replacement_definition_id": "row",
+            "expected_revision_token": revision.uuidString,
+        ]) == .bulkReplaceExercises(
+            selector: BulkExerciseSelectorInput(definitionID: "run"),
+            replacementDefinitionID: "row",
+            dryRun: true,
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "bulk_replace_exercises", input: [
+            "selector": ["modality": "cardio"],
+            "replacement_definition_id": "ski_erg",
+            "dry_run": false,
+            "expected_revision_token": revision.uuidString,
+        ]) == .bulkReplaceExercises(
+            selector: BulkExerciseSelectorInput(modality: "cardio"),
+            replacementDefinitionID: "ski_erg",
+            dryRun: false,
+            expectedRevisionToken: revision
+        ))
+        // Selector and replacement are mandatory.
+        #expect(ToolCallMapper.map(name: "bulk_replace_exercises", input: [
+            "replacement_definition_id": "row",
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "bulk_replace_exercises", input: [
+            "selector": ["definition_id": "run"],
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "bulk_replace_exercises", input: [
+            "selector": ["definition_id": "run"],
+            "replacement_definition_id": "row",
+        ]) == nil)
+    }
 }

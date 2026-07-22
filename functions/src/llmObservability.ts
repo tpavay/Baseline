@@ -12,8 +12,8 @@ import * as logger from "firebase-functions/logger";
 export const LLM_OBSERVABILITY_VERSIONS = {
   samplingPolicy: "all-v1",
   pricing: "langfuse-model-pricing-live-v1",
-  conversationPrompt: "conversation-prompt-v3",
-  conversationTools: "conversation-tools-v2",
+  conversationPrompt: "conversation-prompt-v4",
+  conversationTools: "conversation-tools-v3",
   conversationOutput: "anthropic-content-blocks-v1",
   conversationValidator: "tool-mapper-v1",
   importPrompt: "workout-import-prompt-v1",
@@ -22,8 +22,8 @@ export const LLM_OBSERVABILITY_VERSIONS = {
 } as const;
 
 /**
- * The conversation callable serves Wave 6, Wave 5, and legacy toolsets, so the trace records which
- * one the model actually saw rather than one constant.
+ * The conversation callable serves Wave 7, Wave 6, Wave 5, and legacy toolsets, so the trace records
+ * which one the model actually saw rather than one constant.
  */
 export function conversationToolSchemaVersion(servedToolset: string): string {
   return `${LLM_OBSERVABILITY_VERSIONS.conversationTools}-${servedToolset}`;

@@ -122,7 +122,7 @@ enum ExerciseSearch {
     // MARK: - Running
 
     static func run(_ query: Query, in snapshot: ExerciseCatalogSnapshot) -> Results {
-        let filtered = snapshot.definitions.filter { matchesFilters($0, query) }
+        let filtered = snapshot.definitions.filter { matches($0, query) }
 
         guard let text = query.text else {
             guard !query.isEmpty else {
@@ -166,7 +166,10 @@ enum ExerciseSearch {
         return nil
     }
 
-    private static func matchesFilters(_ def: ExerciseDefinition, _ q: Query) -> Bool {
+    /// Whether one definition satisfies every taxonomy filter in the query (text is ignored here).
+    /// Internal because the Wave 7 bulk-selector tools reuse exactly this filter semantics over a
+    /// workout's resolved instances — one matching rule, not a second selector implementation.
+    static func matches(_ def: ExerciseDefinition, _ q: Query) -> Bool {
         if let m = q.muscle, !def.primaryMuscles.contains(m), !def.secondaryMuscles.contains(m) { return false }
         if let e = q.equipment, !def.equipment.contains(e) { return false }
         if let mo = q.modality, def.modality != mo { return false }

@@ -402,6 +402,23 @@ struct AgentToolsTests {
             mutationID: UUID(),
             expectedRevisionToken: UUID()
         )))
+        // Wave 7 composite/bulk edits act only on the draft workout, so they belong in the scope.
+        #expect(service.permits(.applyWorkoutEdits(
+            operations: [.removeSet(setID: UUID())],
+            expectedRevisionToken: UUID()
+        )))
+        #expect(service.permits(.convertWorkoutUnits(
+            units: [.distance: .kilometers],
+            selector: nil,
+            dryRun: true,
+            expectedRevisionToken: UUID()
+        )))
+        #expect(service.permits(.bulkReplaceExercises(
+            selector: BulkExerciseSelectorInput(definitionID: "run"),
+            replacementDefinitionID: "row",
+            dryRun: true,
+            expectedRevisionToken: UUID()
+        )))
         #expect(!service.permits(.updateExercisePreference(
             exercise: "Sled Pull",
             scope: .exercise,
