@@ -12,7 +12,7 @@ import * as logger from "firebase-functions/logger";
 export const LLM_OBSERVABILITY_VERSIONS = {
   samplingPolicy: "all-v1",
   pricing: "langfuse-model-pricing-live-v1",
-  conversationPrompt: "conversation-prompt-v1",
+  conversationPrompt: "conversation-prompt-v2",
   conversationTools: "conversation-tools-v1",
   conversationOutput: "anthropic-content-blocks-v1",
   conversationValidator: "tool-mapper-v1",
@@ -27,6 +27,14 @@ export const LLM_OBSERVABILITY_VERSIONS = {
  */
 export function conversationToolSchemaVersion(servedToolset: string): string {
   return `${LLM_OBSERVABILITY_VERSIONS.conversationTools}-${servedToolset}`;
+}
+
+/**
+ * The system prompt's editing guidance is likewise toolset-matched (see prompt.ts), so the trace
+ * records the prompt variant the model actually saw alongside the served tool schema.
+ */
+export function conversationPromptVersion(servedToolset: string): string {
+  return `${LLM_OBSERVABILITY_VERSIONS.conversationPrompt}-${servedToolset}`;
 }
 
 export type LLMSurface =

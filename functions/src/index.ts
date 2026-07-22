@@ -57,6 +57,7 @@ import {
   LLM_OBSERVABILITY_VERSIONS,
   LLMSurface,
   configureLLMObservability,
+  conversationPromptVersion,
   conversationToolSchemaVersion,
   flushLLMObservability,
   parseClientToolObservations,
@@ -141,7 +142,7 @@ export const conversation = onCall(
         await recordClientToolObservations(parseToolEvents(data.toolEvents));
         try {
           const content = await provider.complete({
-            system: buildSystem(contextSummary),
+            system: buildSystem(servedToolsetForClientSchema(data.clientToolSchemaVersion), contextSummary),
             tools: toolsForClientSchema(data.clientToolSchemaVersion),
             messages: messages,
             roundIndex: trace.roundIndex,
@@ -756,16 +757,15 @@ function conversationTraceContext(
   const traceID = validTraceID(data.traceID) ?? randomUUID();
   const sessionID = safeString(data.sessionID, 120) ?? traceID;
   const surface = allowedChatSurface(data.surface);
+  const servedToolset = servedToolsetForClientSchema(data.clientToolSchemaVersion);
   return {
     traceID,
     sessionID,
     surface,
     uid,
     model,
-    promptVersion: LLM_OBSERVABILITY_VERSIONS.conversationPrompt,
-    toolSchemaVersion: conversationToolSchemaVersion(
-      servedToolsetForClientSchema(data.clientToolSchemaVersion),
-    ),
+    promptVersion: conversationPromptVersion(servedToolset),
+    toolSchemaVersion: conversationToolSchemaVersion(servedToolset),
     outputSchemaVersion: LLM_OBSERVABILITY_VERSIONS.conversationOutput,
     validatorVersion: LLM_OBSERVABILITY_VERSIONS.conversationValidator,
     roundIndex: boundedInteger(data.roundIndex, 0, 12),

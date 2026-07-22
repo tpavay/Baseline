@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  conversationPromptVersion,
   conversationToolSchemaVersion,
   maskLangfuseData,
   normalizeTraceID,
@@ -17,6 +18,17 @@ test("conversation traces record the toolset the model actually saw", () => {
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema(undefined)),
     "conversation-tools-v1-legacy",
+  );
+});
+
+test("conversation traces record the prompt variant the model actually saw", () => {
+  assert.equal(
+    conversationPromptVersion(servedToolsetForClientSchema("5")),
+    "conversation-prompt-v2-wave5",
+  );
+  assert.equal(
+    conversationPromptVersion(servedToolsetForClientSchema(undefined)),
+    "conversation-prompt-v2-legacy",
   );
 });
 
