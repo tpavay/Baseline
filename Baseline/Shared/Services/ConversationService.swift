@@ -3,6 +3,41 @@ import CryptoKit
 import UIKit
 @preconcurrency import FirebaseFunctions
 
+/// The remote boundary of the conversation runtime, mirroring `WorkoutImportRemoteCalling` so the
+/// turn's timeout, cancellation, and error mapping are unit-testable without a network.
+protocol ConversationRemoteCalling: AnyObject, Sendable {
+    var timeoutInterval: TimeInterval { get set }
+    /// Returns the callable's response payload re-encoded as JSON `Data`: the raw response is a
+    /// heterogeneous object graph (non-Sendable), and the deadline race needs a Sendable value.
+    func call(_ request: [String: String]) async throws -> Data
+}
+
+private final class FirebaseConversationRemoteCallable: ConversationRemoteCalling, @unchecked Sendable {
+    private let callable: HTTPSCallable
+
+    var timeoutInterval: TimeInterval {
+        get { callable.timeoutInterval }
+        set { callable.timeoutInterval = newValue }
+    }
+
+    init(functions: Functions, name: String) {
+        callable = functions.httpsCallable(name)
+    }
+
+    func call(_ request: [String: String]) async throws -> Data {
+        let raw = try await callable.call(request).data
+        guard JSONSerialization.isValidJSONObject(raw) else { return Data() }
+        return try JSONSerialization.data(withJSONObject: raw)
+    }
+}
+
+enum ConversationError: Error, Equatable {
+    /// The wall-clock deadline for one model round elapsed. Distinct from the callable's own
+    /// timeout, which is idle-based and never fires on a connection that trickles bytes.
+    case roundDeadlineExceeded
+    case badResponse
+}
+
 /// The app side of the **Conversation Runtime**. Sends the transcript to the `conversation` Cloud
 /// Function, then runs the on-device tool loop — map each `tool_use` → validated `AgentTools.Call`
 /// → dispatch → `tool_result` → resend — until the model returns a final reply. The deterministic
@@ -11,6 +46,18 @@ import UIKit
 @MainActor
 @Observable
 final class ConversationService {
+
+    /// Network patience knobs, injectable so tests can compress them to fractions of a second.
+    struct Timeouts: Sendable {
+        /// Idle timeout handed to the callable (`URLRequest.timeoutInterval`). It resets on every
+        /// received byte, so on its own it cannot bound a trickling connection.
+        var callableIdleSeconds: TimeInterval = 30
+        /// Wall-clock bound on one model round — the guarantee that a turn always ends. Generous
+        /// because a tool-using model round legitimately takes tens of seconds.
+        var roundDeadlineSeconds: TimeInterval = 60
+        /// Wall-clock bound on the fail-open observability export.
+        var telemetryDeadlineSeconds: TimeInterval = 10
+    }
 
     enum Scope: Equatable, Sendable {
         case general
@@ -41,6 +88,10 @@ final class ConversationService {
     private(set) var log: [Message] = []
     private(set) var isThinking = false
 
+    /// True only while a turn task is in flight and can actually be stopped. `isThinking` also
+    /// covers the local undo, which has no task to cancel, so the stop affordance keys off this.
+    var canCancelTurn: Bool { turnTask != nil }
+
     // Observability: the structured state + plan the conversation is building, exposed for the
     // "What Baseline knows" inspector.
     private(set) var latestDecision: DecisionEngine.Result?
@@ -49,25 +100,45 @@ final class ConversationService {
     private(set) var toolActivity: [ToolEvent] = []
 
     private let tools: AgentTools
-    private let functions: Functions
+    private let makeCallable: @Sendable (String) -> any ConversationRemoteCalling
     private let scope: Scope
     private let surface: Surface
+    private let timeouts: Timeouts
     private let conversationSessionID = UUID().uuidString.lowercased()
     private var transcript: [[String: Any]] = []      // Anthropic wire-format messages
     private let maxToolRounds = 6                       // safety bound on tool ping-pong
     private var activeTraceID = ""
     private var pendingToolObservations: [ClientToolObservation] = []
+    private var turnTask: Task<Void, Never>?
 
-    init(
+    convenience init(
         tools: AgentTools,
         functions: Functions = Functions.functions(),
         scope: Scope = .general,
-        surface: Surface = .today
+        surface: Surface = .today,
+        timeouts: Timeouts = .init()
+    ) {
+        self.init(
+            tools: tools,
+            makeCallable: { FirebaseConversationRemoteCallable(functions: functions, name: $0) },
+            scope: scope,
+            surface: surface,
+            timeouts: timeouts
+        )
+    }
+
+    init(
+        tools: AgentTools,
+        makeCallable: @escaping @Sendable (String) -> any ConversationRemoteCalling,
+        scope: Scope = .general,
+        surface: Surface = .today,
+        timeouts: Timeouts = .init()
     ) {
         self.tools = tools
-        self.functions = functions
+        self.makeCallable = makeCallable
         self.scope = scope
         self.surface = scope == .workoutImport ? .workoutImport : surface
+        self.timeouts = timeouts
     }
 
     var canUndoLatestWorkoutMutation: Bool {
@@ -86,12 +157,24 @@ final class ConversationService {
         pendingToolObservations = []
         transcript.append(["role": "user", "content": userText])
         isThinking = true
-        Task { [weak self] in
+        turnTask = Task { [weak self] in
             guard let self else { return }
+            // `defer` and not straight-line code: the loading state must clear on every exit —
+            // clean finish, failure, and cancellation alike. A stuck `isThinking` locks the composer.
+            defer {
+                isThinking = false
+                turnTask = nil
+            }
             let completed = await runLoop()
             if !completed { transcript.removeLast(transcript.count - checkpoint) }
-            isThinking = false
         }
+    }
+
+    /// Aborts the in-flight turn. The turn task rolls the transcript back to its pre-turn
+    /// checkpoint and clears the loading state; no error copy is appended, because the athlete
+    /// chose to stop — but a tool result already committed this turn still surfaces.
+    func cancelTurn() {
+        turnTask?.cancel()
     }
 
     /// Applies the exact persisted inverse represented by the latest receipt. This deliberately
@@ -134,10 +217,20 @@ final class ConversationService {
         // payload (receipts, revision tokens) that must never become an athlete-visible bubble.
         var lastToolResult: String?
         for roundIndex in 0..<maxToolRounds {
-            guard let content = await callFunction(roundIndex: roundIndex) else {
-                await sendTerminalTelemetry("provider_failed", roundIndex: roundIndex)
+            let content: [[String: Any]]
+            do {
+                content = try await callFunction(roundIndex: roundIndex)
+            } catch is CancellationError {
+                // The athlete stopped the turn: no error copy, but a mutation a tool already
+                // committed must still surface — the same invariant the failure path holds.
+                if let lastToolResult { log.append(Message(role: .baseline, text: lastToolResult)) }
+                return false
+            } catch {
+                // Message first, telemetry second: the athlete should not wait out the (bounded,
+                // fail-open) observability export before learning the turn failed.
                 log.append(Message(role: .baseline, text: lastToolResult
-                    ?? "I couldn't reach the coach just now — try again in a moment."))
+                    ?? Self.failureMessage(for: error)))
+                await sendTerminalTelemetry("provider_failed", roundIndex: roundIndex)
                 return false
             }
             transcript.append(["role": "assistant", "content": content])
@@ -231,8 +324,8 @@ final class ConversationService {
             if !userFacingResults.isEmpty { lastToolResult = userFacingResults.joined(separator: "\n") }
             transcript.append(["role": "user", "content": results])
         }
-        await sendTerminalTelemetry("tool_round_exhausted", roundIndex: maxToolRounds - 1)
         log.append(Message(role: .baseline, text: "Let's take that one step at a time — ask me again?"))
+        await sendTerminalTelemetry("tool_round_exhausted", roundIndex: maxToolRounds - 1)
         return false   // tool rounds exhausted → transcript ends on a tool_result; roll it back
     }
 
@@ -252,7 +345,7 @@ final class ConversationService {
         return !call.requiresWorkoutMutationReceiptForActivity || response.mutationReceipt != nil
     }
 
-    private func callFunction(roundIndex: Int) async -> [[String: Any]]? {
+    private func callFunction(roundIndex: Int) async throws -> [[String: Any]] {
         let today = tools.dispatch(.getToday)
         latestDecision = today.decision
         latestPlan = today.plan
@@ -262,21 +355,24 @@ final class ConversationService {
         // The transcript is heterogeneous JSON (non-Sendable), so ship it as a string; the request
         // dict is then [String: String] (Sendable) and safe to send across the callable boundary.
         guard let data = try? JSONSerialization.data(withJSONObject: transcript),
-              let messagesJSON = String(data: data, encoding: .utf8) else { return nil }
+              let messagesJSON = String(data: data, encoding: .utf8) else { throw ConversationError.badResponse }
         var request = traceRequest(roundIndex: roundIndex)
         request["messages"] = messagesJSON
         request["contextSummary"] = contextSummary
         if let toolEvents = Self.encodedToolObservations(pendingToolObservations) {
             request["toolEvents"] = toolEvents
         }
-        do {
-            let result = try await functions.httpsCallable("conversation").call(request)
-            let payload = result.data as? [String: Any]
-            pendingToolObservations = []
-            return payload?["content"] as? [[String: Any]]
-        } catch {
-            return nil
+        let callable = makeCallable("conversation")
+        callable.timeoutInterval = timeouts.callableIdleSeconds
+        let response = try await Self.callRacingDeadline(
+            callable, request: request, deadline: timeouts.roundDeadlineSeconds
+        )
+        pendingToolObservations = []
+        guard let payload = try? JSONSerialization.jsonObject(with: response) as? [String: Any],
+              let content = payload["content"] as? [[String: Any]] else {
+            throw ConversationError.badResponse
         }
+        return content
     }
 
     private func sendTerminalTelemetry(_ outcome: String, roundIndex: Int) async {
@@ -285,11 +381,134 @@ final class ConversationService {
         if let toolEvents = Self.encodedToolObservations(pendingToolObservations) {
             request["toolEvents"] = toolEvents
         }
+        let callable = makeCallable("recordLLMObservability")
+        callable.timeoutInterval = timeouts.telemetryDeadlineSeconds
         do {
-            _ = try await functions.httpsCallable("recordLLMObservability").call(request)
+            _ = try await Self.callRacingDeadline(
+                callable, request: request, deadline: timeouts.telemetryDeadlineSeconds
+            )
             pendingToolObservations = []
         } catch {
             // Observability is fail-open. The athlete's chat result must never depend on export.
+        }
+    }
+
+    // MARK: - Deadline race
+
+    /// Copy for a turn that failed because the network is gone or too degraded to finish.
+    static let offlineFailureMessage = "No connection right now - check your signal and try again."
+    /// Copy for any other failed turn.
+    static let genericFailureMessage = "I couldn't reach the coach just now — try again in a moment."
+
+    static func failureMessage(for error: any Error) -> String {
+        isConnectivityFailure(error) ? offlineFailureMessage : genericFailureMessage
+    }
+
+    /// Walks the error chain looking for a connectivity-shaped failure. The Functions SDK surfaces
+    /// transport errors both directly (NSURLErrorDomain) and wrapped in FunctionsErrorDomain, so
+    /// both the top error and its underlying chain are inspected.
+    static func isConnectivityFailure(_ error: any Error) -> Bool {
+        if let conversationError = error as? ConversationError {
+            return conversationError == .roundDeadlineExceeded
+        }
+        var next: NSError? = error as NSError
+        while let nsError = next {
+            if nsError.domain == NSURLErrorDomain {
+                switch nsError.code {
+                case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost,
+                     NSURLErrorCannotConnectToHost, NSURLErrorTimedOut:
+                    return true
+                default:
+                    break
+                }
+            }
+            if nsError.domain == FunctionsErrorDomain,
+               nsError.code == FunctionsErrorCode.unavailable.rawValue ||
+               nsError.code == FunctionsErrorCode.deadlineExceeded.rawValue {
+                return true
+            }
+            next = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
+    }
+
+    /// Races the callable against a wall-clock deadline, honoring caller cancellation.
+    ///
+    /// Structured concurrency cannot express this race: a task group waits for every child on scope
+    /// exit, and the Functions SDK's async `call` is a completion-handler import that ignores task
+    /// cancellation — a hung fetch child would keep the group (and the turn) alive for the full
+    /// hang, which on a trickling connection is forever (the callable's own timeout is idle-based).
+    /// The fetch therefore runs unstructured; whichever of fetch / deadline / caller-cancellation
+    /// finishes first resumes the continuation, and the losing arms are cancelled best-effort.
+    private static func callRacingDeadline(
+        _ callable: any ConversationRemoteCalling,
+        request: [String: String],
+        deadline: TimeInterval
+    ) async throws -> Data {
+        let race = RaceBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                race.begin(continuation)
+                let fetch = Task {
+                    do { race.finish(.success(try await callable.call(request))) }
+                    catch { race.finish(.failure(error)) }
+                }
+                let timer = Task {
+                    do { try await Task.sleep(for: .seconds(deadline)) } catch { return }
+                    race.finish(.failure(ConversationError.roundDeadlineExceeded))
+                }
+                race.register([fetch, timer])
+            }
+        } onCancel: {
+            race.finish(.failure(CancellationError()))
+        }
+    }
+
+    /// First-finish-wins holder for the deadline race. All state is guarded by the lock; late
+    /// `finish` calls from losing arms no-op, and a `begin` that arrives after an early cancellation
+    /// resumes immediately with the stored result. Safe to call from any thread.
+    private final class RaceBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Data, any Error>?
+        private var result: Result<Data, any Error>?
+        private var pending: [Task<Void, Never>] = []
+
+        func begin(_ continuation: CheckedContinuation<Data, any Error>) {
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(with: result)
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+        }
+
+        func register(_ tasks: [Task<Void, Never>]) {
+            lock.lock()
+            if result != nil {
+                lock.unlock()
+                tasks.forEach { $0.cancel() }
+                return
+            }
+            pending = tasks
+            lock.unlock()
+        }
+
+        func finish(_ newResult: Result<Data, any Error>) {
+            lock.lock()
+            guard result == nil else {
+                lock.unlock()
+                return
+            }
+            result = newResult
+            let continuation = continuation
+            self.continuation = nil
+            let losers = pending
+            pending = []
+            lock.unlock()
+            losers.forEach { $0.cancel() }
+            continuation?.resume(with: newResult)
         }
     }
 
