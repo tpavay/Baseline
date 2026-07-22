@@ -547,6 +547,53 @@ struct CustomExerciseImportReviewTests {
         #expect(model.session.canSave == false, "a partially-valid import must not save")
     }
 
+    /// Two agent mutations can land in one model round while SwiftUI coalesces `onChange` to the
+    /// final value only. The store's `agentMutationObserver` must feed every intermediate value to
+    /// the view model, so undoing back to a state the view never rendered still restores the
+    /// blocking issue that state had.
+    @Test func coalescedRendersStillRestoreAnIntermediateIssueStateOnUndo() throws {
+        let (model, review, _, exerciseID) = unknownExerciseFixture()
+        review.agentMutationObserver = { [weak model] in model?.replaceDraftWorkout($0) }
+        #expect(model.session.canSave == false)
+
+        // First mutation leaves the blocking issue open; the second fixes it. No view sync happens
+        // between them - the observer is the only per-mutation delivery.
+        let retitleToken = try #require(review.mutationTarget(review.agentScope)?.revisionToken)
+        #expect(review.updateWorkoutMetadata(
+            title: .set("Imported Sprint Day"),
+            goal: .unchanged,
+            guidance: .unchanged,
+            expectedRevisionToken: retitleToken
+        ).succeeded)
+        let fixToken = try #require(review.mutationTarget(review.agentScope)?.revisionToken)
+        let fixed = review.replaceExercise(
+            exerciseInstanceID: exerciseID,
+            with: "Echo Bike",
+            expectedRevisionToken: fixToken
+        )
+        guard case .mutated(let receipt) = fixed else {
+            Issue.record("expected the replacement to apply, got \(fixed)")
+            return
+        }
+
+        // The coalesced render delivers only the final value; by then the issue is already resolved.
+        model.synchronizeDraft(from: review)
+        #expect(model.session.issues.isEmpty)
+        #expect(model.session.canSave)
+
+        // Undo regresses the draft to the retitled-but-unresolved intermediate state the view never
+        // rendered. Its blocking issue must resurface, and the single dismissal sync must keep it.
+        #expect(review.undoMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        ).succeeded)
+        model.synchronizeDraft(from: review)
+
+        #expect(model.session.issues.count == 1, "the intermediate state's blocking issue must resurface")
+        #expect(model.session.issues.first?.code == .unknownExercise)
+        #expect(model.session.canSave == false, "a partially-valid import must not save")
+    }
+
     @Test func agentIssueContextListsOpenIssuesAndGoesQuietWhenResolved() throws {
         let (model, review, _, exerciseID) = unknownExerciseFixture()
 

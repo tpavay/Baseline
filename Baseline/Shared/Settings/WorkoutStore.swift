@@ -691,6 +691,13 @@ final class WorkoutStore {
         }
     }
 
+    /// Synchronous per-mutation feed: invoked with the resulting workout after every applied agent
+    /// mutation and after every undo. The import review flow wires this so each intermediate value
+    /// reaches its issue reconciler in order, independent of SwiftUI change coalescing; view-level
+    /// `onChange` only sees the last value of a render pass, and a skipped intermediate state would
+    /// otherwise be unrestorable after `undo_workout_mutation`.
+    @ObservationIgnored var agentMutationObserver: ((Workout) -> Void)?
+
     /// The addressable descriptor returned by `get_current_workout` and required by mutation calls.
     /// Bound stores read it through the plan repository; review-local stores own a transient token.
     func mutationTarget(_ scope: WorkoutEditScope) -> WorkoutMutationTarget? {
@@ -806,6 +813,7 @@ final class WorkoutStore {
                 isSyncing = false
             }
             pendingPlanEdit = nil
+            agentMutationObserver?(authoritative)
             return .mutated(receipt)
         case .preview(let receipt):
             return .mutated(receipt)
@@ -878,12 +886,14 @@ final class WorkoutStore {
             transientRevisionToken = undoReceipt.afterRevisionToken
             invalidateLatestTransientUndo()
             revertCustomExerciseCreation(ifUndone: mutationID)
+            agentMutationObserver?(applied.before)
             return .mutated(undoReceipt)
         }
         switch sink.undoMutation(mutationID, expectedRevisionToken) {
         case .applied(let receipt):
             reloadFromPlan()
             revertCustomExerciseCreation(ifUndone: mutationID)
+            if let restored = current { agentMutationObserver?(restored) }
             return .mutated(receipt)
         case .preview(let receipt):
             return .mutated(receipt)

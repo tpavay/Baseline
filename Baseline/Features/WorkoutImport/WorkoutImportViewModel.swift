@@ -191,6 +191,7 @@ final class WorkoutImportViewModel {
         let generation = beginOperation(sessionID: sessionID)
         session = ImportSession(id: sessionID, status: .loadingImages(completed: 0, total: imageCount))
         currentJob = nil
+        issueStateHistory.removeAll()
         reviewDraftIsPersisted = false
         reviewPersistenceError = nil
         let nextTask = Task { [weak self] in
@@ -229,6 +230,7 @@ final class WorkoutImportViewModel {
         }
         cleanupTask = cancellation
         currentJob = nil
+        issueStateHistory.removeAll()
         reviewDraftIsPersisted = false
         reviewPersistenceError = nil
         clearTransientSourceState()
@@ -584,6 +586,9 @@ final class WorkoutImportViewModel {
         if let activeOperationSessionID, activeOperationSessionID != job.id { return }
         activeOperationSessionID = job.id
         guard currentJob == nil || currentJob?.id == job.id || session.id == job.id else { return }
+        // Job adoption replaces the draft and its issue set wholesale, so recorded review states
+        // from any earlier parse are no longer restorable.
+        issueStateHistory.removeAll()
         currentJob = job
         session.id = job.id
         session.sourcePages = job.pages
@@ -724,6 +729,7 @@ final class WorkoutImportViewModel {
             cleanupTask = Task { await coordinator.complete(job) }
         }
         currentJob = nil
+        issueStateHistory.removeAll()
         clearTransientSourceState()
         session.status = .saved(templateID: template.id)
         touch()

@@ -91,10 +91,12 @@ struct WorkoutImportReviewView: View {
             model.replaceDraftWorkout(newValue)
         }
         // The chat inherits this view's environment, so its `WorkoutStore` is the transient review
-        // store: the agent edits the draft, never today's workout. Every chat mutation lands in
-        // `reviewStore.current`, flows through the `onChange` above into `replaceDraftWorkout`, and
-        // reconciles the import issues - save stays blocked while a blocking issue remains. The
-        // dismissal sync is belt-and-braces, mirroring the save path.
+        // store: the agent edits the draft, never today's workout. Every chat mutation reaches
+        // `replaceDraftWorkout` synchronously through the store's `agentMutationObserver` (wired at
+        // store creation), so issue reconciliation sees each intermediate value even when the
+        // `onChange` above coalesces to the last one - save stays blocked while a blocking issue
+        // remains. The `onChange` covers manual editor edits; the dismissal sync is belt-and-braces,
+        // mirroring the save path.
         .sheet(isPresented: $showChat, onDismiss: { model.synchronizeDraft(from: reviewStore) }) {
             AskBaselineSheet(
                 mode: .workoutImport,
