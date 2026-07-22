@@ -796,7 +796,12 @@ struct WorkoutImportView: View {
               reviewStore == nil,
               let workout = model.session.draft?.workout,
               !workout.allExercises.isEmpty else { return }
-        reviewStore = WorkoutStore(transientWorkout: workout, configurationFrom: workouts)
+        let store = WorkoutStore(transientWorkout: workout, configurationFrom: workouts)
+        // Agent mutations feed the import document synchronously, one value per mutation. The review
+        // view's `onChange` only delivers the last value of a render pass, and a skipped intermediate
+        // state could never have its issue set restored after `undo_workout_mutation`.
+        store.agentMutationObserver = { [weak model] in model?.replaceDraftWorkout($0) }
+        reviewStore = store
     }
 
     private var saved: some View {

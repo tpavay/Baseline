@@ -875,4 +875,104 @@ struct ToolCallMapperTests {
             "replacement_definition_id": "row",
         ]) == nil)
     }
+
+    @Test func mapsCreateCustomExerciseWithTolerantTaxonomyAndUnits() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let proposal = try #require(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+
+        // Raw values, display names, and snake case all land on the same taxonomy case.
+        #expect(ToolCallMapper.map(name: "create_custom_exercise", input: [
+            "name": "Single-arm sled drag",
+            "equipment": ["sled"],
+            "primary_muscles": ["glutes", "Front delts"],
+            "secondary_muscles": ["hamstrings"],
+            "metrics": ["distance", "duration"],
+            "patterns": ["gait"],
+            "tags": ["hyrox"],
+            "level": "expert",
+            "distance_unit": "mi",
+            "expected_revision_token": revision.uuidString,
+        ]) == .createCustomExercise(
+            draft: WorkoutStore.CustomExerciseDraft(
+                name: "Single-arm sled drag",
+                equipment: [.sled],
+                primaryMuscles: [.glutes, .frontDelts],
+                secondaryMuscles: [.hamstrings],
+                metrics: [.distance, .duration],
+                patterns: [.gait],
+                tags: [.hyrox],
+                level: .expert,
+                units: [.distance: .miles]
+            ),
+            proposalID: nil,
+            expectedRevisionToken: revision
+        ))
+
+        // The confirming call carries the proposal id; omitted optionals stay empty, not invented.
+        #expect(ToolCallMapper.map(name: "create_custom_exercise", input: [
+            "name": "Keg Toss",
+            "equipment": ["sandbag"],
+            "primary_muscles": ["glutes"],
+            "metrics": ["reps", "load"],
+            "proposal_id": proposal.uuidString,
+            "expected_revision_token": revision.uuidString,
+        ]) == .createCustomExercise(
+            draft: WorkoutStore.CustomExerciseDraft(
+                name: "Keg Toss",
+                equipment: [.sandbag],
+                primaryMuscles: [.glutes],
+                secondaryMuscles: [],
+                metrics: [.reps, .load],
+                patterns: [],
+                tags: [],
+                level: nil,
+                units: [:]
+            ),
+            proposalID: proposal,
+            expectedRevisionToken: revision
+        ))
+    }
+
+    @Test func createCustomExerciseRejectsMissingOrUnknownClassification() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let complete: [String: Any] = [
+            "name": "Keg Toss",
+            "equipment": ["sandbag"],
+            "primary_muscles": ["glutes"],
+            "metrics": ["reps"],
+            "expected_revision_token": revision.uuidString,
+        ]
+
+        func without(_ key: String) -> [String: Any] {
+            var input = complete
+            input[key] = nil
+            return input
+        }
+
+        // The manual form's required set is required here too.
+        for key in ["name", "equipment", "primary_muscles", "metrics", "expected_revision_token"] {
+            #expect(ToolCallMapper.map(name: "create_custom_exercise", input: without(key)) == nil, "missing \(key)")
+        }
+        // Empty required arrays are as missing as absent ones.
+        for (key, value) in [("equipment", [String]()), ("primary_muscles", []), ("metrics", [])] {
+            var input = complete
+            input[key] = value
+            #expect(ToolCallMapper.map(name: "create_custom_exercise", input: input) == nil, "empty \(key)")
+        }
+        // A single unparseable value anywhere rejects the whole call - a silently dropped
+        // classification would commit a definition the athlete never saw proposed.
+        for (key, value) in [
+            ("equipment", ["sandbag", "banana"]),
+            ("secondary_muscles", ["banana"]),
+            ("patterns", ["banana"]),
+            ("tags", ["banana"]),
+            ("level", "banana"),
+            ("proposal_id", "not-a-uuid"),
+            ("distance_unit", "banana"),
+        ] as [(String, Any)] {
+            var input = complete
+            input[key] = value
+            #expect(ToolCallMapper.map(name: "create_custom_exercise", input: input) == nil, "unknown \(key) value")
+        }
+    }
 }

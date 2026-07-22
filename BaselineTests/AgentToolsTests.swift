@@ -431,6 +431,23 @@ struct AgentToolsTests {
         #expect(service.permits(.searchExercises(query: "bike", muscle: nil, equipment: nil,
                                                  modality: nil, pattern: nil, tag: nil, level: nil)))
         #expect(service.permits(.getExercise(name: "Echo Bike", id: nil)))
+        // An imported draft can contain a movement the catalog genuinely lacks; deliberate custom
+        // creation (behind the proposal-confirm flow) is how that resolves without losing identity.
+        #expect(service.permits(.createCustomExercise(
+            draft: WorkoutStore.CustomExerciseDraft(
+                name: "Torsonator Rotation",
+                equipment: [.barbell],
+                primaryMuscles: [.obliques],
+                secondaryMuscles: [],
+                metrics: [.reps, .load],
+                patterns: [.rotation],
+                tags: [],
+                level: nil,
+                units: [:]
+            ),
+            proposalID: nil,
+            expectedRevisionToken: UUID()
+        )))
 
         #expect(!service.permits(.setSleep(hours: 4)))
         #expect(!service.permits(.moveWorkout(workout: "AMRAP", toDay: "Friday")))

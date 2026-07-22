@@ -1213,6 +1213,56 @@ export const TOOLS: ToolSchema[] = [
       required: ["exercise_instance_id", "expected_revision_token"],
     },
   },
+  {
+    name: "create_custom_exercise",
+    description: "Deliberately create a custom exercise definition for a movement Baseline's catalog doesn't have. Call search_exercises FIRST - if the movement (or a spelling of it) already exists, use the catalog entry instead of creating a duplicate. TWO-PHASE: call first WITHOUT proposal_id - nothing is created; the tool validates the classification, checks existing custom and catalog movements, and returns the exact definition it would commit (marking every derived or defaulted part) plus a proposal_id. Relay that full classification to the athlete and confirm every part they did not explicitly state - never silently commit a classification you inferred - then call again with the same fields plus that proposal_id to create it. The new exercise is immediately addable by name.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", minLength: 1, description: "The movement's name, e.g. 'Single-arm sled drag'." },
+        equipment: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", enum: ["barbell", "dumbbell", "kettlebell", "cable", "machine", "bodyweight", "band", "medicineBall", "ezBar", "bench", "sled", "sandbag", "box", "jumpRope", "trapBar", "pullUpBar", "bike", "rower", "skiErg", "treadmill", "stairStepper", "elliptical", "other"] },
+          description: "Gear the movement needs. Required, like the manual create form.",
+        },
+        primary_muscles: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", enum: ["abdominals", "abductors", "adductors", "biceps", "calves", "chest", "forearms", "frontDelts", "fullBody", "glutes", "hamstrings", "hipFlexors", "lats", "lowerBack", "neck", "obliques", "quadriceps", "rearDelts", "sideDelts", "traps", "triceps", "upperBack"] },
+          description: "What it mainly trains. Required, like the manual create form.",
+        },
+        secondary_muscles: {
+          type: "array",
+          items: { type: "string", enum: ["abdominals", "abductors", "adductors", "biceps", "calves", "chest", "forearms", "frontDelts", "fullBody", "glutes", "hamstrings", "hipFlexors", "lats", "lowerBack", "neck", "obliques", "quadriceps", "rearDelts", "sideDelts", "traps", "triceps", "upperBack"] },
+        },
+        metrics: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", enum: ["reps", "load", "duration", "distance", "calories", "heartRate", "heartRateZoneTime", "cadence", "power", "pace", "rpe"] },
+          description: "The metrics this movement can log (they also become its logging defaults, and its modality is derived from them).",
+        },
+        patterns: {
+          type: "array",
+          maxItems: 2,
+          items: { type: "string", enum: ["squat", "hinge", "lunge", "push", "pull", "carry", "rotation", "gait", "hold"] },
+          description: "Movement pattern(s), at most two.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string", enum: ["hyrox", "olympicWeightlifting", "powerlifting", "calisthenics", "plyometric", "mobility", "strongman"] },
+        },
+        level: { type: "string", enum: ["beginner", "intermediate", "expert"], description: "Defaults to intermediate when the athlete doesn't say." },
+        distance_unit: { type: "string", enum: ["m", "km", "mi"], description: "Optional future display default for this movement's distance." },
+        load_unit: { type: "string", enum: ["kg", "lb"], description: "Optional future display default for this movement's load." },
+        duration_unit: { type: "string", enum: ["sec", "min"], description: "Optional future display default for this movement's duration." },
+        pace_unit: { type: "string", enum: ["/km", "/mi"], description: "Optional future display default for this movement's pace." },
+        proposal_id: { type: "string", description: "Pass ONLY on the confirming second call, using the id from the first call's proposal." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["name", "equipment", "primary_muscles", "metrics", "expected_revision_token"],
+    },
+  },
 ];
 
 const legacyWaveFiveOverrides = new Map<string, ToolSchema>([
@@ -1332,6 +1382,10 @@ const waveEightOnlyToolNames = new Set([
   "update_exercise_prescription",
 ]);
 
+const waveNineOnlyToolNames = new Set([
+  "create_custom_exercise",
+]);
+
 function toolNamed(name: string): ToolSchema {
   const tool = TOOLS.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`missing tool schema: ${name}`);
@@ -1381,7 +1435,11 @@ const waveSevenOverrides = new Map<string, ToolSchema>([
   })()],
 ]);
 
-export const WAVE7_TOOLS: ToolSchema[] = TOOLS
+export const WAVE8_TOOLS: ToolSchema[] = TOOLS.filter(
+  (tool) => !waveNineOnlyToolNames.has(tool.name),
+);
+
+export const WAVE7_TOOLS: ToolSchema[] = WAVE8_TOOLS
   .filter((tool) => !waveEightOnlyToolNames.has(tool.name))
   .map((tool) => waveSevenOverrides.get(tool.name) ?? tool);
 
@@ -1397,16 +1455,17 @@ export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
   .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
   .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
 
-export type ServedToolset = "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
+export type ServedToolset = "wave9" | "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
 
 /**
- * Monotonic capability gate: Wave 8 clients receive advanced node and prescription editing, Wave 7
- * clients keep atomic composite/bulk mutations, Wave 6 clients keep performed logging, Wave 5
- * clients keep their ID-targeted structure schema, and older clients keep the name-based legacy
- * schema.
+ * Monotonic capability gate: Wave 9 clients receive deliberate custom exercise creation, Wave 8
+ * clients keep advanced node and prescription editing, Wave 7 clients keep atomic composite/bulk
+ * mutations, Wave 6 clients keep performed logging, Wave 5 clients keep their ID-targeted
+ * structure schema, and older clients keep the name-based legacy schema.
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  if (Number(version) >= 9) return "wave9";
   if (Number(version) >= 8) return "wave8";
   if (Number(version) >= 7) return "wave7";
   if (Number(version) >= 6) return "wave6";
@@ -1415,7 +1474,8 @@ export function servedToolsetForClientSchema(version: unknown): ServedToolset {
 
 export function toolsForClientSchema(version: unknown): ToolSchema[] {
   switch (servedToolsetForClientSchema(version)) {
-  case "wave8": return TOOLS;
+  case "wave9": return TOOLS;
+  case "wave8": return WAVE8_TOOLS;
   case "wave7": return WAVE7_TOOLS;
   case "wave6": return WAVE6_TOOLS;
   case "wave5": return WAVE5_TOOLS;

@@ -287,6 +287,36 @@ struct WorkoutImportEvidenceRenderTests {
         #expect(screen.showsText(containing: "did not guess"), "the failure must say Baseline refused to guess")
         #expect(screen.showsText(containing: "Try again"), "a retryable failure must offer the retry")
     }
+
+    /// Wave 9 reachability: the review screen must offer the import-fix conversation - the chat
+    /// that edits the same transient draft - from the toolbar always, and beside the review items
+    /// when something needs fixing. Before this, `AskBaselineSheet(mode: .workoutImport)` existed
+    /// only as disconnected plumbing with no reachable entry point.
+    @Test func theReviewScreenOffersFixWithBaseline() async throws {
+        let exerciseID = UUID()
+        var session = ImportSession()
+        session.draft = .init(workout: Workout(title: "Imported", blocks: [WorkoutBlock(name: "Main", exercises: [
+            PlannedExercise(id: exerciseID, exerciseName: "Mystery machine", definitionId: nil),
+        ])]))
+        session.issues = [.init(
+            code: .unknownExercise,
+            severity: .blocking,
+            message: "Choose an exercise for Mystery machine.",
+            exerciseID: exerciseID
+        )]
+        session.status = .reviewing
+
+        let screen = try await WorkoutImportScreen(session: session, settleOn: "Review Workout")
+        defer { screen.tearDown() }
+        screen.scroll(to: 100_000)
+        screen.capture("review-fix-with-baseline-entry")
+
+        #expect(
+            screen.showsText(containing: "Fix with Baseline"),
+            "the import-fix conversation must be reachable from the review screen"
+        )
+        #expect(!session.canSave, "the blocking issue keeps save shut while the chat entry is offered")
+    }
 }
 
 // MARK: - Harness

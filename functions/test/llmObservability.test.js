@@ -12,47 +12,55 @@ const { servedToolsetForClientSchema } = require("../lib/tools");
 
 test("conversation traces record the toolset the model actually saw", () => {
   assert.equal(
+    conversationToolSchemaVersion(servedToolsetForClientSchema("9")),
+    "conversation-tools-v5-wave9",
+  );
+  assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("8")),
-    "conversation-tools-v4-wave8",
+    "conversation-tools-v5-wave8",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("7")),
-    "conversation-tools-v4-wave7",
+    "conversation-tools-v5-wave7",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("6")),
-    "conversation-tools-v4-wave6",
+    "conversation-tools-v5-wave6",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("5")),
-    "conversation-tools-v4-wave5",
+    "conversation-tools-v5-wave5",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema(undefined)),
-    "conversation-tools-v4-legacy",
+    "conversation-tools-v5-legacy",
   );
 });
 
 test("conversation traces record the prompt variant the model actually saw", () => {
   assert.equal(
+    conversationPromptVersion(servedToolsetForClientSchema("9")),
+    "conversation-prompt-v6-wave9",
+  );
+  assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema("8")),
-    "conversation-prompt-v5-wave8",
+    "conversation-prompt-v6-wave8",
   );
   assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema("7")),
-    "conversation-prompt-v5-wave7",
+    "conversation-prompt-v6-wave7",
   );
   assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema("6")),
-    "conversation-prompt-v5-wave6",
+    "conversation-prompt-v6-wave6",
   );
   assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema("5")),
-    "conversation-prompt-v5-wave5",
+    "conversation-prompt-v6-wave5",
   );
   assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema(undefined)),
-    "conversation-prompt-v5-legacy",
+    "conversation-prompt-v6-legacy",
   );
 });
 

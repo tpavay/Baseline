@@ -110,6 +110,63 @@ enum ToolCallMapper {
                 dryRun: boolOrNil(input["dry_run"]) ?? true,
                 expectedRevisionToken: expected
             )
+        case "create_custom_exercise":
+            guard let name = trimmedOrNil(input["name"]),
+                  let equipment = taxonomyList(input["equipment"]) as [Equipment]?, !equipment.isEmpty,
+                  let primary = taxonomyList(input["primary_muscles"]) as [Muscle]?, !primary.isEmpty,
+                  let metrics = metricList(input["metrics"]), !metrics.isEmpty,
+                  let expected = requiredUUID(input["expected_revision_token"]),
+                  let units = unitOverrides(input) else { return nil }
+            // Optional taxonomy stays optional, but a supplied value must parse - a silently dropped
+            // classification would commit a definition the athlete never saw proposed.
+            let secondary: [Muscle]
+            if input["secondary_muscles"] == nil || input["secondary_muscles"] is NSNull {
+                secondary = []
+            } else {
+                guard let parsed = taxonomyList(input["secondary_muscles"]) as [Muscle]? else { return nil }
+                secondary = parsed
+            }
+            let patterns: [MovementPattern]
+            if input["patterns"] == nil || input["patterns"] is NSNull {
+                patterns = []
+            } else {
+                guard let parsed = taxonomyList(input["patterns"]) as [MovementPattern]? else { return nil }
+                patterns = parsed
+            }
+            let tags: [ExerciseTag]
+            if input["tags"] == nil || input["tags"] is NSNull {
+                tags = []
+            } else {
+                guard let parsed = taxonomyList(input["tags"]) as [ExerciseTag]? else { return nil }
+                tags = parsed
+            }
+            var level: ExerciseLevel?
+            if let rawLevel = trimmedOrNil(input["level"]) {
+                guard let parsed = taxonomyValue(rawLevel) as ExerciseLevel? else { return nil }
+                level = parsed
+            }
+            let proposalID: UUID?
+            if input["proposal_id"] == nil || input["proposal_id"] is NSNull {
+                proposalID = nil
+            } else {
+                guard let parsed = requiredUUID(input["proposal_id"]) else { return nil }
+                proposalID = parsed
+            }
+            return .createCustomExercise(
+                draft: WorkoutStore.CustomExerciseDraft(
+                    name: name,
+                    equipment: equipment,
+                    primaryMuscles: primary,
+                    secondaryMuscles: secondary,
+                    metrics: metrics,
+                    patterns: patterns,
+                    tags: tags,
+                    level: level,
+                    units: units
+                ),
+                proposalID: proposalID,
+                expectedRevisionToken: expected
+            )
         case "require_all_options":
             guard let choice = input["choice"] as? String,
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
@@ -1164,6 +1221,22 @@ enum ToolCallMapper {
     private static func metric(_ v: Any?) -> MetricType? {
         guard let s = v as? String else { return nil }
         return metricAliases[normalize(s)] ?? MetricType(rawValue: s)
+    }
+    /// One taxonomy value, matched the way ExerciseSearch matches filters: exact raw value, or a
+    /// display name with case/spacing/punctuation ignored ("Front delts", "front_delts").
+    private static func taxonomyValue<T: TaxonomyFilterValue>(_ raw: String) -> T? {
+        let key = squashed(raw)
+        return T.allCases.first { squashed($0.rawValue) == key || squashed($0.displayName) == key }
+    }
+    /// A whole taxonomy list, rejected outright when any element fails to parse - dropping one would
+    /// commit a different classification than the model sent.
+    private static func taxonomyList<T: TaxonomyFilterValue>(_ v: Any?) -> [T]? {
+        guard let arr = v as? [String] else { return nil }
+        let values: [T] = arr.compactMap { taxonomyValue($0) }
+        return values.count == arr.count ? values : nil
+    }
+    private static func squashed(_ s: String) -> String {
+        s.lowercased().filter { $0.isLetter || $0.isNumber }
     }
     private static func metricList(_ v: Any?) -> [MetricType]? {
         guard let arr = v as? [String] else { return nil }

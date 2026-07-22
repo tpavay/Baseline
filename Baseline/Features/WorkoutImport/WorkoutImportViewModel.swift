@@ -44,6 +44,11 @@ final class WorkoutImportViewModel {
     private(set) var reviewPersistenceError: String?
     private(set) var reviewDraftIsPersisted = false
     private(set) var currentJob: WorkoutImportJob?
+    /// The last few (workout, issues) draft states, oldest first. When a draft mutation restores a
+    /// workout value the review already saw - the agent's undo, or an identical manual re-edit -
+    /// the issue set that state actually had comes back with it (see `adoptDraftWorkout`).
+    private var issueStateHistory: [(workout: Workout, issues: [WorkoutImportIssue])] = []
+    private static let issueStateHistoryLimit = 8
     var scheduleDate: Date?
     var canRetry: Bool { currentJob?.failure?.isRetryable == true }
     var canRefreshStructuredResult: Bool {
@@ -186,6 +191,7 @@ final class WorkoutImportViewModel {
         let generation = beginOperation(sessionID: sessionID)
         session = ImportSession(id: sessionID, status: .loadingImages(completed: 0, total: imageCount))
         currentJob = nil
+        issueStateHistory.removeAll()
         reviewDraftIsPersisted = false
         reviewPersistenceError = nil
         let nextTask = Task { [weak self] in
@@ -224,6 +230,7 @@ final class WorkoutImportViewModel {
         }
         cleanupTask = cancellation
         currentJob = nil
+        issueStateHistory.removeAll()
         reviewDraftIsPersisted = false
         reviewPersistenceError = nil
         clearTransientSourceState()
@@ -390,21 +397,43 @@ final class WorkoutImportViewModel {
 
     func updateWorkout(_ transform: (inout Workout) -> Void) {
         guard var draft = session.draft else { return }
-        let previous = draft.workout
-        transform(&draft.workout)
-        session.draft = draft
-        reconcileIssues(with: draft.workout, previous: previous)
-        touch()
+        var workout = draft.workout
+        transform(&workout)
+        draft.workout = workout
+        adoptDraftWorkout(workout, into: draft)
     }
 
     /// Keeps the import document synchronized with the same transient `WorkoutStore` used by the
     /// ordinary editor. Review-only issue metadata remains outside canonical workout state.
     func replaceDraftWorkout(_ workout: Workout) {
         guard var draft = session.draft else { return }
-        let previous = draft.workout
         draft.workout = workout
+        adoptDraftWorkout(workout, into: draft)
+    }
+
+    /// The one adoption path for a mutated draft workout: record the outgoing state, then either
+    /// restore the issue set a recurring workout value actually had, or reconcile the current one.
+    ///
+    /// The restore branch exists for reverts - most importantly the agent's receipt-addressed
+    /// `undo_workout_mutation` on the review store. `reconcileIssues` only ever *clears* issues, so
+    /// without it a fix-then-undo would leave a blocking issue resolved while the draft regressed,
+    /// and a partially-valid import could save.
+    private func adoptDraftWorkout(_ workout: Workout, into draft: WorkoutTemplateDraft) {
+        let previous = session.draft?.workout
+        let previousIssues = session.issues
         session.draft = draft
-        reconcileIssues(with: workout, previous: previous)
+        if let restored = issueStateHistory.last(where: { $0.workout == workout }) {
+            session.issues = restored.issues
+        } else {
+            reconcileIssues(with: workout, previous: previous ?? workout)
+        }
+        if let previous, previous != workout {
+            issueStateHistory.removeAll { $0.workout == previous }
+            issueStateHistory.append((previous, previousIssues))
+            if issueStateHistory.count > Self.issueStateHistoryLimit {
+                issueStateHistory.removeFirst(issueStateHistory.count - Self.issueStateHistoryLimit)
+            }
+        }
         touch()
     }
 
@@ -413,6 +442,28 @@ final class WorkoutImportViewModel {
     func synchronizeDraft(from reviewStore: WorkoutStore) {
         guard let workout = reviewStore.current else { return }
         replaceDraftWorkout(workout)
+    }
+
+    /// The open import issues in agent-readable form - the import-fix conversation's extra context.
+    /// A fresh read per model round: issues reconcile away as the draft is fixed, and the block must
+    /// describe only what is still actually open. Nil once everything is resolved.
+    var agentIssueContext: String? {
+        guard !session.issues.isEmpty else { return nil }
+        var lines = [
+            "OPEN IMPORT ISSUES - fix these in the draft. Saving stays blocked while any blocking issue remains:",
+        ]
+        for issue in session.issues {
+            var parts = ["- [\(issue.severity.rawValue)] \(issue.message)"]
+            if let exerciseID = issue.exerciseID { parts.append("exercise_instance_id \(exerciseID.uuidString)") }
+            if let setID = issue.setID { parts.append("set_id \(setID.uuidString)") }
+            if let nodeID = issue.nodeID { parts.append("node_id \(nodeID.uuidString)") }
+            if let metric = issue.metric { parts.append("metric \(metric.rawValue)") }
+            if !issue.candidates.isEmpty {
+                parts.append("candidate catalog matches: \(issue.candidates.joined(separator: ", "))")
+            }
+            lines.append(parts.joined(separator: " · "))
+        }
+        return lines.joined(separator: "\n")
     }
 
     func canUseWatts(for issue: WorkoutImportIssue) -> Bool {
@@ -535,6 +586,9 @@ final class WorkoutImportViewModel {
         if let activeOperationSessionID, activeOperationSessionID != job.id { return }
         activeOperationSessionID = job.id
         guard currentJob == nil || currentJob?.id == job.id || session.id == job.id else { return }
+        // Job adoption replaces the draft and its issue set wholesale, so recorded review states
+        // from any earlier parse are no longer restorable.
+        issueStateHistory.removeAll()
         currentJob = job
         session.id = job.id
         session.sourcePages = job.pages
@@ -675,6 +729,7 @@ final class WorkoutImportViewModel {
             cleanupTask = Task { await coordinator.complete(job) }
         }
         currentJob = nil
+        issueStateHistory.removeAll()
         clearTransientSourceState()
         session.status = .saved(templateID: template.id)
         touch()

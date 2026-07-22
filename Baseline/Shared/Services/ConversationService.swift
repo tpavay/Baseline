@@ -104,6 +104,10 @@ final class ConversationService {
     private let scope: Scope
     private let surface: Surface
     private let timeouts: Timeouts
+    /// Import scope only: the live import issues (ids, severity, messages, candidates) supplied by
+    /// the review screen. A closure, not a snapshot - issues reconcile away as the draft is fixed,
+    /// and each round must describe what is still actually open.
+    private let importIssueContext: (@MainActor () -> String?)?
     private let conversationSessionID = UUID().uuidString.lowercased()
     private var transcript: [[String: Any]] = []      // Anthropic wire-format messages
     private let maxToolRounds = 6                       // safety bound on tool ping-pong
@@ -116,14 +120,16 @@ final class ConversationService {
         functions: Functions = Functions.functions(),
         scope: Scope = .general,
         surface: Surface = .today,
-        timeouts: Timeouts = .init()
+        timeouts: Timeouts = .init(),
+        importIssueContext: (@MainActor () -> String?)? = nil
     ) {
         self.init(
             tools: tools,
             makeCallable: { FirebaseConversationRemoteCallable(functions: functions, name: $0) },
             scope: scope,
             surface: surface,
-            timeouts: timeouts
+            timeouts: timeouts,
+            importIssueContext: importIssueContext
         )
     }
 
@@ -132,13 +138,15 @@ final class ConversationService {
         makeCallable: @escaping @Sendable (String) -> any ConversationRemoteCalling,
         scope: Scope = .general,
         surface: Surface = .today,
-        timeouts: Timeouts = .init()
+        timeouts: Timeouts = .init(),
+        importIssueContext: (@MainActor () -> String?)? = nil
     ) {
         self.tools = tools
         self.makeCallable = makeCallable
         self.scope = scope
         self.surface = scope == .workoutImport ? .workoutImport : surface
         self.timeouts = timeouts
+        self.importIssueContext = importIssueContext
     }
 
     var canUndoLatestWorkoutMutation: Bool {
@@ -349,9 +357,13 @@ final class ConversationService {
         let today = tools.dispatch(.getToday)
         latestDecision = today.decision
         latestPlan = today.plan
-        let contextSummary = scope == .workoutImport
-            ? "CURRENT SURFACE: Fixing an imported workout draft. Only inspect or edit this workout. Do not change readiness, health context, the week plan, logging state, or saved templates.\n\n\(tools.contextSummary())"
-            : tools.contextSummary()   // full durable state = the model's memory
+        let contextSummary: String
+        if scope == .workoutImport {
+            let issueBlock = importIssueContext?().map { "\n\n\($0)" } ?? ""
+            contextSummary = "CURRENT SURFACE: Fixing an imported workout draft. Only inspect or edit this workout. Do not change readiness, health context, the week plan, logging state, or saved templates.\(issueBlock)\n\n\(tools.contextSummary())"
+        } else {
+            contextSummary = tools.contextSummary()   // full durable state = the model's memory
+        }
         // The transcript is heterogeneous JSON (non-Sendable), so ship it as a string; the request
         // dict is then [String: String] (Sendable) and safe to send across the callable boundary.
         guard let data = try? JSONSerialization.data(withJSONObject: transcript),
@@ -520,7 +532,7 @@ final class ConversationService {
             "roundIndex": String(roundIndex),
             "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             "appBuild": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
-            "clientToolSchemaVersion": "8",
+            "clientToolSchemaVersion": "9",
             "iosVersion": Self.operatingSystemVersion,
             "deviceClass": Self.deviceClass,
         ]
@@ -542,7 +554,13 @@ final class ConversationService {
              .removeSetAlternative, .updateExercisePrescription,
              .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
              .getCurrentWorkout, .updateLoggingConfig,
-             .setMetricValue, .removeMetric, .undoWorkoutMutation, .searchExercises, .getExercise:
+             .setMetricValue, .removeMetric, .undoWorkoutMutation, .searchExercises, .getExercise,
+             // Custom creation is in because an imported draft can genuinely contain a movement the
+             // catalog lacks - creating it (deliberately, behind the proposal-confirm flow) is how an
+             // unknown-exercise issue resolves without losing the movement's identity. The transient
+             // review store already write-throughs deliberate catalog changes to the athlete's real
+             // configuration by design.
+             .createCustomExercise:
             return true
         default:
             return false

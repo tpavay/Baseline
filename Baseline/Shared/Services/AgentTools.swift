@@ -470,6 +470,13 @@ final class AgentTools {
             dryRun: Bool,
             expectedRevisionToken: UUID
         )
+        // Wave 9: deliberate custom exercise creation - two-phase (proposal, then commit with the
+        // proposal id) so an inferred classification is always surfaced before it is committed.
+        case createCustomExercise(
+            draft: WorkoutStore.CustomExerciseDraft,
+            proposalID: UUID?,
+            expectedRevisionToken: UUID
+        )
         case undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID)
         case getCurrentWorkout
         // Performed logging. These mutate WorkoutLog only and use its independent revision token.
@@ -602,6 +609,7 @@ final class AgentTools {
             case .convertWorkoutUnits: return "Converted workout display units"
             case .bulkReplaceExercises(_, let replacementDefinitionID, _, _):
                 return "Bulk-replaced exercises with \(replacementDefinitionID)"
+            case .createCustomExercise(let draft, _, _): return "Created custom exercise \(draft.name)"
             case .undoWorkoutMutation: return "Undid a workout edit"
             case .getCurrentWorkout: return "Read the current workout"
             case .getActiveSession: return "Read the active session"
@@ -657,6 +665,7 @@ final class AgentTools {
                  .moveNode, .removeNode, .addSetAlternative, .updateSetAlternative,
                  .removeSetAlternative, .updateExercisePrescription,
                  .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
+                 .createCustomExercise,
                  .undoWorkoutMutation, .upsertPerformedSet, .setPerformedSetOutcome,
                  .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
                  .addExerciseSessionNote, .undoSessionMutation,
@@ -680,6 +689,7 @@ final class AgentTools {
                  .moveNode, .removeNode, .addSetAlternative, .updateSetAlternative,
                  .removeSetAlternative, .updateExercisePrescription,
                  .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
+                 .createCustomExercise,
                  .undoWorkoutMutation, .updateLoggingConfig,
                  .setMetricValue, .removeMetric, .upsertPerformedSet, .setPerformedSetOutcome,
                  .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
@@ -1245,6 +1255,20 @@ final class AgentTools {
                     expectedRevisionToken: expectedRevisionToken
                 )
             )
+        case .createCustomExercise(let draft, let proposalID, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            switch workouts.createCustomExercise(
+                draft: draft,
+                proposalID: proposalID,
+                expectedRevisionToken: expectedRevisionToken
+            ) {
+            case .proposal(let text), .existing(let text):
+                return Response(text: text, decision: nil, plan: nil)
+            case .created(let receipt, let text):
+                return workoutResponse(prefix: text, receipt: receipt)
+            case .rejected(let message):
+                return Response(text: message, decision: nil, plan: nil)
+            }
         case .undoWorkoutMutation(let mutationID, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             return outcome(
@@ -1503,13 +1527,16 @@ final class AgentTools {
                 return Response(text: "\"\(bad.value)\" isn't a \(bad.field) Baseline knows. Valid \(bad.field) values: \(bad.valid.joined(separator: ", ")). Search again with one of those, or use the query parameter for free text.",
                                 decision: nil, plan: nil)
             case .success(let q):
-                return Response(text: searchSummary(ExerciseCatalog.search(q), q), decision: nil, plan: nil)
+                let results = catalogWithCustoms.map { ExerciseSearch.run(q, in: $0) } ?? ExerciseCatalog.search(q)
+                return Response(text: searchSummary(results, q), decision: nil, plan: nil)
             }
         case .getExercise(let name, let id):
             guard let asked = name ?? id else {
                 return Response(text: "get_exercise needs either a name or an id - it was called with neither. Pass the exercise's name, or the id from a search_exercises row.", decision: nil, plan: nil)
             }
-            guard let def = ExerciseCatalog.lookUp(name: name, id: id) else {
+            let def = catalogWithCustoms.map { ExerciseSearch.lookUp(name: name, id: id, in: $0) }
+                ?? ExerciseCatalog.lookUp(name: name, id: id)
+            guard let def else {
                 return Response(text: "\"\(asked)\" isn't in Baseline's exercise catalog. Try search_exercises to find the closest real movement - don't invent one.", decision: nil, plan: nil)
             }
             return Response(text: exerciseDetail(def), decision: nil, plan: nil)
@@ -1537,18 +1564,28 @@ final class AgentTools {
         return ([header] + r.matches.map(compactRow)).joined(separator: "\n")
     }
 
+    /// The athlete's own catalog view: custom definitions ahead of the curated library, matching
+    /// `WorkoutStore.resolveDefinition`'s custom-first rule, so a movement created with
+    /// create_custom_exercise is immediately searchable and retrievable. Nil while the athlete has
+    /// no customs - the shared curated snapshot already answers, index-free of rebuild cost.
+    private var catalogWithCustoms: ExerciseCatalogSnapshot? {
+        guard let customs = workouts?.customDefinitions, !customs.isEmpty else { return nil }
+        return ExerciseCatalogSnapshot(customs + ExerciseCatalog.definitions)
+    }
+
     /// One match, compact: identity + the axes that let the model pick between near-duplicates.
     private func compactRow(_ d: ExerciseDefinition) -> String {
         var fields = [d.id, d.name]
         fields.append(d.primaryMuscles.isEmpty ? "-" : d.primaryMuscles.map(\.displayName).joined(separator: ", "))
         fields.append(d.equipment.isEmpty ? "-" : d.equipment.map(\.displayName).joined(separator: ", "))
         fields.append(d.modality?.displayName ?? "-")
+        if d.id.hasPrefix("custom_") { fields.append("custom") }
         return "- " + fields.joined(separator: " · ")
     }
 
     private func exerciseDetail(_ d: ExerciseDefinition) -> String {
         func list(_ xs: [String]) -> String { xs.isEmpty ? "none" : xs.joined(separator: ", ") }
-        var lines = ["\(d.name) (id \(d.id))"]
+        var lines = ["\(d.name) (id \(d.id))\(d.id.hasPrefix("custom_") ? " - custom, athlete-created" : "")"]
         lines.append("Primary muscles: \(list(d.primaryMuscles.map(\.displayName)))")
         lines.append("Secondary muscles: \(list(d.secondaryMuscles.map(\.displayName)))")
         lines.append("Equipment: \(list(d.equipment.map(\.displayName)))")
