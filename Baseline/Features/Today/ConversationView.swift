@@ -224,19 +224,21 @@ private struct ConversationView: View {
                 .padding(.horizontal, 15).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(BaselineColor.surface).overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(BaselineColor.line, lineWidth: 1)))
-            // While a turn is in flight the send arrow becomes a stop button, so the athlete can
-            // always abandon a reply that is taking too long instead of waiting out the network.
+            // While a cancellable turn is in flight the send arrow becomes a stop button, so the
+            // athlete can always abandon a reply that is taking too long instead of waiting out the
+            // network. Keyed off `canCancelTurn`, not `isThinking`: the local undo also thinks, but
+            // has no task to stop, and a Stop that no-ops is worse than a disabled arrow.
             Button {
-                if service.isThinking { service.cancelTurn() } else { send() }
+                if service.canCancelTurn { service.cancelTurn() } else { send() }
             } label: {
-                Image(systemName: service.isThinking ? "stop.fill" : "arrow.up")
+                Image(systemName: service.canCancelTurn ? "stop.fill" : "arrow.up")
                     .font(.headline.weight(.bold)).foregroundStyle(Color(hex: 0x120B21))
                     .frame(width: 44, height: 44)
-                    .background(Circle().fill(canSend || service.isThinking ? BaselineColor.accent : BaselineColor.line))
+                    .background(Circle().fill(canSend || service.canCancelTurn ? BaselineColor.accent : BaselineColor.line))
             }
-            .disabled(!canSend && !service.isThinking)
-            .accessibilityLabel(service.isThinking ? "Stop" : "Send message")
-            .accessibilityHint(service.isThinking
+            .disabled(!canSend && !service.canCancelTurn)
+            .accessibilityLabel(service.canCancelTurn ? "Stop" : "Send message")
+            .accessibilityHint(service.canCancelTurn
                 ? "Stops Baseline's reply so you can type again"
                 : "Sends your workout correction to Baseline")
         }

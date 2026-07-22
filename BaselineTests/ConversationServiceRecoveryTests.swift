@@ -10,6 +10,10 @@ import Testing
 @MainActor
 struct ConversationServiceRecoveryTests {
 
+    /// Plays its behaviors in call order, repeating the last one forever — so a single-behavior
+    /// script keeps its old always-that-behavior meaning, and a multi-round script can commit a
+    /// tool mutation on round one and hang (or reply) on round two. State is lock-guarded because
+    /// the service's deadline race invokes `call` off the main actor.
     private final class ScriptedCallable: ConversationRemoteCalling, @unchecked Sendable {
         enum Behavior: Sendable {
             case hang                      // never returns; the realistic stalled-connection shape
@@ -18,12 +22,19 @@ struct ConversationServiceRecoveryTests {
         }
 
         var timeoutInterval: TimeInterval = 70
-        private let behavior: Behavior
+        private let lock = NSLock()
+        private var remaining: [Behavior]
 
-        init(_ behavior: Behavior) { self.behavior = behavior }
+        init(_ behaviors: [Behavior]) { remaining = behaviors }
+
+        private func nextBehavior() -> Behavior {
+            lock.withLock {
+                remaining.count > 1 ? remaining.removeFirst() : remaining[0]
+            }
+        }
 
         func call(_ request: [String: String]) async throws -> Data {
-            switch behavior {
+            switch nextBehavior() {
             case .hang:
                 try await Task.sleep(for: .seconds(3600))
                 return Data()
@@ -39,11 +50,19 @@ struct ConversationServiceRecoveryTests {
         behavior: ScriptedCallable.Behavior,
         timeouts: ConversationService.Timeouts = .init()
     ) -> ConversationService {
+        makeService(behaviors: [behavior], timeouts: timeouts)
+    }
+
+    private func makeService(
+        behaviors: [ScriptedCallable.Behavior],
+        tools: AgentTools? = nil,
+        timeouts: ConversationService.Timeouts = .init()
+    ) -> ConversationService {
         let defaults = UserDefaults(suiteName: "ConversationServiceRecoveryTests-\(UUID().uuidString)")!
-        let tools = AgentTools(store: TrainingContextStore(defaults: defaults), base: DecisionEngine.Inputs())
+        let callable = ScriptedCallable(behaviors)
         return ConversationService(
-            tools: tools,
-            makeCallable: { _ in ScriptedCallable(behavior) },
+            tools: tools ?? AgentTools(store: TrainingContextStore(defaults: defaults), base: DecisionEngine.Inputs()),
+            makeCallable: { _ in callable },
             timeouts: timeouts
         )
     }
@@ -87,10 +106,12 @@ struct ConversationServiceRecoveryTests {
         let service = makeService(behavior: .hang)
         service.send("Replace the barbell bench press with something else")
         #expect(service.isThinking)
+        #expect(service.canCancelTurn, "An in-flight turn is exactly what the stop button is for.")
 
         service.cancelTurn()
         try await waitUntil("the cancelled turn ends", timeout: 2) { !service.isThinking }
-        #expect(service.log.count == 1, "A cancelled turn appends no error bubble.")
+        #expect(!service.canCancelTurn)
+        #expect(service.log.count == 1, "A cancelled turn with no committed mutation appends nothing.")
         #expect(service.log.last?.role == .you)
 
         // The guard is not wedged: the next send goes out again.
@@ -98,6 +119,54 @@ struct ConversationServiceRecoveryTests {
         #expect(service.isThinking)
         service.cancelTurn()
         try await waitUntil("the second cancelled turn ends", timeout: 2) { !service.isThinking }
+    }
+
+    /// A cancel that lands after a tool already committed a mutation must not hide the change: the
+    /// tool's own sentence becomes the reply, exactly as the failure path guarantees.
+    @Test func cancelAfterACommittedMutationSurfacesTheToolResult() async throws {
+        let toolUse: [[String: Any]] = [[
+            "type": "tool_use", "id": "toolu_1", "name": "set_time_available",
+            "input": ["minutes": 45],
+        ]]
+        let firstRound = try JSONSerialization.data(withJSONObject: ["content": toolUse])
+        let service = makeService(behaviors: [.reply(firstRound), .hang])
+        service.send("I only have 45 minutes today")
+
+        try await waitUntil("the tool commits and the follow-up round hangs") { !service.toolActivity.isEmpty }
+        service.cancelTurn()
+        try await waitUntil("the cancelled turn ends", timeout: 2) { !service.isThinking }
+        #expect(service.log.last?.role == .baseline)
+        #expect(service.log.last?.text.contains("45 min today.") == true,
+                "The committed mutation's own sentence must surface, not silence.")
+    }
+
+    /// Undo is a fast local mutation with no task to stop: it thinks, but it must never offer a
+    /// stop affordance that would no-op.
+    @Test func undoRunsWithoutOfferingACancellableTurn() async throws {
+        let context = TrainingContextStore(defaults: UserDefaults(suiteName: "undo-ctx-\(UUID().uuidString)")!)
+        let workouts = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "undo-wk-\(UUID().uuidString)")!)
+        workouts.create(title: "Push Day", goal: nil)
+        let token = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+        let toolUse: [[String: Any]] = [[
+            "type": "tool_use", "id": "toolu_1", "name": "add_block",
+            "input": ["name": "Main", "expected_revision_token": token.uuidString],
+        ]]
+        let service = makeService(
+            behaviors: [
+                .reply(try JSONSerialization.data(withJSONObject: ["content": toolUse])),
+                .reply(try JSONSerialization.data(withJSONObject: ["content": [["type": "text", "text": "Added a Main block."]]])),
+            ],
+            tools: AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts),
+            timeouts: compressed
+        )
+        service.send("Add a main block")
+        try await waitUntil("the mutating turn finishes") { !service.isThinking }
+        #expect(service.canUndoLatestWorkoutMutation)
+
+        service.undoLatestWorkoutMutation()
+        #expect(service.isThinking)
+        #expect(!service.canCancelTurn, "Undo has no turn task; the composer must show the plain disabled arrow.")
+        try await waitUntil("the undo finishes") { !service.isThinking }
     }
 
     /// The seam must not have cost the happy path: a well-formed reply still lands in the log.

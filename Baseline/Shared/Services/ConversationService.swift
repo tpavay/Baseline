@@ -88,6 +88,10 @@ final class ConversationService {
     private(set) var log: [Message] = []
     private(set) var isThinking = false
 
+    /// True only while a turn task is in flight and can actually be stopped. `isThinking` also
+    /// covers the local undo, which has no task to cancel, so the stop affordance keys off this.
+    var canCancelTurn: Bool { turnTask != nil }
+
     // Observability: the structured state + plan the conversation is building, exposed for the
     // "What Baseline knows" inspector.
     private(set) var latestDecision: DecisionEngine.Result?
@@ -167,8 +171,8 @@ final class ConversationService {
     }
 
     /// Aborts the in-flight turn. The turn task rolls the transcript back to its pre-turn
-    /// checkpoint and clears the loading state; nothing is appended to the visible log, because the
-    /// athlete chose to stop — a cancelled turn is not an error to explain.
+    /// checkpoint and clears the loading state; no error copy is appended, because the athlete
+    /// chose to stop — but a tool result already committed this turn still surfaces.
     func cancelTurn() {
         turnTask?.cancel()
     }
@@ -217,7 +221,10 @@ final class ConversationService {
             do {
                 content = try await callFunction(roundIndex: roundIndex)
             } catch is CancellationError {
-                return false            // the athlete stopped the turn; say nothing
+                // The athlete stopped the turn: no error copy, but a mutation a tool already
+                // committed must still surface — the same invariant the failure path holds.
+                if let lastToolResult { log.append(Message(role: .baseline, text: lastToolResult)) }
+                return false
             } catch {
                 // Message first, telemetry second: the athlete should not wait out the (bounded,
                 // fail-open) observability export before learning the turn failed.
