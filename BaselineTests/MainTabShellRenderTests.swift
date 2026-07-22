@@ -22,7 +22,9 @@ struct MainTabShellRenderTests {
             #expect(screen.element(labelled: title) != nil)
         }
         if tab == .plan {
-            #expect(screen.element(labelled: "Ask Baseline") != nil)
+            // The calendar's leading toolbar menu - "Ask Baseline" lives inside it, so the menu's
+            // own label is the Plan surface's stable accessibility marker.
+            #expect(screen.element(labelled: "Calendar options") != nil)
         }
         if tab == .train {
             let chat = try #require(screen.element(labelled: "Talk to Baseline"))
@@ -49,11 +51,11 @@ struct MainTabShellRenderTests {
         defer { screen.tearDown() }
         try await screen.settle()
 
-        #expect(screen.element(labelled: "Ask Baseline") == nil)
+        #expect(screen.element(labelled: "Calendar options") == nil)
         #expect(screen.activate(labelled: "Plan"))
         try await screen.settle()
 
-        #expect(screen.element(labelled: "Ask Baseline") != nil)
+        #expect(screen.element(labelled: "Calendar options") != nil)
         #expect(screen.visibleSystemTabBars.isEmpty)
     }
 
