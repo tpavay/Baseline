@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+// Regenerates Baseline/Assets.xcassets/TodayMuscleMap from the committed
+// react-native-body-highlighter path data in .lavish/muscle-assets (MIT; the
+// license ships alongside the assets as MuscleMapLicense.dataset).
+// Requires `rsvg-convert` (brew install librsvg) to rasterize SVG to PDF.
+
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";

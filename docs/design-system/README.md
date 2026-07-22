@@ -171,10 +171,11 @@ The sleep dial and heart-rate donut must use this same renderer.
 The approved zone order is blue, green, violet, amber, and red.
 Domain calculations remain outside the component.
 
-### `BaselineTabBar`
+### `BaselineFloatingTabBar`
 
-`BaselineTabBar` is the shared floating three-tab navigation surface for Today, Plan, and Profile.
-It owns the selected-item fill, tab icon and label styling, approved pill geometry, and accessibility selection state.
+`BaselineFloatingTabBar` (in `MainTabView.swift`) is the shell's floating capsule tab bar: four tabs (Today, Plan, Train, Profile), icon plus caption label, and an accent-tinted capsule behind the active tab with the `isSelected` accessibility trait.
+Its geometry comes from the floating-tab tokens in the table above.
+A `safeAreaInset` applied outside a `NavigationStack` never crosses its UIKit hosting boundary, so every screen hosted in the shell reserves bottom space itself with `.floatingTabBarClearance()` inside its own stack, or with `BaselineSpacing.screenBottom` content padding when its content should scroll behind the bar.
 
 ### `MuscleMapView`
 
@@ -209,7 +210,7 @@ See [`app-icon/README.md`](app-icon/README.md) - how large the mark can go, why 
 - **Dose Scale** — MED / HPL / MDV stepped bar, filled to the cleared level.
 - **Prescription Card** — outlined spec sheet: header + session + dose + footer ("WHY →").
 - **Button / Primary** — accent fill, mono label, accent glow.
-- **Tab Bar** — hairline top, mono caps labels, accent tick on active.
+- **Tab Bar** - legacy hairline-top treatment; production ships `BaselineFloatingTabBar` (see Shared components).
 - **Tag** — small state-colored pill, mono caps.
 - **Hairline** — 1px rule.
 
