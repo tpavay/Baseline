@@ -104,6 +104,38 @@ const setTargets = {
   additionalProperties: false,
 };
 
+/**
+ * Explicit taxonomy selector shared by the Wave 7 bulk tools. Fields AND together. Instances without
+ * catalog identity can never match a taxonomy field — the tool reports them instead of silently
+ * skipping or including them, so a policy-sensitive phrase ("all runs") never decides itself.
+ */
+const exerciseSelector = {
+  type: "object",
+  minProperties: 1,
+  description: "Explicit match over this workout's exercise instances. All supplied fields must match (AND). Prefer these explicit taxonomy fields over name guessing; the result always enumerates the exact matched instance IDs and names.",
+  properties: {
+    definition_id: { type: "string", description: "Exact catalog id from search_exercises / get_exercise, e.g. 'treadmill_run'. The most precise selector." },
+    muscle: { type: "string", description: "Muscle trained (primary or secondary), e.g. quadriceps, hamstrings, chest." },
+    equipment: { type: "string", description: "Gear needed, e.g. barbell, dumbbell, treadmill, rower." },
+    modality: { type: "string", description: "resistance | cardio | hold | mobility" },
+    pattern: { type: "string", description: "Movement pattern: squat | hinge | lunge | push | pull | carry | rotation | gait | hold" },
+    tag: { type: "string", description: "Discipline: hyrox | olympicWeightlifting | powerlifting | calisthenics | plyometric | mobility | strongman" },
+    level: { type: "string", description: "beginner | intermediate | expert" },
+    block_id: { type: "string", description: "Restrict to one block by stable block ID from get_current_workout." },
+  },
+  additionalProperties: false,
+};
+
+/** The single tools whose payloads may appear as one operation of an atomic apply_workout_edits batch. */
+const batchOperationNames = [
+  "update_workout_metadata", "update_block_metadata", "update_exercise_metadata",
+  "add_block", "remove_block", "move_block", "duplicate_block",
+  "add_exercise", "move_exercise", "replace_exercise", "remove_exercise",
+  "reorder_exercise", "duplicate_exercise",
+  "add_set", "update_set", "remove_set", "move_set", "duplicate_set",
+  "set_metric_value", "remove_metric", "update_logging_config",
+];
+
 type ToolSchema = {
   name: string;
   description: string;
@@ -868,6 +900,66 @@ export const TOOLS: ToolSchema[] = [
       required: ["set_id", "expected_revision_token"],
     },
   },
+  {
+    name: "apply_workout_edits",
+    description: "Apply an ORDERED list of workout edits as ONE atomic mutation. Use when one athlete request needs several edits ('rename the block, move rows after pull-ups, and add a set') so a later step can never leave the workout half-changed. Every operation is validated against the same snapshot: if ANY operation is invalid the whole batch is rejected, nothing is written, and the error names exactly which operation failed and why. Success returns ONE mutation receipt, and one undo_workout_mutation call reverts the entire batch. Each operation object is {\"op\": \"<single tool name>\", ...that tool's fields WITHOUT expected_revision_token} — the batch carries the token once.",
+    input_schema: {
+      type: "object",
+      properties: {
+        operations: {
+          type: "array",
+          minItems: 1,
+          maxItems: 20,
+          description: "Ordered operations. Later operations see earlier ones' effects (indexes and IDs shift as edits land), all inside the same atomic apply.",
+          items: {
+            type: "object",
+            properties: {
+              op: {
+                type: "string",
+                enum: batchOperationNames,
+                description: "Which edit this is. The object's remaining fields are exactly the named tool's fields, minus expected_revision_token.",
+              },
+            },
+            required: ["op"],
+          },
+        },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["operations", "expected_revision_token"],
+    },
+  },
+  {
+    name: "convert_workout_units",
+    description: "Bulk-set DISPLAY units (distance, load, duration, pace) across every matched exercise instance in ONE atomic, undoable mutation. Display-only: canonical stored values never change. Omit selector to match every exercise in the workout that logs the metric — duplicates included. Include at least one unit field. The receipt enumerates exactly which instances changed. For a policy-sensitive phrase like 'all runs', pass a selector and dry_run true first, then confirm the enumerated matched instances against the athlete's intent before applying.",
+    input_schema: {
+      type: "object",
+      minProperties: 2,
+      properties: {
+        distance_unit: { type: "string", description: "m | km | mi" },
+        load_unit: { type: "string", description: "kg | lb" },
+        duration_unit: { type: "string", description: "sec | min" },
+        pace_unit: { type: "string", description: "/km | /mi" },
+        selector: exerciseSelector,
+        dry_run: { type: "boolean", description: "true = enumerate the exact matched instance IDs and names and change nothing. Defaults to false." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["expected_revision_token"],
+    },
+  },
+  {
+    name: "bulk_replace_exercises",
+    description: "Replace EVERY exercise instance matched by an explicit taxonomy selector with one catalog exercise, atomically and undoably. Each instance keeps its ID, sets, targets, notes, and order (same semantics as replace_exercise). ALWAYS dry-run first: dry_run defaults to true and the result enumerates the exact matched instance IDs and names, plus any instances the selector could NOT classify. Read that list, confirm against the athlete's intent when the match set could surprise them ('all runs' — do treadmill or interval variants count?), and only then call again with dry_run explicitly false and the same expected_revision_token.",
+    input_schema: {
+      type: "object",
+      properties: {
+        selector: exerciseSelector,
+        replacement_definition_id: { type: "string", description: "Exact catalog id of the replacement movement from search_exercises / get_exercise." },
+        dry_run: { type: "boolean", description: "Omit or true = enumerate matches only, nothing changes. Only an explicit false applies the replacement." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["selector", "replacement_definition_id", "expected_revision_token"],
+    },
+  },
 ];
 
 const legacyWaveFiveOverrides = new Map<string, ToolSchema>([
@@ -967,7 +1059,17 @@ const waveSixOnlyToolNames = new Set([
   "undo_session_mutation",
 ]);
 
-export const WAVE5_TOOLS: ToolSchema[] = TOOLS.filter(
+const waveSevenOnlyToolNames = new Set([
+  "apply_workout_edits",
+  "convert_workout_units",
+  "bulk_replace_exercises",
+]);
+
+export const WAVE6_TOOLS: ToolSchema[] = TOOLS.filter(
+  (tool) => !waveSevenOnlyToolNames.has(tool.name),
+);
+
+export const WAVE5_TOOLS: ToolSchema[] = WAVE6_TOOLS.filter(
   (tool) => !waveSixOnlyToolNames.has(tool.name),
 );
 
@@ -975,21 +1077,24 @@ export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
   .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
   .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
 
-export type ServedToolset = "wave6" | "wave5" | "legacy";
+export type ServedToolset = "wave7" | "wave6" | "wave5" | "legacy";
 
 /**
- * Monotonic capability gate: Wave 6 clients receive performed logging, Wave 5 clients keep their
- * ID-targeted structure schema, and older clients keep the name-based legacy schema.
+ * Monotonic capability gate: Wave 7 clients receive atomic composite/bulk mutations, Wave 6 clients
+ * keep performed logging, Wave 5 clients keep their ID-targeted structure schema, and older clients
+ * keep the name-based legacy schema.
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  if (Number(version) >= 7) return "wave7";
   if (Number(version) >= 6) return "wave6";
   return Number(version) >= 5 ? "wave5" : "legacy";
 }
 
 export function toolsForClientSchema(version: unknown): ToolSchema[] {
   switch (servedToolsetForClientSchema(version)) {
-  case "wave6": return TOOLS;
+  case "wave7": return TOOLS;
+  case "wave6": return WAVE6_TOOLS;
   case "wave5": return WAVE5_TOOLS;
   case "legacy": return LEGACY_TOOLS;
   }

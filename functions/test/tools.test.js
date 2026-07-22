@@ -4,6 +4,7 @@ const {
   LEGACY_TOOLS,
   TOOLS,
   WAVE5_TOOLS,
+  WAVE6_TOOLS,
   servedToolsetForClientSchema,
   toolsForClientSchema,
 } = require("../lib/tools");
@@ -107,7 +108,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
 
   // The gate is monotonic: a future client version bump keeps the current schema, while malformed
   // or pre-Wave-5 versions fall back to the legacy schema.
-  assert.equal(toolsForClientSchema("6"), TOOLS);
+  assert.equal(toolsForClientSchema("6"), WAVE6_TOOLS);
+  assert.equal(toolsForClientSchema("7"), TOOLS);
   assert.equal(toolsForClientSchema("12"), TOOLS);
   assert.equal(toolsForClientSchema("4"), LEGACY_TOOLS);
   assert.equal(toolsForClientSchema("0"), LEGACY_TOOLS);
@@ -118,7 +120,9 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(toolsForClientSchema(null), LEGACY_TOOLS);
 
   assert.equal(servedToolsetForClientSchema("5"), "wave5");
-  assert.equal(servedToolsetForClientSchema("7"), "wave6");
+  assert.equal(servedToolsetForClientSchema("6"), "wave6");
+  assert.equal(servedToolsetForClientSchema("7"), "wave7");
+  assert.equal(servedToolsetForClientSchema("12"), "wave7");
   assert.equal(servedToolsetForClientSchema("4"), "legacy");
   assert.equal(servedToolsetForClientSchema(undefined), "legacy");
 
@@ -193,8 +197,71 @@ test("Wave 6 performed logging is distinct, unit-safe, and capability-gated", ()
     assert.deepEqual(tool.input_schema.dependencies, pairing, `${name} should pair group_id with iteration`);
   }
 
-  assert.equal(toolsForClientSchema("6"), TOOLS);
+  assert.equal(toolsForClientSchema("6"), WAVE6_TOOLS);
   assert.equal(servedToolsetForClientSchema("6"), "wave6");
+});
+
+test("Wave 7 composite and bulk mutations are atomic, dry-runnable, and capability-gated", () => {
+  const wave7Names = ["apply_workout_edits", "convert_workout_units", "bulk_replace_exercises"];
+  const allNames = new Set(TOOLS.map((tool) => tool.name));
+  const wave6Names = new Set(WAVE6_TOOLS.map((tool) => tool.name));
+  const wave5Names = new Set(WAVE5_TOOLS.map((tool) => tool.name));
+
+  for (const name of wave7Names) {
+    assert.equal(allNames.has(name), true, `${name} should be served to Wave 7 clients`);
+    assert.equal(wave6Names.has(name), false, `${name} should not leak to Wave 6 clients`);
+    assert.equal(wave5Names.has(name), false, `${name} should not leak to Wave 5 clients`);
+  }
+
+  const batch = TOOLS.find((tool) => tool.name === "apply_workout_edits");
+  assert.deepEqual(batch.input_schema.required, ["operations", "expected_revision_token"]);
+  assert.equal(batch.input_schema.properties.operations.minItems, 1);
+  assert.equal(batch.input_schema.properties.operations.maxItems, 20);
+  assert.deepEqual(batch.input_schema.properties.operations.items.required, ["op"]);
+  assert.match(batch.description, /atomic/i);
+  assert.match(batch.description, /whole batch is rejected/i);
+  assert.match(batch.description, /which operation failed/i);
+  assert.match(batch.description, /one undo_workout_mutation call reverts the entire batch/i);
+  // Every batch-eligible op is a real served single tool with the same name.
+  const opNames = batch.input_schema.properties.operations.items.properties.op.enum;
+  assert.equal(new Set(opNames).size, opNames.length);
+  for (const opName of opNames) {
+    assert.equal(allNames.has(opName), true, `batch op ${opName} should be a served tool`);
+  }
+  for (const excluded of ["create_workout", "require_all_options", "undo_workout_mutation", "upsert_performed_set"]) {
+    assert.equal(opNames.includes(excluded), false, `${excluded} must not be batchable`);
+  }
+
+  const convert = TOOLS.find((tool) => tool.name === "convert_workout_units");
+  assert.deepEqual(convert.input_schema.required, ["expected_revision_token"]);
+  assert.equal(convert.input_schema.minProperties, 2);   // at least one unit besides the token
+  for (const unitField of ["distance_unit", "load_unit", "duration_unit", "pace_unit"]) {
+    assert.equal(convert.input_schema.properties[unitField].type, "string");
+  }
+  assert.match(convert.description, /display/i);
+  assert.match(convert.description, /canonical stored values never change/i);
+  assert.match(convert.description, /duplicates included/i);
+  assert.match(convert.input_schema.properties.dry_run.description, /defaults to false/i);
+
+  const replace = TOOLS.find((tool) => tool.name === "bulk_replace_exercises");
+  assert.deepEqual(replace.input_schema.required, [
+    "selector", "replacement_definition_id", "expected_revision_token",
+  ]);
+  assert.match(replace.description, /dry[-_]?run/i);
+  assert.match(replace.description, /exact matched instance IDs and names/i);
+  assert.match(replace.input_schema.properties.dry_run.description, /explicit false/i);
+
+  // Both bulk tools share one explicit-taxonomy selector; no fuzzy name field exists.
+  for (const tool of [convert, replace]) {
+    const selector = tool.input_schema.properties.selector;
+    assert.equal(selector.minProperties, 1);
+    assert.equal(selector.additionalProperties, false);
+    assert.deepEqual(Object.keys(selector.properties).sort(), [
+      "block_id", "definition_id", "equipment", "level", "modality", "muscle", "pattern", "tag",
+    ]);
+    assert.equal(selector.properties.name, undefined);
+    assert.equal(selector.properties.query, undefined);
+  }
 });
 
 test("Wave 4 planned-set schemas are ID-only and explicit about clearing", () => {

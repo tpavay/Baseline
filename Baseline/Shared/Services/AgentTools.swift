@@ -74,6 +74,128 @@ struct PlannedSetPatch: Equatable, Sendable {
     var isUnchanged: Bool { values.isUnchanged && role.isUnchanged && targets.isUnchanged }
 }
 
+/// One typed operation inside an atomic `apply_workout_edits` batch. Each case carries exactly the
+/// payload of the matching single tool, minus the revision token — the batch states that once and
+/// every operation validates against the same snapshot before one commit, so a later operation's
+/// failure can never leave the workout half-edited.
+enum WorkoutEditOperation: Equatable, Sendable {
+    case updateWorkoutMetadata(
+        title: MetadataPatch<String>,
+        goal: MetadataPatch<String>,
+        guidance: MetadataPatch<String>
+    )
+    case updateBlockMetadata(
+        blockID: UUID,
+        name: MetadataPatch<String>,
+        intent: MetadataPatch<String>,
+        guidance: MetadataPatch<String>
+    )
+    case updateExerciseMetadata(
+        exerciseInstanceID: UUID,
+        displayLabel: MetadataPatch<String>,
+        guidance: MetadataPatch<String>
+    )
+    case addBlock(name: String, intent: String?, guidance: String?, atIndex: Int?)
+    case removeBlock(blockID: UUID)
+    case moveBlock(blockID: UUID, toIndex: Int)
+    case duplicateBlock(blockID: UUID)
+    case addExercise(
+        blockID: UUID,
+        name: String,
+        atIndex: Int?,
+        sets: Int?,
+        reps: Int?,
+        load: Double?,
+        durationSeconds: Int?,
+        distanceMeters: Double?
+    )
+    case moveExercise(exerciseInstanceID: UUID, toBlockID: UUID, toIndex: Int)
+    case replaceExercise(exerciseInstanceID: UUID, replacement: String)
+    case removeExercise(exerciseInstanceID: UUID)
+    case reorderExercise(exerciseInstanceID: UUID, toIndex: Int)
+    case duplicateExercise(exerciseInstanceID: UUID)
+    case addSet(
+        exerciseInstanceID: UUID,
+        afterSetID: UUID?,
+        values: PlannedSetValues,
+        role: SetRole,
+        targets: PlannedSetTargets
+    )
+    case updateSet(setID: UUID, patch: PlannedSetPatch)
+    case removeSet(setID: UUID)
+    case moveSet(setID: UUID, beforeSetID: UUID?, toIndex: Int?)
+    case duplicateSet(setID: UUID)
+    case setMetricValue(exerciseInstanceID: UUID, setID: UUID, metric: MetricType, value: Double, unit: MetricUnit?)
+    case removeMetric(exerciseInstanceID: UUID, metric: MetricType)
+    case updateLoggingConfig(exerciseInstanceID: UUID, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
+
+    /// The public tool name this operation mirrors — a batch error names the failing op with it.
+    var toolName: String {
+        switch self {
+        case .updateWorkoutMetadata: "update_workout_metadata"
+        case .updateBlockMetadata: "update_block_metadata"
+        case .updateExerciseMetadata: "update_exercise_metadata"
+        case .addBlock: "add_block"
+        case .removeBlock: "remove_block"
+        case .moveBlock: "move_block"
+        case .duplicateBlock: "duplicate_block"
+        case .addExercise: "add_exercise"
+        case .moveExercise: "move_exercise"
+        case .replaceExercise: "replace_exercise"
+        case .removeExercise: "remove_exercise"
+        case .reorderExercise: "reorder_exercise"
+        case .duplicateExercise: "duplicate_exercise"
+        case .addSet: "add_set"
+        case .updateSet: "update_set"
+        case .removeSet: "remove_set"
+        case .moveSet: "move_set"
+        case .duplicateSet: "duplicate_set"
+        case .setMetricValue: "set_metric_value"
+        case .removeMetric: "remove_metric"
+        case .updateLoggingConfig: "update_logging_config"
+        }
+    }
+}
+
+/// The raw explicit-taxonomy selector the Wave 7 bulk tools target instances with. Taxonomy values
+/// stay raw strings here so the store can answer an unknown value with a correctable message listing
+/// the valid values — the same contract `search_exercises` uses — instead of a bare rejection.
+struct BulkExerciseSelectorInput: Equatable, Sendable {
+    var definitionID: String?
+    var muscle: String?
+    var equipment: String?
+    var modality: String?
+    var pattern: String?
+    var tag: String?
+    var level: String?
+    var blockID: UUID?
+
+    init(
+        definitionID: String? = nil,
+        muscle: String? = nil,
+        equipment: String? = nil,
+        modality: String? = nil,
+        pattern: String? = nil,
+        tag: String? = nil,
+        level: String? = nil,
+        blockID: UUID? = nil
+    ) {
+        self.definitionID = definitionID
+        self.muscle = muscle
+        self.equipment = equipment
+        self.modality = modality
+        self.pattern = pattern
+        self.tag = tag
+        self.level = level
+        self.blockID = blockID
+    }
+
+    var isEmpty: Bool {
+        definitionID == nil && muscle == nil && equipment == nil && modality == nil
+            && pattern == nil && tag == nil && level == nil && blockID == nil
+    }
+}
+
 /// The Context Engine's **validated tool layer** — the deterministic operations the LLM *proposes*
 /// and this *executes*. The model understands language; this owns what actually happens: every call
 /// is typed and validated, mutates the structured state, and returns the **recomputed** plan so the
@@ -148,6 +270,20 @@ final class AgentTools {
         case removeSet(setID: UUID, expectedRevisionToken: UUID)
         case moveSet(setID: UUID, beforeSetID: UUID?, toIndex: Int?, expectedRevisionToken: UUID)
         case duplicateSet(setID: UUID, expectedRevisionToken: UUID)
+        // Wave 7: one atomic batch of the primitive edits above, and selector-driven bulk mutations.
+        case applyWorkoutEdits(operations: [WorkoutEditOperation], expectedRevisionToken: UUID)
+        case convertWorkoutUnits(
+            units: [MetricType: MetricUnit],
+            selector: BulkExerciseSelectorInput?,
+            dryRun: Bool,
+            expectedRevisionToken: UUID
+        )
+        case bulkReplaceExercises(
+            selector: BulkExerciseSelectorInput,
+            replacementDefinitionID: String,
+            dryRun: Bool,
+            expectedRevisionToken: UUID
+        )
         case undoWorkoutMutation(mutationID: UUID, expectedRevisionToken: UUID)
         case getCurrentWorkout
         // Performed logging. These mutate WorkoutLog only and use its independent revision token.
@@ -264,6 +400,11 @@ final class AgentTools {
             case .removeSet: return "Removed a planned set"
             case .moveSet: return "Moved a planned set"
             case .duplicateSet: return "Duplicated a planned set"
+            case .applyWorkoutEdits(let operations, _):
+                return "Applied \(operations.count) workout edit\(operations.count == 1 ? "" : "s") atomically"
+            case .convertWorkoutUnits: return "Converted workout display units"
+            case .bulkReplaceExercises(_, let replacementDefinitionID, _, _):
+                return "Bulk-replaced exercises with \(replacementDefinitionID)"
             case .undoWorkoutMutation: return "Undid a workout edit"
             case .getCurrentWorkout: return "Read the current workout"
             case .getActiveSession: return "Read the active session"
@@ -315,6 +456,7 @@ final class AgentTools {
                  .removeBlock, .moveBlock, .duplicateBlock, .moveExercise, .replaceExercise,
                  .requireAllOptions, .removeExercise, .reorderExercise, .duplicateExercise, .addSet,
                  .updateSet, .removeSet, .moveSet, .duplicateSet,
+                 .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
                  .undoWorkoutMutation, .upsertPerformedSet, .setPerformedSetOutcome,
                  .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
                  .addExerciseSessionNote, .undoSessionMutation,
@@ -334,6 +476,7 @@ final class AgentTools {
                  .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
                  .removeBlock, .moveBlock, .duplicateBlock, .removeExercise, .reorderExercise,
                  .duplicateExercise, .addSet, .updateSet, .removeSet, .moveSet, .duplicateSet,
+                 .applyWorkoutEdits, .convertWorkoutUnits, .bulkReplaceExercises,
                  .undoWorkoutMutation, .updateLoggingConfig,
                  .setMetricValue, .removeMetric, .upsertPerformedSet, .setPerformedSetOutcome,
                  .addExtraPerformedSet, .updateExtraPerformedSet, .deleteExtraPerformedSet,
@@ -749,6 +892,35 @@ final class AgentTools {
             return outcome(
                 workouts.duplicateSet(setID: setID, expectedRevisionToken: expectedRevisionToken),
                 success: "Duplicated the planned set."
+            )
+        case .applyWorkoutEdits(let operations, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.applyWorkoutEdits(
+                    operations: operations,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "Applied all \(operations.count) edit\(operations.count == 1 ? "" : "s") as one atomic mutation."
+            )
+        case .convertWorkoutUnits(let units, let selector, let dryRun, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return bulkOutcome(
+                workouts.convertWorkoutUnits(
+                    units: units,
+                    selector: selector,
+                    dryRun: dryRun,
+                    expectedRevisionToken: expectedRevisionToken
+                )
+            )
+        case .bulkReplaceExercises(let selector, let replacementDefinitionID, let dryRun, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return bulkOutcome(
+                workouts.bulkReplaceExercises(
+                    selector: selector,
+                    replacementDefinitionID: replacementDefinitionID,
+                    dryRun: dryRun,
+                    expectedRevisionToken: expectedRevisionToken
+                )
             )
         case .undoWorkoutMutation(let mutationID, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
@@ -1186,6 +1358,20 @@ final class AgentTools {
         case .done: return workoutResponse(prefix: success)
         case .mutated(let receipt): return workoutResponse(prefix: success, receipt: receipt)
         case .notFound(let m), .ambiguous(let m): return Response(text: m, decision: nil, plan: nil)
+        }
+    }
+
+    /// A bulk mutation's reply carries its own enumeration of exactly what matched: an applied bulk
+    /// edit echoes the receipt plus the refreshed workout, a dry run reports the matched set and
+    /// changes nothing, and a rejection hands the model the correctable message.
+    private func bulkOutcome(_ result: WorkoutStore.BulkMutationOutcome) -> Response {
+        switch result {
+        case .applied(let receipt, let detail):
+            return workoutResponse(prefix: detail, receipt: receipt)
+        case .preview(let detail):
+            return Response(text: detail, decision: nil, plan: nil)
+        case .rejected(let message):
+            return Response(text: message, decision: nil, plan: nil)
         }
     }
 

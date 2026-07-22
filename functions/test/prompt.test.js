@@ -1,10 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { buildSystem } = require("../lib/prompt");
-const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS } = require("../lib/tools");
+const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS } = require("../lib/tools");
 
 const SERVED_PAIRS = [
-  ["wave6", TOOLS],
+  ["wave7", TOOLS],
+  ["wave6", WAVE6_TOOLS],
   ["wave5", WAVE5_TOOLS],
   ["legacy", LEGACY_TOOLS],
 ];
@@ -63,6 +64,33 @@ test("Wave 6 prompt teaches performed logging without rewriting the plan", () =>
 
   for (const toolset of ["wave5", "legacy"]) {
     assert.doesNotMatch(buildSystem(toolset), /upsert_performed_set/);
+  }
+});
+
+test("Wave 7 prompt teaches the atomic batch and dry-run-then-apply bulk contract", () => {
+  const prompt = buildSystem("wave7");
+
+  for (const name of ["apply_workout_edits", "convert_workout_units", "bulk_replace_exercises"]) {
+    assert.match(prompt, new RegExp(name), `wave7 prompt must list ${name}`);
+  }
+  assert.match(prompt, /all-or-nothing/i);
+  assert.match(prompt, /NOTHING changed/);
+  assert.match(prompt, /ONE receipt \(one undo\)/);
+  assert.match(prompt, /\{"op": "<single tool name>"/);
+  assert.match(prompt, /canonical stored values never change/i);
+  assert.match(prompt, /duplicates included/i);
+  assert.match(prompt, /dry_run true first/);
+  assert.match(prompt, /"all runs" NEVER decides itself/);
+  assert.match(prompt, /confirm with the athlete/i);
+  assert.match(prompt, /without catalog identity never match/i);
+  // The performed-log contract survives alongside the batch guidance.
+  assert.match(prompt, /upsert_performed_set/);
+
+  for (const toolset of ["wave6", "wave5", "legacy"]) {
+    const older = buildSystem(toolset);
+    assert.doesNotMatch(older, /apply_workout_edits/, `${toolset} must not advertise the batch tool`);
+    assert.doesNotMatch(older, /convert_workout_units/);
+    assert.doesNotMatch(older, /bulk_replace_exercises/);
   }
 });
 

@@ -157,6 +157,9 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
   The `Staging` config additionally needs `GoogleService-Info-Staging.plist`, which only CI has, so a local `-configuration Staging` build fails in `scripts/select-firebase-plist.sh`; archive `Release` to exercise the same distribution path locally.
 - The Cloud Functions in `functions/` need `npm ci` before `npm run build` (tsc) or `npm test`.
   Without it, tsc reports dozens of missing-type errors in files you did not touch. There is no lint script; `npm run build` is the type gate.
+- Adding or changing a conversational agent tool is one serialized facade change, and shipping only part of it produces tools the model never uses.
+  Update together: `functions/src/tools.ts` (schema + capability gating), the matching toolset variant in `functions/src/prompt.ts`, the version constants in `functions/src/llmObservability.ts`, `ToolCallMapper.swift`, `AgentTools.swift`, the agent-facing section of `WorkoutStore.swift`, and `ConversationService.swift` (`clientToolSchemaVersion` plus the import-scope allowlist).
+  Batch-eligible workout edits are `WorkoutEditOperation` cases: the single tools and `apply_workout_edits` share `ToolCallMapper.editOperation` and `WorkoutStore.preparedEdit(for:)`, so implement an edit exactly once there.
 - Sign-in gates the app at launch, so a plain simulator run reaches the auth screen and no further; there is no bypass.
   To look at a screen, host it in an app-hosted test: attach a `UIWindow` to the window scene from `UIApplication.shared.connectedScenes`, give it a `UIHostingController` root, then `drawHierarchy` into a `UIGraphicsImageRenderer`.
   An unattached window renders blank, and `ImageRenderer` is not a substitute: it cannot rasterize `ScrollView` content or `TextField`.

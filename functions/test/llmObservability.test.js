@@ -12,31 +12,39 @@ const { servedToolsetForClientSchema } = require("../lib/tools");
 
 test("conversation traces record the toolset the model actually saw", () => {
   assert.equal(
+    conversationToolSchemaVersion(servedToolsetForClientSchema("7")),
+    "conversation-tools-v3-wave7",
+  );
+  assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("6")),
-    "conversation-tools-v2-wave6",
+    "conversation-tools-v3-wave6",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema("5")),
-    "conversation-tools-v2-wave5",
+    "conversation-tools-v3-wave5",
   );
   assert.equal(
     conversationToolSchemaVersion(servedToolsetForClientSchema(undefined)),
-    "conversation-tools-v2-legacy",
+    "conversation-tools-v3-legacy",
   );
 });
 
 test("conversation traces record the prompt variant the model actually saw", () => {
   assert.equal(
+    conversationPromptVersion(servedToolsetForClientSchema("7")),
+    "conversation-prompt-v4-wave7",
+  );
+  assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema("6")),
-    "conversation-prompt-v3-wave6",
+    "conversation-prompt-v4-wave6",
   );
   assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema("5")),
-    "conversation-prompt-v3-wave5",
+    "conversation-prompt-v4-wave5",
   );
   assert.equal(
     conversationPromptVersion(servedToolsetForClientSchema(undefined)),
-    "conversation-prompt-v3-legacy",
+    "conversation-prompt-v4-legacy",
   );
 });
 

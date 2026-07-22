@@ -56,168 +56,61 @@ enum ToolCallMapper {
             return .createWorkout(title: title, goal: input["goal"] as? String,
                                   replaceExisting: replaceExisting,
                                   expectedRevisionToken: expectedRevisionToken)
-        case "update_workout_metadata":
-            guard let title = stringPatch(input, key: "title", nullable: false),
-                  let goal = stringPatch(input, key: "goal", nullable: true),
-                  let guidance = stringPatch(input, key: "guidance", nullable: true),
-                  let expected = requiredUUID(input["expected_revision_token"]),
-                  hasChanges(title, goal, guidance) else { return nil }
-            return .updateWorkoutMetadata(
-                title: title,
-                goal: goal,
-                guidance: guidance,
+        case "update_workout_metadata", "update_block_metadata", "update_exercise_metadata",
+             "add_block", "remove_block", "move_block", "duplicate_block",
+             "add_exercise", "move_exercise", "replace_exercise", "remove_exercise",
+             "reorder_exercise", "duplicate_exercise",
+             "add_set", "update_set", "remove_set", "move_set", "duplicate_set",
+             "set_metric_value", "remove_metric", "update_logging_config":
+            // Every batch-eligible single tool parses through the same operation parser the batch
+            // uses, so a payload that is valid standalone is valid inside apply_workout_edits and
+            // vice versa — one contract, not two that usually agree.
+            guard let expected = requiredUUID(input["expected_revision_token"]),
+                  let operation = editOperation(op: name, input: input) else { return nil }
+            return call(for: operation, expectedRevisionToken: expected)
+        case "apply_workout_edits":
+            guard let expected = requiredUUID(input["expected_revision_token"]),
+                  let rawOperations = input["operations"] as? [[String: Any]],
+                  rawOperations.isEmpty == false else { return nil }
+            var operations: [WorkoutEditOperation] = []
+            for raw in rawOperations {
+                guard let op = raw["op"] as? String,
+                      let operation = editOperation(op: op, input: raw) else { return nil }
+                operations.append(operation)
+            }
+            return .applyWorkoutEdits(operations: operations, expectedRevisionToken: expected)
+        case "convert_workout_units":
+            guard let expected = requiredUUID(input["expected_revision_token"]),
+                  let units = unitOverrides(input), units.isEmpty == false else { return nil }
+            let selector: BulkExerciseSelectorInput?
+            if input["selector"] == nil || input["selector"] is NSNull {
+                selector = nil
+            } else {
+                guard let parsed = bulkSelector(input["selector"]) else { return nil }
+                selector = parsed
+            }
+            return .convertWorkoutUnits(
+                units: units,
+                selector: selector,
+                dryRun: boolOrNil(input["dry_run"]) ?? false,
                 expectedRevisionToken: expected
             )
-        case "update_block_metadata":
-            guard let blockID = requiredUUID(input["block_id"]),
-                  let name = stringPatch(input, key: "name", nullable: false),
-                  let intent = stringPatch(input, key: "intent", nullable: true),
-                  let guidance = stringPatch(input, key: "guidance", nullable: true),
-                  let expected = requiredUUID(input["expected_revision_token"]),
-                  hasChanges(name, intent, guidance) else { return nil }
-            return .updateBlockMetadata(
-                blockID: blockID,
-                name: name,
-                intent: intent,
-                guidance: guidance,
-                expectedRevisionToken: expected
-            )
-        case "update_exercise_metadata":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let displayLabel = stringPatch(input, key: "display_label", nullable: true),
-                  let guidance = stringPatch(input, key: "guidance", nullable: true),
-                  let expected = requiredUUID(input["expected_revision_token"]),
-                  hasChanges(displayLabel, guidance) else { return nil }
-            return .updateExerciseMetadata(
-                exerciseInstanceID: exerciseID,
-                displayLabel: displayLabel,
-                guidance: guidance,
-                expectedRevisionToken: expected
-            )
-        case "add_block":
-            guard let name = input["name"] as? String,
-                  validOptionalIndex(input["at_index"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .addBlock(
-                name: name,
-                intent: input["intent"] as? String,
-                guidance: input["guidance"] as? String,
-                atIndex: exactIntOrNil(input["at_index"]),
-                expectedRevisionToken: expected
-            )
-        case "remove_block":
-            guard let blockID = requiredUUID(input["block_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .removeBlock(blockID: blockID, expectedRevisionToken: expected)
-        case "move_block":
-            guard let blockID = requiredUUID(input["block_id"]),
-                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0,
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .moveBlock(blockID: blockID, toIndex: toIndex, expectedRevisionToken: expected)
-        case "duplicate_block":
-            guard let blockID = requiredUUID(input["block_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .duplicateBlock(blockID: blockID, expectedRevisionToken: expected)
-        case "add_exercise":
-            guard let blockID = requiredUUID(input["block_id"]),
-                  let name = input["name"] as? String,
-                  validOptionalIndex(input["at_index"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .addExercise(
-                blockID: blockID,
-                name: name,
-                atIndex: exactIntOrNil(input["at_index"]),
-                sets: intOrNil(input["sets"]),
-                reps: intOrNil(input["reps"]),
-                load: doubleOrNil(input["load"]),
-                durationSeconds: intOrNil(input["duration_seconds"]),
-                distanceMeters: doubleOrNil(input["distance_m"]),
-                expectedRevisionToken: expected
-            )
-        case "move_exercise":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let toBlockID = requiredUUID(input["to_block_id"]),
-                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0,
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .moveExercise(
-                exerciseInstanceID: exerciseID,
-                toBlockID: toBlockID,
-                toIndex: toIndex,
-                expectedRevisionToken: expected
-            )
-        case "replace_exercise":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let replacement = input["replacement"] as? String,
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .replaceExercise(
-                exerciseInstanceID: exerciseID,
-                replacement: replacement,
+        case "bulk_replace_exercises":
+            guard let expected = requiredUUID(input["expected_revision_token"]),
+                  let selector = bulkSelector(input["selector"]),
+                  let replacement = trimmedOrNil(input["replacement_definition_id"]) else { return nil }
+            // Dry run is the safe default: only an explicit false applies the replacement, so an
+            // omitted flag can never skip the enumerate-and-confirm step.
+            return .bulkReplaceExercises(
+                selector: selector,
+                replacementDefinitionID: replacement,
+                dryRun: boolOrNil(input["dry_run"]) ?? true,
                 expectedRevisionToken: expected
             )
         case "require_all_options":
             guard let choice = input["choice"] as? String,
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
             return .requireAllOptions(choice: choice, expectedRevisionToken: expected)
-        case "remove_exercise":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .removeExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: expected)
-        case "reorder_exercise":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0,
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .reorderExercise(
-                exerciseInstanceID: exerciseID,
-                toIndex: toIndex,
-                expectedRevisionToken: expected
-            )
-        case "duplicate_exercise":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .duplicateExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: expected)
-        case "add_set":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  validOptionalUUID(input["after_set_id"]),
-                  let values = plannedSetValues(input["values"]),
-                  let role = setRole(input["role"]),
-                  let targets = plannedSetTargets(input["targets"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .addSet(
-                exerciseInstanceID: exerciseID,
-                afterSetID: uuid(input["after_set_id"]),
-                values: values,
-                role: role,
-                targets: targets,
-                expectedRevisionToken: expected
-            )
-        case "update_set":
-            guard let setID = requiredUUID(input["set_id"]),
-                  let patchInput = input["patch"] as? [String: Any],
-                  let patch = plannedSetPatch(patchInput),
-                  patch.isUnchanged == false,
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .updateSet(setID: setID, patch: patch, expectedRevisionToken: expected)
-        case "remove_set":
-            guard let setID = requiredUUID(input["set_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .removeSet(setID: setID, expectedRevisionToken: expected)
-        case "move_set":
-            guard let setID = requiredUUID(input["set_id"]),
-                  validOptionalUUID(input["before_set_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            let beforeSetID = uuid(input["before_set_id"])
-            let toIndex = exactIntOrNil(input["to_index"])
-            guard (beforeSetID != nil) != (toIndex != nil) else { return nil }
-            return .moveSet(
-                setID: setID,
-                beforeSetID: beforeSetID,
-                toIndex: toIndex,
-                expectedRevisionToken: expected
-            )
-        case "duplicate_set":
-            guard let setID = requiredUUID(input["set_id"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .duplicateSet(setID: setID, expectedRevisionToken: expected)
         case "undo_workout_mutation":
             guard let mutationID = requiredUUID(input["mutation_id"]),
                   let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
@@ -338,50 +231,280 @@ enum ToolCallMapper {
         case "update_template":
             guard let n = input["name"] as? String else { return nil }
             return .updateTemplate(name: n)
-        case "update_logging_config":
-            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  input["enabled_metrics"] == nil || metricList(input["enabled_metrics"]) != nil,
-                  let units = unitOverrides(input),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .updateLoggingConfig(
-                exerciseInstanceID: exerciseID,
-                enabledMetrics: metricList(input["enabled_metrics"]),
-                units: units,
-                expectedRevisionToken: expected
-            )
         case "update_exercise_preference":
             guard let ex = input["exercise"] as? String else { return nil }
             let scope: WorkoutStore.PreferenceScope = (input["scope"] as? String) == "category" ? .category : .exercise
             guard input["enabled_metrics"] == nil || metricList(input["enabled_metrics"]) != nil,
                   let units = unitOverrides(input) else { return nil }
             return .updateExercisePreference(exercise: ex, scope: scope, units: units, selectedMetrics: metricList(input["enabled_metrics"]))
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Batch-eligible operation parsing (shared by the single tools and apply_workout_edits)
+
+    /// Parse one batch-eligible operation payload. `op` is the public tool name; `input` carries that
+    /// tool's fields (any embedded expected_revision_token is ignored — the standalone case and the
+    /// batch both supply the token separately). Nil rejects the whole call, exactly as before.
+    private static func editOperation(op: String, input: [String: Any]) -> WorkoutEditOperation? {
+        switch op {
+        case "update_workout_metadata":
+            guard let title = stringPatch(input, key: "title", nullable: false),
+                  let goal = stringPatch(input, key: "goal", nullable: true),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  hasChanges(title, goal, guidance) else { return nil }
+            return .updateWorkoutMetadata(title: title, goal: goal, guidance: guidance)
+        case "update_block_metadata":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let name = stringPatch(input, key: "name", nullable: false),
+                  let intent = stringPatch(input, key: "intent", nullable: true),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  hasChanges(name, intent, guidance) else { return nil }
+            return .updateBlockMetadata(blockID: blockID, name: name, intent: intent, guidance: guidance)
+        case "update_exercise_metadata":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let displayLabel = stringPatch(input, key: "display_label", nullable: true),
+                  let guidance = stringPatch(input, key: "guidance", nullable: true),
+                  hasChanges(displayLabel, guidance) else { return nil }
+            return .updateExerciseMetadata(
+                exerciseInstanceID: exerciseID,
+                displayLabel: displayLabel,
+                guidance: guidance
+            )
+        case "add_block":
+            guard let name = input["name"] as? String,
+                  validOptionalIndex(input["at_index"]) else { return nil }
+            return .addBlock(
+                name: name,
+                intent: input["intent"] as? String,
+                guidance: input["guidance"] as? String,
+                atIndex: exactIntOrNil(input["at_index"])
+            )
+        case "remove_block":
+            guard let blockID = requiredUUID(input["block_id"]) else { return nil }
+            return .removeBlock(blockID: blockID)
+        case "move_block":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0 else { return nil }
+            return .moveBlock(blockID: blockID, toIndex: toIndex)
+        case "duplicate_block":
+            guard let blockID = requiredUUID(input["block_id"]) else { return nil }
+            return .duplicateBlock(blockID: blockID)
+        case "add_exercise":
+            guard let blockID = requiredUUID(input["block_id"]),
+                  let name = input["name"] as? String,
+                  validOptionalIndex(input["at_index"]) else { return nil }
+            return .addExercise(
+                blockID: blockID,
+                name: name,
+                atIndex: exactIntOrNil(input["at_index"]),
+                sets: intOrNil(input["sets"]),
+                reps: intOrNil(input["reps"]),
+                load: doubleOrNil(input["load"]),
+                durationSeconds: intOrNil(input["duration_seconds"]),
+                distanceMeters: doubleOrNil(input["distance_m"])
+            )
+        case "move_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let toBlockID = requiredUUID(input["to_block_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0 else { return nil }
+            return .moveExercise(exerciseInstanceID: exerciseID, toBlockID: toBlockID, toIndex: toIndex)
+        case "replace_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let replacement = input["replacement"] as? String else { return nil }
+            return .replaceExercise(exerciseInstanceID: exerciseID, replacement: replacement)
+        case "remove_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]) else { return nil }
+            return .removeExercise(exerciseInstanceID: exerciseID)
+        case "reorder_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  let toIndex = exactIntOrNil(input["to_index"]), toIndex >= 0 else { return nil }
+            return .reorderExercise(exerciseInstanceID: exerciseID, toIndex: toIndex)
+        case "duplicate_exercise":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]) else { return nil }
+            return .duplicateExercise(exerciseInstanceID: exerciseID)
+        case "add_set":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  validOptionalUUID(input["after_set_id"]),
+                  let values = plannedSetValues(input["values"]),
+                  let role = setRole(input["role"]),
+                  let targets = plannedSetTargets(input["targets"]) else { return nil }
+            return .addSet(
+                exerciseInstanceID: exerciseID,
+                afterSetID: uuid(input["after_set_id"]),
+                values: values,
+                role: role,
+                targets: targets
+            )
+        case "update_set":
+            guard let setID = requiredUUID(input["set_id"]),
+                  let patchInput = input["patch"] as? [String: Any],
+                  let patch = plannedSetPatch(patchInput),
+                  patch.isUnchanged == false else { return nil }
+            return .updateSet(setID: setID, patch: patch)
+        case "remove_set":
+            guard let setID = requiredUUID(input["set_id"]) else { return nil }
+            return .removeSet(setID: setID)
+        case "move_set":
+            guard let setID = requiredUUID(input["set_id"]),
+                  validOptionalUUID(input["before_set_id"]) else { return nil }
+            let beforeSetID = uuid(input["before_set_id"])
+            let toIndex = exactIntOrNil(input["to_index"])
+            guard (beforeSetID != nil) != (toIndex != nil) else { return nil }
+            return .moveSet(setID: setID, beforeSetID: beforeSetID, toIndex: toIndex)
+        case "duplicate_set":
+            guard let setID = requiredUUID(input["set_id"]) else { return nil }
+            return .duplicateSet(setID: setID)
         case "set_metric_value":
             guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
                   let setID = requiredUUID(input["set_id"]),
                   let m = metric(input["metric"]), let v = doubleOrNil(input["value"]),
-                  input["unit"] == nil || valueUnit(input["unit"]) != nil,
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
+                  input["unit"] == nil || valueUnit(input["unit"]) != nil else { return nil }
             let parsedUnit = valueUnit(input["unit"])
             return .setMetricValue(
                 exerciseInstanceID: exerciseID,
                 setID: setID,
                 metric: m,
                 value: v * (parsedUnit?.multiplier ?? 1),
-                unit: parsedUnit?.unit,
-                expectedRevisionToken: expected
+                unit: parsedUnit?.unit
             )
         case "remove_metric":
             guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
-                  let m = metric(input["metric"]),
-                  let expected = requiredUUID(input["expected_revision_token"]) else { return nil }
-            return .removeMetric(
+                  let m = metric(input["metric"]) else { return nil }
+            return .removeMetric(exerciseInstanceID: exerciseID, metric: m)
+        case "update_logging_config":
+            guard let exerciseID = requiredUUID(input["exercise_instance_id"]),
+                  input["enabled_metrics"] == nil || metricList(input["enabled_metrics"]) != nil,
+                  let units = unitOverrides(input) else { return nil }
+            return .updateLoggingConfig(
                 exerciseInstanceID: exerciseID,
-                metric: m,
-                expectedRevisionToken: expected
+                enabledMetrics: metricList(input["enabled_metrics"]),
+                units: units
             )
         default:
             return nil
         }
+    }
+
+    /// The standalone `AgentTools.Call` for one operation — the single-tool cases stay the public
+    /// dispatch surface while sharing the batch's parsing above.
+    private static func call(
+        for operation: WorkoutEditOperation,
+        expectedRevisionToken expected: UUID
+    ) -> AgentTools.Call {
+        switch operation {
+        case .updateWorkoutMetadata(let title, let goal, let guidance):
+            .updateWorkoutMetadata(title: title, goal: goal, guidance: guidance, expectedRevisionToken: expected)
+        case .updateBlockMetadata(let blockID, let name, let intent, let guidance):
+            .updateBlockMetadata(
+                blockID: blockID,
+                name: name,
+                intent: intent,
+                guidance: guidance,
+                expectedRevisionToken: expected
+            )
+        case .updateExerciseMetadata(let exerciseID, let displayLabel, let guidance):
+            .updateExerciseMetadata(
+                exerciseInstanceID: exerciseID,
+                displayLabel: displayLabel,
+                guidance: guidance,
+                expectedRevisionToken: expected
+            )
+        case .addBlock(let name, let intent, let guidance, let atIndex):
+            .addBlock(name: name, intent: intent, guidance: guidance, atIndex: atIndex, expectedRevisionToken: expected)
+        case .removeBlock(let blockID):
+            .removeBlock(blockID: blockID, expectedRevisionToken: expected)
+        case .moveBlock(let blockID, let toIndex):
+            .moveBlock(blockID: blockID, toIndex: toIndex, expectedRevisionToken: expected)
+        case .duplicateBlock(let blockID):
+            .duplicateBlock(blockID: blockID, expectedRevisionToken: expected)
+        case .addExercise(let blockID, let name, let atIndex, let sets, let reps, let load, let durationSeconds, let distanceMeters):
+            .addExercise(
+                blockID: blockID,
+                name: name,
+                atIndex: atIndex,
+                sets: sets,
+                reps: reps,
+                load: load,
+                durationSeconds: durationSeconds,
+                distanceMeters: distanceMeters,
+                expectedRevisionToken: expected
+            )
+        case .moveExercise(let exerciseID, let toBlockID, let toIndex):
+            .moveExercise(
+                exerciseInstanceID: exerciseID,
+                toBlockID: toBlockID,
+                toIndex: toIndex,
+                expectedRevisionToken: expected
+            )
+        case .replaceExercise(let exerciseID, let replacement):
+            .replaceExercise(exerciseInstanceID: exerciseID, replacement: replacement, expectedRevisionToken: expected)
+        case .removeExercise(let exerciseID):
+            .removeExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: expected)
+        case .reorderExercise(let exerciseID, let toIndex):
+            .reorderExercise(exerciseInstanceID: exerciseID, toIndex: toIndex, expectedRevisionToken: expected)
+        case .duplicateExercise(let exerciseID):
+            .duplicateExercise(exerciseInstanceID: exerciseID, expectedRevisionToken: expected)
+        case .addSet(let exerciseID, let afterSetID, let values, let role, let targets):
+            .addSet(
+                exerciseInstanceID: exerciseID,
+                afterSetID: afterSetID,
+                values: values,
+                role: role,
+                targets: targets,
+                expectedRevisionToken: expected
+            )
+        case .updateSet(let setID, let patch):
+            .updateSet(setID: setID, patch: patch, expectedRevisionToken: expected)
+        case .removeSet(let setID):
+            .removeSet(setID: setID, expectedRevisionToken: expected)
+        case .moveSet(let setID, let beforeSetID, let toIndex):
+            .moveSet(setID: setID, beforeSetID: beforeSetID, toIndex: toIndex, expectedRevisionToken: expected)
+        case .duplicateSet(let setID):
+            .duplicateSet(setID: setID, expectedRevisionToken: expected)
+        case .setMetricValue(let exerciseID, let setID, let metric, let value, let unit):
+            .setMetricValue(
+                exerciseInstanceID: exerciseID,
+                setID: setID,
+                metric: metric,
+                value: value,
+                unit: unit,
+                expectedRevisionToken: expected
+            )
+        case .removeMetric(let exerciseID, let metric):
+            .removeMetric(exerciseInstanceID: exerciseID, metric: metric, expectedRevisionToken: expected)
+        case .updateLoggingConfig(let exerciseID, let enabledMetrics, let units):
+            .updateLoggingConfig(
+                exerciseInstanceID: exerciseID,
+                enabledMetrics: enabledMetrics,
+                units: units,
+                expectedRevisionToken: expected
+            )
+        }
+    }
+
+    /// The bulk tools' explicit taxonomy selector. Every supplied field must be a string (block_id a
+    /// UUID) — a mistyped field rejects the call rather than silently dropping a constraint, which
+    /// would widen the match set behind the model's back. An empty object is rejected too.
+    private static func bulkSelector(_ value: Any?) -> BulkExerciseSelectorInput? {
+        guard let object = value as? [String: Any] else { return nil }
+        for key in ["definition_id", "muscle", "equipment", "modality", "pattern", "tag", "level"] {
+            guard object[key] == nil || object[key] is NSNull || object[key] is String else { return nil }
+        }
+        guard validOptionalUUID(object["block_id"]) else { return nil }
+        let selector = BulkExerciseSelectorInput(
+            definitionID: trimmedOrNil(object["definition_id"]),
+            muscle: trimmedOrNil(object["muscle"]),
+            equipment: trimmedOrNil(object["equipment"]),
+            modality: trimmedOrNil(object["modality"]),
+            pattern: trimmedOrNil(object["pattern"]),
+            tag: trimmedOrNil(object["tag"]),
+            level: trimmedOrNil(object["level"]),
+            blockID: uuid(object["block_id"])
+        )
+        guard selector.isEmpty == false else { return nil }
+        return selector
     }
 
     // JSON scalars arrive as Int/Double/Bool/NSNumber; JSON null as NSNull.
