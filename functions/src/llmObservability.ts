@@ -13,7 +13,7 @@ export const LLM_OBSERVABILITY_VERSIONS = {
   samplingPolicy: "all-v1",
   pricing: "langfuse-model-pricing-live-v1",
   conversationPrompt: "conversation-prompt-v6",
-  conversationTools: "conversation-tools-v5",
+  conversationTools: "conversation-tools-v6",
   conversationOutput: "anthropic-content-blocks-v1",
   conversationValidator: "tool-mapper-v1",
   importPrompt: "workout-import-prompt-v1",
