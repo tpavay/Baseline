@@ -29,10 +29,18 @@ struct AskBaselineSheet: View {
     @State private var showInspector = false
     let mode: AskBaselineContext
     let surface: AskBaselineSurface
+    /// Import mode only: the presenting review screen's live open-issue block, read fresh each
+    /// model round so fixed issues drop out of context as the draft reconciles.
+    let importIssueContext: (@MainActor () -> String?)?
 
-    init(mode: AskBaselineContext = .general, surface: AskBaselineSurface = .today) {
+    init(
+        mode: AskBaselineContext = .general,
+        surface: AskBaselineSurface = .today,
+        importIssueContext: (@MainActor () -> String?)? = nil
+    ) {
         self.mode = mode
         self.surface = surface
+        self.importIssueContext = importIssueContext
     }
 
     var body: some View {
@@ -96,7 +104,8 @@ struct AskBaselineSheet: View {
         service = ConversationService(
             tools: tools,
             scope: mode == .workoutImport ? .workoutImport : .general,
-            surface: conversationSurface
+            surface: conversationSurface,
+            importIssueContext: mode == .workoutImport ? importIssueContext : nil
         )
     }
 

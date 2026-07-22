@@ -1,10 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { buildSystem } = require("../lib/prompt");
-const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS, WAVE7_TOOLS } = require("../lib/tools");
+const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS, WAVE7_TOOLS, WAVE8_TOOLS } = require("../lib/tools");
 
 const SERVED_PAIRS = [
-  ["wave8", TOOLS],
+  ["wave9", TOOLS],
+  ["wave8", WAVE8_TOOLS],
   ["wave7", WAVE7_TOOLS],
   ["wave6", WAVE6_TOOLS],
   ["wave5", WAVE5_TOOLS],
@@ -150,5 +151,32 @@ test("Wave 8 prompt teaches advanced node editing and canonical prescription uni
     assert.doesNotMatch(older, /update_group/);
     assert.doesNotMatch(older, /update_exercise_prescription/);
     assert.doesNotMatch(older, /add_set_alternative/);
+  }
+});
+
+test("Wave 9 prompt teaches deliberate two-phase custom exercise creation", () => {
+  const prompt = buildSystem("wave9");
+
+  assert.match(prompt, /create_custom_exercise/);
+  assert.match(prompt, /TWO-PHASE/);
+  assert.match(prompt, /proposal_id/);
+  assert.match(prompt, /creates nothing/i);
+  assert.match(prompt, /never silently commit a guessed classification/i);
+  assert.match(prompt, /anything YOU inferred counts as unstated/);
+  assert.match(prompt, /Search first/i);
+  assert.match(prompt, /immediately addable by its exact name/);
+  // The units-bearing future defaults ride the same display-unit vocabulary.
+  assert.match(prompt, /distance_unit \/ load_unit \/ duration_unit \/ pace_unit/);
+  // The full Wave 8 editing surface survives alongside the creation guidance.
+  assert.match(prompt, /move_node is the ONE tool for restructuring/);
+  assert.match(prompt, /apply_workout_edits/);
+  assert.match(prompt, /upsert_performed_set/);
+
+  for (const toolset of ["wave8", "wave7", "wave6", "wave5", "legacy"]) {
+    assert.doesNotMatch(
+      buildSystem(toolset),
+      /create_custom_exercise/,
+      `${toolset} must not advertise create_custom_exercise`
+    );
   }
 });

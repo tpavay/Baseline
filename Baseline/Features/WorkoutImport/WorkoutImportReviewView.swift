@@ -44,6 +44,7 @@ struct WorkoutImportReviewView: View {
     let onDiscard: () -> Void
 
     @State private var duplicatePrompt = false
+    @State private var showChat = false
     @AccessibilityFocusState private var focusedAction: ReviewAction?
 
     var body: some View {
@@ -64,6 +65,15 @@ struct WorkoutImportReviewView: View {
                     )
             }
             ToolbarItem(placement: .topBarTrailing) {
+                Button { showChat = true } label: {
+                    Image(systemName: "sparkles")
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .foregroundStyle(BaselineColor.accent)
+                .accessibilityLabel("Fix with Baseline")
+                .accessibilityHint("Opens a conversation that edits this imported draft")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if sourceCount > 0 {
                         Button("View Source Photos", systemImage: "photo.stack", action: onViewSources)
@@ -79,6 +89,17 @@ struct WorkoutImportReviewView: View {
         .onChange(of: reviewStore.current) { _, newValue in
             guard let newValue else { return }
             model.replaceDraftWorkout(newValue)
+        }
+        // The chat inherits this view's environment, so its `WorkoutStore` is the transient review
+        // store: the agent edits the draft, never today's workout. Every chat mutation lands in
+        // `reviewStore.current`, flows through the `onChange` above into `replaceDraftWorkout`, and
+        // reconciles the import issues - save stays blocked while a blocking issue remains. The
+        // dismissal sync is belt-and-braces, mirroring the save path.
+        .sheet(isPresented: $showChat, onDismiss: { model.synchronizeDraft(from: reviewStore) }) {
+            AskBaselineSheet(
+                mode: .workoutImport,
+                importIssueContext: { [weak model] in model?.agentIssueContext }
+            )
         }
         .confirmationDialog("A similar template already exists", isPresented: $duplicatePrompt) {
             ForEach(model.duplicateTemplates) { template in
@@ -147,6 +168,17 @@ struct WorkoutImportReviewView: View {
                 }
                 .accessibilityElement(children: .contain)
             }
+
+            // Conversation is the primary fix path: the chat opens over this editor, edits the
+            // same draft, and these items reconcile away as it resolves them.
+            Button {
+                showChat = true
+            } label: {
+                Label("Fix with Baseline", systemImage: "sparkles")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.accent))
+            .accessibilityHint("Opens a conversation that fixes these review items in the draft")
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

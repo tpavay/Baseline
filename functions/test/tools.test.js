@@ -6,6 +6,7 @@ const {
   WAVE5_TOOLS,
   WAVE6_TOOLS,
   WAVE7_TOOLS,
+  WAVE8_TOOLS,
   servedToolsetForClientSchema,
   toolsForClientSchema,
 } = require("../lib/tools");
@@ -117,7 +118,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   // or pre-Wave-5 versions fall back to the legacy schema.
   assert.equal(toolsForClientSchema("6"), WAVE6_TOOLS);
   assert.equal(toolsForClientSchema("7"), WAVE7_TOOLS);
-  assert.equal(toolsForClientSchema("8"), TOOLS);
+  assert.equal(toolsForClientSchema("8"), WAVE8_TOOLS);
+  assert.equal(toolsForClientSchema("9"), TOOLS);
   assert.equal(toolsForClientSchema("12"), TOOLS);
   assert.equal(toolsForClientSchema("4"), LEGACY_TOOLS);
   assert.equal(toolsForClientSchema("0"), LEGACY_TOOLS);
@@ -131,7 +133,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(servedToolsetForClientSchema("6"), "wave6");
   assert.equal(servedToolsetForClientSchema("7"), "wave7");
   assert.equal(servedToolsetForClientSchema("8"), "wave8");
-  assert.equal(servedToolsetForClientSchema("12"), "wave8");
+  assert.equal(servedToolsetForClientSchema("9"), "wave9");
+  assert.equal(servedToolsetForClientSchema("12"), "wave9");
   assert.equal(servedToolsetForClientSchema("4"), "legacy");
   assert.equal(servedToolsetForClientSchema(undefined), "legacy");
 
@@ -459,11 +462,11 @@ test("Wave 8 advanced node and prescription schemas are ID-only, typed, and capa
     "remove_set_alternative",
     "update_exercise_prescription",
   ];
-  const allNames = new Set(TOOLS.map((tool) => tool.name));
+  const wave8ServedNames = new Set(WAVE8_TOOLS.map((tool) => tool.name));
   const wave7Names = new Set(WAVE7_TOOLS.map((tool) => tool.name));
 
   for (const name of wave8Names) {
-    assert.equal(allNames.has(name), true, `${name} should be served to Wave 8 clients`);
+    assert.equal(wave8ServedNames.has(name), true, `${name} should be served to Wave 8 clients`);
     assert.equal(wave7Names.has(name), false, `${name} should not leak to Wave 7 clients`);
   }
 
@@ -545,8 +548,54 @@ test("Wave 8 advanced node and prescription schemas are ID-only, typed, and capa
     assert.equal(opNames.includes(name), true, `${name} should be batch-eligible`);
   }
 
-  assert.equal(toolsForClientSchema("8"), TOOLS);
+  assert.equal(toolsForClientSchema("8"), WAVE8_TOOLS);
   assert.equal(servedToolsetForClientSchema("8"), "wave8");
+});
+
+test("Wave 9 custom exercise creation is two-phase, taxonomy-complete, and capability-gated", () => {
+  const tool = TOOLS.find((candidate) => candidate.name === "create_custom_exercise");
+
+  assert.ok(tool);
+  // The manual create form's required set: name, equipment, primary muscle, at least one metric.
+  assert.deepEqual(tool.input_schema.required, [
+    "name", "equipment", "primary_muscles", "metrics", "expected_revision_token",
+  ]);
+  assert.equal(tool.input_schema.properties.equipment.minItems, 1);
+  assert.equal(tool.input_schema.properties.primary_muscles.minItems, 1);
+  assert.equal(tool.input_schema.properties.metrics.minItems, 1);
+  assert.equal(tool.input_schema.properties.patterns.maxItems, 2);
+  assert.ok(tool.input_schema.properties.proposal_id);
+  // Taxonomy axes are closed enums so the model cannot invent classification values.
+  for (const axis of ["equipment", "primary_muscles", "secondary_muscles", "metrics", "patterns", "tags"]) {
+    assert.ok(Array.isArray(tool.input_schema.properties[axis].items.enum), `${axis} must be a closed enum`);
+  }
+  assert.deepEqual(tool.input_schema.properties.level.enum, ["beginner", "intermediate", "expert"]);
+  // Units-bearing future defaults reuse the display-unit vocabulary.
+  assert.deepEqual(tool.input_schema.properties.distance_unit.enum, ["m", "km", "mi"]);
+  assert.deepEqual(tool.input_schema.properties.load_unit.enum, ["kg", "lb"]);
+  // The two-phase confirmation contract is spelled out.
+  assert.match(tool.description, /TWO-PHASE/);
+  assert.match(tool.description, /nothing is created/i);
+  assert.match(tool.description, /never silently commit a classification you inferred/i);
+  assert.match(tool.description, /search_exercises FIRST/);
+
+  // Gating: Wave 9 clients only. No older toolset may serve it, and it is not batch-eligible.
+  for (const [label, toolset] of [
+    ["wave8", WAVE8_TOOLS], ["wave7", WAVE7_TOOLS], ["wave6", WAVE6_TOOLS],
+    ["wave5", WAVE5_TOOLS], ["legacy", LEGACY_TOOLS],
+  ]) {
+    assert.equal(
+      toolset.some((candidate) => candidate.name === "create_custom_exercise"),
+      false,
+      `create_custom_exercise should not leak to ${label} clients`
+    );
+  }
+  const batchOps = TOOLS.find((candidate) => candidate.name === "apply_workout_edits")
+    .input_schema.properties.operations.items.properties.op.enum;
+  assert.equal(batchOps.includes("create_custom_exercise"), false);
+
+  assert.equal(toolsForClientSchema("9"), TOOLS);
+  assert.equal(servedToolsetForClientSchema("9"), "wave9");
 });
 
 test("Wave 7 and older clients keep exactly the schemas their mappers understand", () => {

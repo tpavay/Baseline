@@ -877,11 +877,13 @@ final class WorkoutStore {
             }
             transientRevisionToken = undoReceipt.afterRevisionToken
             invalidateLatestTransientUndo()
+            revertCustomExerciseCreation(ifUndone: mutationID)
             return .mutated(undoReceipt)
         }
         switch sink.undoMutation(mutationID, expectedRevisionToken) {
         case .applied(let receipt):
             reloadFromPlan()
+            revertCustomExerciseCreation(ifUndone: mutationID)
             return .mutated(receipt)
         case .preview(let receipt):
             return .mutated(receipt)
@@ -1490,7 +1492,9 @@ final class WorkoutStore {
     @discardableResult
     func setExercisePreference(exerciseNamed name: String, scope: PreferenceScope,
                                units: [MetricType: MetricUnit] = [:], selected: [MetricType]? = nil) -> EditOutcome {
-        let def = ExerciseCatalog.resolve(name)
+        // Resolve through the athlete's own catalog (customs first): "use miles for it from now on"
+        // must reach a movement created with create_custom_exercise, not just curated names.
+        let def = resolveDefinition(name)
         guard def.id != ExerciseCatalog.generic.id else {
             return .notFound("I don't recognize \"\(name)\" as a known exercise to set a default for.")
         }
@@ -3184,6 +3188,240 @@ final class WorkoutStore {
         case .done:
             return .rejected("I couldn't apply that replacement.")
         }
+    }
+
+    // MARK: - Wave 9: deliberate custom exercise creation (two-phase proposal → envelope commit)
+
+    /// The validated wire payload for `create_custom_exercise`. `level` stays nil when the athlete
+    /// didn't state one - the commit defaults it to intermediate and the proposal marks it as a
+    /// default, so an inferred value is never committed as if the athlete chose it.
+    struct CustomExerciseDraft: Sendable, Equatable {
+        var name: String
+        var equipment: [Equipment]
+        var primaryMuscles: [Muscle]
+        var secondaryMuscles: [Muscle]
+        var metrics: [MetricType]
+        var patterns: [MovementPattern]
+        var tags: [ExerciseTag]
+        var level: ExerciseLevel?
+        /// Future display-unit defaults for the new movement (the Wave 4 unit vocabulary), applied
+        /// to `preferences.unitsByExercise` on commit.
+        var units: [MetricType: MetricUnit]
+    }
+
+    enum CustomExerciseCreationOutcome: Equatable {
+        /// Phase 1: the exact definition a confirming call would commit. Nothing was created.
+        case proposal(String)
+        /// The movement already exists; nothing was created and the reply names the existing one.
+        case existing(String)
+        case created(WorkoutMutationReceipt, String)
+        case rejected(String)
+    }
+
+    private var pendingCustomExerciseProposal: (id: UUID, draft: CustomExerciseDraft)?
+    /// The newest committed creation, so undoing exactly that mutation receipt also removes the
+    /// definition (and its unit defaults). Older creations become permanently unreachable through
+    /// the envelope's plan-head staleness rule, so one record is enough.
+    private var latestCustomExerciseCreation: (mutationID: UUID, definitionID: String)?
+
+    func createCustomExercise(
+        draft: CustomExerciseDraft,
+        proposalID: UUID?,
+        expectedRevisionToken: UUID
+    ) -> CustomExerciseCreationOutcome {
+        if let message = validationFailure(for: draft) { return .rejected(message) }
+        let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // The manual path's duplicate rule (`createCustomDefinition` reuses an existing same-named
+        // custom) surfaced honestly, instead of silently returning an old definition under a
+        // "created" claim.
+        let key = trimmedName.lowercased()
+        if let existing = customDefinitions.first(where: { $0.name.lowercased() == key || $0.aliases.contains(key) }) {
+            pendingCustomExerciseProposal = nil
+            return .existing(
+                "A custom exercise named \"\(existing.name)\" already exists (id \(existing.id)) - "
+                    + "nothing new was created. Use it directly: add_exercise and replace_exercise "
+                    + "resolve it by that name. \(classificationSummary(of: existing))"
+            )
+        }
+
+        // Envelope preconditions checked up front, so even the read-only proposal phase is truthful
+        // about a missing workout or a stale revision token.
+        guard let target = mutationTarget(agentScope) else {
+            return .rejected(sink == nil ? "There's no workout yet." : Self.missingPlanWorkout)
+        }
+        guard target.revisionToken == expectedRevisionToken else {
+            return .rejected(Self.staleMutationMessage)
+        }
+
+        guard let proposalID else {
+            let id = UUID()
+            pendingCustomExerciseProposal = (id, draft)
+            return .proposal(proposalText(for: draft, name: trimmedName, proposalID: id))
+        }
+        guard let pending = pendingCustomExerciseProposal, pending.id == proposalID else {
+            return .rejected(
+                "That proposal id doesn't match an open proposal, so nothing was created. "
+                    + "Call create_custom_exercise again without proposal_id for a fresh proposal."
+            )
+        }
+        guard pending.draft == draft else {
+            // The fields changed after the proposal: what the athlete confirmed is not what this
+            // call would commit. Re-propose so the confirmation covers the actual content.
+            let id = UUID()
+            pendingCustomExerciseProposal = (id, draft)
+            return .proposal(
+                "The fields changed since that proposal, so nothing was created - confirm this "
+                    + "updated classification instead.\n"
+                    + proposalText(for: draft, name: trimmedName, proposalID: id)
+            )
+        }
+
+        // The workout itself is untouched; the envelope contributes the revision-token guard, the
+        // persisted receipt, and receipt-addressed undo for a deliberate catalog change. The
+        // definition is created only after the envelope accepts the mutation, so a rejected write
+        // never leaves a half-committed catalog entry.
+        let outcome = mutate(
+            expectedRevisionToken: expectedRevisionToken,
+            reason: "Create custom exercise \(trimmedName)",
+            diff: WorkoutMutationDiff(changes: [
+                .init(kind: .add, summary: "Create custom exercise \"\(trimmedName)\"", entityID: target.workoutID),
+            ])
+        ) { _ in nil }
+        switch outcome {
+        case .mutated(let receipt):
+            let definition = createCustomDefinition(
+                name: trimmedName,
+                supported: draft.metrics,
+                equipment: draft.equipment,
+                primaryMuscles: draft.primaryMuscles,
+                secondaryMuscles: draft.secondaryMuscles,
+                patterns: draft.patterns,
+                tags: draft.tags,
+                level: draft.level ?? .intermediate
+            )
+            if !draft.units.isEmpty { preferences.unitsByExercise[definition.id] = draft.units }
+            latestCustomExerciseCreation = (receipt.mutationID, definition.id)
+            pendingCustomExerciseProposal = nil
+            return .created(
+                receipt,
+                "Created custom exercise \"\(definition.name)\" (id \(definition.id)). "
+                    + "\(classificationSummary(of: definition)) It's immediately addable by that "
+                    + "exact name with add_exercise or replace_exercise."
+            )
+        case .notFound(let message), .ambiguous(let message):
+            return .rejected(message)
+        case .done:
+            return .rejected("I couldn't create that custom exercise.")
+        }
+    }
+
+    /// Mirrors `CustomExerciseForm`'s create gate and picker caps exactly: name, at least one
+    /// equipment value, one primary muscle, and one metric are required; patterns cap at two. The
+    /// agent path must not accept a definition the manual form would refuse.
+    private func validationFailure(for draft: CustomExerciseDraft) -> String? {
+        if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "A custom exercise needs a name."
+        }
+        if draft.equipment.isEmpty {
+            return "A custom exercise needs at least one equipment value (bodyweight counts)."
+        }
+        if draft.primaryMuscles.isEmpty {
+            return "A custom exercise needs at least one primary muscle."
+        }
+        if draft.metrics.isEmpty {
+            return "A custom exercise needs at least one metric it can log."
+        }
+        if draft.patterns.count > 2 {
+            return "A custom exercise carries at most two movement patterns - keep the dominant one or two."
+        }
+        for (metric, unit) in draft.units {
+            guard draft.metrics.contains(metric) else {
+                return "A display default for \(metric.label.lowercased()) needs \(metric.label.lowercased()) in the metrics list."
+            }
+            guard metric.displayUnits.contains(unit) else {
+                return "\(unit.rawValue) isn't a display unit \(metric.label.lowercased()) offers."
+            }
+        }
+        return nil
+    }
+
+    private func proposalText(for draft: CustomExerciseDraft, name: String, proposalID: UUID) -> String {
+        let modality = Modality.inferred(fromMetrics: draft.metrics)
+        let category = ActivityCategory.legacy(modality: modality, patterns: draft.patterns)
+        var lines = ["PROPOSAL - nothing created yet. Custom exercise \"\(name)\" would be committed as:"]
+        lines.append("- equipment: \(draft.equipment.map(\.displayName).joined(separator: ", "))")
+        lines.append("- primary muscles: \(draft.primaryMuscles.map(\.displayName).joined(separator: ", "))")
+        if !draft.secondaryMuscles.isEmpty {
+            lines.append("- secondary muscles: \(draft.secondaryMuscles.map(\.displayName).joined(separator: ", "))")
+        }
+        lines.append("- metrics it logs: \(draft.metrics.map(\.label).joined(separator: ", "))")
+        if !draft.patterns.isEmpty {
+            lines.append("- movement patterns: \(draft.patterns.map(\.displayName).joined(separator: ", "))")
+        }
+        if !draft.tags.isEmpty {
+            lines.append("- tags: \(draft.tags.map(\.displayName).joined(separator: ", "))")
+        }
+        if let level = draft.level {
+            lines.append("- level: \(level.displayName)")
+        } else {
+            lines.append("- level: Intermediate (DEFAULT - the athlete didn't state one)")
+        }
+        lines.append("- modality: \(modality.rawValue) (DERIVED from its metrics)")
+        lines.append("- category: \(category.rawValue) (DERIVED)")
+        if !draft.units.isEmpty {
+            let units = draft.units
+                .sorted { $0.key.rawValue < $1.key.rawValue }
+                .map { "\($0.key.label.lowercased()) in \($0.value.rawValue)" }
+            lines.append("- display defaults: \(units.joined(separator: ", "))")
+        }
+        lines.append(contentsOf: curatedCatalogNotes(for: name))
+        lines.append(
+            "Relay this classification to the athlete and confirm every part they didn't state "
+                + "themselves - then call create_custom_exercise again with the same fields plus "
+                + "proposal_id \"\(proposalID.uuidString)\"."
+        )
+        return lines.joined(separator: "\n")
+    }
+
+    /// The curated catalog's view of the proposed name: an exact name/alias hit is a shadowing
+    /// warning, and near-misses are surfaced because the right fix is usually the real movement.
+    private func curatedCatalogNotes(for name: String) -> [String] {
+        let key = name.lowercased()
+        if let curated = ExerciseCatalog.lookUp(name: name, id: nil),
+           curated.name.lowercased() == key || curated.aliases.contains(key) {
+            return [
+                "WARNING: the catalog already has \"\(curated.name)\" (id \(curated.id)). Prefer using "
+                    + "it - a custom with the same name shadows the catalog entry whenever the name is used.",
+            ]
+        }
+        guard case .success(let query) = ExerciseSearch.parse(text: name) else { return [] }
+        let similar = ExerciseCatalog.search(query).matches.prefix(3)
+        guard !similar.isEmpty else { return [] }
+        let rows = similar.map { "\($0.name) (\($0.id))" }.joined(separator: ", ")
+        return ["Similar catalog movements: \(rows). If one of these is the movement, use it instead of creating a custom."]
+    }
+
+    private func classificationSummary(of definition: ExerciseDefinition) -> String {
+        var parts = [
+            "equipment: \(definition.equipment.map(\.displayName).joined(separator: ", "))",
+            "primary muscles: \(definition.primaryMuscles.map(\.displayName).joined(separator: ", "))",
+            "metrics: \(definition.supported.map(\.label).joined(separator: ", "))",
+        ]
+        if let level = definition.level { parts.append("level: \(level.displayName)") }
+        if let modality = definition.modality { parts.append("modality: \(modality.rawValue)") }
+        parts.append("category: \(definition.category.rawValue)")
+        return "Classification - \(parts.joined(separator: "; "))."
+    }
+
+    /// The undo companion for a committed creation: when `undo_workout_mutation` reverts exactly
+    /// that receipt, the definition it created (and its unit defaults) must disappear with it.
+    private func revertCustomExerciseCreation(ifUndone mutationID: UUID) {
+        guard let creation = latestCustomExerciseCreation, creation.mutationID == mutationID else { return }
+        customDefinitions.removeAll { $0.id == creation.definitionID }
+        preferences.unitsByExercise[creation.definitionID] = nil
+        recentExerciseIds.removeAll { $0 == creation.definitionID }
+        latestCustomExerciseCreation = nil
     }
 
     // MARK: - Performed-log tools
