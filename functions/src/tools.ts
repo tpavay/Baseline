@@ -189,6 +189,52 @@ export const TOOLS = [
     },
   },
   {
+    name: "update_workout_metadata",
+    description: "Update the current workout's title, goal, or guidance. Include only fields the athlete asked to change. For nullable fields, omit to preserve the current value and pass null to clear it.",
+    input_schema: {
+      type: "object",
+      minProperties: 2,
+      properties: {
+        title: { type: "string", minLength: 1, description: "New workout title. Omit to leave unchanged." },
+        goal: { type: ["string", "null"], description: "New workout goal, null to clear, or omit to leave unchanged." },
+        guidance: { type: ["string", "null"], description: "Coach guidance or notes for the workout, null to clear, or omit to leave unchanged." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["expected_revision_token"],
+    },
+  },
+  {
+    name: "update_block_metadata",
+    description: "Update one workout block's name, intent, or guidance by stable block ID. Include only fields the athlete asked to change. For nullable fields, omit to preserve the current value and pass null to clear it.",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        block_id: { type: "string", description: "Stable block ID from get_current_workout." },
+        name: { type: "string", minLength: 1, description: "New block name. Omit to leave unchanged." },
+        intent: { type: ["string", "null"], description: "New block intent, null to clear, or omit to leave unchanged." },
+        guidance: { type: ["string", "null"], description: "Coach guidance or notes for the block, null to clear, or omit to leave unchanged." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["block_id", "expected_revision_token"],
+    },
+  },
+  {
+    name: "update_exercise_metadata",
+    description: "Update one exercise instance's workout-local display label or guidance by stable exercise instance ID. Include only fields the athlete asked to change. Omit a nullable field to preserve it and pass null to clear it.",
+    input_schema: {
+      type: "object",
+      minProperties: 3,
+      properties: {
+        exercise_instance_id: { type: "string", description: "Stable exercise instance ID from get_current_workout." },
+        display_label: { type: ["string", "null"], description: "Workout-local label, null to return to the catalog exercise name, or omit to leave unchanged." },
+        guidance: { type: ["string", "null"], description: "Coach guidance or notes for this instance, null to clear, or omit to leave unchanged." },
+        expected_revision_token: expectedRevisionToken,
+      },
+      required: ["exercise_instance_id", "expected_revision_token"],
+    },
+  },
+  {
     name: "start_workout",
     description: "Begin the athlete's workout — activates a live logging session so sets can be checked off, and returns the active session id. Safe to call immediately when a workout exists and no session is already active. The workout must already exist (see the current-workout index in the state block); if none exists, offer to build one instead of calling this. Idempotent — calling it when already active just reports the running session.",
     input_schema: { type: "object", properties: {} },

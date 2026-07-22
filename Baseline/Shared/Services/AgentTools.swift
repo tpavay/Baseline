@@ -1,5 +1,18 @@
 import Foundation
 
+/// A field supplied by a tool call can be absent, carry a value, or explicitly carry JSON `null`.
+/// Keeping those states distinct prevents a clear request from collapsing into "leave unchanged."
+enum MetadataPatch<Value: Equatable & Sendable>: Equatable, Sendable {
+    case unchanged
+    case set(Value)
+    case clear
+
+    var isUnchanged: Bool {
+        if case .unchanged = self { return true }
+        return false
+    }
+}
+
 /// The Context Engine's **validated tool layer** — the deterministic operations the LLM *proposes*
 /// and this *executes*. The model understands language; this owns what actually happens: every call
 /// is typed and validated, mutates the structured state, and returns the **recomputed** plan so the
@@ -32,6 +45,25 @@ final class AgentTools {
         case getRestingHeartRate(days: Int)
         // Workout editing. Stable instance IDs from get_current_workout take precedence over names.
         case createWorkout(title: String, goal: String?, replaceExisting: Bool, expectedRevisionToken: UUID? = nil)
+        case updateWorkoutMetadata(
+            title: MetadataPatch<String>,
+            goal: MetadataPatch<String>,
+            guidance: MetadataPatch<String>,
+            expectedRevisionToken: UUID
+        )
+        case updateBlockMetadata(
+            blockID: UUID,
+            name: MetadataPatch<String>,
+            intent: MetadataPatch<String>,
+            guidance: MetadataPatch<String>,
+            expectedRevisionToken: UUID
+        )
+        case updateExerciseMetadata(
+            exerciseInstanceID: UUID,
+            displayLabel: MetadataPatch<String>,
+            guidance: MetadataPatch<String>,
+            expectedRevisionToken: UUID
+        )
         case addBlock(name: String, intent: String?, expectedRevisionToken: UUID? = nil)
         case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, expectedRevisionToken: UUID? = nil)
         case moveExercise(exercise: String, exerciseID: UUID?, toBlock: String, toBlockID: UUID?, expectedRevisionToken: UUID? = nil)
@@ -90,6 +122,21 @@ final class AgentTools {
             case .getHRVReadings(let l): return "Retrieved \(l) recent HRV readings"
             case .getRestingHeartRate(let d): return "Retrieved resting HR (\(d)-day) from Apple Health"
             case .createWorkout(let t, _, _, _): return "Created workout: \(t)"
+            case .updateWorkoutMetadata(let title, let goal, let guidance, _):
+                return Self.metadataActivityLabel(
+                    subject: "workout",
+                    fields: [("title", title), ("goal", goal), ("guidance", guidance)]
+                )
+            case .updateBlockMetadata(_, let name, let intent, let guidance, _):
+                return Self.metadataActivityLabel(
+                    subject: "block",
+                    fields: [("name", name), ("intent", intent), ("guidance", guidance)]
+                )
+            case .updateExerciseMetadata(_, let displayLabel, let guidance, _):
+                return Self.metadataActivityLabel(
+                    subject: "exercise",
+                    fields: [("display label", displayLabel), ("guidance", guidance)]
+                )
             case .addBlock(let n, _, _): return "Added block: \(n)"
             case .addExercise(let b, let n, _, _, _, _, _, _): return "Added \(n) to \(b)"
             case .moveExercise(let e, _, let b, _, _): return "Moved \(e) → \(b)"
@@ -136,6 +183,7 @@ final class AgentTools {
             case .setTimeAvailable, .setEquipment, .setTraveling, .setIllness, .setSleep, .setCheckIn,
                  .setNote, .upsertConstraint, .resolveConstraint, .openAppleHealthSetup, .getSleep,
                  .getHRVReadings, .getRestingHeartRate, .createWorkout, .addBlock, .addExercise,
+                 .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
                  .moveExercise, .replaceExercise, .requireAllOptions, .removeExercise, .updateSet,
                  .undoWorkoutMutation,
                  .startWorkout, .completeWorkout, .moveWorkout, .swapWorkouts, .skipWorkout,
@@ -143,6 +191,41 @@ final class AgentTools {
                  .updateTemplate, .updateLoggingConfig, .updateExercisePreference, .setMetricValue,
                  .removeMetric:
                 return true
+            }
+        }
+
+        /// Receipt-bound edits record activity only after the shared mutation envelope confirms a
+        /// write. This keeps stale and missing-target calls out of the "what changed" feed.
+        var requiresWorkoutMutationReceiptForActivity: Bool {
+            switch self {
+            case .updateWorkoutMetadata, .updateBlockMetadata, .updateExerciseMetadata,
+                 .addBlock, .addExercise, .moveExercise, .replaceExercise, .requireAllOptions,
+                 .removeExercise, .updateSet, .undoWorkoutMutation, .updateLoggingConfig,
+                 .setMetricValue, .removeMetric:
+                return true
+            default:
+                return false
+            }
+        }
+
+        private static func metadataActivityLabel(
+            subject: String,
+            fields: [(String, MetadataPatch<String>)]
+        ) -> String {
+            let changed = fields.filter { !$0.1.isUnchanged }
+            guard changed.count == 1, let (field, patch) = changed.first else {
+                return "Updated \(subject) " + changed.map(\.0).joined(separator: ", ")
+            }
+            switch patch {
+            case .unchanged:
+                return "Updated \(subject)"
+            case .clear:
+                return "Cleared \(subject) \(field)"
+            case .set(let value):
+                if field == "title" || field == "name" { return "Renamed \(subject) to \(value)" }
+                if field == "display label" { return "Labeled \(subject) \(value)" }
+                if field == "guidance" { return "Updated \(subject) guidance" }
+                return "Set \(subject) \(field) to \(value)"
             }
         }
     }
@@ -320,6 +403,45 @@ final class AgentTools {
             return outcome(
                 workouts.create(title: title, goal: goal, expectedRevisionToken: expectedRevisionToken),
                 success: "Created workout \"\(title)\"."
+            )
+        case .updateWorkoutMetadata(let title, let goal, let guidance, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateWorkoutMetadata(
+                    title: title,
+                    goal: goal,
+                    guidance: guidance,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "\(call.activityLabel)."
+            )
+        case .updateBlockMetadata(let blockID, let name, let intent, let guidance, let expectedRevisionToken):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateBlockMetadata(
+                    blockID: blockID,
+                    name: name,
+                    intent: intent,
+                    guidance: guidance,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "\(call.activityLabel)."
+            )
+        case .updateExerciseMetadata(
+            let exerciseInstanceID,
+            let displayLabel,
+            let guidance,
+            let expectedRevisionToken
+        ):
+            guard let workouts else { return workoutUnavailable() }
+            return outcome(
+                workouts.updateExerciseMetadata(
+                    exerciseInstanceID: exerciseInstanceID,
+                    displayLabel: displayLabel,
+                    guidance: guidance,
+                    expectedRevisionToken: expectedRevisionToken
+                ),
+                success: "\(call.activityLabel)."
             )
         case .addBlock(let name, let intent, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }

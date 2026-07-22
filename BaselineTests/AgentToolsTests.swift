@@ -115,6 +115,41 @@ struct AgentToolsTests {
         #expect(AgentTools.Call.getSleep(nightsAgo: 0).showsInActivityFeed)
     }
 
+    @Test func receiptBoundActivityRecordsOnlyConfirmedMetadataWrites() throws {
+        let context = TrainingContextStore(
+            defaults: UserDefaults(suiteName: "activity-receipt-\(UUID().uuidString)")!
+        )
+        let workouts = WorkoutStore(
+            units: StubUnitSystem(),
+            defaults: UserDefaults(suiteName: "activity-workout-\(UUID().uuidString)")!
+        )
+        let tools = AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts)
+        let unavailableCall = AgentTools.Call.updateWorkoutMetadata(
+            title: .set("Race prep"),
+            goal: .unchanged,
+            guidance: .unchanged,
+            expectedRevisionToken: UUID()
+        )
+        let unavailableResponse = tools.dispatch(unavailableCall)
+
+        #expect(ConversationService.shouldRecordActivity(unavailableCall, response: unavailableResponse) == false)
+
+        _ = tools.dispatch(.createWorkout(title: "Original", goal: nil, replaceExisting: false))
+        let revision = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+        let appliedCall = AgentTools.Call.updateWorkoutMetadata(
+            title: .set("Race prep"),
+            goal: .unchanged,
+            guidance: .unchanged,
+            expectedRevisionToken: revision
+        )
+        let appliedResponse = tools.dispatch(appliedCall)
+
+        #expect(appliedResponse.mutationReceipt != nil)
+        #expect(ConversationService.shouldRecordActivity(appliedCall, response: appliedResponse))
+        #expect(appliedCall.activityLabel == "Renamed workout to Race prep")
+        #expect(appliedResponse.userFacingText == "Renamed workout to Race prep.")
+    }
+
     @Test func catalogToolsAreReadOnly() {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
@@ -277,6 +312,29 @@ struct AgentToolsTests {
             exerciseID: nil,
             enabledMetrics: [.distance, .load],
             units: [.load: .pounds]
+        )))
+        #expect(service.permits(.updateWorkoutMetadata(
+            title: .set("Imported workout"),
+            goal: .unchanged,
+            guidance: .unchanged,
+            expectedRevisionToken: UUID()
+        )))
+        #expect(service.permits(.updateBlockMetadata(
+            blockID: UUID(),
+            name: .set("Main"),
+            intent: .unchanged,
+            guidance: .unchanged,
+            expectedRevisionToken: UUID()
+        )))
+        #expect(service.permits(.updateExerciseMetadata(
+            exerciseInstanceID: UUID(),
+            displayLabel: .set("Station A"),
+            guidance: .unchanged,
+            expectedRevisionToken: UUID()
+        )))
+        #expect(service.permits(.undoWorkoutMutation(
+            mutationID: UUID(),
+            expectedRevisionToken: UUID()
         )))
         #expect(!service.permits(.updateExercisePreference(
             exercise: "Sled Pull",
