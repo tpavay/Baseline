@@ -66,13 +66,16 @@ If Baseline later chooses to bundle Inter, add the licensed font resources, regi
 | `navigationTitle` | SF Pro Semibold | `headline` | Navigation and card titles |
 | `prose` | SF Pro Regular | `body` | Explanation and conversational copy |
 | `proseSmall` | SF Pro Regular | `subheadline` | Supporting prose |
+| `exerciseName` | SF Pro Semibold | `title3` | Prominent editable exercise names |
 | `rowTitle` | SF Pro Regular | `body` | Picker row titles |
+| `rowValue` | SF Pro Regular | `subheadline` | Classification values and compact supporting values |
 | `rowSubtitle` | SF Pro Regular | `caption` | Picker subtitles and disabled reasons |
 | `instrumentMetric` | SF Mono Bold | `title2` | Primary metric values |
 | `instrumentValue` | SF Mono Bold | `title3` | Compact center values and readouts |
 | `instrumentLabel` | SF Mono Semibold | `caption` | Uppercase section and instrument labels |
 | `instrumentMeta` | SF Mono Medium | `caption` | Supporting measurement metadata |
 | `button` | SF Mono Bold | `subheadline` | Compact action labels |
+| `primaryAction` | SF Pro Bold | `subheadline` | Full-width primary actions |
 
 Use `.baselineTypography(...)` for new shared and feature UI.
 `Font.bMono` remains a compatibility API for existing call sites that still require explicit sizes.
@@ -86,10 +89,16 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Picker icon | `BaselineSize.icon` | 32 pt |
 | Picker icon glyph | `BaselineSize.iconGlyph` | 15 pt |
 | Picker selection glyph | `BaselineSize.selectionGlyph` | 17 pt |
+| Primary action height | `BaselineSize.primaryActionHeight` | 50 pt |
+| Picker row minimum height | `BaselineSize.pickerRowMinimumHeight` | 62 pt |
+| Exercise asset placeholder | `BaselineSize.exerciseAsset` | 92 pt |
 | Icon radius | `BaselineRadius.icon` | 9 pt |
 | Control radius | `BaselineRadius.control` | 10 pt |
+| Search radius | `BaselineRadius.search` | 11 pt |
+| Action radius | `BaselineRadius.action` | 12 pt |
 | Card radius | `BaselineRadius.card` | 14 pt |
 | Pill radius | `BaselineRadius.pill` | 28 pt |
+| Form row vertical padding | `BaselineSpacing.formRowVertical` | 14 pt |
 | Card content padding | `BaselineSpacing.cardContent` | 15 pt |
 | Screen margin | `BaselineSpacing.screen` | 24 pt |
 
@@ -139,6 +148,7 @@ Selection never relies on color alone.
 Single selection replaces the previous ID.
 Multiple selection toggles an unbounded set.
 Disabled rows cannot mutate selection.
+Callers may override the default search placeholder and receive an optional post-selection callback after each enabled row tap, which single-select feature pickers use to dismiss on selection.
 Feature screens provide data, labels, icons, and disabled reasons without rebuilding interaction behavior.
 
 ## App icon

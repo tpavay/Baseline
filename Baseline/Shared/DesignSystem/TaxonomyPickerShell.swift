@@ -12,10 +12,12 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
     @Binding var selection: Set<Item.ID>
     let selectionMode: SelectionMode
     let isSearchEnabled: Bool
+    let searchPrompt: String?
     let itemTitle: (Item) -> String
     let itemSubtitle: (Item) -> String?
     let itemIcon: (Item) -> Image
     let disabledReason: (Item) -> String?
+    let onSelect: ((Item.ID) -> Void)?
     let onBack: () -> Void
     let onDone: (() -> Void)?
 
@@ -27,10 +29,12 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
         selection: Binding<Set<Item.ID>>,
         selectionMode: SelectionMode,
         isSearchEnabled: Bool = true,
+        searchPrompt: String? = nil,
         itemTitle: @escaping (Item) -> String,
         itemSubtitle: @escaping (Item) -> String? = { _ in nil },
         itemIcon: @escaping (Item) -> Image,
         disabledReason: @escaping (Item) -> String? = { _ in nil },
+        onSelect: ((Item.ID) -> Void)? = nil,
         onBack: @escaping () -> Void,
         onDone: (() -> Void)? = nil
     ) {
@@ -39,10 +43,12 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
         _selection = selection
         self.selectionMode = selectionMode
         self.isSearchEnabled = isSearchEnabled
+        self.searchPrompt = searchPrompt
         self.itemTitle = itemTitle
         self.itemSubtitle = itemSubtitle
         self.itemIcon = itemIcon
         self.disabledReason = disabledReason
+        self.onSelect = onSelect
         self.onBack = onBack
         self.onDone = onDone
     }
@@ -66,7 +72,7 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
                         .foregroundStyle(BaselineColor.textFaint)
                         .accessibilityHidden(true)
 
-                    TextField("Search \(title)", text: $searchText)
+                    TextField(searchPrompt ?? "Search \(title)", text: $searchText)
                         .baselineTypography(.proseSmall)
                         .foregroundStyle(BaselineColor.textHi)
                         .textInputAutocapitalization(.never)
@@ -75,10 +81,10 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
                 .padding(.horizontal, BaselineSpacing.medium)
                 .frame(minHeight: BaselineSize.minimumTapTarget)
                 .background {
-                    RoundedRectangle(cornerRadius: 11)
+                    RoundedRectangle(cornerRadius: BaselineRadius.search)
                         .fill(BaselineColor.surface)
                         .overlay {
-                            RoundedRectangle(cornerRadius: 11)
+                            RoundedRectangle(cornerRadius: BaselineRadius.search)
                                 .stroke(BaselineColor.line, lineWidth: BaselineSize.hairline)
                         }
                 }
@@ -112,6 +118,9 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
                                         allowsMultiple: selectionMode == .multiple,
                                         isDisabled: reason != nil
                                     )
+                                    if reason == nil {
+                                        onSelect?(item.id)
+                                    }
                                 }
                             )
                         }

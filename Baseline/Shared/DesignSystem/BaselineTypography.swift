@@ -10,13 +10,16 @@ enum BaselineTypography: ViewModifier {
     case navigationTitle
     case prose
     case proseSmall
+    case exerciseName
     case rowTitle
+    case rowValue
     case rowSubtitle
     case instrumentMetric
     case instrumentValue
     case instrumentLabel
     case instrumentMeta
     case button
+    case primaryAction
 
     var font: Font {
         switch self {
@@ -28,8 +31,12 @@ enum BaselineTypography: ViewModifier {
             .system(.body, design: .default, weight: .regular)
         case .proseSmall:
             .system(.subheadline, design: .default, weight: .regular)
+        case .exerciseName:
+            .system(.title3, design: .default, weight: .semibold)
         case .rowTitle:
             .system(.body, design: .default, weight: .regular)
+        case .rowValue:
+            .system(.subheadline, design: .default, weight: .regular)
         case .rowSubtitle:
             .system(.caption, design: .default, weight: .regular)
         case .instrumentMetric:
@@ -42,6 +49,8 @@ enum BaselineTypography: ViewModifier {
             .system(.caption, design: .monospaced, weight: .medium)
         case .button:
             .system(.subheadline, design: .monospaced, weight: .bold)
+        case .primaryAction:
+            .system(.subheadline, design: .default, weight: .bold)
         }
     }
 

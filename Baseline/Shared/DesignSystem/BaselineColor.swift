@@ -45,6 +45,7 @@ enum BaselineSpacing {
     static let xSmall: CGFloat = 8
     static let small: CGFloat = 10
     static let medium: CGFloat = 12
+    static let formRowVertical: CGFloat = 14
     static let cardContent: CGFloat = 15
     static let large: CGFloat = 16
     static let screen: CGFloat = 24
@@ -54,6 +55,8 @@ enum BaselineSpacing {
 enum BaselineRadius {
     static let icon: CGFloat = 9
     static let control: CGFloat = 10
+    static let search: CGFloat = 11
+    static let action: CGFloat = 12
     static let card: CGFloat = 14
     static let pill: CGFloat = 28
 }
@@ -65,6 +68,9 @@ enum BaselineSize {
     static let iconGlyph: CGFloat = 15
     static let selectionGlyph: CGFloat = 17
     static let minimumTapTarget: CGFloat = 44
+    static let primaryActionHeight: CGFloat = 50
+    static let pickerRowMinimumHeight: CGFloat = 62
+    static let exerciseAsset: CGFloat = 92
 }
 
 extension Color {
