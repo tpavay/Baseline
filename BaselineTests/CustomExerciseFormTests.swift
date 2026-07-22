@@ -17,6 +17,29 @@ struct CustomExerciseFormTests {
         #expect(draft.canSave == false)
     }
 
+    @Test func promotingAMuscleToPrimaryRemovesItFromOtherMuscles() {
+        var draft = CustomExerciseFormDraft(
+            name: "Single-Arm Sled Drag",
+            primaryMuscles: [.lats],
+            secondaryMuscles: [.quadriceps, .biceps]
+        )
+
+        draft.primaryMuscles = [.quadriceps]
+
+        #expect(draft.primaryMuscles == [.quadriceps])
+        #expect(draft.secondaryMuscles == [.biceps])
+    }
+
+    @Test func aDraftSeededWithOverlappingMusclesKeepsOnlyThePrimaryCopy() {
+        let draft = CustomExerciseFormDraft(
+            name: "Single-Arm Sled Drag",
+            primaryMuscles: [.lats],
+            secondaryMuscles: [.lats, .biceps]
+        )
+
+        #expect(draft.secondaryMuscles == [.biceps])
+    }
+
     @Test func pickerSelectionFeedsTheDraftAndPreservesTapOrder() {
         let options: [MovementPattern] = [.squat, .hinge, .lunge, .push, .pull, .carry, .rotation, .gait, .hold]
 
@@ -60,5 +83,37 @@ struct CustomExerciseFormTests {
         #expect(created.tags == [.hyrox])
         #expect(created.level == .intermediate)
         #expect(store.customDefinitions.map(\.id) == [created.id])
+    }
+}
+
+struct CustomExerciseTaxonomyOrderTests {
+    @Test func equipmentOrderCoversEveryCaseExactlyOnce() {
+        #expect(Set(CustomExerciseTaxonomyOrder.equipment) == Set(Equipment.allCases))
+        #expect(CustomExerciseTaxonomyOrder.equipment.count == Equipment.allCases.count)
+    }
+
+    @Test func muscleOrderCoversEveryCaseExactlyOnce() {
+        #expect(Set(CustomExerciseTaxonomyOrder.muscles) == Set(Muscle.allCases))
+        #expect(CustomExerciseTaxonomyOrder.muscles.count == Muscle.allCases.count)
+    }
+
+    @Test func metricOrderCoversEveryCaseExactlyOnce() {
+        #expect(Set(CustomExerciseTaxonomyOrder.metrics) == Set(MetricType.allCases))
+        #expect(CustomExerciseTaxonomyOrder.metrics.count == MetricType.allCases.count)
+    }
+
+    @Test func patternOrderCoversEveryCaseExactlyOnce() {
+        #expect(Set(CustomExerciseTaxonomyOrder.patterns) == Set(MovementPattern.allCases))
+        #expect(CustomExerciseTaxonomyOrder.patterns.count == MovementPattern.allCases.count)
+    }
+
+    @Test func tagOrderCoversEveryCaseExactlyOnce() {
+        #expect(Set(CustomExerciseTaxonomyOrder.tags) == Set(ExerciseTag.allCases))
+        #expect(CustomExerciseTaxonomyOrder.tags.count == ExerciseTag.allCases.count)
+    }
+
+    @Test func levelOrderCoversEveryCaseExactlyOnce() {
+        #expect(Set(CustomExerciseTaxonomyOrder.levels) == Set(ExerciseLevel.allCases))
+        #expect(CustomExerciseTaxonomyOrder.levels.count == ExerciseLevel.allCases.count)
     }
 }

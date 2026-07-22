@@ -15,12 +15,13 @@ struct CustomExerciseAssetPlaceholder: View {
                         )
                 }
 
-            Text("Add image (optional)")
+            Text("No image yet (optional)")
                 .baselineTypography(.rowSubtitle)
-                .foregroundStyle(BaselineColor.accent)
+                .foregroundStyle(BaselineColor.textFaint)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Exercise image, optional")
+        .accessibilityLabel("Exercise image, optional, none added")
+        .accessibilityAddTraits(.isStaticText)
     }
 }

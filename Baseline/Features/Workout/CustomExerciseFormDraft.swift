@@ -4,7 +4,9 @@ import Foundation
 struct CustomExerciseFormDraft: Equatable {
     var name: String
     var equipment: [Equipment]
-    var primaryMuscles: [Muscle]
+    var primaryMuscles: [Muscle] {
+        didSet { secondaryMuscles.removeAll(where: primaryMuscles.contains) }
+    }
     var secondaryMuscles: [Muscle]
     var metrics: [MetricType]
     var patterns: [MovementPattern]
@@ -24,7 +26,7 @@ struct CustomExerciseFormDraft: Equatable {
         self.name = name
         self.equipment = equipment
         self.primaryMuscles = primaryMuscles
-        self.secondaryMuscles = secondaryMuscles
+        self.secondaryMuscles = secondaryMuscles.filter { primaryMuscles.contains($0) == false }
         self.metrics = metrics
         self.patterns = patterns
         self.tags = tags

@@ -46,11 +46,12 @@ struct CustomExerciseTaxonomyPicker<Value: Hashable>: View {
             itemSubtitle: { option in option.subtitle },
             itemIcon: { option in option.icon },
             disabledReason: { option in disabledReason(option) },
+            onSelect: { id in singleSelect(id) },
             onBack: { dismiss() },
             onDone: doneAction
         )
-        .onChange(of: selectedIDs) { oldValue, newValue in
-            updateSelection(oldValue, newValue)
+        .onChange(of: selectedIDs) { _, newValue in
+            updateSelection(newValue)
         }
     }
 
@@ -74,14 +75,21 @@ struct CustomExerciseTaxonomyPicker<Value: Hashable>: View {
         return "Pick up to \(selectionLimit)"
     }
 
-    private func updateSelection(_ oldValue: Set<Value>, _ newValue: Set<Value>) {
+    private func updateSelection(_ newValue: Set<Value>) {
         selected = CustomExercisePickerLogic.orderedSelection(
             options: options.map(\.id),
             selectedIDs: newValue,
             previousSelection: selected
         )
-        if allowsMultiple == false, oldValue != newValue {
-            dismiss()
-        }
+    }
+
+    private func singleSelect(_ id: Value) {
+        guard allowsMultiple == false else { return }
+        selected = CustomExercisePickerLogic.orderedSelection(
+            options: options.map(\.id),
+            selectedIDs: [id],
+            previousSelection: selected
+        )
+        dismiss()
     }
 }

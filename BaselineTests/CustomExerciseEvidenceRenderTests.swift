@@ -5,7 +5,7 @@ import UIKit
 
 @MainActor
 struct CustomExerciseEvidenceRenderTests {
-    @Test func capturesEveryApprovedCustomExerciseScreenOnIPhone16Pro() throws {
+    @Test func capturesEveryApprovedCustomExerciseScreenOnIPhone16() throws {
         let store = WorkoutStore(
             units: StubUnitSystem(.imperial),
             defaults: UserDefaults(suiteName: "custom-evidence-\(UUID().uuidString)")!
@@ -154,6 +154,7 @@ private final class CustomExerciseEvidenceHarness {
     }
 
     func capture(_ image: UIImage, named name: String) throws {
+        guard ProcessInfo.processInfo.environment["CAPTURE_EVIDENCE"] == "1" else { return }
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()

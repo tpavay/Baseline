@@ -13,7 +13,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: equipmentOptions,
-                allowsMultiple: false,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 searchPrompt: "Search equipment",
                 selected: $draft.equipment
@@ -22,7 +22,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: muscleOptions,
-                allowsMultiple: false,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 searchPrompt: "Search muscles",
                 selected: $draft.primaryMuscles
@@ -31,7 +31,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: otherMuscleOptions,
-                allowsMultiple: true,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 searchPrompt: "Search muscles",
                 selected: $draft.secondaryMuscles,
@@ -43,7 +43,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: metricOptions,
-                allowsMultiple: true,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 selected: $draft.metrics
             )
@@ -51,7 +51,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: patternOptions,
-                allowsMultiple: true,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 selectionLimit: 2,
                 selected: $draft.patterns
@@ -60,7 +60,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: tagOptions,
-                allowsMultiple: true,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 selected: $draft.tags
             )
@@ -68,7 +68,7 @@ struct CustomExercisePicker: View {
             CustomExerciseTaxonomyPicker(
                 title: kind.title,
                 options: levelOptions,
-                allowsMultiple: false,
+                allowsMultiple: kind.allowsMultiple,
                 isSearchEnabled: kind.isSearchEnabled,
                 selected: $draft.level
             )
@@ -76,7 +76,7 @@ struct CustomExercisePicker: View {
     }
 
     private var equipmentOptions: [CustomExerciseTaxonomyOption<Equipment>] {
-        equipmentOrder.map { equipment in
+        CustomExerciseTaxonomyOrder.equipment.map { equipment in
             CustomExerciseTaxonomyOption(
                 id: equipment,
                 title: CustomExerciseTaxonomyPresentation.title(equipment),
@@ -87,7 +87,7 @@ struct CustomExercisePicker: View {
     }
 
     private var muscleOptions: [CustomExerciseTaxonomyOption<Muscle>] {
-        muscleOrder.map { muscle in
+        CustomExerciseTaxonomyOrder.muscles.map { muscle in
             CustomExerciseTaxonomyOption(
                 id: muscle,
                 title: CustomExerciseTaxonomyPresentation.title(muscle),
@@ -98,7 +98,7 @@ struct CustomExercisePicker: View {
     }
 
     private var otherMuscleOptions: [CustomExerciseTaxonomyOption<Muscle>] {
-        muscleOrder.map { muscle in
+        CustomExerciseTaxonomyOrder.muscles.map { muscle in
             CustomExerciseTaxonomyOption(
                 id: muscle,
                 title: CustomExerciseTaxonomyPresentation.title(muscle),
@@ -111,7 +111,7 @@ struct CustomExercisePicker: View {
     }
 
     private var metricOptions: [CustomExerciseTaxonomyOption<MetricType>] {
-        metricOrder.map { metric in
+        CustomExerciseTaxonomyOrder.metrics.map { metric in
             CustomExerciseTaxonomyOption(
                 id: metric,
                 title: CustomExerciseTaxonomyPresentation.title(metric),
@@ -122,7 +122,7 @@ struct CustomExercisePicker: View {
     }
 
     private var patternOptions: [CustomExerciseTaxonomyOption<MovementPattern>] {
-        MovementPattern.allCases.map { pattern in
+        CustomExerciseTaxonomyOrder.patterns.map { pattern in
             CustomExerciseTaxonomyOption(
                 id: pattern,
                 title: CustomExerciseTaxonomyPresentation.title(pattern),
@@ -133,7 +133,7 @@ struct CustomExercisePicker: View {
     }
 
     private var tagOptions: [CustomExerciseTaxonomyOption<ExerciseTag>] {
-        tagOrder.map { tag in
+        CustomExerciseTaxonomyOrder.tags.map { tag in
             CustomExerciseTaxonomyOption(
                 id: tag,
                 title: tag.displayName,
@@ -144,7 +144,7 @@ struct CustomExercisePicker: View {
     }
 
     private var levelOptions: [CustomExerciseTaxonomyOption<ExerciseLevel>] {
-        ExerciseLevel.allCases.map { level in
+        CustomExerciseTaxonomyOrder.levels.map { level in
             CustomExerciseTaxonomyOption(
                 id: level,
                 title: CustomExerciseTaxonomyPresentation.title(level),
@@ -152,26 +152,5 @@ struct CustomExercisePicker: View {
                 icon: CustomExerciseTaxonomyPresentation.icon(level)
             )
         }
-    }
-
-    private var equipmentOrder: [Equipment] {
-        [.bodyweight, .barbell, .ezBar, .trapBar, .dumbbell, .kettlebell, .medicineBall, .machine,
-         .cable, .sled, .sandbag, .box, .bench, .band, .jumpRope, .pullUpBar, .bike, .rower,
-         .skiErg, .treadmill, .stairStepper, .elliptical, .other]
-    }
-
-    private var muscleOrder: [Muscle] {
-        [.chest, .lats, .upperBack, .traps, .lowerBack, .frontDelts, .sideDelts, .rearDelts,
-         .biceps, .triceps, .forearms, .abdominals, .obliques, .glutes, .quadriceps,
-         .hamstrings, .adductors, .abductors, .calves, .hipFlexors, .neck, .fullBody]
-    }
-
-    private var metricOrder: [MetricType] {
-        [.reps, .load, .duration, .distance, .pace, .power, .calories, .cadence, .heartRate,
-         .heartRateZoneTime, .rpe]
-    }
-
-    private var tagOrder: [ExerciseTag] {
-        [.hyrox, .powerlifting, .olympicWeightlifting, .strongman, .calisthenics, .plyometric, .mobility]
     }
 }

@@ -17,6 +17,7 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
     let itemSubtitle: (Item) -> String?
     let itemIcon: (Item) -> Image
     let disabledReason: (Item) -> String?
+    let onSelect: ((Item.ID) -> Void)?
     let onBack: () -> Void
     let onDone: (() -> Void)?
 
@@ -33,6 +34,7 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
         itemSubtitle: @escaping (Item) -> String? = { _ in nil },
         itemIcon: @escaping (Item) -> Image,
         disabledReason: @escaping (Item) -> String? = { _ in nil },
+        onSelect: ((Item.ID) -> Void)? = nil,
         onBack: @escaping () -> Void,
         onDone: (() -> Void)? = nil
     ) {
@@ -46,6 +48,7 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
         self.itemSubtitle = itemSubtitle
         self.itemIcon = itemIcon
         self.disabledReason = disabledReason
+        self.onSelect = onSelect
         self.onBack = onBack
         self.onDone = onDone
     }
@@ -115,6 +118,9 @@ struct TaxonomyPickerShell<Item: Identifiable>: View {
                                         allowsMultiple: selectionMode == .multiple,
                                         isDisabled: reason != nil
                                     )
+                                    if reason == nil {
+                                        onSelect?(item.id)
+                                    }
                                 }
                             )
                         }
