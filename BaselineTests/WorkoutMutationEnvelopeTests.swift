@@ -670,6 +670,58 @@ struct WorkoutMetadataToolTests {
         #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.guidance?.formCues == ["Set exercise guidance"])
     }
 
+    @Test func settingGuidanceSupersedesEveryPriorGuidanceField() throws {
+        let harness = WorkoutMutationHarness()
+        let (plan, workouts, scheduled, blocks, exercises) = harness.boundMetadataWorkout()
+        let tools = tools(for: workouts)
+        let blockID = try #require(blocks.first)
+        let exerciseID = try #require(exercises.first)
+        let rich = CoachGuidance(
+            goal: "Old goal note",
+            tempo: "3-1-1",
+            formCues: ["Old cue"],
+            commonMistakes: ["Old mistake"],
+            progressionNotes: "Old progression"
+        )
+        _ = plan.editContent(scheduled.id) { workout in
+            workout.updateGuidance(rich)
+            _ = workout.setBlockGuidance(blockID, rich)
+            _ = workout.updateExercise(exerciseID) { $0.guidance = rich }
+        }
+        workouts.reloadFromPlan()
+        var token = try #require(workouts.mutationTarget(.plan)?.revisionToken)
+
+        let workoutSet = try #require(tools.dispatch(.updateWorkoutMetadata(
+            title: .unchanged,
+            goal: .unchanged,
+            guidance: .set("New workout guidance"),
+            expectedRevisionToken: token
+        )).mutationReceipt)
+        token = workoutSet.afterRevisionToken
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.guidance
+                == CoachGuidance(formCues: ["New workout guidance"]))
+
+        let blockSet = try #require(tools.dispatch(.updateBlockMetadata(
+            blockID: blockID,
+            name: .unchanged,
+            intent: .unchanged,
+            guidance: .set("New block guidance"),
+            expectedRevisionToken: token
+        )).mutationReceipt)
+        token = blockSet.afterRevisionToken
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.blocks.first?.guidance
+                == CoachGuidance(formCues: ["New block guidance"]))
+
+        _ = try #require(tools.dispatch(.updateExerciseMetadata(
+            exerciseInstanceID: exerciseID,
+            displayLabel: .unchanged,
+            guidance: .set("New exercise guidance"),
+            expectedRevisionToken: token
+        )).mutationReceipt)
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.exercise(exerciseID)?.guidance
+                == CoachGuidance(formCues: ["New exercise guidance"]))
+    }
+
     @Test func activeSessionMetadataReceiptUndoRestoresOnlySessionWorkout() throws {
         let harness = WorkoutMutationHarness()
         let (plan, workouts, scheduled, _, _) = harness.boundMetadataWorkout()
@@ -758,6 +810,8 @@ struct WorkoutMetadataToolTests {
             expectedRevisionToken: first.afterRevisionToken
         ))
         #expect(staleUndo.mutationReceipt == nil)
+        #expect(staleUndo.text.localizedCaseInsensitiveContains("latest version"))
+        #expect(staleUndo.text.localizedCaseInsensitiveContains("didn't undo newer work"))
         #expect(review.current?.title == "Second title")
 
         _ = try #require(tools.dispatch(.undoWorkoutMutation(
@@ -810,6 +864,8 @@ struct WorkoutMetadataToolTests {
         ))
 
         #expect(undo.mutationReceipt == nil)
+        #expect(undo.text.localizedCaseInsensitiveContains("discarded"))
+        #expect(!undo.text.localizedCaseInsensitiveContains("latest version"))
         #expect(plan.session(for: scheduled.id)?.status == .discarded)
         #expect(plan.session(for: scheduled.id)?.workout?.title == "Discarded session title")
         #expect(plan.scheduledWorkout(scheduled.id)?.workout.title == "Original workout")

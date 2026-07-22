@@ -587,8 +587,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         expectedRevisionToken: UUID,
         actor: PlanActor
     ) -> WorkoutMutationResult {
-        let rows: [SDSessionMutationVersion] = fetchAll()
-        guard let row = rows.first(where: { $0.mutationID == mutationID }),
+        guard let row = firstSD(SDSessionMutationVersion.self, where: #Predicate { $0.mutationID == mutationID }),
               let applied = mapSessionMutation(row) else {
             return .rejected(.notFound)
         }
@@ -599,9 +598,13 @@ final class SwiftDataPlanRepository: PlanRepository {
               let scheduledID = applied.receipt.scheduledWorkoutID,
               let sessionID = applied.receipt.sessionID,
               let session = latestSession(scheduledID),
-              session.id == sessionID,
-              session.statusRaw != SessionStatus.discarded.rawValue,
-              let scheduled = scheduledWorkout(scheduledID) else {
+              session.id == sessionID else {
+            return .rejected(.staleRevision)
+        }
+        guard session.statusRaw != SessionStatus.discarded.rawValue else {
+            return .rejected(.sessionDiscarded)
+        }
+        guard let scheduled = scheduledWorkout(scheduledID) else {
             return .rejected(.staleRevision)
         }
         let currentToken = session.sessionWorkoutRevisionID ?? scheduled.workoutRevisionID
@@ -788,7 +791,7 @@ final class SwiftDataPlanRepository: PlanRepository {
                 WorkoutMutationReceipt.self,
                 version.workoutMutationReceiptJSON
             )?.mutationID == mutationID
-        } || (fetchAll() as [SDSessionMutationVersion]).contains { $0.mutationID == mutationID }
+        } || firstSD(SDSessionMutationVersion.self, where: #Predicate { $0.mutationID == mutationID }) != nil
     }
 
     private func receipt(

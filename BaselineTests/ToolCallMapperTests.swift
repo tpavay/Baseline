@@ -223,6 +223,15 @@ struct ToolCallMapperTests {
         #expect(exercisePatches(["display_label": "Station A"])?.1 == .unchanged)
         #expect(exercisePatches(["guidance": "Stay tall"])?.1 == .set("Stay tall"))
         #expect(exercisePatches(["guidance": NSNull()])?.1 == .clear)
+
+        // Blank strings on nullable fields normalize to clear, matching the manual editor,
+        // so an agent write can never store a value the UI treats as absent.
+        #expect(workoutPatches(["goal": ""])?.0 == .clear)
+        #expect(workoutPatches(["guidance": "  "])?.1 == .clear)
+        #expect(blockPatches(["intent": ""])?.0 == .clear)
+        #expect(blockPatches(["guidance": " \n"])?.1 == .clear)
+        #expect(exercisePatches(["display_label": ""])?.0 == .clear)
+        #expect(exercisePatches(["guidance": "   "])?.1 == .clear)
     }
 
     @Test func rejectsInvalidMetadataPatches() {

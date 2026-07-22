@@ -267,7 +267,9 @@ enum ToolCallMapper {
         guard let value = input[key] else { return .unchanged }
         if value is NSNull { return nullable ? .clear : nil }
         guard let string = value as? String else { return nil }
-        if !nullable, string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+        if string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return nullable ? .clear : nil
+        }
         return .set(string)
     }
 

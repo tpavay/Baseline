@@ -157,7 +157,11 @@ final class WorkoutStore {
         let receipt: WorkoutMutationReceipt
         let before: Workout
     }
-    private var transientMutationUndos: [UUID: TransientMutationUndo] = [:]
+    /// Only the newest transient receipt can ever undo (the token guard makes every older one
+    /// permanently stale), so only its snapshot is retained. Pruned receipts keep their IDs in
+    /// `staleTransientMutationIDs` so a late undo attempt still gets the truthful stale answer.
+    private var latestTransientUndo: TransientMutationUndo?
+    private var staleTransientMutationIDs: Set<UUID> = []
     /// Set once at startup: makes a brand-new today scheduled workout in the plan (for the agent's
     /// create_workout when nothing is scheduled today) and returns a sink bound to it.
     var makeTodayScheduled: ((Workout) -> PlanSink?)?
@@ -266,6 +270,13 @@ final class WorkoutStore {
     /// makes that receipt stale and prevents whole-snapshot undo from erasing the direct edit.
     private func advanceTransientRevisionAfterDirectWrite() {
         transientRevisionToken = UUID()
+        invalidateLatestTransientUndo()
+    }
+
+    private func invalidateLatestTransientUndo() {
+        guard let latestTransientUndo else { return }
+        staleTransientMutationIDs.insert(latestTransientUndo.receipt.mutationID)
+        self.latestTransientUndo = nil
     }
 
     /// User-level display/metric preferences, keyed by exercise identity and by category — applied to
@@ -721,7 +732,8 @@ final class WorkoutStore {
         case .applied(let receipt):
             if sink == nil {
                 transientRevisionToken = receipt.afterRevisionToken
-                transientMutationUndos[receipt.mutationID] = TransientMutationUndo(
+                invalidateLatestTransientUndo()
+                latestTransientUndo = TransientMutationUndo(
                     receipt: receipt,
                     before: before
                 )
@@ -746,7 +758,10 @@ final class WorkoutStore {
 
     func undoMutation(mutationID: UUID, expectedRevisionToken: UUID) -> EditOutcome {
         guard let sink else {
-            guard let applied = transientMutationUndos[mutationID] else {
+            guard let applied = latestTransientUndo, applied.receipt.mutationID == mutationID else {
+                if staleTransientMutationIDs.contains(mutationID) {
+                    return .notFound(Self.staleUndoMessage)
+                }
                 return .notFound("I couldn't find an undoable workout mutation with that id.")
             }
             guard applied.receipt.undoAvailable,
@@ -754,7 +769,7 @@ final class WorkoutStore {
                   transientRevisionToken == expectedRevisionToken,
                   let current,
                   current.id == applied.before.id else {
-                return .notFound("That edit is no longer the latest version, so I didn't undo newer work. Read the workout again before changing it.")
+                return .notFound(Self.staleUndoMessage)
             }
             let undoRequest = WorkoutMutationRequest(
                 mutationID: UUID(),
@@ -791,6 +806,7 @@ final class WorkoutStore {
             )
             self.current = applied.before
             transientRevisionToken = undoReceipt.afterRevisionToken
+            invalidateLatestTransientUndo()
             return .mutated(undoReceipt)
         }
         switch sink.undoMutation(mutationID, expectedRevisionToken) {
@@ -803,7 +819,10 @@ final class WorkoutStore {
             return .notFound("That workout has an active-session conflict, so I didn't undo it.")
         case .rejected(.staleRevision):
             reloadFromPlan()
-            return .notFound("That edit is no longer the latest version, so I didn't undo newer work. Read the workout again before changing it.")
+            return .notFound(Self.staleUndoMessage)
+        case .rejected(.sessionDiscarded):
+            reloadFromPlan()
+            return .notFound("That session was discarded, so its record is closed and I didn't undo anything in it.")
         case .rejected(.persistenceFailure):
             reloadFromPlan()
             return .notFound("I couldn't save that undo, so I rolled it back and left the workout unchanged.")
@@ -818,6 +837,8 @@ final class WorkoutStore {
         "Today's workout isn't in your plan any more - it looks like it was deleted. Open the Plan tab and add one, and I'll pick it up from there."
     private static let staleMutationMessage =
         "That workout changed after I read it, so I left it untouched. Call get_current_workout again and retry with its new revision_token."
+    private static let staleUndoMessage =
+        "That edit is no longer the latest version, so I didn't undo newer work. Read the workout again before changing it."
 
 
     /// Whether the stored workout is for today. Unstamped (legacy) workouts count as today's; a
@@ -958,9 +979,7 @@ final class WorkoutStore {
         case .clear:
             return nil
         case .set(let value):
-            var updated = current ?? CoachGuidance()
-            updated.formCues = [value]
-            return updated
+            return CoachGuidance(formCues: [value])
         }
     }
 
