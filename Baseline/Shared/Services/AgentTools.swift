@@ -148,7 +148,8 @@ final class AgentTools {
     }
 
     struct Response: Sendable {
-        let text: String                       // what the model (and UI) see back
+        let text: String                       // what the model sees back (may carry machine payload)
+        let userFacingText: String             // the human sentence a chat bubble may show the athlete
         let decision: DecisionEngine.Result?
         let plan: PlanningEngine.Plan?
         let mutationReceipt: WorkoutMutationReceipt?
@@ -157,9 +158,11 @@ final class AgentTools {
             text: String,
             decision: DecisionEngine.Result?,
             plan: PlanningEngine.Plan?,
-            mutationReceipt: WorkoutMutationReceipt? = nil
+            mutationReceipt: WorkoutMutationReceipt? = nil,
+            userFacingText: String? = nil
         ) {
             self.text = text
+            self.userFacingText = userFacingText ?? text
             self.decision = decision
             self.plan = plan
             self.mutationReceipt = mutationReceipt
@@ -694,7 +697,7 @@ final class AgentTools {
             return "MUTATION RECEIPT: " + String(decoding: data, as: UTF8.self)
         }
         let text = [prefix, receiptText, currentWorkoutSummary].compactMap { $0 }.joined(separator: "\n")
-        return Response(text: text, decision: nil, plan: nil, mutationReceipt: receipt)
+        return Response(text: text, decision: nil, plan: nil, mutationReceipt: receipt, userFacingText: prefix)
     }
 
     // MARK: - Helpers

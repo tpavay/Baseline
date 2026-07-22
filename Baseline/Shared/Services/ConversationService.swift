@@ -111,7 +111,7 @@ final class ConversationService {
             if response.mutationReceipt == nil {
                 latestWorkoutMutationReceipt = nil
             }
-            log.append(Message(role: .baseline, text: response.text))
+            log.append(Message(role: .baseline, text: response.userFacingText))
             isThinking = false
         }
     }
@@ -122,7 +122,9 @@ final class ConversationService {
     private func runLoop() async -> Bool {
         // Tools mutate local state (constraints, workout) before the model's follow-up reply. If that
         // follow-up fails, the change is already committed — so report the deterministic tool result
-        // instead of a misleading "couldn't reach the coach" (which implies nothing happened).
+        // instead of a misleading "couldn't reach the coach" (which implies nothing happened). Only
+        // the human sentence from mutating tools qualifies: the full result text carries machine
+        // payload (receipts, revision tokens) that must never become an athlete-visible bubble.
         var lastToolResult: String?
         for roundIndex in 0..<maxToolRounds {
             guard let content = await callFunction(roundIndex: roundIndex) else {
@@ -154,6 +156,7 @@ final class ConversationService {
 
             // Execute each requested tool on-device and feed results back for the model's follow-up.
             var results: [[String: Any]] = []
+            var userFacingResults: [String] = []
             for (requestedOrder, tu) in toolUses.enumerated() {
                 let started = ContinuousClock.now
                 let decodeStarted = ContinuousClock.now
@@ -179,6 +182,7 @@ final class ConversationService {
                     readOnly = !call.showsInActivityFeed
                     resultHasDecision = response.decision != nil
                     resultHasPlan = response.plan != nil
+                    if call.showsInActivityFeed { userFacingResults.append(response.userFacingText) }
                     record(call, response)
                 } else if scope == .workoutImport {
                     resultText = "That action isn't available while fixing an imported workout. Only edit the draft workout."
@@ -217,7 +221,7 @@ final class ConversationService {
                 ))
                 results.append(["type": "tool_result", "tool_use_id": tu.id, "content": resultText])
             }
-            lastToolResult = results.compactMap { $0["content"] as? String }.joined(separator: "\n")
+            if !userFacingResults.isEmpty { lastToolResult = userFacingResults.joined(separator: "\n") }
             transcript.append(["role": "user", "content": results])
         }
         await sendTerminalTelemetry("tool_round_exhausted", roundIndex: maxToolRounds - 1)

@@ -528,6 +528,8 @@ final class SwiftDataPlanRepository: PlanRepository {
               let scheduledID = appliedReceipt.scheduledWorkoutID,
               let scheduled = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == scheduledID }),
               scheduled.workoutRevisionID == expectedRevisionToken,
+              let headSnapshot = PlanCoding.value(ScheduleSnapshot.self, versions[appliedIndex].snapshotJSON),
+              scheduleMatchesCurrent(headSnapshot),
               let target = PlanCoding.value(ScheduleSnapshot.self, versions[appliedIndex - 1].snapshotJSON),
               let restoredIntent = target.scheduled.first(where: { $0.id == scheduledID }) else {
             return .rejected(.staleRevision)
@@ -870,6 +872,15 @@ final class SwiftDataPlanRepository: PlanRepository {
     }
 
     private func snapshot() -> ScheduleSnapshot { ScheduleSnapshot(scheduled: (fetchAll() as [SDScheduledWorkout]).map(intent)) }
+
+    /// True when the live schedule still matches a recorded snapshot. Targeted undo restores the whole
+    /// schedule, so any drift the version log never saw (e.g. a manual editor save, which moves a
+    /// revision pointer without appending a version) makes the undo stale — restoring the prior
+    /// snapshot would silently revert that later work.
+    private func scheduleMatchesCurrent(_ snap: ScheduleSnapshot) -> Bool {
+        Dictionary(uniqueKeysWithValues: snapshot().scheduled.map { ($0.id, $0) })
+            == Dictionary(uniqueKeysWithValues: snap.scheduled.map { ($0.id, $0) })
+    }
 
     private func intent(_ sd: SDScheduledWorkout) -> ScheduledIntent {
         ScheduledIntent(id: sd.id, programID: sd.programID, sectionID: sd.sectionID, date: sd.date,

@@ -252,6 +252,53 @@ struct WorkoutMutationEnvelopeTests {
         #expect(versions.dropFirst().compactMap(\.workoutMutationReceipt) == receipts)
     }
 
+    @Test func targetedUndoRejectsWhenAnotherWorkoutWasManuallyEditedAfterTheEdit() {
+        let harness = makeHarness()
+        let (plan, store, scheduled, setID) = harness.boundWorkout()
+        let otherWorkout = Workout(
+            title: "Conditioning",
+            blocks: [WorkoutBlock(name: "Main", isDefault: true)]
+        )
+        let other = plan.addScheduled(ScheduledWorkout(
+            programID: scheduled.programID,
+            date: .now,
+            origin: .userCreated,
+            workoutID: otherWorkout.id,
+            workoutRevisionID: UUID(),
+            workout: otherWorkout
+        ))
+
+        guard case .mutated(let receipt) = store.updateSet(
+            exerciseNamed: "Squat",
+            setNumber: 1,
+            setID: setID,
+            reps: 8,
+            load: nil,
+            durationSeconds: nil,
+            rpe: nil,
+            expectedRevisionToken: scheduled.workoutRevisionID
+        ) else {
+            Issue.record("Expected the agent edit to apply")
+            return
+        }
+        plan.updateWorkout(other.id) { $0.rename("Conditioning B") }
+        guard let manualRevision = plan.scheduledWorkout(other.id)?.workoutRevisionID,
+              manualRevision != other.workoutRevisionID else {
+            Issue.record("Expected the manual edit to move the other workout's revision pointer")
+            return
+        }
+
+        let result = plan.undoWorkoutMutation(
+            mutationID: receipt.mutationID,
+            expectedRevisionToken: receipt.afterRevisionToken
+        )
+
+        #expect(result == .rejected(.staleRevision))
+        #expect(plan.scheduledWorkout(scheduled.id)?.workoutRevisionID == receipt.afterRevisionToken)
+        #expect(plan.scheduledWorkout(other.id)?.workoutRevisionID == manualRevision)
+        #expect(plan.scheduledWorkout(other.id)?.workout.title == "Conditioning B")
+    }
+
     @Test func targetedUndoRejectsAsStaleWhenASessionStartsAfterTheEdit() {
         let harness = makeHarness()
         let (plan, store, scheduled, setID) = harness.boundWorkout()
