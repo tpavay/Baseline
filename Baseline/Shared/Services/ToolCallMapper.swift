@@ -61,13 +61,23 @@ enum ToolCallMapper {
                                 load: doubleOrNil(input["load"]), durationSeconds: intOrNil(input["duration_seconds"]),
                                 distanceMeters: doubleOrNil(input["distance_m"]))
         case "move_exercise":
-            guard let exercise = input["exercise"] as? String, let toBlock = input["to_block"] as? String else { return nil }
-            return .moveExercise(exercise: exercise, toBlock: toBlock)
+            guard let exercise = input["exercise"] as? String,
+                  let toBlock = input["to_block"] as? String,
+                  validOptionalUUID(input["exercise_id"]),
+                  validOptionalUUID(input["to_block_id"]) else { return nil }
+            return .moveExercise(
+                exercise: exercise,
+                exerciseID: uuid(input["exercise_id"]),
+                toBlock: toBlock,
+                toBlockID: uuid(input["to_block_id"])
+            )
         case "replace_exercise":
             guard let exercise = input["exercise"] as? String,
-                  let replacement = input["replacement"] as? String else { return nil }
+                  let replacement = input["replacement"] as? String,
+                  validOptionalUUID(input["exercise_id"]) else { return nil }
             return .replaceExercise(
                 exercise: exercise,
+                exerciseID: uuid(input["exercise_id"]),
                 replacement: replacement,
                 block: input["block"] as? String,
                 replaceAll: boolOrNil(input["replace_all"]) ?? false
@@ -76,11 +86,14 @@ enum ToolCallMapper {
             guard let choice = input["choice"] as? String else { return nil }
             return .requireAllOptions(choice: choice)
         case "remove_exercise":
-            guard let exercise = input["exercise"] as? String else { return nil }
-            return .removeExercise(exercise: exercise)
+            guard let exercise = input["exercise"] as? String,
+                  validOptionalUUID(input["exercise_id"]) else { return nil }
+            return .removeExercise(exercise: exercise, exerciseID: uuid(input["exercise_id"]))
         case "update_set":
-            guard let exercise = input["exercise"] as? String, let n = intOrNil(input["set_number"]) else { return nil }
-            return .updateSet(exercise: exercise, setNumber: n,
+            guard let exercise = input["exercise"] as? String,
+                  let n = intOrNil(input["set_number"]),
+                  validOptionalUUID(input["set_id"]) else { return nil }
+            return .updateSet(exercise: exercise, setNumber: n, setID: uuid(input["set_id"]),
                               reps: intOrNil(input["reps"]), load: doubleOrNil(input["load"]),
                               durationSeconds: intOrNil(input["duration_seconds"]),
                               distanceMeters: doubleOrNil(input["distance_m"]), rpe: doubleOrNil(input["rpe"]))
@@ -133,19 +146,34 @@ enum ToolCallMapper {
             guard let n = input["name"] as? String else { return nil }
             return .updateTemplate(name: n)
         case "update_logging_config":
-            guard let ex = input["exercise"] as? String else { return nil }
-            return .updateLoggingConfig(exercise: ex, enabledMetrics: metricList(input["enabled_metrics"]), units: unitOverrides(input))
+            guard let ex = input["exercise"] as? String,
+                  validOptionalUUID(input["exercise_id"]) else { return nil }
+            return .updateLoggingConfig(
+                exercise: ex,
+                exerciseID: uuid(input["exercise_id"]),
+                enabledMetrics: metricList(input["enabled_metrics"]),
+                units: unitOverrides(input)
+            )
         case "update_exercise_preference":
             guard let ex = input["exercise"] as? String else { return nil }
             let scope: WorkoutStore.PreferenceScope = (input["scope"] as? String) == "category" ? .category : .exercise
             return .updateExercisePreference(exercise: ex, scope: scope, units: unitOverrides(input), selectedMetrics: metricList(input["enabled_metrics"]))
         case "set_metric_value":
             guard let ex = input["exercise"] as? String, let n = intOrNil(input["set_number"]),
-                  let m = metric(input["metric"]), let v = doubleOrNil(input["value"]) else { return nil }
-            return .setMetricValue(exercise: ex, setNumber: n, metric: m, value: v, unit: unit(input["unit"]))
+                  let m = metric(input["metric"]), let v = doubleOrNil(input["value"]),
+                  validOptionalUUID(input["set_id"]) else { return nil }
+            return .setMetricValue(
+                exercise: ex,
+                setNumber: n,
+                setID: uuid(input["set_id"]),
+                metric: m,
+                value: v,
+                unit: unit(input["unit"])
+            )
         case "remove_metric":
-            guard let ex = input["exercise"] as? String, let m = metric(input["metric"]) else { return nil }
-            return .removeMetric(exercise: ex, metric: m)
+            guard let ex = input["exercise"] as? String, let m = metric(input["metric"]),
+                  validOptionalUUID(input["exercise_id"]) else { return nil }
+            return .removeMetric(exercise: ex, exerciseID: uuid(input["exercise_id"]), metric: m)
         default:
             return nil
         }
@@ -158,6 +186,17 @@ enum ToolCallMapper {
         if let d = v as? Double { return Int(d) }
         if let n = v as? NSNumber { return n.intValue }
         return nil
+    }
+
+    private static func uuid(_ value: Any?) -> UUID? {
+        guard let string = value as? String else { return nil }
+        return UUID(uuidString: string)
+    }
+
+    /// Omitted IDs preserve the legacy name-based path. A supplied malformed ID rejects the call
+    /// instead of silently falling back to a potentially ambiguous name.
+    private static func validOptionalUUID(_ value: Any?) -> Bool {
+        value == nil || value is NSNull || uuid(value) != nil
     }
     // MARK: - Metric / unit parsing (tolerant of casual names the model may emit)
 

@@ -12,6 +12,43 @@ test("replace_exercise is an atomic duplicate-safe tool", () => {
   assert.match(tool.description, /never simulate replacement/i);
 });
 
+test("workout tools expose stable ID targeting without breaking name calls", () => {
+  const currentWorkout = TOOLS.find((candidate) => candidate.name === "get_current_workout");
+  assert.ok(currentWorkout);
+  assert.match(currentWorkout.description, /stable ids/i);
+  assert.match(currentWorkout.description, /block, exercise instance, and set/i);
+
+  const targetFields = {
+    move_exercise: ["exercise_id", "to_block_id"],
+    replace_exercise: ["exercise_id"],
+    remove_exercise: ["exercise_id"],
+    update_set: ["set_id"],
+    update_logging_config: ["exercise_id"],
+    set_metric_value: ["set_id"],
+    remove_metric: ["exercise_id"],
+  };
+
+  for (const [name, fields] of Object.entries(targetFields)) {
+    const tool = TOOLS.find((candidate) => candidate.name === name);
+    assert.ok(tool, `${name} should exist`);
+    for (const field of fields) {
+      assert.equal(tool.input_schema.properties[field].type, "string", `${name}.${field}`);
+      assert.match(tool.input_schema.properties[field].description, /get_current_workout/i);
+      assert.match(tool.input_schema.properties[field].description, /takes precedence/i);
+      assert.equal(tool.input_schema.required.includes(field), false, `${name}.${field} stays optional`);
+    }
+  }
+
+  assert.deepEqual(
+    TOOLS.find((candidate) => candidate.name === "remove_exercise").input_schema.required,
+    ["exercise"]
+  );
+  assert.deepEqual(
+    TOOLS.find((candidate) => candidate.name === "update_set").input_schema.required,
+    ["exercise", "set_number"]
+  );
+});
+
 test("require_all_options preserves an imported choice's children", () => {
   const tool = TOOLS.find((candidate) => candidate.name === "require_all_options");
 

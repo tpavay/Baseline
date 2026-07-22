@@ -31,15 +31,15 @@ final class AgentTools {
         case getSleep(nightsAgo: Int)
         case getHRVReadings(limit: Int)
         case getRestingHeartRate(days: Int)
-        // Workout editing — build/edit today's structured workout (name-resolved). See WorkoutStore.
+        // Workout editing. Stable instance IDs from get_current_workout take precedence over names.
         case createWorkout(title: String, goal: String?, replaceExisting: Bool)
         case addBlock(name: String, intent: String?)
         case addExercise(block: String, name: String, sets: Int?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?)
-        case moveExercise(exercise: String, toBlock: String)
-        case replaceExercise(exercise: String, replacement: String, block: String?, replaceAll: Bool)
+        case moveExercise(exercise: String, exerciseID: UUID?, toBlock: String, toBlockID: UUID?)
+        case replaceExercise(exercise: String, exerciseID: UUID?, replacement: String, block: String?, replaceAll: Bool)
         case requireAllOptions(choice: String)
-        case removeExercise(exercise: String)
-        case updateSet(exercise: String, setNumber: Int, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
+        case removeExercise(exercise: String, exerciseID: UUID?)
+        case updateSet(exercise: String, setNumber: Int, setID: UUID?, reps: Int?, load: Double?, durationSeconds: Int?, distanceMeters: Double?, rpe: Double?)
         case getCurrentWorkout
         case startWorkout
         case completeWorkout(confirm: Bool)
@@ -61,10 +61,10 @@ final class AgentTools {
         case createFromTemplate(name: String, day: String)
         case updateTemplate(name: String)
         // Metric system: configure which metrics an exercise logs + display units, and set values.
-        case updateLoggingConfig(exercise: String, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
+        case updateLoggingConfig(exercise: String, exerciseID: UUID?, enabledMetrics: [MetricType]?, units: [MetricType: MetricUnit])
         case updateExercisePreference(exercise: String, scope: WorkoutStore.PreferenceScope, units: [MetricType: MetricUnit], selectedMetrics: [MetricType]?)
-        case setMetricValue(exercise: String, setNumber: Int, metric: MetricType, value: Double, unit: MetricUnit?)
-        case removeMetric(exercise: String, metric: MetricType)
+        case setMetricValue(exercise: String, setNumber: Int, setID: UUID?, metric: MetricType, value: Double, unit: MetricUnit?)
+        case removeMetric(exercise: String, exerciseID: UUID?, metric: MetricType)
 
         /// A short human-readable summary of what this call did — for the "what Baseline knows"
         /// inspector's activity feed, so the behind-the-scenes mutations are visible.
@@ -92,11 +92,11 @@ final class AgentTools {
             case .createWorkout(let t, _, _): return "Created workout: \(t)"
             case .addBlock(let n, _): return "Added block: \(n)"
             case .addExercise(let b, let n, _, _, _, _, _): return "Added \(n) to \(b)"
-            case .moveExercise(let e, let b): return "Moved \(e) → \(b)"
-            case .replaceExercise(let e, let r, _, let all): return "Replaced \(all ? "all \(e)" : e) → \(r)"
+            case .moveExercise(let e, _, let b, _): return "Moved \(e) → \(b)"
+            case .replaceExercise(let e, let id, let r, _, let all): return "Replaced \(all && id == nil ? "all \(e)" : e) → \(r)"
             case .requireAllOptions(let choice): return "Made every option required in \(choice)"
-            case .removeExercise(let e): return "Removed \(e)"
-            case .updateSet(let e, let n, _, _, _, _, _): return "Updated set \(n) of \(e)"
+            case .removeExercise(let e, _): return "Removed \(e)"
+            case .updateSet(let e, let n, _, _, _, _, _, _): return "Updated set \(n) of \(e)"
             case .getCurrentWorkout: return "Read the current workout"
             case .startWorkout: return "Started the workout"
             case .completeWorkout: return "Completed the workout"
@@ -114,10 +114,10 @@ final class AgentTools {
             case .saveAsTemplate(let n): return "Saved template \(n)"
             case .createFromTemplate(let n, let d): return "Added \(n) → \(d)"
             case .updateTemplate(let n): return "Updated template \(n)"
-            case .updateLoggingConfig(let e, _, _): return "Configured metrics for \(e)"
+            case .updateLoggingConfig(let e, _, _, _): return "Configured metrics for \(e)"
             case .updateExercisePreference(let e, let s, _, _): return "Saved \(s.rawValue) default for \(e)"
-            case .setMetricValue(let e, let n, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
-            case .removeMetric(let e, let m): return "Removed \(m.label.lowercased()) from \(e)"
+            case .setMetricValue(let e, let n, _, let m, _, _): return "Set \(m.label.lowercased()) on set \(n) of \(e)"
+            case .removeMetric(let e, _, let m): return "Removed \(m.label.lowercased()) from \(e)"
             }
         }
 
@@ -307,20 +307,21 @@ final class AgentTools {
             guard let workouts else { return workoutUnavailable() }
             return outcome(workouts.addExercise(name: name, toBlockNamed: block, sets: sets, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist),
                            success: "Added \(name) to \(block).")
-        case .moveExercise(let exercise, let toBlock):
+        case .moveExercise(let exercise, let exerciseID, let toBlock, let toBlockID):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.moveExercise(named: exercise, toBlockNamed: toBlock),
+            return outcome(workouts.moveExercise(named: exercise, exerciseID: exerciseID, toBlockNamed: toBlock, toBlockID: toBlockID),
                            success: "Moved \(exercise) to \(toBlock).")
-        case .replaceExercise(let exercise, let replacement, let block, let replaceAll):
+        case .replaceExercise(let exercise, let exerciseID, let replacement, let block, let replaceAll):
             guard let workouts else { return workoutUnavailable() }
             return outcome(
                 workouts.replaceExercise(
                     named: exercise,
+                    exerciseID: exerciseID,
                     with: replacement,
                     inBlock: block,
                     replaceAll: replaceAll
                 ),
-                success: "Replaced \(replaceAll ? "every \(exercise)" : exercise) with \(replacement)."
+                success: "Replaced \(replaceAll && exerciseID == nil ? "every \(exercise)" : exercise) with \(replacement)."
             )
         case .requireAllOptions(let choice):
             guard let workouts else { return workoutUnavailable() }
@@ -328,15 +329,15 @@ final class AgentTools {
                 workouts.requireAllOptions(choiceNamed: choice),
                 success: "Changed \(choice) from a choice to one required sequence."
             )
-        case .removeExercise(let exercise):
+        case .removeExercise(let exercise, let exerciseID):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.removeExercise(named: exercise), success: "Removed \(exercise).")
-        case .updateSet(let exercise, let n, let reps, let load, let dur, let dist, let rpe):
+            return outcome(workouts.removeExercise(named: exercise, exerciseID: exerciseID), success: "Removed \(exercise).")
+        case .updateSet(let exercise, let n, let setID, let reps, let load, let dur, let dist, let rpe):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.updateSet(exerciseNamed: exercise, setNumber: n, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist, rpe: rpe),
+            return outcome(workouts.updateSet(exerciseNamed: exercise, setNumber: n, setID: setID, reps: reps, load: load, durationSeconds: dur, distanceMeters: dist, rpe: rpe),
                            success: "Updated set \(n) of \(exercise).")
         case .getCurrentWorkout:
-            guard let workouts else { return workoutUnavailable() }
+            guard workouts != nil else { return workoutUnavailable() }
             return Response(text: currentWorkoutSummary ?? "No workout has been created yet.", decision: nil, plan: nil)
         case .startWorkout:
             guard let workouts else { return workoutUnavailable() }
@@ -440,9 +441,9 @@ final class AgentTools {
                 return Response(text: "Added \(sw.workout.title) on \(dayLabel(date)) from the \(matches[0].name) template.", decision: nil, plan: nil)
             default: return Response(text: templateAmbiguity(name, matches), decision: nil, plan: nil)
             }
-        case .updateLoggingConfig(let ex, let enabled, let units):
+        case .updateLoggingConfig(let ex, let exerciseID, let enabled, let units):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.setLoggingConfig(exerciseNamed: ex, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
+            return outcome(workouts.setLoggingConfig(exerciseNamed: ex, exerciseID: exerciseID, enabled: enabled, units: units), success: "Updated what \(ex) logs.")
         case .updateExercisePreference(let ex, let scope, let units, let selected):
             guard let workouts else { return workoutUnavailable() }
             let r = workouts.setExercisePreference(exerciseNamed: ex, scope: scope, units: units, selected: selected)
@@ -450,12 +451,12 @@ final class AgentTools {
                 return Response(text: "Saved that as your \(scope == .category ? "category" : "default") preference for \(ex) — it applies to future \(ex) instances, not today's.", decision: nil, plan: nil)
             }
             return outcome(r, success: "")
-        case .setMetricValue(let ex, let n, let m, let v, let u):
+        case .setMetricValue(let ex, let n, let setID, let m, let v, let u):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.setMetricValue(exerciseNamed: ex, setNumber: n, metric: m, value: v, unit: u), success: "Set \(m.label.lowercased()) on set \(n) of \(ex).")
-        case .removeMetric(let ex, let m):
+            return outcome(workouts.setMetricValue(exerciseNamed: ex, setNumber: n, setID: setID, metric: m, value: v, unit: u), success: "Set \(m.label.lowercased()) on set \(n) of \(ex).")
+        case .removeMetric(let ex, let exerciseID, let m):
             guard let workouts else { return workoutUnavailable() }
-            return outcome(workouts.removeMetric(exerciseNamed: ex, metric: m), success: "Removed \(m.label.lowercased()) from \(ex).")
+            return outcome(workouts.removeMetric(exerciseNamed: ex, exerciseID: exerciseID, metric: m), success: "Removed \(m.label.lowercased()) from \(ex).")
         case .searchExercises(let query, let muscle, let equipment, let modality, let pattern, let tag, let level):
             switch ExerciseSearch.parse(text: query, muscle: muscle, equipment: equipment, modality: modality,
                                         pattern: pattern, tag: tag, level: level) {
