@@ -92,13 +92,12 @@ struct ProfileView: View {
                                 subtitle: "Which inputs build your score", destination: .soon)
                             NavigationLink {
                                 HeartRateZoneSettingsView(store: HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears }))
-                                    .floatingTabBarClearance()
                             } label: {
                                 rowBody(icon: "waveform.path.ecg.rectangle.fill", title: "Heart Rate Zones",
                                         subtitle: "Karvonen / LTHR zones", trailing: .chevron)
                             }
                             .buttonStyle(.plain)
-                            NavigationLink { MeasurementsView().floatingTabBarClearance() } label: {
+                            NavigationLink { MeasurementsView() } label: {
                                 rowBody(icon: "dot.radiowaves.left.and.right", title: "Devices",
                                         subtitle: deviceSubtitle, trailing: .chevron)
                             }

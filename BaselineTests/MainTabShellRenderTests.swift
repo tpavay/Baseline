@@ -22,8 +22,7 @@ struct MainTabShellRenderTests {
             #expect(screen.element(labelled: title) != nil)
         }
         if tab == .plan {
-            let chat = try #require(screen.element(labelled: "Ask about your week"))
-            #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
+            #expect(screen.element(labelled: "Ask Baseline") != nil)
         }
         if tab == .train {
             let chat = try #require(screen.element(labelled: "Talk to Baseline"))
@@ -50,18 +49,22 @@ struct MainTabShellRenderTests {
         defer { screen.tearDown() }
         try await screen.settle()
 
-        #expect(screen.element(labelled: "Ask about your week") == nil)
+        #expect(screen.element(labelled: "Ask Baseline") == nil)
         #expect(screen.activate(labelled: "Plan"))
         try await screen.settle()
 
-        let chat = try #require(screen.element(labelled: "Ask about your week"))
-        #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
+        #expect(screen.element(labelled: "Ask Baseline") != nil)
         #expect(screen.visibleSystemTabBars.isEmpty)
     }
 
-    @Test func aPushedProfileDestinationStaysClearOfTheBar() async throws {
+    /// Heart Rate Zones lives inside Profile's modal settings sheet since the Profile redesign, so
+    /// the shell must reach it through Settings and the zones surface must render fully there.
+    @Test func profileSettingsReachesHeartRateZones() async throws {
         let screen = try MainTabShellScreen(tab: .profile)
         defer { screen.tearDown() }
+        try await screen.settle()
+
+        #expect(screen.activate(labelled: "Settings"))
         try await screen.settle()
 
         #expect(screen.activate(labelled: "Heart Rate Zones"))

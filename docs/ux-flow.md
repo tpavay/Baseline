@@ -6,17 +6,17 @@ Legend: **[E]** Evidence · **[C]** Context · **[D]** Decision · **[P]** Plann
 
 ---
 
-## Navigation model - three modes, three tabs
-The app is **three modes** the athlete is never in two of at once — *Decide, Plan, Train* — plus setup. "Workout" is an overloaded word for three different objects, so the execution surface is **Train**; it is entered by starting a session from **Plan**, not from a tab of its own.
+## Navigation model - three modes, four tabs
+The app is **three modes** the athlete is never in two of at once — *Decide, Plan, Train* — plus setup. "Workout" is an overloaded word for three different objects, so the execution surface is **Train**; it is entered by starting a session from **Plan** or from the Train tab itself.
 
 ```
-Today            Plan                  Profile
-= Decide         = Plan → Train        = setup
-"what should     "what am I scheduled
- I do?"           for?" → start it
+Today            Plan                  Train            Profile
+= Decide         = the calendar        = execute        = setup
+"what should     "what am I scheduled  "log what I'm
+ I do?"           for?" → start it      doing"
 ```
 
-*Follow-up: the Today/home tab-shell redesign (PR #56) is still in flight, so this section is corrected minimally for the shipped shell; consolidating the navigation model into its owner (`docs/implementation/plan-tab.md`) is tracked in issue #57.*
+*Follow-up: consolidating the navigation model into its owner (`docs/implementation/plan-tab.md`) is tracked in issue #57.*
 
 **Three objects, never conflated:**
 - **Program** — long-term training (HYROX Dallas, Marathon Base, Shoulder Rehab). An athlete can have several at once; Today reasons across all of them.
