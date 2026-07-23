@@ -100,6 +100,45 @@ struct PlanRepositoryTests {
         } else { Issue.record("expected completed") }
     }
 
+    /// Discarding an *empty* workout — one scheduled only to start logging right now — must leave the
+    /// day truly undecided. `purgeProvisionalWorkout` removes the whole placeholder (scheduled workout
+    /// and its session), so the day shows no stuck workout and carries no stale rest marker.
+    @Test func purgingAProvisionalWorkoutLeavesTheDayUndecided() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        // A blank workout scheduled up front, then started — exactly what "Start an empty workout" does.
+        let sw = repo.addScheduled(ScheduledWorkout(
+            programID: prog.id, date: monday, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(),
+            workout: Workout(title: "New workout", blocks: [WorkoutBlock(name: "", isDefault: true)])))
+        repo.startSession(forScheduled: sw.id, now: monday)
+        #expect(repo.day(monday, filter: .allTraining).sessions.count == 1)
+        #expect(repo.session(forScheduled: sw.id) != nil)
+
+        #expect(repo.purgeProvisionalWorkout(sw.id, actor: .user, reason: nil).isApplied)
+
+        let day = repo.day(monday, filter: .allTraining)
+        #expect(day.sessions.isEmpty)                        // no workout stuck on the day
+        #expect(day.isRestDay == false)                      // and no stale rest marker — reads undecided
+        #expect(repo.scheduledWorkout(sw.id) == nil)
+        #expect(repo.session(forScheduled: sw.id) == nil)    // the session is gone too — no orphan
+    }
+
+    /// The bug's other half, pinned as a contrast: plain `discardSession` only marks the session
+    /// discarded and deliberately keeps the scheduled workout so a real session can restart from the
+    /// saved revision. That is why an empty placeholder needs `purgeProvisionalWorkout`, not discard.
+    @Test func discardSessionKeepsTheScheduledWorkoutUnlikePurge() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let sw = seed(repo, date: monday, program: prog.id)
+        repo.startSession(forScheduled: sw.id, now: monday)
+
+        repo.discardSession(forScheduled: sw.id)
+
+        #expect(repo.day(monday, filter: .allTraining).sessions.count == 1)
+        #expect(repo.scheduledWorkout(sw.id) != nil)
+    }
+
     @Test func editingWorkoutCreatesANewImmutableRevision() {
         let repo = makeRepo()
         let prog = repo.addProgram(Program(name: "P", createdAt: monday))

@@ -73,6 +73,9 @@ struct MainTabShellRenderTests {
 @MainActor
 final class MainTabShellScreen: HostedScreen {
     let window: UIWindow
+    /// The live plan store the shell is driving, exposed so flow tests can read the plan back the way
+    /// the athlete would open it tomorrow (e.g. asserting a discarded empty workout left the day empty).
+    let plan: PlanStore
     private let container: ModelContainer
 
     init(tab: MainTab) throws {
@@ -82,6 +85,7 @@ final class MainTabShellScreen: HostedScreen {
             for: Schema(models),
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
+        plan = PlanStore(context: container.mainContext)
         let root = MainTabView(initialSelection: tab)
             .environment(AuthViewModel())
             .environment(AppSettings())
@@ -90,7 +94,7 @@ final class MainTabShellScreen: HostedScreen {
             .environment(TrainingContextStore())
             .environment(OnboardingStore())
             .environment(WorkoutStore(units: AppSettings()))
-            .environment(PlanStore(context: container.mainContext))
+            .environment(plan)
             .modelContainer(container)
             .preferredColorScheme(.dark)
         window = try Self.makeWindow(rootView: root)

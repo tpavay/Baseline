@@ -84,6 +84,14 @@ protocol PlanRepository {
     func sessionMutationVersions(sessionID: UUID, limit: Int) -> [SessionMutationVersion]
     func setSkipped(_ id: UUID, _ skipped: Bool, actor: PlanActor, reason: String?) -> MutationResult
     func delete(_ id: UUID, actor: PlanActor, reason: String?, proposalID: UUID?) -> MutationResult
+    /// Fully remove a *provisional* workout — a blank workout scheduled only to start logging right
+    /// now, then discarded before it earned a place on the plan. Unlike `discardSession` (which keeps
+    /// the scheduled workout so a real session can restart from the saved revision) this leaves the day
+    /// truly undecided: the scheduled workout, its sessions, and any completed log are all removed, and
+    /// no rest marker is left behind. Silent and immediate — no delete proposal, because the athlete
+    /// already confirmed the discard — but versioned so plan history and undo stay consistent with the
+    /// matching `addWorkout`.
+    func purgeProvisionalWorkout(_ id: UUID, actor: PlanActor, reason: String?) -> MutationResult
     func undo(actor: PlanActor) -> MutationResult
     func restore(versionID: UUID, actor: PlanActor) -> MutationResult
 
@@ -893,6 +901,18 @@ final class SwiftDataPlanRepository: PlanRepository {
         context.delete(prop)
         let diff = ScheduleDiff(changes: [.init(kind: .remove, summary: "Delete \(title(id))", scheduledID: id)])
         return apply(.delete, actor, reason, diff) { context.delete(sd) }
+    }
+
+    func purgeProvisionalWorkout(_ id: UUID, actor: PlanActor, reason: String?) -> MutationResult {
+        guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { return .rejected(.notFound) }
+        let diff = ScheduleDiff(changes: [.init(kind: .remove, summary: "Discard \(title(id))", scheduledID: id)])
+        // Remove the whole footprint of the placeholder — sessions and any completed log included — so
+        // no orphaned session survives to resurface the day as occupied, then the scheduled workout.
+        return apply(.delete, actor, reason, diff) {
+            fetch(SDWorkoutSession.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
+            fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
+            context.delete(sd)
+        }
     }
 
     func undo(actor: PlanActor) -> MutationResult {
