@@ -27,7 +27,7 @@ struct AppStoreValidationTests {
         let value = try #require(
             Bundle.main.object(forInfoDictionaryKey: "NSHealthShareUsageDescription") as? String
         ).lowercased()
-        for topic in ["sleep", "heart rate", "workout", "activity", "age", "biological sex"] {
+        for topic in ["sleep", "heart rate", "workout", "activity", "weight", "age", "biological sex"] {
             #expect(value.contains(topic), "purpose string does not mention \(topic)")
         }
     }
