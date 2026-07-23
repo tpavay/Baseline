@@ -5,13 +5,18 @@
 // included - to the actual Anthropic Messages API in the smallest possible request
 // (max_tokens: 1, one-word user message), and fails if the provider rejects any. This is the
 // ground truth the offline lint (toolSchemaContract.ts) approximates: the 2026-07 outage was a
-// schema construct that only the provider's own request validator caught. Run by CI on every
-// functions PR; run locally with:
+// schema construct that only the provider's own request validator caught.
+//
+// PAID and GATED - not on every PR. This spends real provider tokens (a request the provider
+// ACCEPTS is billed for its input), so CI runs it only in the opt-in `provider-live-guard.yml`
+// workflow (manual dispatch, weekly schedule, or a PR labeled `provider-smoke`). The free per-PR
+// provider-rejection guard is the offline lint (toolSchemaContract.ts); count_tokens cannot stand
+// in here - it returns 200 for a top-level `oneOf`. See docs/tool-schema-contract.md. Run locally:
 //
 //   ANTHROPIC_API_KEY=... npm run preflight:providers
 //
 // Cost: one ~tool-schema-sized input per variant with a 1-token completion - a schema-acceptance
-// check, not a generation. Requires `npm run build` first (reads ../lib).
+// check, not a generation (a rejected variant 400s for $0). Requires `npm run build` first (reads ../lib).
 "use strict";
 
 const { SERVED_TOOLSETS } = require("../lib/tools");

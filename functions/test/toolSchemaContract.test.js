@@ -77,6 +77,39 @@ test("the pre-#59 top-level oneOf schema is rejected by the lint", () => {
   assert.match(findings[0].message, /top level/);
 });
 
+// The paid real-provider preflight (scripts/preflight-tool-schemas.js) moved off the per-PR CI
+// path into the gated `provider-live-guard.yml` workflow, so this OFFLINE lint is now the sole
+// guard that fails an ordinary PR reintroducing a provider-rejected schema. It must do so for $0
+// and with no network. The free `count_tokens` endpoint cannot stand in for it: verified against
+// the live API on 2026-07-23, count_tokens returns HTTP 200 for a top-level `oneOf` while the
+// messages endpoint returns HTTP 400 "input_schema does not support oneOf, allOf, or anyOf at the
+// top level" - so only the lint (offline) or the paid messages preflight rejects the outage class.
+// See docs/tool-schema-contract.md.
+test("the offline lint is the per-PR guard: it rejects the outage class with no network and no spend", () => {
+  // Every served toolset variant, exactly what the runtime serves, must pass with zero findings -
+  // this is what runs on every functions PR via `npm test`.
+  assert.deepEqual(enforcedViolations(), []);
+
+  // And a schema in the exact class the live messages API 400s (top-level combinator) must fail
+  // the enforced lint, so an ordinary PR reintroducing it goes red offline.
+  const regression = {
+    name: "outage_replica",
+    description: "top-level oneOf - the 2026-07 outage class the live API 400s and count_tokens does not",
+    input_schema: {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      oneOf: [{ required: ["a"] }, { required: ["b"] }],
+      additionalProperties: false,
+    },
+  };
+  for (const profile of ENFORCED_PROFILES) {
+    const findings = lintToolSchema(regression, profile);
+    assert.equal(findings.length, 1, `${profile.id} must reject the top-level oneOf offline`);
+    assert.equal(findings[0].keyword, "oneOf");
+    assert.match(findings[0].message, /top level/);
+  }
+});
+
 test("every top-level combinator is rejected by every enforced profile", () => {
   for (const profile of ENFORCED_PROFILES) {
     for (const banned of ["oneOf", "anyOf", "allOf", "not"]) {
