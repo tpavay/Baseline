@@ -110,7 +110,7 @@ struct WorkoutView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(onRequestDiscard != nil
-                ? "This empty workout will be removed and the day left with no workout scheduled."
+                ? "This workout and anything you logged in it will be removed, and the day is left with no workout scheduled."
                 : "Everything you logged will be removed, along with any exercises you added, removed, replaced, or reordered during this workout. Your saved plan stays as it was.")
         }
         .confirmationDialog(
