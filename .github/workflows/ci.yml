@@ -476,7 +476,10 @@ jobs:
         run: npm --prefix functions ci
 
       # Both scripts read functions/lib and fail hard when the API key secret is missing -
-      # a skipped preflight would let a provider-rejected schema reach a green build.
+      # a skipped preflight would let a provider-rejected schema reach a green build. The one
+      # non-fatal provider error is an exhausted credit balance (a billing outage with zero
+      # schema signal): the scripts skip with a ::warning annotation instead of misreporting
+      # "fix the schema" - see functions/scripts/provider-outage.js.
       - name: Preflight every served toolset against the live provider
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

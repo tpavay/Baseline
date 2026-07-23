@@ -27,6 +27,7 @@ const {
   WORKOUT_IMPORT_SKETCH_SYSTEM,
   WORKOUT_IMPORT_SKETCH_TOOL,
 } = require("../lib/workoutImportStream");
+const { isCreditExhaustion, warnProviderOutage } = require("./provider-outage");
 
 const API_URL = "https://api.anthropic.com/v1/messages/count_tokens";
 const MODEL = DEFAULT_CONVERSATION_MODEL;
@@ -178,7 +179,19 @@ async function main() {
   }
 
   console.log(`Counting tool-schema tokens against ${MODEL} (anthropic count_tokens, free)…`);
-  const measured = await measure(apiKey);
+  let measured;
+  try {
+    measured = await measure(apiKey);
+  } catch (error) {
+    // A billing outage cannot verify (or produce) a fixture; in check mode it is a loud skip,
+    // never a "stale fixture" verdict (see provider-outage.js). Write mode still fails: a fixture
+    // must never be written from a failed measurement.
+    if (mode === "check" && isCreditExhaustion(error.message)) {
+      warnProviderOutage("Token-fixture check");
+      return;
+    }
+    throw error;
+  }
   const serialized = `${JSON.stringify(measured, null, 2)}\n`;
 
   if (mode === "write") {

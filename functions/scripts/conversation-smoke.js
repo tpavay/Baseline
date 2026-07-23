@@ -15,6 +15,7 @@
 const { AnthropicProvider } = require("../lib/provider");
 const { SERVED_TOOLSETS } = require("../lib/tools");
 const { buildSystemBlocks } = require("../lib/prompt");
+const { isCreditExhaustion, warnProviderOutage } = require("./provider-outage");
 
 // One entry per supported provider. Adding a provider: implement ConversationProvider, add its
 // constraint profile to toolSchemaContract.ts, and register a factory here.
@@ -58,10 +59,18 @@ async function smokeProvider({ id, make, keyEnvVar }) {
 async function main() {
   console.log(`Smoking ${PROVIDERS.length} provider(s) with the wave9 toolset…`);
   const failures = [];
+  let sawBillingOutage = false;
   for (const provider of PROVIDERS) {
     try {
       await smokeProvider(provider);
     } catch (error) {
+      // The SDK surfaces the provider's error body in the thrown message; an exhausted credit
+      // balance is a billing outage, not a broken provider path (see provider-outage.js).
+      if (isCreditExhaustion(error.message)) {
+        console.error(`  ⚠ ${provider.id}: UNVERIFIED - provider credit balance exhausted`);
+        sawBillingOutage = true;
+        continue;
+      }
       console.error(`  ✗ ${provider.id}: ${error.message}`);
       failures.push(provider.id);
     }
@@ -69,6 +78,10 @@ async function main() {
   if (failures.length > 0) {
     console.error(`\nConversation smoke failed for: ${failures.join(", ")}. Do not merge.`);
     process.exit(1);
+  }
+  if (sawBillingOutage) {
+    warnProviderOutage("Conversation smoke");
+    return;
   }
   console.log("All providers completed a live conversation round-trip.");
 }

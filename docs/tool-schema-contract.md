@@ -78,6 +78,8 @@ That is the whole procedure - "add its constraint profile + run the preflight", 
 - CI job: `functions-provider-preflight` in `.github/workflows/ci.yml`, gated on the `changes` filter's `functions` output, feeding the single required `CI` check.
 - Key: repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together.
 - The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would let a provider-rejected schema reach a green build.
+- One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema" on every functions PR.
+  The schemas are unverified by such a run; top up the account behind the secret and re-run the job.
 - Cost per run: 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ a few cents, plus ~90 free `count_tokens` requests for the token-fixture check, only on PRs that touch `functions/`.
 
 ## Keeping the contract honest

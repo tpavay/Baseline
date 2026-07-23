@@ -17,6 +17,7 @@
 const { SERVED_TOOLSETS } = require("../lib/tools");
 const { buildSystemBlocks } = require("../lib/prompt");
 const { buildConversationProviderRequest, DEFAULT_CONVERSATION_MODEL } = require("../lib/provider");
+const { isCreditExhaustion, warnProviderOutage } = require("./provider-outage");
 
 const API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CONVERSATION_MODEL || DEFAULT_CONVERSATION_MODEL;
@@ -61,6 +62,12 @@ async function preflightVariant(apiKey, toolsetName, tools) {
       await sleep(delayMs);
       continue;
     }
+    // An exhausted credit balance also arrives as a 400 invalid_request_error, but it is a
+    // billing outage, not a schema verdict - classify it apart so it cannot be misreported as
+    // "the provider rejected this schema" (see provider-outage.js).
+    if (isCreditExhaustion(text)) {
+      return { ok: false, billingOutage: true, status: response.status, detail: text };
+    }
     return { ok: false, status: response.status, detail: text };
   }
   return { ok: false, status: 0, detail: "retries exhausted" };
@@ -81,10 +88,14 @@ async function main() {
   console.log(`Preflighting ${variants.length} served toolset variants against ${MODEL} (anthropic)…`);
 
   const failures = [];
+  let sawBillingOutage = false;
   for (const [toolsetName, tools] of variants) {
     const result = await preflightVariant(apiKey, toolsetName, tools);
     if (result.ok) {
       console.log(`  ✓ ${toolsetName} (${tools.length} tools) accepted`);
+    } else if (result.billingOutage) {
+      console.error(`  ⚠ ${toolsetName} (${tools.length} tools) UNVERIFIED - provider credit balance exhausted`);
+      sawBillingOutage = true;
     } else {
       console.error(`  ✗ ${toolsetName} (${tools.length} tools) REJECTED - HTTP ${result.status}\n    ${result.detail}`);
       failures.push(toolsetName);
@@ -98,6 +109,10 @@ async function main() {
       "Fix the schema (see docs/tool-schema-contract.md) - do not merge."
     );
     process.exit(1);
+  }
+  if (sawBillingOutage) {
+    warnProviderOutage("Tool-schema preflight");
+    return;
   }
   console.log("All served toolset variants accepted by the provider.");
 }
