@@ -72,13 +72,15 @@ ZoneTimeAccumulator                      // seconds-in-zone over a session, from
 
 ## UI
 
-- `HeartRateZoneSpectrum` — the hero component: a segmented **Z1–Z5 colored bar**, the current zone
-  filled/highlighted, a moving marker at `position(forBPM:)`, and an optional **planned target-zone**
-  band outline. Pure view over (zone, position, target?). Layout math in a testable helper.
-- `LiveHeartRateView` — big BPM number + zone name (e.g. "Z3 · Threshold") + the spectrum + a
-  connection/sensor-contact/"reconnecting"/stale state. Standalone, DS-compliant, rich previews
-  (each zone, no-signal, stale, reconnecting, sensor-off, with/without target). Rendered via
-  `RenderPreview` for the UX review.
+- `HeartRateZoneGauge` — the hero component. Shipped first as a linear `HeartRateZoneSpectrum` and
+  then redesigned (issue #65) into a **semicircular Z1→Z5 gauge wrapping the BPM number**: segments
+  proportional to each zone's BPM span, the current zone lit, a pulsing current-position marker. Pure
+  view with layout math in a testable helper. See `live-heart-rate-go-live.md` for the current HUD
+  design of record.
+- `LiveHeartRateView` — big BPM number (tinted the current zone color) + zone name (e.g. "Z3 ·
+  AEROBIC") + the gauge + AVG · TIME · MAX stats + a TIME IN ZONE breakdown + honest
+  sensor-contact/"reconnecting"/stale states. Standalone, DS-compliant, rich previews (each zone,
+  no-signal, stale, reconnecting, sensor-off). Rendered via `RenderPreview` for the UX review.
 - `HeartRateZoneSettingsView` — replaces the `.soon` Profile row: max HR (Tanaka default, editable),
   resting HR, optional LTHR, method indicator, and a live zone-boundary preview table.
 
@@ -90,7 +92,7 @@ ZoneTimeAccumulator                      // seconds-in-zone over a session, from
 2. **Zone settings + profile fields + persistence.** Real `HeartRateZoneSettingsView` (retire the
    `.soon` stub), optional maxHR/restingHR/LTHR profile fields (optional-backed), per-session
    zone-time record. Previewable.
-3. **Live-HR UI (standalone).** `HeartRateZoneSpectrum` + `LiveHeartRateView` + the 5th color token;
+3. **Live-HR UI (standalone).** `HeartRateZoneGauge` + `LiveHeartRateView` + the 5th color token;
    rich previews. **Defer** the drop into the active-workout surface (dirty `StructuredWorkoutView`/
    `WorkoutView`) to a documented go-live step (`docs/implementation/live-heart-rate-go-live.md`):
    place `LiveHeartRateView`, bind it to `HeartRateMonitor`, pass the session's planned target zone,

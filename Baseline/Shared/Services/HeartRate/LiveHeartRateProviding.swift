@@ -33,6 +33,9 @@ protocol LiveHeartRateProviding: AnyObject {
     var maxBPM: Int? { get }
     /// Session elapsed seconds (recorded aggregate) — the TIME in the AVG · TIME · MAX row.
     var sessionElapsed: TimeInterval { get }
+    /// Seconds-in-zone accumulated over the session — the TIME IN ZONE breakdown. Like the other
+    /// aggregates it summarizes recorded samples, so it persists through a dropout.
+    var zoneTime: ZoneTimeAccumulator { get }
 }
 
 /// `HeartRateMonitor` already exposes every member of `LiveHeartRateProviding`, so it conforms with

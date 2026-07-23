@@ -45,7 +45,7 @@ Use status colors only when they communicate an actual semantic state.
 | Zone red | `BaselineColor.zoneRed` | `#FF5247` | Zone 5 and high-risk semantic state |
 
 The approved five-zone donut uses blue, green, violet, amber, and red in order.
-`zoneOrange` remains available only for existing live-spectrum compatibility and is not part of the approved taxonomy-surface palette.
+`zoneOrange` remains available only for existing live heart-rate zone-gauge compatibility and is not part of the approved taxonomy-surface palette.
 Do not introduce screen-local color values when one of these semantic tokens applies.
 
 ## Typography

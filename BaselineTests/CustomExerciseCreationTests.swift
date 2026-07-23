@@ -493,9 +493,10 @@ struct CustomExerciseImportReviewTests {
         let proposal = tools.dispatch(.createCustomExercise(draft: payload, proposalID: nil, expectedRevisionToken: token))
         let match = try #require(proposal.text.firstMatch(of: /proposal_id "([0-9a-fA-F\-]{36})"/))
         let commitToken = try #require(review.mutationTarget(review.agentScope)?.revisionToken)
+        let proposalID = try #require(UUID(uuidString: String(match.1)))
         let commit = tools.dispatch(.createCustomExercise(
             draft: payload,
-            proposalID: try #require(UUID(uuidString: String(match.1))),
+            proposalID: proposalID,
             expectedRevisionToken: commitToken
         ))
         #expect(commit.mutationReceipt != nil)

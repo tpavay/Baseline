@@ -1,6 +1,6 @@
 # Live Heart Rate — Go-Live Wiring
 
-Slice 3 shipped the live HUD (`LiveHeartRateView` + `HeartRateZoneSpectrum`) as a standalone,
+Slice 3 shipped the live HUD (`LiveHeartRateView` + `HeartRateZoneGauge`) as a standalone,
 fully-previewed component with **no live call site**: nothing in the running app constructs a
 `HeartRateMonitor`, starts monitoring, or opens a BLE connection.
 This document is the ordered, owner-performed checklist to drop the HUD into the active-workout
@@ -22,9 +22,11 @@ Do these steps once that surface is stable.
   HUD's AVG · TIME · MAX row) — all via an injected clock. Slice 1 + Slice 3.
 - `HeartRateZoneSettingsStore` — persists the athlete's max/resting/LTHR and vends a
   `HeartRateZoneModel`. Slice 2.
-- `LiveHeartRateView` / `HeartRateZoneSpectrum` / `LiveHeartRateStateResolver` — the HUD, its
-  spectrum, and the honest state mapping. This slice (Slice 3). `LiveHeartRateView` binds to any
-  `LiveHeartRateProviding`; `HeartRateMonitor` is the production conformer.
+- `LiveHeartRateView` / `HeartRateZoneGauge` / `LiveHeartRateStateResolver` — the HUD, its
+  semicircular Z1→Z5 zone gauge wrapping the BPM number, and the honest state mapping. Slice 3, then
+  redesigned (issue #65: proportional gauge segments, a pulsing current-position marker, a zone-name
+  line, and a TIME IN ZONE breakdown fed by the monitor's `zoneTime`). `LiveHeartRateView` binds to
+  any `LiveHeartRateProviding`; `HeartRateMonitor` is the production conformer.
 
 ## Ordered steps
 
@@ -42,15 +44,24 @@ Do these steps once that surface is stable.
    glances during work intervals.
    `targetZones` is a `ClosedRange<Int>?` so a session can target a **single zone** (map the existing
    `targetZone: Int?` to `n...n`) or a **range** ("live in Z1–Z2"); pass `nil` when the segment has no
-   HR target. The spectrum draws one continuous dashed outline across the range.
+   HR target. Target display is currently **held** (issue #65): the parameter is accepted but **not
+   rendered** — every caller passes `nil` today, and the value only reaches the gauge's accessible
+   summary. Re-enabling a target cue is a separate feature.
    The view only reads the monitor — it never starts it.
 
-   HUD design decisions locked in this slice (from the design review):
-   - The big BPM number is **tinted with the current zone's color** (the zone identity lives in the
-     tint + the spectrum, not a text label).
-   - Under the number is an **AVG · TIME · MAX** row of session aggregates, which **persist through a
+   HUD design decisions (from the design review, as shipped after the issue-#65 redesign):
+   - The hero is a **semicircular Z1→Z5 zone gauge wrapping the big BPM number**; each segment's arc
+     length is **proportional to that zone's BPM span** in the athlete's configured `HeartRateZoneModel`
+     (not equal fifths), with a **pulsing current-position marker** at the live BPM angle.
+   - The big BPM number is **tinted with the current zone's color**, and the **zone name** ("Z3 ·
+     AEROBIC") sits on the context line below the gauge while streaming normally.
+   - Under that is an **AVG · TIME · MAX** row of session aggregates, which **persist through a
      dropout** (they summarize recorded samples; only the live number blanks when stale).
-   - The planned target is shown by the **dashed outline alone — there is no target text**.
+   - At the bottom, a **TIME IN ZONE** breakdown (a stacked bar plus per-zone percents, fed by the
+     monitor's `zoneTime`) appears only once real zone time has been credited — never a fabricated
+     all-zero split.
+   - The connection status line shows **only** on a real sensor/signal issue (`sensorOff`, `noSignal`,
+     `reconnecting`, `disconnected`, `connecting`); a healthy stream shows the zone name instead.
    - `sensorOff` **shows the (flagged) number** with an amber "sensor not detecting contact" warning
      rather than hiding it; `noSignal` / `reconnecting` / `connecting` / `disconnected` show no number.
 

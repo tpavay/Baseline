@@ -56,8 +56,53 @@ enum LiveHeartRatePresentation {
         case .noSignal: "wave.3.right"
         case .sensorOff: "hand.raised.slash"
         case .connecting, .reconnecting: "antenna.radiowaves.left.and.right"
-        case .disconnected: "bolt.horizontal.slash"
+        case .disconnected: "antenna.radiowaves.left.and.right.slash"
         }
+    }
+
+    // MARK: - Time in zone
+
+    /// One zone's share of the session's credited time, for the TIME IN ZONE breakdown.
+    struct ZoneTimeShare: Equatable {
+        let zone: HeartRateZone
+        /// Exact fraction of the total credited time (0…1) — drives the stacked bar's widths.
+        let fraction: Double
+        /// Integer percent for the per-zone figure. Across all five zones these sum to exactly 100.
+        let percent: Int
+
+        var percentText: String { "\(percent)%" }
+    }
+
+    /// Shares for every zone in Z1…Z5 order, or `[]` before any zone time has been credited (the
+    /// breakdown is hidden rather than showing a fabricated all-zero split). Integer percents use
+    /// largest-remainder rounding so they always sum to 100 — the bar and the figures can never
+    /// disagree about the whole.
+    static func zoneTimeShares(_ zoneTime: ZoneTimeAccumulator) -> [ZoneTimeShare] {
+        let total = zoneTime.total
+        guard total > 0 else { return [] }
+        let fractions = HeartRateZone.allCases.map { zoneTime.seconds(in: $0) / total }
+        let floors = fractions.map { Int(($0 * 100).rounded(.down)) }
+
+        // Hand the leftover points to the largest fractional remainders; ties go to the lower zone
+        // so the result is deterministic.
+        var percents = floors
+        let byRemainder = fractions.indices.sorted { a, b in
+            let ra = fractions[a] * 100 - Double(floors[a])
+            let rb = fractions[b] * 100 - Double(floors[b])
+            return ra == rb ? a < b : ra > rb
+        }
+        for index in 0..<(100 - floors.reduce(0, +)) {
+            percents[byRemainder[index % byRemainder.count]] += 1
+        }
+
+        return HeartRateZone.allCases.enumerated().map { index, zone in
+            ZoneTimeShare(zone: zone, fraction: fractions[index], percent: percents[index])
+        }
+    }
+
+    /// VoiceOver value for the TIME IN ZONE breakdown, e.g. "Z1 5 percent, Z2 18 percent, …".
+    static func timeInZoneAccessibilityValue(_ shares: [ZoneTimeShare]) -> String {
+        shares.map { "\($0.zone.displayName) \($0.percent) percent" }.joined(separator: ", ")
     }
 
     // MARK: - Accessibility
@@ -91,9 +136,9 @@ enum LiveHeartRatePresentation {
             : "Target \(low.displayName) to \(high.displayName)"
     }
 
-    /// Accessible summary for the spectrum: current zone + BPM, or the reason none is shown, plus the
-    /// planned target zone/range when one is set.
-    static func spectrumAccessibilityValue(_ state: LiveHeartRateDisplayState, targetZones: ClosedRange<Int>?) -> String {
+    /// Accessible summary for the zone gauge: current zone + BPM, or the reason none is shown, plus
+    /// the planned target zone/range when one is set.
+    static func gaugeAccessibilityValue(_ state: LiveHeartRateDisplayState, targetZones: ClosedRange<Int>?) -> String {
         let base: String
         switch state {
         case let .streaming(bpm, zone, _), let .sensorOff(bpm, zone, _):
