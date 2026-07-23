@@ -1,19 +1,20 @@
 import SwiftUI
 
-/// The sleep evidence screen pushed from Today's sleep row (plan §9). Explains the night behind the
-/// readiness decision: score-or-observed-points + quality badge → stage timeline → duration/awake/gap
-/// stats → Apple-aligned component breakdown → additional stage evidence (visually distinct from the
-/// score) → vs-you comparisons + flags → descriptive insights → provenance → influence/cap footer.
+/// The sleep evidence screen pushed from Today's sleep card (approved redesign, screen 2). Explains
+/// the night behind the readiness decision: score + band headline → Apple-style score breakdown
+/// (with the inline ⓘ opening the About screen) → staged hypnogram → vs-you comparisons + flags →
+/// descriptive insights → provenance → influence/cap footer.
 ///
-/// All formatting/mapping is in `SleepDetailPresentation` (pure, tested); `body` only lays out already
-/// resolved sections. The timeline needs the raw stage intervals, which live on the `SleepNight`, so
-/// the view takes the night (facts) plus its `analysis` (derived) — the repository holds both.
+/// All formatting/mapping is in `SleepDetailPresentation` (pure, tested); `body` only lays out
+/// already resolved sections. The hypnogram needs the raw stage intervals, which live on the
+/// `SleepNight`, so the view takes the night (facts) plus its `analysis` (derived) - the repository
+/// holds both.
 struct SleepDetailView: View {
     let night: SleepNight
     let analysis: SleepAnalysis
     var decision: DecisionEngine.Result?
 
-    /// Built once when the view value is created, not on every property read — the mapping runs
+    /// Built once when the view value is created, not on every property read - the mapping runs
     /// `SleepInsights.rules` + all formatting, so rebuilding it ~10× per body pass would be wasteful
     /// (house rule: expensive derived state outside `body`).
     private let model: SleepDetailPresentation
@@ -25,17 +26,16 @@ struct SleepDetailView: View {
         self.model = SleepDetailPresentation(analysis: analysis,
                                              decision: decision,
                                              resolvedSource: night.resolvedSource,
-                                             lastSyncAt: night.lastHealthKitSyncAt)
+                                             lastSyncAt: night.lastHealthKitSyncAt,
+                                             nightDate: night.date)
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 headline
-                timelineSection
-                statsSection
-                componentsSection
-                stageEvidenceSection
+                breakdownSection
+                hypnogramSection
                 comparisonsSection
                 insightsSection
                 provenanceSection
@@ -52,171 +52,152 @@ struct SleepDetailView: View {
 
     // MARK: - Headline
 
-    private var headline: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                headlineValue
-                Spacer()
-                badge
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder private var headlineValue: some View {
+    @ViewBuilder private var headline: some View {
         switch model.headline {
         case .score(let score):
-            VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .lastTextBaseline, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(score)").font(.bMono(52, .bold)).foregroundStyle(BaselineColor.textHi)
-                    Text("/ 100").font(.bMono(16, .medium)).foregroundStyle(BaselineColor.textFaint)
+                    Text("\(score)")
+                        .font(.system(size: 50, weight: .heavy))
+                        .foregroundStyle(BaselineColor.textHi)
+                    Text("/ 100")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(BaselineColor.textFaint)
                 }
-                InstrumentLabel("Sleep score")
+                Spacer()
+                VStack(alignment: .trailing, spacing: 3) {
+                    if let band = model.bandLabel {
+                        Text(band)
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(SleepScoreBand(score: score).color)
+                    }
+                    if !model.dateLabel.isEmpty {
+                        Text(model.dateLabel.uppercased())
+                            .font(.bMono(9, .semibold)).tracking(0.8)
+                            .foregroundStyle(BaselineColor.textFaint)
+                    }
+                }
             }
-            .accessibilityLabel("Sleep score \(score) of 100")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(scoreAccessibilityLabel(score)))
         case .partial(let observed, let possible, let coverage):
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(observed)").font(.bMono(52, .bold)).foregroundStyle(BaselineColor.textHi)
-                    Text("of \(possible) pts").font(.bMono(16, .medium)).foregroundStyle(BaselineColor.textFaint)
+                    Text("\(observed)").font(.system(size: 50, weight: .heavy)).foregroundStyle(BaselineColor.textHi)
+                    Text("of \(possible) pts").font(.system(size: 17, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
                 }
                 InstrumentLabel("Observed · \(coverage)% coverage")
                 Text("Not enough evidence for a full score.")
                     .font(.system(size: 13)).foregroundStyle(BaselineColor.textMid)
             }
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(observed) of \(possible) possible points observed, \(coverage) percent coverage. Not enough evidence for a full score.")
         case .notScored(let duration, let caption):
             VStack(alignment: .leading, spacing: 2) {
                 Text(duration ?? "No sleep recorded")
-                    .font(.bMono(duration == nil ? 24 : 44, .bold)).foregroundStyle(BaselineColor.textHi)
+                    .font(.system(size: duration == nil ? 24 : 44, weight: .heavy))
+                    .foregroundStyle(BaselineColor.textHi)
                     .fixedSize(horizontal: false, vertical: true)
                 InstrumentLabel(caption)
             }
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(duration.map { "\($0) asleep, \(caption)" } ?? caption)
         }
     }
 
-    private var badge: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            if model.badge.isProvisional {
-                Text(model.badge.status.uppercased())
-                    .font(.bMono(10, .bold)).tracking(1)
-                    .foregroundStyle(BaselineColor.zoneAmber)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Capsule().stroke(BaselineColor.zoneAmber.opacity(0.6), lineWidth: 1))
-            } else {
-                Text(model.badge.status.uppercased())
-                    .font(.bMono(10, .bold)).tracking(1)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Capsule().stroke(BaselineColor.line, lineWidth: 1))
-            }
-            Text(model.badge.reliability)
-                .font(.system(size: 11, weight: .medium)).foregroundStyle(BaselineColor.textFaint)
-                .multilineTextAlignment(.trailing)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(model.badge.status), \(model.badge.reliability)")
+    private func scoreAccessibilityLabel(_ score: Int) -> String {
+        var parts = ["Sleep score \(score) of 100"]
+        if let band = model.bandLabel { parts.append(band) }
+        if !model.dateLabel.isEmpty { parts.append(model.dateLabel) }
+        return parts.joined(separator: ", ")
     }
 
-    // MARK: - Timeline
+    // MARK: - Score breakdown (with the inline ⓘ → About)
 
-    private var timelineSection: some View {
-        sectionCard(title: "Overnight") {
-            SleepTimelineChart(intervals: night.primaryEpisode?.intervals ?? [],
-                               gaps: night.primaryEpisode?.gaps ?? [],
-                               naps: night.episodes.filter { !$0.isPrimary })
-        }
-    }
-
-    // MARK: - Stats
-
-    @ViewBuilder private var statsSection: some View {
-        if !model.stats.isEmpty {
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(model.stats) { stat in
-                    VStack(alignment: .leading, spacing: 4) {
-                        // One line, scaled to fit the narrow column, so a value never breaks mid-word.
-                        Text(stat.value).font(.bMono(18, .bold)).foregroundStyle(BaselineColor.textHi)
-                            .lineLimit(1).minimumScaleFactor(0.6)
-                        InstrumentLabel(stat.label, tracking: 1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(stat.label): \(stat.value)")
-                    if stat.id != model.stats.last?.id {
-                        Rectangle().fill(BaselineColor.line).frame(width: 1, height: 32)
-                    }
-                }
-            }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
-        }
-    }
-
-    // MARK: - Components
-
-    private var componentsSection: some View {
-        sectionCard(title: "Score breakdown") {
-            VStack(spacing: 12) {
-                ForEach(model.components) { row in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(row.title).font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(row.isAvailable ? BaselineColor.textHi : BaselineColor.textFaint)
-                            Spacer()
-                            Text(row.value).font(.bMono(13, .bold))
-                                .foregroundStyle(row.isAvailable ? BaselineColor.textMid : BaselineColor.textFaint)
-                        }
-                        ComponentBar(fraction: row.fraction, available: row.isAvailable)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(row.title): \(row.value)")
-                }
-            }
-        }
-    }
-
-    // MARK: - Additional stage evidence (visually distinct from the score)
-
-    private var stageEvidenceSection: some View {
+    private var breakdownSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "waveform.path").font(.system(size: 12)).foregroundStyle(BaselineColor.sleepREM)
-                InstrumentLabel("Sleep stages", color: BaselineColor.sleepREM)
+            HStack {
+                InstrumentLabel("Score breakdown")
+                Spacer()
+                NavigationLink {
+                    SleepScoreAboutView(score: analysis.score)
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(BaselineColor.accent)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("How your score works")
             }
-            if model.stageEvidence.isEmpty {
-                Text("No stage detail from this source.")
-                    .font(.system(size: 13)).foregroundStyle(BaselineColor.textFaint)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(model.stageEvidence) { row in
-                        HStack {
-                            RoundedRectangle(cornerRadius: 3).fill(row.stage.color).frame(width: 12, height: 12)
-                            Text(row.label).font(.system(size: 14, weight: .medium)).foregroundStyle(BaselineColor.textHi)
+            VStack(spacing: 0) {
+                ForEach(model.components) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(row.isAvailable ? row.kind.color : BaselineColor.textFaint)
+                                    .frame(width: 7, height: 7)
+                                Text(row.title)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(row.isAvailable ? row.kind.color : BaselineColor.textFaint)
+                            }
                             Spacer()
-                            Text(row.duration).font(.bMono(13, .bold)).foregroundStyle(BaselineColor.textMid)
-                            Text(row.share).font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
-                                .frame(width: 90, alignment: .trailing)
+                            Text(row.value).font(.bMono(14, .medium))
+                                .foregroundStyle(row.isAvailable ? BaselineColor.textHi : BaselineColor.textFaint)
                         }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("\(row.label): \(row.duration), \(row.share)")
+                        if !row.subtitle.isEmpty {
+                            Text(row.subtitle)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(BaselineColor.textMid)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        ComponentBar(fraction: row.fraction,
+                                     color: row.kind.color,
+                                     available: row.isAvailable)
+                            .padding(.top, 5)
+                    }
+                    .padding(.vertical, 13)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(componentAccessibilityLabel(row))
+                    if row.id != model.components.last?.id {
+                        Divider().overlay(BaselineColor.line)
                     }
                 }
-                Text(model.stageEvidenceCaption)
-                    .font(.system(size: 12)).foregroundStyle(BaselineColor.textFaint)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Distinct surface + accent hairline so stage evidence never reads as part of the score card.
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.amethyst.opacity(0.35))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(BaselineColor.sleepCore.opacity(0.4), lineWidth: 1))
-        )
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 3)
+        .background(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
+            .fill(BaselineColor.surface))
+    }
+
+    private func componentAccessibilityLabel(_ row: SleepDetailPresentation.ComponentRow) -> String {
+        row.subtitle.isEmpty
+            ? "\(row.title): \(row.value)"
+            : "\(row.title): \(row.value). \(row.subtitle)"
+    }
+
+    // MARK: - Overnight staged hypnogram
+
+    private var hypnogramSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 12) {
+                InstrumentLabel("Overnight · sleep stages")
+                SleepHypnogramChart(intervals: night.primaryEpisode?.intervals ?? [],
+                                    gaps: night.primaryEpisode?.gaps ?? [])
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
+                .fill(BaselineColor.surface))
+            Text(model.stageEvidenceCaption)
+                .font(.system(size: 11.5)).foregroundStyle(BaselineColor.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
+        }
     }
 
     // MARK: - Comparisons + flags
@@ -306,7 +287,7 @@ struct SleepDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .background(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
             .strokeBorder(BaselineColor.line, lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
@@ -320,13 +301,16 @@ struct SleepDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
+        .background(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
+            .fill(BaselineColor.surface))
     }
 }
 
-/// A component score bar; hairline-dashed when the component was not observable.
+/// A component score bar tinted with its component's color; hairline-dashed when the component was
+/// not observable.
 private struct ComponentBar: View {
     let fraction: Double
+    let color: Color
     let available: Bool
 
     var body: some View {
@@ -334,7 +318,7 @@ private struct ComponentBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(BaselineColor.base)
                 if available {
-                    Capsule().fill(BaselineColor.accent)
+                    Capsule().fill(color)
                         .frame(width: max(2, CGFloat(fraction) * geo.size.width))
                 } else {
                     Capsule().strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
@@ -349,15 +333,6 @@ private struct ComponentBar: View {
 // MARK: - Previews
 
 #if DEBUG
-#Preview("Detail · full staged night · light") {
-    NavigationStack {
-        SleepDetailView(night: SleepPreviewFixtures.stagedNight,
-                        analysis: SleepPreviewFixtures.stagedAnalysis,
-                        decision: SleepPreviewFixtures.cappedDecision)
-    }
-    .preferredColorScheme(.light)
-}
-
 #Preview("Detail · full staged night · dark") {
     NavigationStack {
         SleepDetailView(night: SleepPreviewFixtures.stagedNight,
@@ -386,12 +361,12 @@ private struct ComponentBar: View {
     .preferredColorScheme(.dark)
 }
 
-#Preview("Detail · manual low-reliability · light") {
+#Preview("Detail · manual low-reliability · dark") {
     NavigationStack {
         SleepDetailView(night: SleepPreviewFixtures.manualNight,
                         analysis: SleepPreviewFixtures.manualAnalysis,
                         decision: nil)
     }
-    .preferredColorScheme(.light)
+    .preferredColorScheme(.dark)
 }
 #endif

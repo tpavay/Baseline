@@ -80,12 +80,12 @@ enum TodayEvidenceState: String, CaseIterable {
 
     private static let sleepReading = TodaySleepCardModel(
         score: 82,
-        rating: "High",
-        durationText: "7h 41m in bed",
+        band: "High",
+        durationText: "7h 41m asleep",
         segments: [
-            .init(weight: 40, progress: 0.83, colorRole: .duration),
-            .init(weight: 35, progress: 0.71, colorRole: .consistency),
-            .init(weight: 25, progress: 0.76, colorRole: .interruptions),
+            .init(kind: .duration, weight: 50, progress: 0.83),
+            .init(kind: .bedtimeConsistency, weight: 30, progress: 0.71),
+            .init(kind: .interruptions, weight: 20, progress: 0.76),
         ]
     )
 

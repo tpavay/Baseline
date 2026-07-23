@@ -51,12 +51,16 @@ enum SleepCanonicalWrite: Equatable, Sendable {
 }
 
 /// How the repository derives a night's `SleepAnalysis` — **injected** so the repository stays free
-/// of scoring knowledge (plan §7 layering). It carries the current engine versions (for the lazy
-/// re-derivation staleness check, AC-8), the history window to feed the pure engine, and the pure
-/// derivation itself. Slice 4 will swap the default for one that threads `need` from `ReadinessConfig`.
+/// of scoring knowledge (plan §7 layering). It carries the current engine versions and the sleep
+/// need (all three feed the lazy re-derivation staleness check, AC-8), the history window to feed
+/// the pure engine, and the pure derivation itself.
 struct SleepAnalysisDerivation: Sendable {
     var currentAggregationVersion: Int
     var currentScoreAlgorithmVersion: Int
+    /// The sleep need (hours) the derivation scores against. A stored blob stamped with a different
+    /// need is stale: the user changed their configured need, so displayed scores must re-derive to
+    /// stay identical to the decision path's need-threaded score.
+    var needHours: Double
     /// Recovery days (ending on and including the night) fetched as history for the engine. Sized to
     /// the full backfill depth (90) so it never silently caps the comparison windows *or* the
     /// notable-night flags: `bestIn`/`worstIn` spanDays reflect the available store span (AC-6's
@@ -65,14 +69,23 @@ struct SleepAnalysisDerivation: Sendable {
     var historyWindowDays: Int
     var analyze: @Sendable (SleepNight, [SleepNight]) -> SleepAnalysis
 
-    /// Production wiring: the pure `SleepEngine` at its current versions, default sleep need, full
-    /// 90-night backfill span as history.
-    static let engine = SleepAnalysisDerivation(
-        currentAggregationVersion: SleepEngine.aggregationVersion,
-        currentScoreAlgorithmVersion: SleepEngine.scoreAlgorithmVersion,
-        historyWindowDays: 90,
-        analyze: { SleepEngine.analyze(night: $0, history: $1) }
-    )
+    /// Production wiring: the pure `SleepEngine` at its current versions, the user's configured
+    /// sleep need (`ReadinessConfig.sleepNeed`; 8 h when unset), full 90-night backfill span as
+    /// history. Display call sites must thread the same need the decision path uses so the two
+    /// scores for a night can never disagree.
+    static func engine(need: Duration = SleepEngine.defaultNeed) -> SleepAnalysisDerivation {
+        // Same hours conversion the engine stamps into `SleepAnalysis.needHours`, so the staleness
+        // comparison is exact.
+        let components = need.components
+        let needHours = (Double(components.seconds) + Double(components.attoseconds) / 1e18) / 3600
+        return SleepAnalysisDerivation(
+            currentAggregationVersion: SleepEngine.aggregationVersion,
+            currentScoreAlgorithmVersion: SleepEngine.scoreAlgorithmVersion,
+            needHours: needHours,
+            historyWindowDays: 90,
+            analyze: { SleepEngine.analyze(night: $0, history: $1, need: need) }
+        )
+    }
 }
 
 /// The **domain-typed gateway** to the Sleep store (plan §7). The single write path — the
@@ -109,7 +122,7 @@ final class SwiftDataSleepRepository: SleepRepository {
     private let derivation: SleepAnalysisDerivation
 
     init(context: ModelContext, calendar: Calendar = .current,
-         derivation: SleepAnalysisDerivation = .engine) {
+         derivation: SleepAnalysisDerivation = .engine()) {
         self.context = context
         self.calendar = calendar
         self.derivation = derivation
@@ -190,15 +203,19 @@ final class SwiftDataSleepRepository: SleepRepository {
         rows(dayKey: dayKey(for: date)).first.map(analysis(for:))
     }
 
-    /// Lazy re-derivation (AC-8): a stored analysis stamped at the current engine versions is
-    /// returned untouched (zero write); an absent or version-trailing one is re-derived from current
-    /// facts and history, persisted, and returned. Facts writes clear the blob (see `apply`), so a
-    /// same-version revision also re-derives here rather than serving a stale analysis.
+    /// Lazy re-derivation (AC-8): a stored analysis stamped at the current engine versions *and*
+    /// the current sleep need is returned untouched (zero write); an absent, version-trailing, or
+    /// need-mismatched one is re-derived from current facts and history, persisted, and returned.
+    /// Facts writes clear the blob (see `apply`), so a same-version revision also re-derives here
+    /// rather than serving a stale analysis. The need check is what re-derives history after the
+    /// user changes their configured sleep need (a pre-v2 blob has `needHours == nil` and likewise
+    /// re-derives once).
     private func analysis(for row: SDSleepNight) -> SleepAnalysis {
         if let data = row.analysisJSON,
            let stored = SleepCoding.value(SleepAnalysis.self, data),
            row.aggregationVersionBacking == derivation.currentAggregationVersion,
-           row.scoreAlgorithmVersionBacking == derivation.currentScoreAlgorithmVersion {
+           row.scoreAlgorithmVersionBacking == derivation.currentScoreAlgorithmVersion,
+           stored.needHours == derivation.needHours {
             return stored
         }
         let night = night(from: row)

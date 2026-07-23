@@ -72,7 +72,9 @@ struct DailyReadingFlowView: View {
                         constraints: context.activeConstraints,
                         dailyContext: context.daily,
                         sleepProvider: RepositorySleepEvidenceProvider(
-                            repository: SwiftDataSleepRepository(context: modelContext), config: config),
+                            repository: SwiftDataSleepRepository(
+                                context: modelContext,
+                                derivation: .engine(need: config.sleepNeed))),
                         referenceDate: .now,
                         onDone: finish
                     )
@@ -266,7 +268,9 @@ struct DailyCheckInView: View {
                         // score/quality readout. Nil (empty store) → the legacy Health/manual card.
                         SleepCheckInCard(
                             answers: $answers,
-                            analysis: SwiftDataSleepRepository(context: modelContext).analysis(for: .now))
+                            analysis: SwiftDataSleepRepository(
+                                context: modelContext,
+                                derivation: .engine(need: config.sleepNeed)).analysis(for: .now))
                     }
                 }
                 .padding(.top, 24)

@@ -130,11 +130,13 @@ struct TodayView: View {
     private func reassemble() async {
         context.rolloverIfNeeded()
         let todayEntry = entries.first { Calendar.current.isDateInToday($0.date) }
-        let sleepRepository = SwiftDataSleepRepository(context: modelContext)
-        let sleepProvider = RepositorySleepEvidenceProvider(
-            repository: sleepRepository,
-            config: readinessConfig
+        // The repository derives with the user's configured sleep need; the provider reads the same
+        // cached analysis, so the displayed and decision scores agree by construction.
+        let sleepRepository = SwiftDataSleepRepository(
+            context: modelContext,
+            derivation: .engine(need: readinessConfig.sleepNeed)
         )
+        let sleepProvider = RepositorySleepEvidenceProvider(repository: sleepRepository)
         let base = await TodayEvidence.baseInputs(
             readings: readings,
             todayEntry: todayEntry,
@@ -201,14 +203,8 @@ struct TodayView: View {
 
     private var readingCards: [TodayReadingCard] {
         var cards: [TodayReadingCard] = []
-        if let todaySleep, let score = todaySleep.analysis.score {
-            let durationHours = todaySleep.night.inBedHours ?? todaySleep.analysis.asleepHours ?? 0
-            cards.append(.sleep(TodaySleepCardModel(
-                score: score,
-                rating: sleepRating(score),
-                durationText: "\(SleepFormat.hours(durationHours)) in bed",
-                segments: sleepSegments(todaySleep.analysis)
-            )))
+        if let todaySleep, let sleepCard = TodaySleepCardModel.make(todaySleep.analysis) {
+            cards.append(.sleep(sleepCard))
         }
         if let todayReading {
             cards.append(.hrv(TodayHRVCardModel(
@@ -218,33 +214,6 @@ struct TodayView: View {
             )))
         }
         return cards
-    }
-
-    private func sleepSegments(_ analysis: SleepAnalysis) -> [TodaySleepCardModel.Segment] {
-        let roles: [(SleepComponent.Kind, TodaySleepCardModel.ColorRole)] = [
-            (.duration, .duration),
-            (.bedtimeConsistency, .consistency),
-            (.interruptions, .interruptions),
-        ]
-        return roles.compactMap { kind, role in
-            guard let component = analysis.component(kind) else { return nil }
-            let progress = component.max > 0 ? component.value / component.max : 0
-            return TodaySleepCardModel.Segment(
-                weight: component.max,
-                progress: progress,
-                colorRole: role
-            )
-        }
-    }
-
-    private func sleepRating(_ score: Int) -> String {
-        switch score {
-        case ..<40: "Very low"
-        case 40..<60: "Low"
-        case 60..<75: "OK"
-        case 75..<90: "High"
-        default: "Very high"
-        }
     }
 
     private var todayReading: Reading? {

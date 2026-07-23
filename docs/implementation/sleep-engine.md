@@ -376,3 +376,8 @@ Issue-first: file a GitHub issue per slice (or one epic + slice checklist), bran
 Planned 2026-07-14, revised same day (round 2: Apple-aligned components, ingestion lifecycle,
 multi-source precedence, snapshot semantics). Ready for implementation; HRV-baseline issue filed
 separately per Q-A.
+
+**2026-07-23 - sleep surfaces redesigned; §9 is superseded by the shipped screens.**
+The Today sleep card (`TodaySleepCardView`) shows an Apple-style band word (`SleepScoreBand`) plus time asleep beside a radial-fill segmented score ring (`RadialFillSegmentedRing`, geometry in `docs/design-system/README.md`).
+`SleepDetailView` drops the quality/status badge and the asleep/awake stat boxes, puts the component breakdown (with human subtitles and an inline info button opening `SleepScoreAboutView`) directly under the score, and replaces the single-track `SleepTimelineChart` view with a staged hypnogram (`SleepHypnogramChart` over the retained pure `SleepTimelineLayout`); nap sub-tracks are no longer rendered.
+`scoreAlgorithmVersion` is now 2: components round individually before summing so the visible rows always equal the headline, and the athlete's configured need is threaded via `SleepAnalysisDerivation.engine(need:)` with `needHours` stamped on `SleepAnalysis`, so displayed and decision scores agree and history re-derives when the need changes (see `docs/implementation/sleep-engine-go-live.md` step 3).

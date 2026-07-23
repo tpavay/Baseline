@@ -20,23 +20,50 @@ enum TodayReadingCard: Equatable, Identifiable {
     }
 }
 
+/// Everything Today needs to render the sleep card and push its detail. Assembled only when a
+/// canonical night exists for today; absent while the Sleep Engine is dormant, which keeps Today's
+/// layout byte-identical to pre-slice (no context → no card → no tap target).
+struct SleepDetailContext: Equatable {
+    var night: SleepNight
+    var analysis: SleepAnalysis
+    var decision: DecisionEngine.Result?
+}
+
 struct TodaySleepCardModel: Equatable {
     struct Segment: Equatable {
+        let kind: SleepComponent.Kind
         let weight: Double
         let progress: Double
-        let colorRole: ColorRole
-    }
-
-    enum ColorRole: Equatable {
-        case duration
-        case consistency
-        case interruptions
     }
 
     let score: Int
-    let rating: String
+    /// The Apple-post-26.2 band word ("OK", "High", …) - the card's leading readout.
+    let band: String
+    /// "8h 32m asleep" under the band word.
     let durationText: String
+    /// Ring segments in component order, weighted by each component's point ceiling (50/30/20) with
+    /// progress = points earned / ceiling - the radial fill height.
     let segments: [Segment]
+
+    /// Pure analysis → card mapping (tested without a view tree). nil when the night published no
+    /// score: the card never shows a fabricated 0–100 number.
+    static func make(_ analysis: SleepAnalysis) -> TodaySleepCardModel? {
+        guard let score = analysis.score else { return nil }
+        let order: [SleepComponent.Kind] = [.duration, .bedtimeConsistency, .interruptions]
+        let segments = order.compactMap { kind -> Segment? in
+            guard let component = analysis.component(kind), component.max > 0 else { return nil }
+            return Segment(kind: kind,
+                           weight: component.max,
+                           progress: component.isAvailable ? component.value / component.max : 0)
+        }
+        let duration = analysis.asleepHours.map { "\(SleepFormat.hours($0)) asleep" } ?? ""
+        return TodaySleepCardModel(
+            score: score,
+            band: SleepScoreBand(score: score).label,
+            durationText: duration,
+            segments: segments
+        )
+    }
 }
 
 struct TodayHRVCardModel: Equatable {

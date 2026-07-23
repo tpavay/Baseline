@@ -2,15 +2,17 @@ import Foundation
 
 /// Shared, pure formatting for sleep durations/clock times so the chart, the presentation model, and
 /// tests all print identical quantities (mirrors `SleepInsights`' private formatter, hoisted for reuse).
+/// The compact "8h 32m" shape is the approved redesign's duration style, used consistently on the
+/// Today card, the detail screen, and the hypnogram legend.
 enum SleepFormat {
-    /// Minutes → "38 min" / "1 h 12 m" / "2 h", rounded to the nearest minute.
+    /// Minutes → "38m" / "1h 12m" / "2h", rounded to the nearest minute.
     static func minutes(_ minutes: Double) -> String {
         let total = Int(minutes.rounded())
         let h = total / 60
         let m = total % 60
-        if h == 0 { return "\(m) min" }
-        if m == 0 { return "\(h) h" }
-        return "\(h) h \(m) m"
+        if h == 0 { return "\(m)m" }
+        if m == 0 { return "\(h)h" }
+        return "\(h)h \(m)m"
     }
 
     /// Hours → the same "h/m" shape via `minutes`.
@@ -30,21 +32,18 @@ struct SleepDetailPresentation: Equatable {
     enum Headline: Equatable {
         case score(Int)
         case partial(observed: Int, possible: Int, coveragePercent: Int)
-        /// Nothing was scorable (manual entry, or a source that can't be scored) — lead with the raw
+        /// Nothing was scorable (manual entry, or a source that can't be scored) - lead with the raw
         /// evidence (duration), never a "0 of 0" numeral that reads as a zero score (AC-3).
         case notScored(duration: String?, caption: String)
-    }
-
-    struct Badge: Equatable {
-        var status: String        // "Provisional" / "Revised" / "Complete"
-        var reliability: String   // "High reliability" / "Low reliability (manual)" …
-        var isProvisional: Bool
     }
 
     struct ComponentRow: Equatable, Identifiable {
         var kind: SleepComponent.Kind
         var title: String
-        var value: String         // "42 / 50" or "Not observed"
+        var value: String         // "50 / 50" or "Not observed"
+        /// The Apple-style human reading of the component ("8h 32m - at your sleep goal",
+        /// "1h 54m off your 14-day average", "10 wake-ups · 24m awake"). Empty when unavailable.
+        var subtitle: String
         var fraction: Double      // value/max, 0 when unavailable
         var isAvailable: Bool
         var id: SleepComponent.Kind { kind }
@@ -56,17 +55,8 @@ struct SleepDetailPresentation: Equatable {
         var id: String { label }
     }
 
-    struct StageEvidenceRow: Equatable, Identifiable {
-        var stage: SleepStage     // carried so the view colors from the token, not a label string
-        var label: String
-        var duration: String
-        var share: String         // "27% of sleep"
-        var fraction: Double
-        var id: String { label }
-    }
-
     /// Footer strings tying sleep to today's decision (AC-4). `influence` is the *weighted* share of
-    /// the blend — never phrased as a cause; `cap` is the separate causal statement when a sleep cap
+    /// the blend - never phrased as a cause; `cap` is the separate causal statement when a sleep cap
     /// actually bound the result.
     struct Footer: Equatable {
         var influence: String?
@@ -75,10 +65,11 @@ struct SleepDetailPresentation: Equatable {
     }
 
     var headline: Headline
-    var badge: Badge
-    var stats: [Stat]
+    /// The Apple-post-26.2 score band word ("OK", "High", …); nil when no score was published.
+    var bandLabel: String?
+    /// "Today, Jul 23" / "Tue, Jul 21" under the band; empty when the night date is unknown.
+    var dateLabel: String
     var components: [ComponentRow]
-    var stageEvidence: [StageEvidenceRow]
     var stageEvidenceCaption: String
     var comparisons: [Stat]
     var flags: [String]
@@ -90,19 +81,23 @@ struct SleepDetailPresentation: Equatable {
 
     /// - Parameters:
     ///   - analysis: the derived night analysis (the single source of the scored numbers).
-    ///   - decision: today's decision result, when this night fed it — drives the influence/cap footer.
+    ///   - decision: today's decision result, when this night fed it - drives the influence/cap footer.
     ///   - resolvedSource: the canonical night's resolved source, for provenance.
     ///   - lastSyncAt: last Health sync instant, for provenance.
+    ///   - nightDate: the night's wake day, for the headline date label.
+    ///   - referenceDate: "now", for the Today-vs-weekday phrasing (injected so tests stay pure).
     init(analysis: SleepAnalysis,
          decision: DecisionEngine.Result? = nil,
          resolvedSource: SleepSource = .none,
-         lastSyncAt: Date? = nil) {
+         lastSyncAt: Date? = nil,
+         nightDate: Date? = nil,
+         referenceDate: Date = .now,
+         calendar: Calendar = .current) {
         self.headline = Self.headline(analysis, resolvedSource: resolvedSource)
-        self.badge = Self.badge(analysis, resolvedSource: resolvedSource)
-        self.stats = Self.stats(analysis)
+        self.bandLabel = analysis.score.map { SleepScoreBand(score: $0).label }
+        self.dateLabel = Self.dateLabel(nightDate, referenceDate: referenceDate, calendar: calendar)
         self.components = Self.components(analysis)
-        self.stageEvidence = Self.stageEvidence(analysis.additionalEvidence)
-        self.stageEvidenceCaption = "Stage estimates are evidence only — they never move the score."
+        self.stageEvidenceCaption = "Stages are evidence only - they never move the score."
         self.comparisons = Self.comparisons(analysis)
         self.flags = Self.flags(analysis.flags)
         self.insights = SleepInsights.rules(for: analysis)
@@ -126,45 +121,22 @@ struct SleepDetailPresentation: Equatable {
                         coveragePercent: Int((a.quality.coverage * 100).rounded()))
     }
 
-    private static func badge(_ a: SleepAnalysis, resolvedSource: SleepSource) -> Badge {
-        let status: String
-        switch a.quality.status {
-        case .provisional: status = "Provisional"
-        case .complete: status = "Complete"
-        case .revised: status = "Revised"
+    private static func dateLabel(_ nightDate: Date?, referenceDate: Date, calendar: Calendar) -> String {
+        guard let nightDate else { return "" }
+        // Anchor formatting to the injected calendar's timezone so the label matches the same-day
+        // check (and stays deterministic under test).
+        let style = Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone)
+        let monthDay = nightDate.formatted(style.month(.abbreviated).day())
+        if calendar.isDate(nightDate, inSameDayAs: referenceDate) {
+            return "Today, \(monthDay)"
         }
-        return Badge(status: status,
-                     reliability: reliabilityLabel(a.quality.reliability, resolvedSource: resolvedSource),
-                     isProvisional: a.quality.status == .provisional)
-    }
-
-    /// Reliability is a source-class trust band, not a score. Manual self-reports are explicitly
-    /// low-reliability (AC-3) even when their coverage is high.
-    private static func reliabilityLabel(_ reliability: Double, resolvedSource: SleepSource) -> String {
-        if case .manual = resolvedSource { return "Low reliability (manual entry)" }
-        if case .none = resolvedSource { return "Source unknown" }
-        if reliability >= 0.9 { return "High reliability (staged wearable)" }
-        if reliability >= 0.5 { return "Medium reliability (phone estimate)" }
-        return "Low reliability"
-    }
-
-    private static func stats(_ a: SleepAnalysis) -> [Stat] {
-        var rows: [Stat] = []
-        rows.append(Stat(label: "Time asleep", value: a.asleepHours.map(SleepFormat.hours) ?? "Not observed"))
-        if let waso = a.wasoMinutes {
-            // Short tokens only — the stat sits in a narrow column, so no long word ("awakenings")
-            // that would break mid-word at large Dynamic Type.
-            let wakeups = a.awakenings.map { " · \($0)×" } ?? ""
-            rows.append(Stat(label: "Awake in bed", value: SleepFormat.minutes(waso) + wakeups))
-        }
-        let gap = a.additionalEvidence.gapMinutes
-        if gap >= 1 { rows.append(Stat(label: "Tracking gap", value: SleepFormat.minutes(gap))) }
-        return rows
+        let weekday = nightDate.formatted(style.weekday(.abbreviated))
+        return "\(weekday), \(monthDay)"
     }
 
     private static func components(_ a: SleepAnalysis) -> [ComponentRow] {
         let titles: [SleepComponent.Kind: String] = [
-            .duration: "Duration", .bedtimeConsistency: "Consistency", .interruptions: "Interruptions"
+            .duration: "Duration", .bedtimeConsistency: "Bedtime", .interruptions: "Interruptions"
         ]
         let order: [SleepComponent.Kind] = [.duration, .bedtimeConsistency, .interruptions]
         return order.map { kind in
@@ -175,24 +147,41 @@ struct SleepDetailPresentation: Equatable {
                 : "Not observed"
             let fraction = (available && (c?.max ?? 0) > 0) ? (c!.value / c!.max) : 0
             return ComponentRow(kind: kind, title: titles[kind] ?? "", value: value,
+                                subtitle: available ? subtitle(kind, a) : "",
                                 fraction: fraction, isAvailable: available)
         }
     }
 
-    /// Empty when the source carries no stage detail — the view then shows a single empty-state line
-    /// instead of three "0 min · 0%" rows that would read as a measured zero.
-    private static func stageEvidence(_ e: SleepStageEvidence) -> [StageEvidenceRow] {
-        let rows: [(SleepStage, String, Double, Double)] = [
-            (.rem, "REM", e.remMinutes, e.remFraction),
-            (.deep, "Deep", e.deepMinutes, e.deepFraction),
-            (.core, "Core", e.coreMinutes, e.coreFraction),
-        ]
-        guard rows.contains(where: { $0.2 > 0 }) else { return [] }
-        return rows.map { stage, label, minutes, fraction in
-            StageEvidenceRow(stage: stage, label: label,
-                             duration: SleepFormat.minutes(minutes),
-                             share: "\(Int((fraction * 100).rounded()))% of sleep",
-                             fraction: fraction)
+    /// The human reading under each component row. Every quantity is recomputed from analysis
+    /// fields the engine scored from, so the copy can never drift from the numbers (mirrors
+    /// `SleepInsights`' honesty rule).
+    private static func subtitle(_ kind: SleepComponent.Kind, _ a: SleepAnalysis) -> String {
+        switch kind {
+        case .duration:
+            guard let asleep = a.asleepHours else { return "" }
+            let slept = SleepFormat.hours(asleep)
+            guard let need = a.needHours else { return "\(slept) asleep" }
+            // A shortfall that rounds to 0 minutes (the same rounding SleepFormat prints with) reads
+            // as at-goal, never "0m short".
+            let shortfallMinutes = ((need - asleep) * 60).rounded()
+            if shortfallMinutes < 1 { return "\(slept) - at your sleep goal" }
+            return "\(slept) - \(SleepFormat.minutes(shortfallMinutes)) short of your sleep goal"
+        case .bedtimeConsistency:
+            guard let shift = a.decisionEvidence.scheduleShiftMinutes else { return "" }
+            let window = SleepEngine.Tunables.consistencyWindowDays
+            if shift <= SleepEngine.Tunables.consistencyGraceMinutes {
+                return "Close to your \(window)-day average"
+            }
+            return "\(SleepFormat.minutes(shift)) off your \(window)-day average"
+        case .interruptions:
+            var parts: [String] = []
+            if let awakenings = a.awakenings {
+                parts.append(awakenings == 1 ? "1 wake-up" : "\(awakenings) wake-ups")
+            }
+            if let waso = a.wasoMinutes {
+                parts.append("\(SleepFormat.minutes(waso)) awake")
+            }
+            return parts.joined(separator: " · ")
         }
     }
 
@@ -216,7 +205,7 @@ struct SleepDetailPresentation: Equatable {
             case .bestIn(let days): "Longest night in \(days) days"
             case .worstIn(let days): "Shortest night in \(days) days"
             case .scheduleShift(let minutes): "Bedtime shifted \(SleepFormat.minutes(minutes))"
-            case .shortNight(let hours): "Short night — \(SleepFormat.hours(hours))"
+            case .shortNight(let hours): "Short night - \(SleepFormat.hours(hours))"
             }
         }
     }
@@ -249,11 +238,11 @@ struct SleepDetailPresentation: Equatable {
         }
         var influence: String?
         if let sleep = decision.domains.first(where: { $0.domain == .sleep }) {
-            // Display-layer share of the weighted blend — descriptive, never causal (plan §8). A cap,
+            // Display-layer share of the weighted blend - descriptive, never causal (plan §8). A cap,
             // when it fires, is stated separately below as the actual limiter.
             let possible = Int((sleep.weight * 100).rounded())
             let weighted = Int((sleep.weight * Double(sleep.subscore)).rounded())
-            influence = "Sleep domain: \(sleep.subscore) — weighted influence \(weighted) of \(possible) possible points"
+            influence = "Sleep domain: \(sleep.subscore) - weighted influence \(weighted) of \(possible) possible points"
         }
 
         var cap: String?

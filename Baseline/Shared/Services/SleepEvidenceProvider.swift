@@ -60,37 +60,22 @@ protocol SleepEvidenceProvider {
     func sleepInputs(on date: Date) -> SleepDecisionInputs?
 }
 
-/// Production provider: reads the canonical night + history from a `SleepRepository`, runs the pure
-/// `SleepEngine` threading `need` from `ReadinessConfig` (default 8 h, AC-4), and maps the result.
-///
-/// Re-deriving here (rather than reading the repository's cached `analysis(for:)`) is deliberate:
-/// `need` is user-set and must override the repository's default-need derivation, without mutating
-/// its persisted cache. The night + history still come from the repository, so this remains a pure
-/// projection of stored facts.
+/// Production provider: maps the repository's canonical `analysis(for:)` — the exact analysis the
+/// detail screen displays — into decision inputs. The repository's injected
+/// `SleepAnalysisDerivation` already threads the user's configured need (`ReadinessConfig.sleepNeed`)
+/// and the full history window, so displayed and decision scores agree by construction: one
+/// derivation, one cache, two readers. Construction sites must build the repository with
+/// `.engine(need:)` for that need (both production call sites do).
 @MainActor
 struct RepositorySleepEvidenceProvider: SleepEvidenceProvider {
     let repository: SleepRepository
-    let need: Duration
-    /// History depth fed to the engine — the full backfill span so comparison windows and notable-
-    /// night flags are never silently capped (mirrors `SleepAnalysisDerivation.engine`).
-    let historyWindowDays: Int
 
-    init(repository: SleepRepository, need: Duration = SleepEngine.defaultNeed, historyWindowDays: Int = 90) {
+    init(repository: SleepRepository) {
         self.repository = repository
-        self.need = need
-        self.historyWindowDays = historyWindowDays
-    }
-
-    /// Convenience: thread `need` straight from a `ReadinessConfig` (default 8 h when unset).
-    init(repository: SleepRepository, config: ReadinessConfig, historyWindowDays: Int = 90) {
-        self.init(repository: repository, need: config.sleepNeed, historyWindowDays: historyWindowDays)
     }
 
     func sleepInputs(on date: Date) -> SleepDecisionInputs? {
-        guard let night = repository.night(for: date) else { return nil }
-        let history = repository.nights(lastDays: historyWindowDays, endingOn: date)
-        let analysis = SleepEngine.analyze(night: night, history: history, need: need)
-        return SleepDecisionInputs(analysis: analysis)
+        repository.analysis(for: date).map(SleepDecisionInputs.init(analysis:))
     }
 }
 

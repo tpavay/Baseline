@@ -13,7 +13,7 @@ private typealias Fix = SleepFixtures
 @MainActor
 struct SleepAnalysisPersistenceTests {
 
-    /// Counts how many times the injected derivation actually ran — the "write" signal. Serial
+    /// Counts how many times the injected derivation actually ran - the "write" signal. Serial
     /// @MainActor tests, so unchecked Sendable is safe.
     private final class Spy: @unchecked Sendable { var count = 0 }
 
@@ -28,12 +28,14 @@ struct SleepAnalysisPersistenceTests {
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
     }
 
-    private func derivation(agg: Int, score: Int, spy: Spy) -> SleepAnalysisDerivation {
+    private func derivation(agg: Int, score: Int, needHours: Double = 8, spy: Spy) -> SleepAnalysisDerivation {
         SleepAnalysisDerivation(
-            currentAggregationVersion: agg, currentScoreAlgorithmVersion: score, historyWindowDays: 31,
+            currentAggregationVersion: agg, currentScoreAlgorithmVersion: score,
+            needHours: needHours, historyWindowDays: 31,
             analyze: { night, history in
                 spy.count += 1
-                var analysis = SleepEngine.analyze(night: night, history: history)
+                var analysis = SleepEngine.analyze(night: night, history: history,
+                                                   need: .seconds(needHours * 3600))
                 // Stamp the versions this derivation represents so the store's staleness check keys
                 // on the injected versions, decoupled from the real engine constants.
                 analysis.aggregationVersion = agg
@@ -42,9 +44,9 @@ struct SleepAnalysisPersistenceTests {
             })
     }
 
-    private func repo(agg: Int = 1, score: Int = 1, spy: Spy) -> SwiftDataSleepRepository {
+    private func repo(agg: Int = 1, score: Int = 1, needHours: Double = 8, spy: Spy) -> SwiftDataSleepRepository {
         SwiftDataSleepRepository(context: ModelContext(container), calendar: Fix.calendar,
-                                 derivation: derivation(agg: agg, score: score, spy: spy))
+                                 derivation: derivation(agg: agg, score: score, needHours: needHours, spy: spy))
     }
 
     private func seededNight() throws -> SleepNight {
@@ -131,10 +133,58 @@ struct SleepAnalysisPersistenceTests {
         #expect(try storedRow().aggregationVersionBacking == 2)
     }
 
+    // MARK: - Sleep-need staleness: a changed configured need re-derives the displayed analysis
+
+    @Test func changedSleepNeedReDerivesAndPersists() throws {
+        let seedSpy = Spy()
+        let seeder = repo(needHours: 8, spy: seedSpy)
+        seeder.replaceCanonical(night: try seededNight())
+        let seeded = try #require(seeder.analysis(for: wakeDay))
+        #expect(seedSpy.count == 1)
+        #expect(seeded.needHours == 8)
+
+        // Same engine versions, different configured need → the stored blob is stale for display.
+        let needSpy = Spy()
+        let reNeeded = repo(needHours: 9, spy: needSpy)
+        let reDerived = try #require(reNeeded.analysis(for: wakeDay))
+        #expect(needSpy.count == 1)
+        #expect(reDerived.needHours == 9)
+
+        // And current for that need thereafter → zero-write.
+        _ = try #require(reNeeded.analysis(for: wakeDay))
+        #expect(needSpy.count == 1)
+    }
+
+    @Test func displayedAnalysisMatchesDecisionScoreForConfiguredNeed() throws {
+        // The score the repository persists for display must be byte-identical to the score the
+        // decision path computes for the same night and configured need - the bug this seam fixes
+        // was the display deriving with the hard-coded 8 h default while the decision threaded the
+        // user's need.
+        let need: Duration = .seconds(9 * 3600)
+        let repository = SwiftDataSleepRepository(
+            context: ModelContext(container), calendar: Fix.calendar,
+            derivation: .engine(need: need))
+        repository.replaceCanonical(night: try seededNight())
+
+        let displayed = try #require(repository.analysis(for: wakeDay))
+        let provider = RepositorySleepEvidenceProvider(repository: repository)
+        let decision = try #require(provider.sleepInputs(on: wakeDay))
+
+        #expect(displayed == decision.snapshot)
+        #expect(displayed.needHours == 9)
+        // A 9 h need must actually bite: the duration component is need-relative, so it cannot
+        // equal the 8 h-need derivation's value for this sub-9 h night.
+        let defaultNeed = try #require(
+            SleepEngine.analyze(night: try seededNight(), history: [], need: .seconds(8 * 3600))
+                .component(.duration)).value
+        let threaded = try #require(displayed.component(.duration)).value
+        #expect(threaded < defaultNeed)
+    }
+
     // MARK: - AC-6/MUST-FIX: production history window reaches flags beyond 31 days
 
     @Test func productionHistoryWindowReachesNotableFlagsBeyond31Days() throws {
-        // The DEFAULT (.engine) derivation — its 90-night history window is what makes a
+        // The DEFAULT (.engine) derivation - its 90-night history window is what makes a
         // notable-night flag past ~30 days reachable; a 31-day window would silently cap it.
         let repository = SwiftDataSleepRepository(context: ModelContext(container), calendar: Fix.calendar)
         let base = Fix.calendar.startOfDay(for: Fix.date(2026, 6, 1))
