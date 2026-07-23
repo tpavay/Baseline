@@ -101,6 +101,15 @@ struct SleepDetailPresentationTests {
         #expect(p.components[0].subtitle == "8h 32m - at your sleep goal")
     }
 
+    @Test func durationSubtitleTreatsASubMinuteShortfallAsAtGoal() {
+        // 7.999 h vs an 8 h need: the shortfall rounds to 0m, so the copy must read at-goal, never
+        // "0m short of your sleep goal".
+        let comps = [component(.duration, 50, 50, true)]
+        let p = SleepDetailPresentation(analysis: analysis(needHours: 8, asleepHours: 7.999,
+                                                           components: comps))
+        #expect(p.components[0].subtitle == "8h - at your sleep goal")
+    }
+
     @Test func durationSubtitleShortOfGoal() {
         let comps = [component(.duration, 40, 50, true)]
         let p = SleepDetailPresentation(analysis: analysis(needHours: 8, asleepHours: 7.2,

@@ -44,10 +44,13 @@ path — so this step is safe to run before step 3, and the app degrades honestl
 
 ### 3. Inject the provider into the decision assembly
 
-Build the provider threading the athlete's sleep need from `ReadinessConfig`:
+Build the repository with the athlete's sleep need threaded from `ReadinessConfig`, then wrap it in
+the provider (which reads the repository's cached analysis, so display and decision always agree):
 
 ```swift
-let sleepProvider = RepositorySleepEvidenceProvider(repository: sleepRepository, config: config)
+let sleepRepository = SwiftDataSleepRepository(context: modelContext,
+                                               derivation: .engine(need: config.sleepNeed))
+let sleepProvider = RepositorySleepEvidenceProvider(repository: sleepRepository)
 ```
 
 Pass it at the two (and only two) construction points:

@@ -90,19 +90,25 @@ struct SleepEvidenceProviderTests {
         #expect(inputs.sleepInterruptionBurden != nil)   // staged source → WASO observed
     }
 
-    // MARK: - AC-4: need is threaded from ReadinessConfig
+    // MARK: - AC-4: need is threaded through the repository's derivation
 
     @Test func needIsThreadedFromConfig() throws {
         repository.replaceCanonical(night: try stagedNight(wakeYear: 2026, month: 3, day: 11))
         let date = Fix.date(2026, 3, 11, 8, 0)
 
-        let eightHour = RepositorySleepEvidenceProvider(repository: repository, config: ReadinessConfig())
+        // The provider reads the repository's cached analysis, so the need reaches it through the
+        // repository's derivation - exactly how the production call sites construct the pair.
         var ninefig = ReadinessConfig(); ninefig.sleepNeedHours = 9
-        let nineHour = RepositorySleepEvidenceProvider(repository: repository, config: ninefig)
+        let eightHour = RepositorySleepEvidenceProvider(repository: SwiftDataSleepRepository(
+            context: ModelContext(container), calendar: Fix.calendar,
+            derivation: .engine(need: ReadinessConfig().sleepNeed)))
+        let nineHour = RepositorySleepEvidenceProvider(repository: SwiftDataSleepRepository(
+            context: ModelContext(container), calendar: Fix.calendar,
+            derivation: .engine(need: ninefig.sleepNeed)))
 
         let d8 = try #require(eightHour.sleepInputs(on: date)?.sleepDurationDeficit)
         let d9 = try #require(nineHour.sleepInputs(on: date)?.sleepDurationDeficit)
-        // A larger need means a larger deficit for the same asleep hours — exactly one hour more.
+        // A larger need means a larger deficit for the same asleep hours - exactly one hour more.
         #expect(abs((d9 - d8) - 1.0) < 0.001)
     }
 

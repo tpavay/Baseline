@@ -167,7 +167,7 @@ struct SleepAnalysisPersistenceTests {
         repository.replaceCanonical(night: try seededNight())
 
         let displayed = try #require(repository.analysis(for: wakeDay))
-        let provider = RepositorySleepEvidenceProvider(repository: repository, need: need)
+        let provider = RepositorySleepEvidenceProvider(repository: repository)
         let decision = try #require(provider.sleepInputs(on: wakeDay))
 
         #expect(displayed == decision.snapshot)

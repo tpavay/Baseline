@@ -161,8 +161,11 @@ struct SleepDetailPresentation: Equatable {
             guard let asleep = a.asleepHours else { return "" }
             let slept = SleepFormat.hours(asleep)
             guard let need = a.needHours else { return "\(slept) asleep" }
-            if asleep >= need { return "\(slept) - at your sleep goal" }
-            return "\(slept) - \(SleepFormat.hours(need - asleep)) short of your sleep goal"
+            // A shortfall that rounds to 0 minutes (the same rounding SleepFormat prints with) reads
+            // as at-goal, never "0m short".
+            let shortfallMinutes = ((need - asleep) * 60).rounded()
+            if shortfallMinutes < 1 { return "\(slept) - at your sleep goal" }
+            return "\(slept) - \(SleepFormat.minutes(shortfallMinutes)) short of your sleep goal"
         case .bedtimeConsistency:
             guard let shift = a.decisionEvidence.scheduleShiftMinutes else { return "" }
             let window = SleepEngine.Tunables.consistencyWindowDays

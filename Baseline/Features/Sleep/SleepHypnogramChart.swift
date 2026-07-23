@@ -8,7 +8,15 @@ enum SleepHypnogramLayout {
 
     /// Lane order top → bottom, exactly as the approved design plots the night:
     /// Awake / REM / Core / Deep.
-    static let lanes: [SleepStage] = [.awake, .rem, .core, .deep]
+    static let stagedLanes: [SleepStage] = [.awake, .rem, .core, .deep]
+
+    /// The lanes this night actually plots. A mixed night carrying `.unspecified` asleep time (a
+    /// second source writing duration-only samples alongside staged data) gets one extra "Asleep"
+    /// lane at the bottom, so recorded sleep never renders as blank space - only a genuine tracking
+    /// gap may read as empty (data honesty).
+    static func lanes(for intervals: [SleepStageInterval]) -> [SleepStage] {
+        intervals.contains { $0.stage == .unspecified } ? stagedLanes + [.unspecified] : stagedLanes
+    }
 
     /// One drawable stage band: its lane row plus fractional x-position in the window.
     struct Band: Equatable, Sendable {
@@ -19,16 +27,17 @@ enum SleepHypnogramLayout {
     }
 
     /// True when the intervals carry real stage structure (anything beyond `.unspecified`) - the
-    /// hypnogram only renders staged nights; a duration-only night has no lanes to plot.
+    /// hypnogram only renders staged nights; a duration-only night has no stage lanes to plot.
     static func hasStagedData(_ intervals: [SleepStageInterval]) -> Bool {
-        intervals.contains { lanes.contains($0.stage) }
+        intervals.contains { stagedLanes.contains($0.stage) }
     }
 
-    /// Lane bands for the staged intervals clipped to `window`. `.unspecified` intervals drop out
-    /// (they have no lane); order is preserved.
+    /// Lane bands for the intervals clipped to `window`; `.unspecified` intervals plot on the
+    /// "Asleep" lane. Order is preserved.
     static func bands(_ intervals: [SleepStageInterval],
                       in window: SleepTimelineLayout.Window) -> [Band] {
-        SleepTimelineLayout.segments(intervals, in: window).compactMap { segment in
+        let lanes = lanes(for: intervals)
+        return SleepTimelineLayout.segments(intervals, in: window).compactMap { segment in
             guard let stage = segment.stage, let lane = lanes.firstIndex(of: stage) else { return nil }
             return Band(lane: lane, stage: stage,
                         startFraction: segment.startFraction,
@@ -44,21 +53,21 @@ enum SleepHypnogramLayout {
         return hourly.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
     }
 
-    /// Per-stage totals in lane order, for the legend ("Awake 24m · REM 1h 15m · …"). Stages with no
-    /// time drop out.
+    /// Per-stage totals in lane order, for the legend ("Awake 24m · REM 1h 15m · …"), including the
+    /// "Asleep" total when the night carries `.unspecified` time. Stages with no time drop out.
     static func legendTotals(_ intervals: [SleepStageInterval]) -> [(stage: SleepStage, minutes: Double)] {
         let minutes = SleepTimelineLayout.stageMinutes(intervals)
-        return lanes.compactMap { lane in
+        return lanes(for: intervals).compactMap { lane in
             minutes.first { $0.stage == lane }
         }
     }
 }
 
-/// The staged hypnogram from the approved sleep redesign: Awake / REM / Core / Deep lanes plotted
-/// across the sleep window with dashed lane gridlines, gap hatching, a 2-hour time axis, and a
-/// legend of per-stage totals. `body` does layout only - every interval→geometry decision comes from
-/// `SleepHypnogramLayout`. Under accessibility Dynamic Type it degrades to a text summary of stage
-/// durations, mirroring `SleepTimelineChart`.
+/// The staged hypnogram from the approved sleep redesign: Awake / REM / Core / Deep lanes (plus an
+/// "Asleep" lane when the night carries unstaged asleep time) plotted across the sleep window with
+/// dashed lane gridlines, gap hatching, a 2-hour time axis, and a legend of per-stage totals.
+/// `body` does layout only - every interval→geometry decision comes from `SleepHypnogramLayout`.
+/// Under accessibility Dynamic Type it degrades to a text summary of stage durations.
 struct SleepHypnogramChart: View {
     let intervals: [SleepStageInterval]
     var gaps: [DateInterval] = []
@@ -67,6 +76,7 @@ struct SleepHypnogramChart: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var window: SleepTimelineLayout.Window? { SleepTimelineLayout.window(for: intervals) }
+    private var lanes: [SleepStage] { SleepHypnogramLayout.lanes(for: intervals) }
 
     private enum Metrics {
         static let laneHeight: CGFloat = 28
@@ -83,7 +93,7 @@ struct SleepHypnogramChart: View {
                     laneLabels
                     VStack(alignment: .leading, spacing: 6) {
                         plot(window: window)
-                            .frame(height: Metrics.laneHeight * CGFloat(SleepHypnogramLayout.lanes.count))
+                            .frame(height: Metrics.laneHeight * CGFloat(lanes.count))
                         axis(window: window)
                     }
                 }
@@ -101,7 +111,7 @@ struct SleepHypnogramChart: View {
 
     private var laneLabels: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(SleepHypnogramLayout.lanes, id: \.self) { stage in
+            ForEach(lanes, id: \.self) { stage in
                 Text(stage.label.uppercased())
                     .font(.bMono(9, .semibold)).tracking(0.5)
                     .foregroundStyle(BaselineColor.textFaint)
@@ -116,7 +126,7 @@ struct SleepHypnogramChart: View {
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
                 // Dashed lane gridlines, one per stage row.
-                ForEach(Array(SleepHypnogramLayout.lanes.indices), id: \.self) { lane in
+                ForEach(Array(lanes.indices), id: \.self) { lane in
                     Path { path in
                         let y = laneCenter(lane)
                         path.move(to: CGPoint(x: 0, y: y))
@@ -210,8 +220,7 @@ struct SleepHypnogramChart: View {
     }
 }
 
-/// Minimal wrapping HStack for the legend so chips reflow under large type instead of clipping
-/// (hoisted twin of `SleepTimelineChart`'s private layout).
+/// Minimal wrapping HStack for the legend so chips reflow under large type instead of clipping.
 struct FlowRow: Layout {
     var spacing: CGFloat = 8
 

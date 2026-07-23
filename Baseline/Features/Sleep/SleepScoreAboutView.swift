@@ -47,7 +47,7 @@ struct SleepScoreAboutView: View {
                 Text("How your score works")
                     .baselineTypography(.screenTitle)
                     .foregroundStyle(BaselineColor.textHi)
-                Text("A 0–100 estimate of how restorative last night was, built from three things you can act on - and only from what your watch actually measured. It never guesses.")
+                Text("A 0–100 estimate of how restorative last night was, built from three things you can act on - and only from what your sleep tracker actually measured. It never guesses.")
                     .font(.system(size: 13))
                     .foregroundStyle(BaselineColor.textMid)
                     .fixedSize(horizontal: false, vertical: true)

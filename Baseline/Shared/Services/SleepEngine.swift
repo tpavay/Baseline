@@ -99,7 +99,7 @@ enum SleepEngine {
 
         let components = [duration, bedtimeComponent, interruptions]
         // Round each component before summing (v2): every UI shows the components as rounded
-        // integers, so the published total must be the sum of exactly those integers — rounding the
+        // integers, so the published total must be the sum of exactly those integers - rounding the
         // unrounded sum instead can disagree with the visible rows by 1 (e.g. 49.4 + 16.4 + 11.4).
         let observedPoints = components.filter(\.isAvailable)
             .map { Int($0.value.rounded()) }

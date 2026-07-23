@@ -130,16 +130,13 @@ struct TodayView: View {
     private func reassemble() async {
         context.rolloverIfNeeded()
         let todayEntry = entries.first { Calendar.current.isDateInToday($0.date) }
-        // The repository derives with the user's configured sleep need so the displayed score is
-        // byte-identical to the decision score the provider computes below (same need, same engine).
+        // The repository derives with the user's configured sleep need; the provider reads the same
+        // cached analysis, so the displayed and decision scores agree by construction.
         let sleepRepository = SwiftDataSleepRepository(
             context: modelContext,
             derivation: .engine(need: readinessConfig.sleepNeed)
         )
-        let sleepProvider = RepositorySleepEvidenceProvider(
-            repository: sleepRepository,
-            config: readinessConfig
-        )
+        let sleepProvider = RepositorySleepEvidenceProvider(repository: sleepRepository)
         let base = await TodayEvidence.baseInputs(
             readings: readings,
             todayEntry: todayEntry,

@@ -74,8 +74,7 @@ struct DailyReadingFlowView: View {
                         sleepProvider: RepositorySleepEvidenceProvider(
                             repository: SwiftDataSleepRepository(
                                 context: modelContext,
-                                derivation: .engine(need: config.sleepNeed)),
-                            config: config),
+                                derivation: .engine(need: config.sleepNeed))),
                         referenceDate: .now,
                         onDone: finish
                     )
