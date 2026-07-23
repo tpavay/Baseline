@@ -174,7 +174,7 @@ Domain calculations remain outside the component.
 
 ### `BaselineFloatingTabBar`
 
-`BaselineFloatingTabBar` (in `MainTabView.swift`) is the shell's floating capsule tab bar: four tabs (Today, Plan, Train, Profile), icon plus caption label, and an accent-tinted capsule behind the active tab with the `isSelected` accessibility trait.
+`BaselineFloatingTabBar` (in `MainTabView.swift`) is the shell's floating capsule tab bar: three tabs (Weekly, Plan, Profile), icon plus caption label, and an accent-tinted capsule behind the active tab with the `isSelected` accessibility trait.
 Its geometry comes from the floating-tab tokens in the table above.
 A `safeAreaInset` applied outside a `NavigationStack` never crosses its UIKit hosting boundary, so every screen hosted in the shell reserves bottom space itself with `.floatingTabBarClearance()` inside its own stack, or with `BaselineSpacing.screenBottom` content padding when its content should scroll behind the bar.
 

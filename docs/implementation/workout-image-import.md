@@ -192,7 +192,7 @@ Two prerequisites must be addressed during implementation:
 
 ### Deferred
 
-- Direct camera/document capture. The first slice uses Photos and paste; camera capture can follow without changing the draft model.
+- Document capture. Direct camera capture shipped with the Plan add-workout redesign (`WorkoutImportCameraCapture`, a `UIImagePickerController` wrapper feeding the existing one-image import pipeline); Photos and paste remain.
 - Handwriting guarantees.
 - Automatic parsing of full multi-day programs from one image.
 - PDF import.
@@ -991,7 +991,7 @@ The future multimodal parser may send the normalized image directly in a single 
 - Provider keys remain Firebase secrets and never enter the app bundle.
 - Confirm the provider's data-retention settings before production use.
 - Review `PrivacyInfo.xcprivacy`, privacy policy, and App Store privacy answers before shipping. Photo selection alone does not justify broad photo-library access; use PhotosPicker rather than requesting library permission.
-- The first slice does not add camera capture, so it does not change the existing camera permission copy. When workout camera capture ships, update both `project.yml` and `Info.plist` descriptions together.
+- Camera capture ships, so `NSCameraUsageDescription` (in `project.yml`, which generates `Info.plist`) was broadened to cover photographing written workouts alongside the HRV fingertip read. Keep it honest if the camera's uses change.
 
 ## 16. Backend contract and limits
 
