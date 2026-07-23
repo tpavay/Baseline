@@ -16,9 +16,11 @@ PR #59 fixed the schemas and pinned "no top-level combinators"; this contract ge
 | 2. Offline contract lint | `functions/src/toolSchemaContract.ts` + `functions/test/toolSchemaContract.test.js` | Every served tool schema stays inside the documented safe subset (allowlist). Catches most problems in milliseconds with no network. Absorbs the PR #59 regression test. | `npm test` (so also CI job `functions-verify`) |
 | 3. Cross-provider profiles | `toolSchemaContract.ts` (`ProviderSchemaProfile`) | The lint is structured per provider: enforced profiles must pass; the conservative cross-provider core reports **advisories** (latent fragility), pinned in the test. | with layer 2 |
 | 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the full wave9 toolset. | CI job `functions-provider-preflight`; `npm run smoke:conversation` locally |
+| 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-provider-preflight` (`npm run tokens:check`); regenerate with `npm run tokens:measure` |
 
 The offline lint approximates the provider's validator; the preflight *is* the provider's validator.
 Keep both: the lint gives instant, explained feedback and covers providers you cannot cheaply call; the preflight is ground truth and catches anything the lint's model of the provider missed.
+The preflight submits the runtime's exact request shape - prompt-caching `cache_control` breakpoints included (`functions/src/promptCaching.ts`) - so a provider rejecting the cache placement also cannot reach a green build.
 
 ## The safe subset
 
@@ -76,10 +78,13 @@ That is the whole procedure - "add its constraint profile + run the preflight", 
 - CI job: `functions-provider-preflight` in `.github/workflows/ci.yml`, gated on the `changes` filter's `functions` output, feeding the single required `CI` check.
 - Key: repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together.
 - The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would let a provider-rejected schema reach a green build.
-- Cost per run: 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ a few cents, only on PRs that touch `functions/`.
+- One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema" on every functions PR.
+  The schemas are unverified by such a run; top up the account behind the secret and re-run the job.
+- Cost per run: 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ a few cents, plus ~90 free `count_tokens` requests for the token-fixture check, only on PRs that touch `functions/`.
 
 ## Keeping the contract honest
 
 - Adding or changing a tool schema: `npm test` lints it instantly; the PR's preflight run is the ground truth.
+  Also regenerate the token fixture with `npm run tokens:measure` and commit the diff - `tokens:check` is exact, so any served-schema or system-prompt change makes the fixture stale.
 - If a legitimately needed construct fails the lint, extend the relevant profile **and** this document in the same PR, and let the preflight prove the provider accepts it.
 - The advisory pin means new provider-fragile constructs require editing the snapshot test - that edit is the review hook.

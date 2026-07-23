@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import { withLLMGeneration } from "./llmObservability";
+import {
+  SystemPromptBlock,
+  anthropicSystemBlocks,
+  withCacheBreakpointOnLastTool,
+} from "./promptCaching";
 
 /** A content block returned to the app: assistant text or a tool_use the app must execute. */
 export type ContentBlock =
@@ -8,10 +13,13 @@ export type ContentBlock =
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
 
 export interface CompleteRequest {
-  system: string;
+  /** Ordered system blocks (static cacheable prefix, then volatile state), or one static string. */
+  system: string | SystemPromptBlock[];
   tools: unknown[];
   messages: unknown[]; // Anthropic-format messages, passed through from the app
   roundIndex?: number;
+  /** The served toolset's fixture-measured schema token cost (see toolSchemaTokens.ts). */
+  toolSchemaTokens?: number;
 }
 
 /**
@@ -28,6 +36,24 @@ export interface ConversationProvider {
  */
 export const DEFAULT_CONVERSATION_MODEL = "claude-sonnet-4-5-20250929";
 
+/**
+ * The exact Anthropic request one conversation round sends, with prompt-caching breakpoints on
+ * the static prefix (last tool + static system block; see promptCaching.ts). Pure and exported so
+ * tests pin the cache placement and the CI preflight submits this same shape to the live API.
+ */
+export function buildConversationProviderRequest(
+  model: string,
+  req: CompleteRequest,
+): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model,
+    max_tokens: 1024,
+    system: anthropicSystemBlocks(req.system),
+    tools: withCacheBreakpointOnLastTool(req.tools as object[]) as Anthropic.Tool[],
+    messages: req.messages as Anthropic.MessageParam[],
+  };
+}
+
 export class AnthropicProvider implements ConversationProvider {
   private client: Anthropic;
   readonly model: string;
@@ -39,13 +65,7 @@ export class AnthropicProvider implements ConversationProvider {
   }
 
   async complete(req: CompleteRequest): Promise<ContentBlock[]> {
-    const request = {
-      model: this.model,
-      max_tokens: 1024,
-      system: req.system,
-      tools: req.tools as Anthropic.Tool[],
-      messages: req.messages as Anthropic.MessageParam[],
-    };
+    const request = buildConversationProviderRequest(this.model, req);
     const msg = await withLLMGeneration({
       name: "llm.generation",
       model: this.model,
@@ -54,6 +74,7 @@ export class AnthropicProvider implements ConversationProvider {
       requestContent: JSON.stringify({ system: request.system, messages: request.messages }),
       messageCount: request.messages.length,
       toolSchemaBytes: Buffer.byteLength(JSON.stringify(request.tools), "utf8"),
+      toolSchemaTokens: req.toolSchemaTokens,
       callIndex: req.roundIndex,
       roundIndex: req.roundIndex,
     }, () => this.client.messages.create(request));

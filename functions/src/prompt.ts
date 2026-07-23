@@ -1,3 +1,4 @@
+import type { SystemPromptBlock } from "./promptCaching";
 import type { ServedToolset } from "./tools";
 
 /**
@@ -188,10 +189,26 @@ function base(toolset: ServedToolset): string {
   });
 }
 
-export function buildSystem(toolset: ServedToolset, contextSummary?: string): string {
-  const prompt = base(toolset);
+/**
+ * The system prompt as ordered blocks: the static per-toolset persona (cacheable - identical on
+ * every request that serves the same toolset, so an Anthropic cache breakpoint on it converts the
+ * whole tools+prompt prefix to cache reads) followed by the volatile per-request athlete state
+ * (never cacheable - it changes between rounds whenever a tool edits engine state).
+ */
+export function buildSystemBlocks(
+  toolset: ServedToolset,
+  contextSummary?: string,
+): SystemPromptBlock[] {
+  const blocks: SystemPromptBlock[] = [{ text: base(toolset), cacheable: true }];
   if (contextSummary && typeof contextSummary === "string" && contextSummary.trim().length > 0) {
-    return `${prompt}\n\nToday's current state (from the engine):\n${contextSummary.trim()}`;
+    blocks.push({
+      text: `Today's current state (from the engine):\n${contextSummary.trim()}`,
+      cacheable: false,
+    });
   }
-  return prompt;
+  return blocks;
+}
+
+export function buildSystem(toolset: ServedToolset, contextSummary?: string): string {
+  return buildSystemBlocks(toolset, contextSummary).map((block) => block.text).join("\n\n");
 }

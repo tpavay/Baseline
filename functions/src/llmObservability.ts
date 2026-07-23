@@ -79,6 +79,12 @@ export interface GenerationContext {
   requestContent?: string;
   messageCount?: number;
   toolSchemaBytes?: number;
+  /**
+   * The fixture-measured token cost of the served tool schemas (toolSchemaTokens.ts). Bytes are
+   * not tokens, so this is what lets a generation's input tokens decompose into schema / prompt /
+   * conversation in a Langfuse query.
+   */
+  toolSchemaTokens?: number;
   callIndex?: number;
   roundIndex?: number;
   sectionIndex?: number;
@@ -168,8 +174,10 @@ const SAFE_METADATA_KEYS = new Set([
   "tool_schema_version", "output_schema_version", "validator_version", "catalog_version",
   "content_capture", "sampling_policy_version", "pricing_version", "round_index", "call_index",
   "section_index", "repair_index", "provider_retry_index", "dispatch_attempt", "queue_ms",
-  "prompt_bytes", "response_bytes", "message_count", "tool_schema_bytes", "request_id",
-  "stop_reason", "error_type", "http_status", "tool_use_id", "requested_order",
+  "prompt_bytes", "response_bytes", "message_count", "tool_schema_bytes", "tool_schema_tokens",
+  "request_id",
+  "stop_reason", "error_type", "http_status", "provider_error_code", "provider_error_message",
+  "tool_use_id", "requested_order",
   "argument_hash", "decode_result", "permission_result", "result_category", "result_hash",
   "error_code", "decode_ms", "permission_ms", "execution_ms", "duration_ms", "read_only",
   "validator_name", "attempt_kind", "rule_code", "relationship_rule", "observed_count",
@@ -382,6 +390,7 @@ export async function withLLMGeneration<T>(
           input_hash: context.requestContent === undefined ? undefined : privateHash(context.requestContent),
           message_count: context.messageCount,
           tool_schema_bytes: context.toolSchemaBytes,
+          tool_schema_tokens: context.toolSchemaTokens,
         },
         metadata: safeMetadata({
           call_index: context.callIndex,
@@ -395,6 +404,7 @@ export async function withLLMGeneration<T>(
           prompt_bytes: requestBytes,
           message_count: context.messageCount,
           tool_schema_bytes: context.toolSchemaBytes,
+          tool_schema_tokens: context.toolSchemaTokens,
           pricing_version: LLM_OBSERVABILITY_VERSIONS.pricing,
         }),
       });
@@ -415,6 +425,7 @@ export async function withLLMGeneration<T>(
         operationError = error;
         try {
           const partial = anthropicUsageDetails(context.partialUsage?.());
+          const providerError = providerErrorDetail(error);
           generation.update({
             level: "ERROR",
             statusMessage: errorName(error),
@@ -422,6 +433,8 @@ export async function withLLMGeneration<T>(
             metadata: safeMetadata({
               error_type: errorName(error),
               http_status: errorStatus(error),
+              provider_error_code: providerError.code,
+              provider_error_message: providerError.message,
               retryable: isRetryableProviderError(error),
               duration_ms: Date.now() - started,
             }),
@@ -875,6 +888,42 @@ function logInstrumentationFailure(stage: string, error?: unknown): void {
 function errorStatus(error: unknown): number | undefined {
   if (!isRecord(error)) return undefined;
   return nonnegativeNumber(error.status) ?? nonnegativeNumber(error.statusCode);
+}
+
+/**
+ * The provider's structured error fields, bounded for export. Before this existed, a provider
+ * rejection recorded only the error class name: the 2026-07 top-level-oneOf 400 would have shown a
+ * 100% `provider_failed` cliff in Langfuse without the message that named the offending schema
+ * path. `code` is Anthropic's `error.type` (e.g. `invalid_request_error`); `message` is the first
+ * 200 characters of `error.message`, which describes the request shape.
+ *
+ * Privacy: the message is pre-collapsed to the masker's `safeCode` charset (runs of anything else
+ * become one `_`) and hard-capped, so even in the unlikely case a provider echoed request content
+ * into an error message, only a short mangled shape descriptor could ever leave the function; the
+ * export masker independently redacts any value that escapes that charset.
+ */
+export function providerErrorDetail(error: unknown): { code?: string; message?: string } {
+  if (!isRecord(error)) return {};
+  // @anthropic-ai/sdk APIError.error is the parsed body: { type: "error", error: { type, message } }.
+  const body = isRecord(error.error) ? error.error : undefined;
+  const inner = body && isRecord(body.error) ? body.error : body;
+  if (!inner) return {};
+  const code = typeof inner.type === "string" && inner.type !== "error" && safeCode(inner.type)
+    ? bounded(inner.type)
+    : undefined;
+  const message = typeof inner.message === "string"
+    ? sanitizedProviderErrorMessage(inner.message)
+    : undefined;
+  return { ...(code === undefined ? {} : { code }), ...(message === undefined ? {} : { message }) };
+}
+
+function sanitizedProviderErrorMessage(message: string): string | undefined {
+  const collapsed = message
+    .slice(0, 400)
+    .replace(/[^a-zA-Z0-9_./:@+-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 200);
+  return collapsed.length > 0 ? collapsed : undefined;
 }
 
 function isRetryableProviderError(error: unknown): boolean {
