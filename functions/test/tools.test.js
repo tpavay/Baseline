@@ -634,31 +634,7 @@ test("Wave 7 and older clients keep exactly the schemas their mappers understand
   );
 });
 
-test("no served toolset carries a top-level schema combinator the Anthropic API rejects", () => {
-  // Anthropic rejects oneOf/allOf/anyOf at the TOP LEVEL of a tool input_schema with a 400
-  // before the model runs, which takes down every conversation request that ships the tool
-  // (2026-07: set_performed_set_outcome's oneOf broke the whole conversation feature).
-  // Nested combinators (inside properties, dependencies, etc.) are fine.
-  const servedToolsets = {
-    LEGACY_TOOLS,
-    WAVE5_TOOLS,
-    WAVE6_TOOLS,
-    WAVE7_TOOLS,
-    WAVE8_TOOLS,
-    TOOLS,
-  };
-  for (const version of ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", undefined, null, "garbage"]) {
-    servedToolsets[`toolsForClientSchema(${String(version)})`] = toolsForClientSchema(version);
-  }
-  for (const [setName, tools] of Object.entries(servedToolsets)) {
-    for (const tool of tools) {
-      for (const banned of ["oneOf", "allOf", "anyOf"]) {
-        assert.equal(
-          tool.input_schema[banned],
-          undefined,
-          `${setName} → ${tool.name} has top-level ${banned}`
-        );
-      }
-    }
-  }
-});
+// The PR #59 regression test ("no served toolset carries a top-level schema combinator the
+// Anthropic API rejects") moved into test/toolSchemaContract.test.js, whose enforced-profile
+// lint covers top-level combinators plus the rest of the documented safe subset across every
+// served toolset variant. See docs/tool-schema-contract.md.

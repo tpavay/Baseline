@@ -22,6 +22,12 @@ export interface ConversationProvider {
   complete(req: CompleteRequest): Promise<ContentBlock[]>;
 }
 
+/**
+ * The model conversation requests use when CONVERSATION_MODEL is unset. Exported so the CI
+ * schema preflight validates every served toolset against the exact model the runtime targets.
+ */
+export const DEFAULT_CONVERSATION_MODEL = "claude-sonnet-4-5-20250929";
+
 export class AnthropicProvider implements ConversationProvider {
   private client: Anthropic;
   readonly model: string;
@@ -29,7 +35,7 @@ export class AnthropicProvider implements ConversationProvider {
   constructor(apiKey: string, model?: string) {
     this.client = new Anthropic({ apiKey });
     // Set CONVERSATION_MODEL to a valid current model id for your account.
-    this.model = model || "claude-sonnet-4-5-20250929";
+    this.model = model || DEFAULT_CONVERSATION_MODEL;
   }
 
   async complete(req: CompleteRequest): Promise<ContentBlock[]> {
