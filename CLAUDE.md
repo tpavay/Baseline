@@ -143,7 +143,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 - Model Baseline's capabilities as reusable, validated domain actions and entities.
 - In-app AI, direct controls, App Intents, Siri, Shortcuts, Spotlight, widgets, and future interfaces must reuse the same domain services and tool contracts rather than implementing separate business logic.
 - System integrations are optional adapters. Baseline's core training system must remain usable without them.
-- Health data access follows least privilege. Reads and any future writes must be explicitly authorized, consistent with user intent, provenance-preserving, and resistant to duplicate imports or writes.
+- Health data access follows least privilege. Reads and writes must be explicitly authorized, consistent with user intent, provenance-preserving, and resistant to duplicate imports or writes.
 - Surface adapters must not invent unavailable data or make external frameworks the source of truth.
 - Load the relevant specialized skill and verify current platform APIs before implementing an integration.
 
@@ -257,7 +257,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 # Privacy & Compliance
 - Keep `PrivacyInfo.xcprivacy`, the privacy policy, the App Store privacy questionnaire, and `NS*UsageDescription` strings in sync.
 - App Store upload validation rejects binaries on two things Xcode never warns about: an app icon carrying an alpha channel (the 1024 source in `AppIcon.appiconset` must be fully opaque), and a missing purpose string for anything the **entitlements** permit, not just what the code calls.
-  `com.apple.developer.healthkit` cannot be scoped to reads, so `NSHealthUpdateUsageDescription` is required even though `HealthService` is read-only.
+  `com.apple.developer.healthkit` cannot be scoped to reads, so `NSHealthUpdateUsageDescription` is required regardless of what the code writes; it must stay honest about Baseline's one Health write, the morning-weight body-mass save (`HealthService.saveBodyMass`), and broadening what Baseline writes requires revising it.
   `BaselineTests/AppStoreValidationTests.swift` guards both.
   The icon artwork has a second guarded invariant (it must stay tagged sRGB); before editing the bitmap read `docs/design-system/app-icon/README.md`, which owns the icon's invariants, size ceiling, and review procedure.
 - Entitlements are split per configuration: `Baseline/Baseline-Debug.entitlements` (App Attest `development`) for Debug, `Baseline/Baseline.entitlements` (`production`) for Staging and Release, wired by `settings.configs` in `project.yml`.

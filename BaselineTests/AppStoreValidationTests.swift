@@ -10,7 +10,8 @@ import Testing
 struct AppStoreValidationTests {
 
     /// `com.apple.developer.healthkit` is a single boolean entitlement that cannot be scoped to
-    /// reads, so the validator demands the update string even though `HealthService` only reads.
+    /// reads, so the validator demands the update string regardless of what the code writes; today
+    /// it truthfully describes `HealthService.saveBodyMass`, Baseline's one Health write.
     @Test("The app bundle declares both HealthKit purpose strings")
     func healthKitPurposeStrings() throws {
         for key in ["NSHealthShareUsageDescription", "NSHealthUpdateUsageDescription"] {
