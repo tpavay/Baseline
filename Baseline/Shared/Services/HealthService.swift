@@ -2,10 +2,12 @@ import Foundation
 import HealthKit
 import Observation
 
-/// Minimal Apple Health facade for onboarding: request read access to the recovery inputs
-/// (sleep, resting HR, HRV history for baseline seeding) plus the characteristics that power
-/// HR zones (date of birth, biological sex). Read-only per project rules — Baseline never
-/// writes to Health. Deeper history import lives with the readiness engine, not here.
+/// Minimal Apple Health facade: request read access to the recovery inputs (sleep, resting HR,
+/// HRV history for baseline seeding) plus the characteristics that power HR zones (date of
+/// birth, biological sex). Baseline's single Health *write* - the body mass the athlete logs in
+/// the morning weight step - also lives here (see the `BodyMassHealthStore` conformance below);
+/// its share authorization is requested separately, only when that step is used. Deeper history
+/// import lives with the readiness engine, not here.
 @MainActor
 @Observable
 final class HealthService {
@@ -229,6 +231,67 @@ extension HealthService: SleepSampleProviding {
             cursor: newCursor ?? cursor,
             droppedUnknownCount: added.count - mapped.count
         )
+    }
+}
+
+// MARK: - Body mass (morning weight entry)
+
+/// The live Health access for the morning weight step. Body mass is the one type Baseline
+/// writes; the share request stays scoped to it (plus its read, for the entry prefill) and is
+/// never bundled into the broad onboarding read request above - least privilege per project
+/// rules. Provenance and duplicate resistance ride on the sample metadata: `wasUserEntered`
+/// marks the value as typed, and the per-day sync identifier makes a re-entry replace the
+/// day's sample instead of duplicating it.
+extension HealthService: BodyMassHealthStore {
+
+    private var bodyMassType: HKQuantityType? {
+        HKQuantityType.quantityType(forIdentifier: .bodyMass)
+    }
+
+    var bodyMassAuthorization: BodyMassAuthorization {
+        guard isAvailable, let type = bodyMassType else { return .unavailable }
+        switch store.authorizationStatus(for: type) {
+        case .notDetermined: return .notDetermined
+        case .sharingDenied: return .denied
+        case .sharingAuthorized: return .authorized
+        @unknown default: return .denied
+        }
+    }
+
+    func requestBodyMassAuthorization() async {
+        guard isAvailable, let type = bodyMassType else { return }
+        try? await store.requestAuthorization(toShare: [type], read: [type])
+    }
+
+    /// Most recent body-mass sample from any app, for the entry prefill. Nil when Health is
+    /// unavailable, read access wasn't granted (indistinguishable from no data, by design), or
+    /// no sample exists.
+    func latestBodyMassKilograms() async -> Double? {
+        guard isAvailable, let type = bodyMassType else { return nil }
+        let sort = [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
+        let sample: HKQuantitySample? = await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: sort) { _, results, _ in
+                continuation.resume(returning: (results as? [HKQuantitySample])?.first)
+            }
+            store.execute(query)
+        }
+        return sample?.quantity.doubleValue(for: .gramUnit(with: .kilo))
+    }
+
+    func saveBodyMass(_ request: BodyMassSaveRequest) async throws {
+        guard isAvailable, let type = bodyMassType else { return }
+        let sample = HKQuantitySample(
+            type: type,
+            quantity: HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: request.kilograms),
+            start: request.date,
+            end: request.date,
+            metadata: [
+                HKMetadataKeySyncIdentifier: request.syncIdentifier,
+                HKMetadataKeySyncVersion: request.syncVersion,
+                HKMetadataKeyWasUserEntered: request.wasUserEntered,
+            ]
+        )
+        try await store.save(sample)
     }
 }
 

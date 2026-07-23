@@ -404,7 +404,7 @@ struct AppleHealthStepView: View {
                     .padding(.top, 12)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("Read-only. Baseline never writes to Apple Health.")
+                Text("Read-only. Baseline writes nothing to Apple Health unless you later log a weight and allow it.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(BaselineColor.textFaint)
                     .frame(maxWidth: .infinity)

@@ -59,9 +59,9 @@ The athlete chooses **which inputs count** and **which questionnaire items appea
 
 ## The morning flow
 
-**Strap path:** live preview → quiet **2:30 timed read, breathing naturally** (no paced cues — resonance-frequency pacing inflates RSA and adds compliance noise to the baseline; decided 2026-07-07. Dark screen, still orb, single R-R curve building, live HR/HRV, bell + haptic at the end) → **averages** → **wellness questionnaire** → **readiness score + band + today's guidance**.
+**Strap path:** live preview → quiet **2:30 timed read, breathing naturally** (no paced cues — resonance-frequency pacing inflates RSA and adds compliance noise to the baseline; decided 2026-07-07. Dark screen, still orb, single R-R curve building, live HR/HRV, bell + haptic at the end) → **averages** → **optional weight entry** (skippable; a confirmed weight is written to Apple Health - not a score input; see `DailyReadingFlowView`) → **wellness questionnaire** → **readiness score + band + today's guidance**.
 
-**Camera path (launch):** same guided 2:30 reading with fingertip over lens + flash, then the questionnaire — identical flow to the strap, different capture front-end.
+**Camera path (launch):** same guided 2:30 reading with fingertip over lens + flash, then the same post-read steps — identical flow to the strap, different capture front-end.
 
 **Subjective-only path (launch):** **wellness questionnaire** → **readiness score + band + guidance** (HRV/RHR simply drop out and weights re-normalize onto subjective + sleep).
 

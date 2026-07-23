@@ -2,10 +2,10 @@ import SwiftUI
 import SwiftData
 
 /// The reading loop, presented full-screen from the home. The **morning** reading produces the
-/// daily readiness score: reading → averages → check-in → readiness (saves a `ReadinessEntry`). A
-/// **snapshot** is a spot-check: reading → check-in → summary → done — no score, no entry. The
-/// reading surface is the shared one (camera or strap); this coordinator owns only the post-read
-/// sequence.
+/// daily readiness score: reading → averages → weight → check-in → readiness (saves a
+/// `ReadinessEntry`). A **snapshot** is a spot-check: reading → check-in → summary → done - no
+/// score, no entry, no weight step. The reading surface is the shared one (camera or strap);
+/// this coordinator owns only the post-read sequence.
 struct DailyReadingFlowView: View {
     let type: ReadingType
     let config: ReadinessConfig
@@ -15,9 +15,11 @@ struct DailyReadingFlowView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(BluetoothManager.self) private var bluetooth
     @Environment(TrainingContextStore.self) private var context
+    @Environment(OnboardingStore.self) private var profile
+    @Environment(AuthViewModel.self) private var authVM
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
 
-    private enum Step { case reading, averages, checkIn, readiness, summary }
+    private enum Step { case reading, averages, weight, checkIn, readiness, summary }
     @State private var step: Step = .reading
 
     /// Only the morning reading produces a readiness score. A snapshot is a spot-check:
@@ -39,11 +41,19 @@ struct DailyReadingFlowView: View {
                 readingView
             case .averages:
                 if let result {
-                    ReadingAveragesView(
-                        result: result,
-                        continueTitle: showsCheckIn ? "CONTINUE TO CHECK-IN" : "SEE READINESS"
-                    ) { step = showsCheckIn ? .checkIn : .readiness }
+                    ReadingAveragesView(result: result, continueTitle: "CONTINUE") { step = .weight }
                 }
+            case .weight:
+                MorningWeightEntryView(
+                    // The onboarding default is a placeholder, not the athlete's number - only a
+                    // completed onboarding makes the profile weight a truthful prefill.
+                    profileFallbackKilograms: profile.isComplete ? profile.draft.weightKg : nil,
+                    onSave: { kilograms in
+                        recordWeight(kilograms)
+                        step = showsCheckIn ? .checkIn : .readiness
+                    },
+                    onSkip: { step = showsCheckIn ? .checkIn : .readiness }
+                )
             case .checkIn:
                 DailyCheckInView(
                     config: config,
@@ -94,6 +104,17 @@ struct DailyReadingFlowView: View {
         } else {
             step = .averages
         }
+    }
+
+    /// Baseline-side record of a confirmed weight entry: the shared profile is the app's own
+    /// body-metric model, so the entry updates it locally (the draft's didSet persists) and - for
+    /// an onboarded, signed-in athlete - merge-writes the same profile document to Firestore,
+    /// mirroring `RootView.reconcileProfile`. The Apple Health write already happened in the step.
+    private func recordWeight(_ kilograms: Double) {
+        profile.draft.weightKg = kilograms
+        guard profile.isComplete, let uid = authVM.user?.uid else { return }
+        let draft = profile.draft
+        Task { try? await UserRepository().saveProfile(uid: uid, draft: draft, onboardingCompleted: true) }
     }
 
     private func finish(_ decision: DecisionEngine.Result, _ plan: PlanningEngine.Plan, _ sleep: ReadinessSleepSnapshot?) {
