@@ -16,9 +16,11 @@ PR #59 fixed the schemas and pinned "no top-level combinators"; this contract ge
 | 2. Offline contract lint | `functions/src/toolSchemaContract.ts` + `functions/test/toolSchemaContract.test.js` | Every served tool schema stays inside the documented safe subset (allowlist). Catches most problems in milliseconds with no network. Absorbs the PR #59 regression test. | `npm test` (so also CI job `functions-verify`) |
 | 3. Cross-provider profiles | `toolSchemaContract.ts` (`ProviderSchemaProfile`) | The lint is structured per provider: enforced profiles must pass; the conservative cross-provider core reports **advisories** (latent fragility), pinned in the test. | with layer 2 |
 | 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the full wave9 toolset. | CI job `functions-provider-preflight`; `npm run smoke:conversation` locally |
+| 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-provider-preflight` (`npm run tokens:check`); regenerate with `npm run tokens:measure` |
 
 The offline lint approximates the provider's validator; the preflight *is* the provider's validator.
 Keep both: the lint gives instant, explained feedback and covers providers you cannot cheaply call; the preflight is ground truth and catches anything the lint's model of the provider missed.
+The preflight submits the runtime's exact request shape - prompt-caching `cache_control` breakpoints included (`functions/src/promptCaching.ts`) - so a provider rejecting the cache placement also cannot reach a green build.
 
 ## The safe subset
 

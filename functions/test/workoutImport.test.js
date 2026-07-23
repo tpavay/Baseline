@@ -626,10 +626,23 @@ test("provider request builder pins the strict import contract and forced matchi
   assert.equal(request.model, "test-model");
   assert.equal(request.max_tokens, 4_096);
   assert.equal(request.temperature, 0);
-  assert.equal(request.system, WORKOUT_IMPORT_SYSTEM);
-  assert.deepEqual(request.tools, [WORKOUT_IMPORT_TOOL]);
+  assert.deepEqual(request.system, [
+    { type: "text", text: WORKOUT_IMPORT_SYSTEM, cache_control: { type: "ephemeral" } },
+  ]);
+  assert.deepEqual(request.tools, [
+    { ...WORKOUT_IMPORT_TOOL, cache_control: { type: "ephemeral" } },
+  ]);
   assert.deepEqual(request.tool_choice, { type: "tool", name: WORKOUT_IMPORT_TOOL.name });
   assert.deepEqual(request.messages, [{ role: "user", content: "serialized OCR" }]);
+});
+
+// The system prompt and tool schema are byte-identical on every import; losing either breakpoint
+// silently reverts ~2.7k tokens per request to full input price.
+test("provider request keeps prompt-cache breakpoints on the static system and last tool", () => {
+  const request = buildWorkoutImportProviderRequest("test-model", "serialized OCR");
+  assert.deepEqual(request.system.at(-1).cache_control, { type: "ephemeral" });
+  assert.deepEqual(request.tools.at(-1).cache_control, { type: "ephemeral" });
+  assert.equal("cache_control" in WORKOUT_IMPORT_TOOL, false, "the shared tool constant must not be mutated");
 });
 
 test("section token budgets are proportional and remain within the fixed clamp", () => {

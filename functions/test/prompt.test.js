@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildSystem } = require("../lib/prompt");
+const { buildSystem, buildSystemBlocks } = require("../lib/prompt");
 const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS, WAVE7_TOOLS, WAVE8_TOOLS } = require("../lib/tools");
 
 const SERVED_PAIRS = [
@@ -113,6 +113,28 @@ test("shared guidance and the state block survive in both variants", () => {
     assert.match(prompt, /MUTATION RECEIPT/);
     assert.match(prompt, /Today's current state \(from the engine\):\nathlete state here$/);
     assert.equal(buildSystem(toolset).includes("Today's current state (from the engine):"), false);
+  }
+});
+
+// The block split is what prompt caching hangs on: the persona is identical across requests for a
+// toolset (cacheable), the athlete state changes between rounds (never cacheable). Marking the
+// state block cacheable would invalidate the whole cached prefix on every state change.
+test("system blocks separate the cacheable persona from the volatile athlete state", () => {
+  for (const [toolset] of SERVED_PAIRS) {
+    const blocks = buildSystemBlocks(toolset, "  athlete state here  ");
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].cacheable, true);
+    assert.match(blocks[0].text, /^You are Baseline/);
+    assert.equal(blocks[1].cacheable, false);
+    assert.equal(blocks[1].text, "Today's current state (from the engine):\nathlete state here");
+
+    const withoutContext = buildSystemBlocks(toolset);
+    assert.equal(withoutContext.length, 1);
+    assert.equal(withoutContext[0].cacheable, true);
+
+    // buildSystem stays the joined view of the same blocks, so scripts and the token fixture
+    // measure exactly what the runtime sends.
+    assert.equal(buildSystem(toolset, "  athlete state here  "), blocks.map((b) => b.text).join("\n\n"));
   }
 });
 

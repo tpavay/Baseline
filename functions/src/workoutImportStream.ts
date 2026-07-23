@@ -1,5 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
+import { anthropicSystemBlocks, withCacheBreakpointOnLastTool } from "./promptCaching";
+
 /**
  * The fast import path: **one** streaming multimodal call with a permissive schema.
  *
@@ -297,11 +299,10 @@ export function buildWorkoutImportSketchRequest(
   const request: Anthropic.MessageCreateParamsStreaming = {
     model,
     max_tokens: Math.min(Math.max(maxTokens, 1_024), WORKOUT_IMPORT_STREAM_LIMITS.maximumOutputTokens),
-    // The system prompt is byte-identical on every import and would be worth a cache_control
-    // breakpoint, but @anthropic-ai/sdk 0.30.1 does not type one outside its beta namespace.
-    // Revisit when the SDK is next upgraded - it is a latency and cost win, not a correctness one.
-    system: WORKOUT_IMPORT_SKETCH_SYSTEM,
-    tools: [WORKOUT_IMPORT_SKETCH_TOOL],
+    // The system prompt and tool schema are byte-identical on every import, so both carry a
+    // prompt-caching breakpoint (see promptCaching.ts); only the photo content varies per request.
+    system: anthropicSystemBlocks(WORKOUT_IMPORT_SKETCH_SYSTEM),
+    tools: withCacheBreakpointOnLastTool([WORKOUT_IMPORT_SKETCH_TOOL]),
     tool_choice: { type: "tool", name: WORKOUT_IMPORT_SKETCH_TOOL_NAME },
     messages: [{ role: "user", content }],
     stream: true,

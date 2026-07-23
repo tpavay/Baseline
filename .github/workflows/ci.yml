@@ -487,6 +487,15 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npm --prefix functions run smoke:conversation
 
+      # Bytes are not tokens: src/toolSchemaTokens.json pins the measured per-request token cost
+      # of every served toolset (recorded as tool_schema_tokens on each generation). Verifying it
+      # against the free count_tokens endpoint forces a PR that fattens a schema to regenerate the
+      # fixture, making "this PR added N tokens to every request" a visible diff in review.
+      - name: Verify tool-schema token fixture against live counts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm --prefix functions run tokens:check
+
   # The single required status check. `if: always()` with no other condition,
   # so it reports on every pull request regardless of base branch, including
   # ones where every other job was correctly skipped and ones where `changes`

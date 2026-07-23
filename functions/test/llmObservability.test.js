@@ -7,6 +7,7 @@ const {
   maskLangfuseData,
   normalizeTraceID,
   parseClientToolObservations,
+  providerErrorDetail,
 } = require("../lib/llmObservability");
 const { servedToolsetForClientSchema } = require("../lib/tools");
 
@@ -92,6 +93,54 @@ test("export masking retains allowlisted dimensions and redacts free text", () =
   assert.equal(masked.note, "[REDACTED]");
   assert.equal(masked.output, "[REDACTED]");
   assert.equal(masked.restingHeartRate, "[REDACTED]");
+});
+
+// The 2026-07 top-level-oneOf outage would have shown a 100% provider_failed cliff in Langfuse
+// without the WHY: only the error class name was recorded. providerErrorDetail captures the
+// provider's structured error type and a bounded, charset-collapsed slice of its message - which
+// must then survive the export masker, or the whole point is lost to [REDACTED].
+test("a simulated Anthropic 400 yields bounded provider error detail that survives the masker", () => {
+  // @anthropic-ai/sdk APIError.error is the parsed body envelope.
+  const detail = providerErrorDetail({
+    status: 400,
+    error: {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "tools.0.custom.input_schema: oneOf is not supported at the root",
+      },
+    },
+  });
+
+  assert.equal(detail.code, "invalid_request_error");
+  assert.equal(detail.message, "tools.0.custom.input_schema:_oneOf_is_not_supported_at_the_root");
+
+  const masked = JSON.parse(maskLangfuseData(JSON.stringify({
+    provider_error_code: detail.code,
+    provider_error_message: detail.message,
+    tool_schema_tokens: 22213,
+  })));
+  assert.equal(masked.provider_error_code, "invalid_request_error");
+  assert.equal(masked.provider_error_message, detail.message);
+  assert.equal(masked.tool_schema_tokens, 22213);
+});
+
+test("provider error messages are hard-capped and collapsed to the safe charset", () => {
+  const { message } = providerErrorDetail({
+    error: { type: "error", error: { type: "invalid_request_error", message: `"x" ${"y".repeat(500)}` } },
+  });
+  assert.ok(message.length <= 200);
+  assert.match(message, /^[a-z0-9_./:@+-]{1,200}$/i, "must satisfy the masker's safeCode charset");
+
+  const masked = JSON.parse(maskLangfuseData(JSON.stringify({ provider_error_message: message })));
+  assert.equal(masked.provider_error_message, message);
+});
+
+test("errors without a structured provider body record nothing rather than inventing detail", () => {
+  assert.deepEqual(providerErrorDetail(new Error("socket hang up")), {});
+  assert.deepEqual(providerErrorDetail(undefined), {});
+  // The envelope's own type: "error" marker is not a provider error code.
+  assert.deepEqual(providerErrorDetail({ error: { type: "error" } }), {});
 });
 
 test("client tool envelopes keep structural summaries but reject content", () => {

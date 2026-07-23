@@ -11,8 +11,9 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { createHash, randomUUID } from "node:crypto";
 
 import { AnthropicProvider } from "./provider";
-import { buildSystem } from "./prompt";
+import { buildSystemBlocks } from "./prompt";
 import { servedToolsetForClientSchema, toolsForClientSchema } from "./tools";
+import { conversationToolSchemaTokens, importToolSchemaTokens } from "./toolSchemaTokens";
 import {
   buildWorkoutImportProviderRequest,
   countParsedExercises,
@@ -141,11 +142,13 @@ export const conversation = onCall(
       return await withLLMTrace(`cloud_function.round.${trace.roundIndex}`, trace, async () => {
         await recordClientToolObservations(parseToolEvents(data.toolEvents));
         try {
+          const servedToolset = servedToolsetForClientSchema(data.clientToolSchemaVersion);
           const content = await provider.complete({
-            system: buildSystem(servedToolsetForClientSchema(data.clientToolSchemaVersion), contextSummary),
+            system: buildSystemBlocks(servedToolset, contextSummary),
             tools: toolsForClientSchema(data.clientToolSchemaVersion),
             messages: messages,
             roundIndex: trace.roundIndex,
+            toolSchemaTokens: conversationToolSchemaTokens(servedToolset),
           });
           const requestedTools = content.filter((block) => block.type === "tool_use").length;
           if (requestedTools === 0) {
@@ -247,6 +250,7 @@ export const parseWorkoutImport = onCall(
             requestContent: content,
             messageCount: request.messages.length,
             toolSchemaBytes: Buffer.byteLength(JSON.stringify(request.tools), "utf8"),
+            toolSchemaTokens: importToolSchemaTokens("durable"),
             callIndex: 0,
             sectionIndex: 0,
             repairIndex: 0,
@@ -445,6 +449,7 @@ export const streamWorkoutImport = onRequest(
           toolChoice: WORKOUT_IMPORT_SKETCH_TOOL_NAME,
           messageCount: request.messages.length,
           toolSchemaBytes: Buffer.byteLength(JSON.stringify([WORKOUT_IMPORT_SKETCH_TOOL]), "utf8"),
+          toolSchemaTokens: importToolSchemaTokens("sketch"),
           callIndex: 0,
           streaming: true,
           // The provider bills a stream it never finished, so the tokens it did consume are
@@ -687,6 +692,7 @@ export const processWorkoutImportJob = onTaskDispatched<{
             requestContent: content,
             messageCount: request.messages.length,
             toolSchemaBytes: Buffer.byteLength(JSON.stringify(request.tools), "utf8"),
+            toolSchemaTokens: importToolSchemaTokens("durable"),
             callIndex: context?.callIndex,
             sectionIndex: context?.sectionIndex,
             repairIndex: context?.repairIndex,

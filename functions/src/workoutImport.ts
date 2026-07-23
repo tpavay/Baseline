@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+import { anthropicSystemBlocks, withCacheBreakpointOnLastTool } from "./promptCaching";
+
 export interface ImportObservation {
   id: string;
   text: string;
@@ -4367,8 +4369,10 @@ export function buildWorkoutImportProviderRequest(
     model,
     max_tokens: Math.max(2_048, Math.min(maxTokens, WORKOUT_IMPORT_MAX_OUTPUT_TOKENS)),
     temperature: 0,
-    system: WORKOUT_IMPORT_SYSTEM,
-    tools: [WORKOUT_IMPORT_TOOL],
+    // The system prompt and tool schema are byte-identical on every import, so both carry a
+    // prompt-caching breakpoint (see promptCaching.ts); only the OCR content varies per request.
+    system: anthropicSystemBlocks(WORKOUT_IMPORT_SYSTEM),
+    tools: withCacheBreakpointOnLastTool([WORKOUT_IMPORT_TOOL]),
     tool_choice: { type: "tool", name: WORKOUT_IMPORT_TOOL.name },
     messages: [{ role: "user", content }],
   };

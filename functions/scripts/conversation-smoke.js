@@ -14,7 +14,7 @@
 
 const { AnthropicProvider } = require("../lib/provider");
 const { SERVED_TOOLSETS } = require("../lib/tools");
-const { buildSystem } = require("../lib/prompt");
+const { buildSystemBlocks } = require("../lib/prompt");
 
 // One entry per supported provider. Adding a provider: implement ConversationProvider, add its
 // constraint profile to toolSchemaContract.ts, and register a factory here.
@@ -35,7 +35,7 @@ async function smokeProvider({ id, make, keyEnvVar }) {
   }
   const provider = make(process.env);
   const blocks = await provider.complete({
-    system: buildSystem("wave9", "No plan or workout exists yet. The athlete is just saying hello."),
+    system: buildSystemBlocks("wave9", "No plan or workout exists yet. The athlete is just saying hello."),
     tools: SERVED_TOOLSETS.wave9,
     messages: [{ role: "user", content: "Hi! Just checking in - no plan needed today." }],
     roundIndex: 0,

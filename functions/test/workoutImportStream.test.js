@@ -96,8 +96,20 @@ test("the request is a single streaming call that forces the sketch tool", () =>
   assert.equal(request.messages.length, 1, "one call, no sectioning and no repair rounds");
   assert.deepEqual(request.tool_choice, { type: "tool", name: WORKOUT_IMPORT_SKETCH_TOOL_NAME });
   assert.equal(request.tools.length, 1);
-  assert.equal(request.system, WORKOUT_IMPORT_SKETCH_SYSTEM);
+  assert.deepEqual(request.system, [
+    { type: "text", text: WORKOUT_IMPORT_SKETCH_SYSTEM, cache_control: { type: "ephemeral" } },
+  ]);
   assert.ok(request.max_tokens <= WORKOUT_IMPORT_STREAM_LIMITS.maximumOutputTokens);
+});
+
+// The system prompt and tool schema are byte-identical on every import; losing either breakpoint
+// silently reverts ~2.6k tokens per request to full input price.
+test("the sketch request keeps prompt-cache breakpoints on the static system and last tool", () => {
+  const content = buildWorkoutImportSketchContent(parseWorkoutImportStreamPayload({ text: "Run" }));
+  const request = buildWorkoutImportSketchRequest("claude-sonnet-4-5-20250929", content);
+  assert.deepEqual(request.system.at(-1).cache_control, { type: "ephemeral" });
+  assert.deepEqual(request.tools.at(-1).cache_control, { type: "ephemeral" });
+  assert.equal("cache_control" in WORKOUT_IMPORT_SKETCH_TOOL, false, "the shared tool constant must not be mutated");
 });
 
 test("max_tokens is clamped rather than trusted", () => {

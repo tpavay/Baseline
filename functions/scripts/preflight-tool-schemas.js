@@ -15,8 +15,8 @@
 "use strict";
 
 const { SERVED_TOOLSETS } = require("../lib/tools");
-const { buildSystem } = require("../lib/prompt");
-const { DEFAULT_CONVERSATION_MODEL } = require("../lib/provider");
+const { buildSystemBlocks } = require("../lib/prompt");
+const { buildConversationProviderRequest, DEFAULT_CONVERSATION_MODEL } = require("../lib/provider");
 
 const API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CONVERSATION_MODEL || DEFAULT_CONVERSATION_MODEL;
@@ -27,13 +27,16 @@ function sleep(ms) {
 }
 
 async function preflightVariant(apiKey, toolsetName, tools) {
-  const body = JSON.stringify({
-    model: MODEL,
-    max_tokens: 1,
-    system: buildSystem(toolsetName),
+  // Built by the exact runtime request builder, prompt-caching breakpoints included (see
+  // promptCaching.ts) - a provider rejecting `cache_control` placement must fail here, not in
+  // production. Only max_tokens differs: 1 token, a schema-acceptance check.
+  const request = buildConversationProviderRequest(MODEL, {
+    system: buildSystemBlocks(toolsetName),
     tools,
     messages: [{ role: "user", content: "ping" }],
   });
+  request.max_tokens = 1;
+  const body = JSON.stringify(request);
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const response = await fetch(API_URL, {

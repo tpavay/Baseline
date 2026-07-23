@@ -8,8 +8,10 @@
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test test/tools.test.js test/toolSchemaContract.test.js test/prompt.test.js test/workoutImport.test.js test/workoutImportRuntime.test.js test/llmObservability.test.js test/workoutImportStream.test.js",
+    "test": "npm run build && node --test test/tools.test.js test/toolSchemaContract.test.js test/prompt.test.js test/provider.test.js test/toolSchemaTokens.test.js test/workoutImport.test.js test/workoutImportRuntime.test.js test/llmObservability.test.js test/workoutImportStream.test.js",
     "preflight:providers": "npm run build && node scripts/preflight-tool-schemas.js",
+    "tokens:measure": "npm run build && node scripts/measure-tool-schema-tokens.js --write",
+    "tokens:check": "npm run build && node scripts/measure-tool-schema-tokens.js --check",
     "smoke:conversation": "npm run build && node scripts/conversation-smoke.js",
     "test:firestore-emulator": "npm run build && firebase --config ../firebase.json emulators:exec --project baseline-import-test --only firestore \"node --test test/workoutImportFirestore.integration.test.js\"",
     "deploy": "npm run build && firebase deploy --only functions",
