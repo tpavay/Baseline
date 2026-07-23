@@ -108,8 +108,6 @@ struct ProfileView: View {
                             appleHealthRow
                             row(icon: "bell.fill", title: "Notifications",
                                 subtitle: "Morning reading reminder", destination: .soon)
-                            row(icon: "paintbrush.fill", title: "Appearance",
-                                subtitle: "Dark", destination: .soon)
                         }
 
                         group("Units") {
@@ -425,18 +423,21 @@ struct ProfileView: View {
 
     /// The global imperial/metric default. Segmented control matches the onboarding units step;
     /// changing it flips every metric field and body input's default (still overridable per exercise).
+    /// Label and control stack vertically: side by side the two cannot share the card's width
+    /// without wrapping the label or breaking a segment across two lines.
     private var unitSystemRow: some View {
         let isImperial = Binding(
             get: { settings.unitSystem == .imperial },
             set: { setUnitSystem($0 ? .imperial : .metric) }
         )
-        return HStack(spacing: 14) {
+        return VStack(alignment: .leading, spacing: BaselineSpacing.medium) {
             Text("Measurement system")
                 .font(.system(size: 16, weight: .semibold)).foregroundStyle(BaselineColor.textHi)
-            Spacer()
-            Segmented2(left: "METRIC", right: "IMPERIAL", isRight: isImperial)
+            Segmented2(left: "METRIC", right: "IMPERIAL", isRight: isImperial,
+                       fillsWidth: true, track: BaselineColor.base)
         }
-        .padding(.horizontal, 16).frame(height: 52)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(BaselineColor.surface))
     }
 
