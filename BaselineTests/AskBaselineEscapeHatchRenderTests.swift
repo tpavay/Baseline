@@ -79,7 +79,8 @@ private final class SilentServer: @unchecked Sendable {
             if case .ready = state { ready.signal() }
         }
         listener.newConnectionHandler = { [weak self] connection in
-            self?.queue.async { self?.adopt(connection) }
+            guard let self else { return }
+            self.queue.async { self.adopt(connection) }
         }
         listener.start(queue: queue)
         guard ready.wait(timeout: .now() + 5) == .success, let boundPort = listener.port?.rawValue else {
@@ -98,8 +99,8 @@ private final class SilentServer: @unchecked Sendable {
     /// Keep reading (and discarding) so the client's request upload completes normally.
     private func drain(_ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] _, _, done, error in
-            guard error == nil, !done else { return }
-            self?.queue.async { self?.drain(connection) }
+            guard let self, error == nil, !done else { return }
+            self.queue.async { self.drain(connection) }
         }
     }
 
