@@ -213,7 +213,7 @@ const batchOperationNames = [
   "remove_set_alternative", "update_exercise_prescription",
 ];
 
-type ToolSchema = {
+export type ToolSchema = {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
@@ -1462,6 +1462,21 @@ export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
 export type ServedToolset = "wave9" | "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
 
 /**
+ * Every toolset variant the runtime can serve, exactly as `toolsForClientSchema` serves it.
+ * This is the single enumeration the schema-contract lint (`toolSchemaContract.ts`), the CI
+ * real-provider preflight, and the conversation smoke test all iterate - a new variant added
+ * here (the `Record` forces it when `ServedToolset` grows) is guarded automatically.
+ */
+export const SERVED_TOOLSETS: Record<ServedToolset, ToolSchema[]> = {
+  wave9: TOOLS,
+  wave8: WAVE8_TOOLS,
+  wave7: WAVE7_TOOLS,
+  wave6: WAVE6_TOOLS,
+  wave5: WAVE5_TOOLS,
+  legacy: LEGACY_TOOLS,
+};
+
+/**
  * Monotonic capability gate: Wave 9 clients receive deliberate custom exercise creation, Wave 8
  * clients keep advanced node and prescription editing, Wave 7 clients keep atomic composite/bulk
  * mutations, Wave 6 clients keep performed logging, Wave 5 clients keep their ID-targeted
@@ -1477,12 +1492,5 @@ export function servedToolsetForClientSchema(version: unknown): ServedToolset {
 }
 
 export function toolsForClientSchema(version: unknown): ToolSchema[] {
-  switch (servedToolsetForClientSchema(version)) {
-  case "wave9": return TOOLS;
-  case "wave8": return WAVE8_TOOLS;
-  case "wave7": return WAVE7_TOOLS;
-  case "wave6": return WAVE6_TOOLS;
-  case "wave5": return WAVE5_TOOLS;
-  case "legacy": return LEGACY_TOOLS;
-  }
+  return SERVED_TOOLSETS[servedToolsetForClientSchema(version)];
 }
