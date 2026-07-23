@@ -78,10 +78,11 @@ That is the whole procedure - "add its constraint profile + run the preflight", 
 - CI job: `functions-provider-preflight` in `.github/workflows/ci.yml`, gated on the `changes` filter's `functions` output, feeding the single required `CI` check.
 - Key: repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together.
 - The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would let a provider-rejected schema reach a green build.
-- Cost per run: 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ a few cents, only on PRs that touch `functions/`.
+- Cost per run: 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ a few cents, plus ~90 free `count_tokens` requests for the token-fixture check, only on PRs that touch `functions/`.
 
 ## Keeping the contract honest
 
 - Adding or changing a tool schema: `npm test` lints it instantly; the PR's preflight run is the ground truth.
+  Also regenerate the token fixture with `npm run tokens:measure` and commit the diff - `tokens:check` is exact, so any served-schema or system-prompt change makes the fixture stale.
 - If a legitimately needed construct fails the lint, extend the relevant profile **and** this document in the same PR, and let the preflight prove the provider accepts it.
 - The advisory pin means new provider-fragile constructs require editing the snapshot test - that edit is the review hook.
