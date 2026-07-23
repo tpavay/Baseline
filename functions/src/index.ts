@@ -11,6 +11,7 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { createHash, randomUUID } from "node:crypto";
 
 import { AnthropicProvider } from "./provider";
+import { classifyProviderFailure, providerCapacityErrorDetails } from "./providerErrors";
 import { buildSystemBlocks } from "./prompt";
 import { servedToolsetForClientSchema, toolsForClientSchema } from "./tools";
 import { conversationToolSchemaTokens, importToolSchemaTokens } from "./toolSchemaTokens";
@@ -162,13 +163,33 @@ export const conversation = onCall(
         }
       });
     } catch (err) {
-      logger.error("conversation.provider_error", { uid, error: `${err}` });
-      throw new HttpsError("internal", "Baseline couldn't reach the coach right now. Try again.");
+      const capacity = classifyProviderFailure(err) === "capacity";
+      logger.error("conversation.provider_error", { uid, error: `${err}`, capacity });
+      throw conversationProviderHttpsError(err, capacity);
     } finally {
       await flushLLMObservability();
     }
   }
 );
+
+/**
+ * Maps a conversation provider failure to the error the app sees. A transient capacity failure
+ * (overload, rate limit, exhausted credits) is reported as `unavailable` with a `provider_capacity`
+ * reason in the details, so the app shows "the coach is busy - your message is saved, tap to try
+ * again" over a real retry button. Anything already an `HttpsError` (e.g. the daily-limit cap) is
+ * passed through untouched; everything else collapses to the generic internal failure.
+ */
+function conversationProviderHttpsError(error: unknown, capacity: boolean): HttpsError {
+  if (error instanceof HttpsError) return error;
+  if (capacity) {
+    return new HttpsError(
+      "unavailable",
+      "The coach is busy right now. Your message is saved - try again in a moment.",
+      providerCapacityErrorDetails(),
+    );
+  }
+  return new HttpsError("internal", "Baseline couldn't reach the coach right now. Try again.");
+}
 
 /** Accepts privacy-filtered client tool spans that cannot be attached to a later model round. */
 export const recordLLMObservability = onCall(

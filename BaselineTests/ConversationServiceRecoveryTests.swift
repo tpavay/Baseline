@@ -24,8 +24,13 @@ struct ConversationServiceRecoveryTests {
         var timeoutInterval: TimeInterval = 70
         private let lock = NSLock()
         private var remaining: [Behavior]
+        private var received: [[String: String]] = []
 
         init(_ behaviors: [Behavior]) { remaining = behaviors }
+
+        /// Every request the service actually sent, in order — lets a test assert the transcript the
+        /// retry reconstructed rather than only the observable log.
+        var requests: [[String: String]] { lock.withLock { received } }
 
         private func nextBehavior() -> Behavior {
             lock.withLock {
@@ -34,6 +39,7 @@ struct ConversationServiceRecoveryTests {
         }
 
         func call(_ request: [String: String]) async throws -> Data {
+            lock.withLock { received.append(request) }
             switch nextBehavior() {
             case .hang:
                 try await Task.sleep(for: .seconds(3600))
@@ -58,13 +64,24 @@ struct ConversationServiceRecoveryTests {
         tools: AgentTools? = nil,
         timeouts: ConversationService.Timeouts = .init()
     ) -> ConversationService {
+        makeServiceAndCallable(behaviors: behaviors, tools: tools, timeouts: timeouts).service
+    }
+
+    /// Like `makeService` but also hands back the callable, so a test can inspect the exact requests
+    /// the service sent (the retry-reconstructs-the-transcript assertion needs the wire messages).
+    private func makeServiceAndCallable(
+        behaviors: [ScriptedCallable.Behavior],
+        tools: AgentTools? = nil,
+        timeouts: ConversationService.Timeouts = .init()
+    ) -> (service: ConversationService, callable: ScriptedCallable) {
         let defaults = UserDefaults(suiteName: "ConversationServiceRecoveryTests-\(UUID().uuidString)")!
         let callable = ScriptedCallable(behaviors)
-        return ConversationService(
+        let service = ConversationService(
             tools: tools ?? AgentTools(store: TrainingContextStore(defaults: defaults), base: DecisionEngine.Inputs()),
             makeCallable: { _ in callable },
             timeouts: timeouts
         )
+        return (service, callable)
     }
 
     /// Short enough that tests finish fast, long enough that the round trip through the fake isn't racy.
@@ -181,6 +198,102 @@ struct ConversationServiceRecoveryTests {
         #expect(service.log.last?.text == "Swapped it for a dumbbell press.")
     }
 
+    // MARK: - Failed-turn retry
+
+    /// The reported bug: a failed turn used to drop the athlete's message from the model transcript,
+    /// so a later "try again" had no context. The message must survive as a retryable failure bubble.
+    @Test func failedTurnPreservesTheMessageAsARetryableBubble() async throws {
+        let service = makeService(behavior: .fail(NSError(domain: "SomethingElse", code: 7)), timeouts: compressed)
+        service.send("Today I did a 3x8-minute tempo row")
+
+        try await waitUntil("the turn fails") { !service.isThinking }
+        #expect(service.log.count == 2)
+        #expect(service.log.last?.role == .baseline)
+        #expect(service.log.last?.kind == .failure)
+        #expect(service.log.last?.retryText == "Today I did a 3x8-minute tempo row")
+        #expect(service.log.last?.text == ConversationService.genericFailureMessage)
+    }
+
+    /// Tapping retry re-sends the exact failed message and, on success, leaves a clean thread: the
+    /// reply lands, the failure bubble is gone, and the user's message shows exactly once (not twice).
+    @Test func retryResendsTheExactMessageAndSucceeds() async throws {
+        let reply: [[String: Any]] = [["type": "text", "text": "Nice - logged that tempo row."]]
+        let good = try JSONSerialization.data(withJSONObject: ["content": reply])
+        let service = makeService(behaviors: [.fail(NSError(domain: "SomethingElse", code: 7)), .reply(good)],
+                                  timeouts: compressed)
+        service.send("Today I did a 3x8-minute tempo row")
+        try await waitUntil("the first turn fails") { !service.isThinking }
+        #expect(service.log.last?.kind == .failure)
+
+        service.retryFailedTurn()
+        try await waitUntil("the retry lands") { !service.isThinking }
+
+        #expect(service.log.last?.role == .baseline)
+        #expect(service.log.last?.kind == .normal)
+        #expect(service.log.last?.text == "Nice - logged that tempo row.")
+        #expect(!service.log.contains { $0.kind == .failure }, "The stale failure bubble must be gone.")
+        let userEchoes = service.log.filter { $0.role == .you && $0.text == "Today I did a 3x8-minute tempo row" }
+        #expect(userEchoes.count == 1, "The retried message must appear once, not duplicated.")
+    }
+
+    /// The transcript the retry ships must be reconstructed to a single clean user turn — the whole
+    /// point of the fix. Proven at the wire seam, not just the visible log.
+    @Test func retryReconstructsASingleTurnTranscript() async throws {
+        let reply: [[String: Any]] = [["type": "text", "text": "Logged."]]
+        let good = try JSONSerialization.data(withJSONObject: ["content": reply])
+        let (service, callable) = makeServiceAndCallable(
+            behaviors: [.fail(NSError(domain: "SomethingElse", code: 7)), .reply(good)],
+            timeouts: compressed
+        )
+        service.send("Today I did a 3x8-minute tempo row")
+        try await waitUntil("the first turn fails") { !service.isThinking }
+        service.retryFailedTurn()
+        try await waitUntil("the retry lands") { !service.isThinking }
+
+        let lastMessagesJSON = try #require(callable.requests.last?["messages"])
+        let messages = try #require(
+            try JSONSerialization.jsonObject(with: Data(lastMessagesJSON.utf8)) as? [[String: Any]]
+        )
+        #expect(messages.count == 1, "The retry must send exactly one user turn, not stack a second.")
+        #expect(messages.first?["role"] as? String == "user")
+        #expect(messages.first?["content"] as? String == "Today I did a 3x8-minute tempo row")
+    }
+
+    /// No double-apply: when a tool already committed a mutation this turn, a later provider failure
+    /// must surface the tool's own sentence as a plain reply — never a retry affordance that would ask
+    /// the model to repeat the mutation it already made.
+    @Test func retryIsNotOfferedWhenAToolAlreadyCommitted() async throws {
+        let toolUse: [[String: Any]] = [[
+            "type": "tool_use", "id": "toolu_1", "name": "set_time_available",
+            "input": ["minutes": 45],
+        ]]
+        let firstRound = try JSONSerialization.data(withJSONObject: ["content": toolUse])
+        let service = makeService(behaviors: [.reply(firstRound), .fail(NSError(domain: "SomethingElse", code: 7))],
+                                  timeouts: compressed)
+        service.send("I only have 45 minutes today")
+
+        try await waitUntil("the tool commits and the follow-up round fails") { !service.isThinking }
+        #expect(service.log.last?.role == .baseline)
+        #expect(service.log.last?.kind == .normal, "A committed mutation is a plain reply, not a retryable failure.")
+        #expect(service.log.last?.retryText == nil)
+        #expect(service.log.last?.text.contains("45 min today.") == true)
+
+        // And the guard holds: calling retry with no failure bubble is a no-op.
+        let before = service.log.count
+        service.retryFailedTurn()
+        #expect(service.log.count == before)
+        #expect(!service.isThinking)
+    }
+
+    /// A cancelled turn is the athlete's own choice — it stays silent and never offers a retry.
+    @Test func cancelDoesNotLeaveARetryableFailure() async throws {
+        let service = makeService(behavior: .hang)
+        service.send("Replace the barbell bench press with something else")
+        service.cancelTurn()
+        try await waitUntil("the cancelled turn ends", timeout: 2) { !service.isThinking }
+        #expect(!service.log.contains { $0.kind == .failure })
+    }
+
     // MARK: - Error mapping
 
     @Test func connectivityShapedFailuresMapToTheOfflineCopy() {
@@ -204,6 +317,28 @@ struct ConversationServiceRecoveryTests {
         #expect(ConversationService.failureMessage(for: NSError(domain: "SomethingElse", code: 7)) == generic)
         #expect(ConversationService.failureMessage(for: ConversationError.badResponse) == generic)
         #expect(ConversationService.failureMessage(for: URLError(.badServerResponse)) == generic)
+    }
+
+    @Test func providerCapacityFailuresMapToTheOverloadedCopy() {
+        let overloaded = ConversationService.overloadedFailureMessage
+        let capacityDetails = ["reason": ConversationService.providerCapacityReason]
+
+        // The server reports transient capacity as `unavailable` + a provider_capacity reason. The
+        // reason wins over the connectivity shape, so the athlete never sees "check your signal".
+        #expect(ConversationService.failureMessage(for: NSError(
+            domain: FunctionsErrorDomain, code: FunctionsErrorCode.unavailable.rawValue,
+            userInfo: [FunctionsErrorDetailsKey: capacityDetails])) == overloaded)
+        // The reason is honored through a wrapped underlying error too.
+        #expect(ConversationService.failureMessage(for: NSError(
+            domain: FunctionsErrorDomain, code: FunctionsErrorCode.internal.rawValue,
+            userInfo: [NSUnderlyingErrorKey: NSError(
+                domain: FunctionsErrorDomain, code: FunctionsErrorCode.unavailable.rawValue,
+                userInfo: [FunctionsErrorDetailsKey: capacityDetails])])) == overloaded)
+        // An unrelated details reason is not treated as capacity.
+        #expect(ConversationService.failureMessage(for: NSError(
+            domain: FunctionsErrorDomain, code: FunctionsErrorCode.internal.rawValue,
+            userInfo: [FunctionsErrorDetailsKey: ["reason": "something_else"]]))
+            == ConversationService.genericFailureMessage)
     }
 
     // MARK: - Plumbing

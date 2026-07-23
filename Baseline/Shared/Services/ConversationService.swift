@@ -73,9 +73,16 @@ final class ConversationService {
 
     struct Message: Identifiable, Sendable {
         enum Role: Sendable { case you, baseline }
+        /// A `.failure` bubble carries the exact user message that failed so the athlete can re-send
+        /// it with one tap. A `.normal` bubble is an ordinary reply and has no retry text.
+        enum Kind: Sendable { case normal, failure }
         let id = UUID()
         let role: Role
         let text: String
+        var kind: Kind = .normal
+        /// Set only on `.failure` bubbles: the athlete's message this turn, replayed verbatim by
+        /// `retryFailedTurn()`. `nil` on every other bubble.
+        var retryText: String? = nil
     }
 
     /// One behind-the-scenes tool the model actually invoked — surfaced in the state inspector so
@@ -114,6 +121,10 @@ final class ConversationService {
     private var activeTraceID = ""
     private var pendingToolObservations: [ClientToolObservation] = []
     private var turnTask: Task<Void, Never>?
+    /// The message the in-flight turn is sending, stamped onto a `.failure` bubble so a retry can
+    /// replay it verbatim. The transcript rolls back to a clean checkpoint on failure, so re-sending
+    /// this text alone reconstructs an identical, wire-valid transcript.
+    private var currentTurnText = ""
 
     convenience init(
         tools: AgentTools,
@@ -161,6 +172,7 @@ final class ConversationService {
         // ends on a dangling user/tool turn — otherwise the next send stacks two user turns and the
         // API rejects every subsequent message until the chat is reopened.
         let checkpoint = transcript.count
+        currentTurnText = userText
         activeTraceID = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
         pendingToolObservations = []
         transcript.append(["role": "user", "content": userText])
@@ -183,6 +195,18 @@ final class ConversationService {
     /// chose to stop — but a tool result already committed this turn still surfaces.
     func cancelTurn() {
         turnTask?.cancel()
+    }
+
+    /// Re-sends the exact message a `.failure` bubble is offering to retry. The transcript was already
+    /// rolled back to a clean pre-turn checkpoint when the turn failed, so replaying the text alone
+    /// reconstructs an identical, wire-valid transcript. The stale failure bubble and the orphaned
+    /// user bubble are dropped first so `send` can re-add the user bubble without duplicating it.
+    func retryFailedTurn() {
+        guard !isThinking, let last = log.last, last.kind == .failure,
+              let text = last.retryText else { return }
+        log.removeLast()                                 // the failure bubble
+        if log.last?.role == .you { log.removeLast() }   // the orphaned user bubble it answered
+        send(text)
     }
 
     /// Applies the exact persisted inverse represented by the latest receipt. This deliberately
@@ -236,8 +260,17 @@ final class ConversationService {
             } catch {
                 // Message first, telemetry second: the athlete should not wait out the (bounded,
                 // fail-open) observability export before learning the turn failed.
-                log.append(Message(role: .baseline, text: lastToolResult
-                    ?? Self.failureMessage(for: error)))
+                if let lastToolResult {
+                    // A tool already committed this turn, so surface its own sentence — never a retry
+                    // affordance. Re-sending would ask the model to repeat a mutation it already
+                    // applied; the change is done, not lost, so this is a plain reply, not a failure.
+                    log.append(Message(role: .baseline, text: lastToolResult))
+                } else {
+                    // Nothing committed: the athlete's message never reached the coach and the
+                    // transcript rolls back to a clean checkpoint. Offer a real retry that replays it.
+                    log.append(Message(role: .baseline, text: Self.failureMessage(for: error),
+                                       kind: .failure, retryText: currentTurnText))
+                }
                 await sendTerminalTelemetry("provider_failed", roundIndex: roundIndex)
                 return false
             }
@@ -409,11 +442,36 @@ final class ConversationService {
 
     /// Copy for a turn that failed because the network is gone or too degraded to finish.
     static let offlineFailureMessage = "No connection right now - check your signal and try again."
+    /// Copy for a transient provider-capacity failure - the coach is momentarily over capacity, rate
+    /// limited, or out of credits. The message survives and the failure bubble offers a one-tap retry.
+    static let overloadedFailureMessage = "The coach is busy right now - your message is saved. Tap to try again."
     /// Copy for any other failed turn.
     static let genericFailureMessage = "I couldn't reach the coach just now — try again in a moment."
 
+    /// The `reason` the conversation callable stamps into its error details when the underlying
+    /// provider failure is transient capacity (overload, rate limit, or exhausted credits), so the
+    /// client can show the "coach is busy, your message is saved" copy rather than a connectivity or
+    /// generic line. Kept in sync with `providerCapacityErrorDetails` in functions/src/index.ts.
+    static let providerCapacityReason = "provider_capacity"
+
     static func failureMessage(for error: any Error) -> String {
-        isConnectivityFailure(error) ? offlineFailureMessage : genericFailureMessage
+        if isProviderCapacityFailure(error) { return overloadedFailureMessage }
+        return isConnectivityFailure(error) ? offlineFailureMessage : genericFailureMessage
+    }
+
+    /// True when the callable tagged this failure as transient provider capacity via its error
+    /// details. Checked ahead of the connectivity shape because the server may choose a transport
+    /// error code (`unavailable`) for a rate limit, and "check your signal" would then mislead.
+    static func isProviderCapacityFailure(_ error: any Error) -> Bool {
+        var next: NSError? = error as NSError
+        while let nsError = next {
+            if let details = nsError.userInfo[FunctionsErrorDetailsKey] as? [String: Any],
+               details["reason"] as? String == providerCapacityReason {
+                return true
+            }
+            next = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     /// Walks the error chain looking for a connectivity-shaped failure. The Functions SDK surfaces

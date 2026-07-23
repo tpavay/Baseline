@@ -189,19 +189,47 @@ private struct ConversationView: View {
         }
     }
 
+    @ViewBuilder
     private func bubble(_ m: ConversationService.Message) -> some View {
-        HStack {
-            if m.role == .you { Spacer(minLength: 40) }
+        if m.kind == .failure {
+            failureBubble(m)
+        } else {
+            HStack {
+                if m.role == .you { Spacer(minLength: 40) }
+                Text(m.text)
+                    .font(.body).lineSpacing(2)
+                    .foregroundStyle(m.role == .you ? Color(hex: 0x120B21) : BaselineColor.textHi)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(m.role == .you ? BaselineColor.accent : BaselineColor.surface))
+                    .overlay(m.role == .you ? nil : RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(BaselineColor.line, lineWidth: 1))
+                if m.role == .baseline { Spacer(minLength: 40) }
+            }
+            .frame(maxWidth: .infinity, alignment: m.role == .you ? .trailing : .leading)
+        }
+    }
+
+    /// A failed turn: the error copy plus a one-tap Retry that re-sends the exact message the coach
+    /// never received. Disabled while another turn is in flight so a rapid double-tap can't stack two.
+    private func failureBubble(_ m: ConversationService.Message) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(m.text)
                 .font(.body).lineSpacing(2)
-                .foregroundStyle(m.role == .you ? Color(hex: 0x120B21) : BaselineColor.textHi)
+                .foregroundStyle(BaselineColor.textHi)
                 .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(m.role == .you ? BaselineColor.accent : BaselineColor.surface))
-                .overlay(m.role == .you ? nil : RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(BaselineColor.line, lineWidth: 1))
-            if m.role == .baseline { Spacer(minLength: 40) }
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(BaselineColor.line, lineWidth: 1))
+            Button {
+                service.retryFailedTurn()
+            } label: {
+                Label("Try again", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.accent))
+            .disabled(service.isThinking)
+            .accessibilityHint("Re-sends your last message to Baseline")
         }
-        .frame(maxWidth: .infinity, alignment: m.role == .you ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .transition(.opacity)
     }
 
     private var typing: some View {
