@@ -97,20 +97,20 @@ private struct RingFixture: View {
 
             BaselineCard {
                 VStack(spacing: BaselineSpacing.screen) {
-                    SegmentedRing(
+                    RadialFillSegmentedRing(
                         segments: [
-                            .init(weight: 0.4, progress: 0.78, color: BaselineColor.zoneBlue),
-                            .init(weight: 0.35, progress: 0.62, color: BaselineColor.accent),
-                            .init(weight: 0.25, progress: 0.73, color: BaselineColor.zoneGreen)
+                            .init(weight: 50, progress: 0.78, color: BaselineColor.zoneBlue),
+                            .init(weight: 30, progress: 0.62, color: BaselineColor.zoneGreen),
+                            .init(weight: 20, progress: 0.73, color: BaselineColor.zoneRed)
                         ],
-                        diameter: 84,
-                        lineWidth: 5,
-                        gapDegrees: 8,
+                        diameter: BaselineSize.sleepRing,
+                        lineWidth: BaselineSize.sleepRingLineWidth,
+                        gapDegrees: BaselineSize.sleepRingGapDegrees,
                         accessibilitySummary: "Sleep score 82"
                     ) {
                         Text("82")
-                            .baselineTypography(.instrumentValue)
-                            .foregroundStyle(BaselineColor.textMid)
+                            .font(.system(.title2, design: .default, weight: .bold))
+                            .foregroundStyle(BaselineColor.textHi)
                     }
 
                     SegmentedRing(

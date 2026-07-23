@@ -91,9 +91,31 @@ struct SleepEngineTests {
         #expect(abs(interruptions.value - 18.4) < 1e-9)
 
         #expect(analysis.possiblePoints == 100)
-        #expect(analysis.observedPoints == 91)   // round(42.7083 + 30 + 18.4)
+        #expect(analysis.observedPoints == 91)   // 43 + 30 + 18 (components round before summing)
         #expect(analysis.score == 91)
         #expect(analysis.score == analysis.observedPoints)
+        #expect(analysis.needHours == 8)         // the need the night was scored against, stamped
+    }
+
+    @Test func scoreIsAlwaysTheSumOfTheRoundedComponents() {
+        // Engineered so v1's round-the-unrounded-sum scheme would disagree with the visible rows:
+        // duration 49.4 (asleep 7.952 h) + consistency 16.4 (bedtime 111.6 min off the 23:00 mean)
+        // + interruptions 11.4 (WASO 51.5 → 6.6, awakenings 3 → 4.8) = 77.2 → v1 said 77 while the
+        // rows showed 49/16/11 = 76. v2 publishes exactly the row sum.
+        let lateBedtime = Fix.calendar.date(bySettingHour: 0, minute: 51, second: 36, of: wakeDay)!
+        let night = mkNight(wakeDay: wakeDay, bedtime: lateBedtime,
+                            asleepHours: 7.952, waso: 51.5, awakenings: 3)
+        let analysis = SleepEngine.analyze(night: night, history: priors(Array(1...6)), need: need)
+
+        let components = analysis.components.filter(\.isAvailable)
+        #expect(abs(components[0].value - 49.4) < 1e-9)
+        #expect(abs(components[1].value - 16.4) < 1e-6)
+        #expect(abs(components[2].value - 11.4) < 1e-9)
+
+        let rowSum = components.map { Int($0.value.rounded()) }.reduce(0, +)
+        #expect(rowSum == 76)
+        #expect(analysis.observedPoints == 76)
+        #expect(analysis.score == 76)            // never the v1 off-by-one 77
     }
 
     @Test func durationTaperIsFullAtNeedAndZeroAtHalfNeed() {
@@ -115,7 +137,7 @@ struct SleepEngineTests {
         let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay),
                             asleepHours: 7.5, waso: nil, awakenings: nil,
                             staged: false, source: .manual)
-        // AC-2b: even with ample history a manual night takes NO scoring path — no duration points,
+        // AC-2b: even with ample history a manual night takes NO scoring path - no duration points,
         // no consistency, no interruptions. The single manual route is Slice 4's subjective fallback.
         let analysis = SleepEngine.analyze(night: night, history: priors(Array(1...10)), need: need)
 
@@ -192,7 +214,7 @@ struct SleepEngineTests {
 
     @Test func stageCompositionShiftAtConstantAsleepHoursDoesNotChangeScore() {
         // Same scored facts (asleepHours / WASO / awakenings / bedtime), but the stage intervals
-        // shift minutes between asleep (core) and awake — the full stage set, not just deep/REM.
+        // shift minutes between asleep (core) and awake - the full stage set, not just deep/REM.
         // If any scored component secretly read a stage proportion, the scores would diverge.
         let history = priors(Array(1...6))
         let low = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay), asleepHours: 7.5,
@@ -268,7 +290,7 @@ struct SleepEngineTests {
 
     @Test func gapNightsAreExcludedFromMeansAndNeverImputedIntoDebt() {
         let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay), asleepHours: 6.0)
-        // Offset 3 is missing entirely (a gap night — no record).
+        // Offset 3 is missing entirely (a gap night - no record).
         let history = priors([1, 2, 4, 5, 6, 7, 8], asleepHours: 7.0)
         let c = SleepEngine.analyze(night: night, history: history, need: need).vsBaseline
 
@@ -324,7 +346,7 @@ struct SleepEngineTests {
         let thirteen = SleepEngine.analyze(night: night, history: priors(Array(1...13)), need: need).flags
         #expect(!thirteen.contains { if case .worstIn = $0 { return true }; return false })
         #expect(!thirteen.contains { if case .bestIn = $0 { return true }; return false })
-        // shortNight still fires (source-independent) — proves suppression is scoped to comparatives.
+        // shortNight still fires (source-independent) - proves suppression is scoped to comparatives.
         #expect(thirteen.contains { if case .shortNight = $0 { return true }; return false })
 
         let fourteen = SleepEngine.analyze(night: night, history: priors(Array(1...14)), need: need).flags
@@ -332,7 +354,7 @@ struct SleepEngineTests {
     }
 
     @Test func bestInSuppressedBelow14RecordedNights() {
-        // Tonight is the LONGEST night — bestIn shares the comparative-flag gate, so it must be
+        // Tonight is the LONGEST night - bestIn shares the comparative-flag gate, so it must be
         // suppressed at 13 recorded nights and appear at 14.
         let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay), asleepHours: 9.0)
 
@@ -397,7 +419,7 @@ struct SleepEngineTests {
     @Test func manualNightWithInjectedWASOStillFeedsNoInterruptionBurden() {
         // Tripwire: hand-build a manual night that (against Slice 1's ingestion invariant) carries
         // WASO + awakenings. interruptionBurden must be nil because the SOURCE is manual, not merely
-        // because WASO is absent. Fails if the isDeviceSourced gate on burden is removed — pinning
+        // because WASO is absent. Fails if the isDeviceSourced gate on burden is removed - pinning
         // AC-2b locally against a future ingestion change that attaches WASO to a non-staged source.
         let night = mkNight(wakeDay: wakeDay, bedtime: bedtimeBefore(wakeDay),
                             asleepHours: 6.5, waso: 30, awakenings: 3,
@@ -427,7 +449,7 @@ struct SleepEngineTests {
                             asleepHours: 6.5, waso: nil, awakenings: nil,
                             staged: false, source: .manual)
         let e = SleepEngine.analyze(night: night, history: priors(Array(1...10)), need: need).decisionEvidence
-        // AC-2b: a manual night feeds NO decision signal — Slice 4 reaches it via the subjective
+        // AC-2b: a manual night feeds NO decision signal - Slice 4 reaches it via the subjective
         // fallback, never a duration deficit (which would be a second manual scoring route).
         #expect(e.durationDeficitHours == nil)
         #expect(e.interruptionBurden == nil)                        // no WASO

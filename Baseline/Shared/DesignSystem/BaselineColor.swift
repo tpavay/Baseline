@@ -27,14 +27,14 @@ enum BaselineColor {
     static let zoneOrange = Color(hex: 0xFF7A33)
     static let zoneRed   = Color(hex: 0xFF5247)
 
-    // Sleep-stage evidence uses a calm indigo-to-lilac ramp in the violet and amethyst
-    // family and OFF the readiness zone hues (green/amber/red/blue) so a stage timeline never reads
-    // as a good/bad readiness verdict (plan §2 Q-B). Awake is a muted mauve-grey: present in the
-    // night but visibly "not asleep". Ordered dark-to-light by depth.
-    static let sleepDeep        = Color(hex: 0x4A3A8C)
-    static let sleepCore        = Color(hex: 0x7C6BE0)
-    static let sleepREM         = Color(hex: 0xB794F6)
-    static let sleepAwake       = Color(hex: 0x5E5670)
+    // Sleep-stage evidence palette from the approved sleep redesign's staged hypnogram (Apple-style
+    // lanes, Baseline's skin): Deep is the darkest indigo, Core the airy blue that dominates the
+    // night, REM a light lilac, and Awake a coral that is visibly "not asleep" without being the
+    // readiness zoneRed. Ordered dark-to-light by depth.
+    static let sleepDeep        = Color(hex: 0x4A2F8F)
+    static let sleepCore        = Color(hex: 0x5B9DFF)
+    static let sleepREM         = Color(hex: 0xB79BFF)
+    static let sleepAwake       = Color(hex: 0xFF6B5C)
     static let sleepUnspecified = Color(hex: 0x6C6480)
 }
 
@@ -87,9 +87,11 @@ enum BaselineSize {
     static let muscleMapHeight: CGFloat = 180
     static let chartHeight: CGFloat = 108
     static let actionSheetHeight: CGFloat = 274
-    static let sleepRing: CGFloat = 84
-    static let sleepRingLineWidth: CGFloat = 5
-    static let sleepRingGapDegrees: Double = 8
+    // Approved sleep-ring geometry: full-width arcs proportional to the 50/30/20 component maxima
+    // with wide gaps (28° each → a 276° usable sweep), stroke 12 % of the ring's 92 pt box.
+    static let sleepRing: CGFloat = 92
+    static let sleepRingLineWidth: CGFloat = 11
+    static let sleepRingGapDegrees: Double = 28
     static let zoneRing: CGFloat = 118
     static let zoneRingLineWidth: CGFloat = 11
     static let zoneRingGapDegrees: Double = 1.2

@@ -16,7 +16,9 @@ enum SleepEngine {
     /// How nights aggregate into windows/comparisons. Bump when window math changes.
     static let aggregationVersion = 1
     /// The scoring math. Bump when component curves/weights change.
-    static let scoreAlgorithmVersion = 1
+    /// v2: components round individually before summing, so the visible component rows always sum
+    /// to the headline score (v1 rounded the unrounded sum, letting the rows disagree by 1).
+    static let scoreAlgorithmVersion = 2
 
     /// Default sleep need when Slice 4 has not wired `ReadinessConfig` yet.
     static let defaultNeed: Duration = .seconds(8 * 3600)
@@ -96,7 +98,12 @@ enum SleepEngine {
         let interruptions = interruptionsComponent(night: night)
 
         let components = [duration, bedtimeComponent, interruptions]
-        let observedPoints = Int(components.filter(\.isAvailable).map(\.value).reduce(0, +).rounded())
+        // Round each component before summing (v2): every UI shows the components as rounded
+        // integers, so the published total must be the sum of exactly those integers — rounding the
+        // unrounded sum instead can disagree with the visible rows by 1 (e.g. 49.4 + 16.4 + 11.4).
+        let observedPoints = components.filter(\.isAvailable)
+            .map { Int($0.value.rounded()) }
+            .reduce(0, +)
         let possiblePoints = Int(components.filter(\.isAvailable).map(\.max).reduce(0, +))
         let allObserved = components.allSatisfy(\.isAvailable)
         let score = allObserved ? observedPoints : nil
@@ -111,6 +118,7 @@ enum SleepEngine {
             observedPoints: observedPoints,
             possiblePoints: possiblePoints,
             score: score,
+            needHours: needHours,
             asleepHours: night.asleepHours,
             wasoMinutes: night.wasoMinutes,
             awakenings: night.awakenings,

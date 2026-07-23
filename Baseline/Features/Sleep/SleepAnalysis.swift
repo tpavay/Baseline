@@ -1,18 +1,18 @@
 import Foundation
 
 /// Derived, versioned analysis of one canonical `SleepNight` (plan §3). Pure value types with no
-/// SwiftData/HealthKit/SwiftUI dependency — the whole struct is the Codable blob persisted on the
+/// SwiftData/HealthKit/SwiftUI dependency - the whole struct is the Codable blob persisted on the
 /// Slice 2 reserved fields (`SDSleepNight.analysisJSON`), so every member is `Codable`, `Equatable`,
 /// and `Sendable`.
 ///
 /// The engine (`SleepEngine`) is the only producer. Scoring lives entirely in `SleepEngine`; these
 /// types just carry its results. The Apple-aligned score is **duration 50 / bedtime consistency 30 /
-/// interruptions 20** — stage proportions are never scored (round-2 correction, AC-3); they live in
+/// interruptions 20** - stage proportions are never scored (round-2 correction, AC-3); they live in
 /// `additionalEvidence` for display only.
 
 // MARK: - Reasons
 
-/// Why a component is unavailable or a quality dimension is reduced. Stable keys, not user copy —
+/// Why a component is unavailable or a quality dimension is reduced. Stable keys, not user copy -
 /// the UI maps them to strings. Descriptive only; never a stage→effect claim (AC-7).
 enum SleepReason: String, Codable, Equatable, Sendable {
     case manualEntry
@@ -48,14 +48,14 @@ struct SleepComponent: Codable, Equatable, Sendable {
 
 // MARK: - Additional evidence (never scored)
 
-/// Stage durations, distribution, timing and tracking gaps for the primary sleep — **displayed,
+/// Stage durations, distribution, timing and tracking gaps for the primary sleep - **displayed,
 /// never scored** in v1 (AC-3). Two nights identical except for deep/REM distribution produce the
 /// same score but different `SleepStageEvidence`.
 struct SleepStageEvidence: Codable, Equatable, Sendable {
     var remMinutes: Double
     var deepMinutes: Double
     var coreMinutes: Double
-    /// Fractions of asleep time (0 when asleep time is zero). Distribution only — not a claim.
+    /// Fractions of asleep time (0 when asleep time is zero). Distribution only - not a claim.
     var remFraction: Double
     var deepFraction: Double
     var coreFraction: Double
@@ -88,7 +88,7 @@ struct SleepEvidenceQuality: Codable, Equatable, Sendable {
 
 /// Acute (7 d) vs chronic (30 d) asleep-hour means over **available** history, plus a 14-day sleep
 /// debt (AC-5). Means exclude gap nights (nil when the window holds no recorded night); debt sums
-/// only recorded nights below need — missing nights are never imputed.
+/// only recorded nights below need - missing nights are never imputed.
 struct SleepComparison: Codable, Equatable, Sendable {
     var acute7Mean: Double?
     var chronic30Mean: Double?
@@ -97,7 +97,7 @@ struct SleepComparison: Codable, Equatable, Sendable {
 
 /// Circular (clock-arithmetic) bedtime/wake means and variability over the rolling 14-day window.
 /// `isAvailable` is false during cold start (< 5 recorded nights, AC-2); the mean/variance are nil
-/// then. Seconds-of-day anchored to each night's own local-midnight `date` — no calendar needed.
+/// then. Seconds-of-day anchored to each night's own local-midnight `date` - no calendar needed.
 struct SleepConsistency: Codable, Equatable, Sendable {
     var bedtimeMeanSecondsOfDay: Double?
     var bedtimeStdMinutes: Double?
@@ -140,6 +140,11 @@ struct SleepAnalysis: Codable, Equatable, Sendable {
     var observedPoints: Int
     var possiblePoints: Int
     var score: Int?
+    /// The sleep need (hours) this analysis was scored against - the duration component's goal.
+    /// Persisted so a stored blob derived under a different configured need reads as stale and
+    /// re-derives (the repository compares it), keeping the displayed score in lockstep with the
+    /// decision path's need-threaded score. Optional only for pre-v2 blobs, which predate the field.
+    var needHours: Double? = nil
     /// Headline raw facts the analysis scored, echoed so display and `SleepInsights` are a pure
     /// function of the analysis blob (AC-7) without re-reading the source `SleepNight`. nil mirrors
     /// the night's own nils (unobservable, never imputed).
