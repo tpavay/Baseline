@@ -19,6 +19,12 @@ protocol PlanRepository {
     func week(containing date: Date, filter: ProgramFilter) -> TrainingWeek
     func day(_ date: Date, filter: ProgramFilter) -> TrainingDay
     func days(from startDate: Date, through endDate: Date, filter: ProgramFilter) -> [TrainingDay]
+    /// Explicit rest-day markers (startOfDay keys) within a half-open range. Markers are global —
+    /// a rest day is a property of the athlete's calendar, not of any one program or filter.
+    func restDays(in range: Range<Date>) -> Set<Date>
+    /// Mark or un-mark a calendar day as an explicit rest day. Idempotent; not versioned — the
+    /// marker schedules nothing, so toggling it back is its own undo.
+    func setRestDay(_ date: Date, _ isRest: Bool)
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout?
     func session(forScheduled id: UUID) -> WorkoutSession?
     func completedLog(forScheduled id: UUID) -> CompletedWorkoutLog?
@@ -137,11 +143,12 @@ final class SwiftDataPlanRepository: PlanRepository {
         let start = calendar.weekStart(for: date)
         let end = calendar.date(byAdding: .day, value: 7, to: start)!
         let scheduled = scheduled(in: start ..< end, filter: filter)
+        let restMarks = restDays(in: start ..< end)
         let days = (0..<7).map { offset -> TrainingDay in
             let d = calendar.date(byAdding: .day, value: offset, to: start)!
             let sessions = scheduled.filter { calendar.isDate($0.date, inSameDayAs: d) }
                 .sorted { ($0.timeOfDay?.rawValue ?? "") < ($1.timeOfDay?.rawValue ?? "") }
-            return TrainingDay(date: d, sessions: sessions)
+            return TrainingDay(date: d, sessions: sessions, isRestDay: restMarks.contains(d))
         }
         return TrainingWeek(startDate: start, days: days)
     }
@@ -149,7 +156,9 @@ final class SwiftDataPlanRepository: PlanRepository {
     func day(_ date: Date, filter: ProgramFilter) -> TrainingDay {
         let start = calendar.startOfDay(for: date)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!
-        return TrainingDay(date: start, sessions: scheduled(in: start ..< end, filter: filter))
+        return TrainingDay(date: start,
+                           sessions: scheduled(in: start ..< end, filter: filter),
+                           isRestDay: !restDays(in: start ..< end).isEmpty)
     }
 
     func days(from startDate: Date, through endDate: Date, filter: ProgramFilter) -> [TrainingDay] {
@@ -158,12 +167,35 @@ final class SwiftDataPlanRepository: PlanRepository {
         guard let end = calendar.date(byAdding: .day, value: 1, to: last) else { return [] }
         let sessions = scheduled(in: start ..< end, filter: filter)
         let sessionsByDate = Dictionary(grouping: sessions) { calendar.startOfDay(for: $0.date) }
+        let restMarks = restDays(in: start ..< end)
         let count = calendar.dateComponents([.day], from: start, to: last).day ?? 0
 
         return (0...count).compactMap { offset in
             guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
-            return TrainingDay(date: date, sessions: sessionsByDate[date, default: []])
+            return TrainingDay(date: date,
+                               sessions: sessionsByDate[date, default: []],
+                               isRestDay: restMarks.contains(date))
         }
+    }
+
+    func restDays(in range: Range<Date>) -> Set<Date> {
+        let start = range.lowerBound
+        let end = range.upperBound
+        let marks = fetch(SDRestDay.self, where: #Predicate { $0.date >= start && $0.date < end })
+        return Set(marks.map { calendar.startOfDay(for: $0.date) })
+    }
+
+    func setRestDay(_ date: Date, _ isRest: Bool) {
+        let day = calendar.startOfDay(for: date)
+        guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+        let existing = fetch(SDRestDay.self, where: #Predicate { $0.date >= day && $0.date < next })
+        if isRest {
+            guard existing.isEmpty else { return }
+            context.insert(SDRestDay(date: day))
+        } else {
+            existing.forEach(context.delete)
+        }
+        save()
     }
 
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? {

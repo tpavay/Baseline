@@ -44,7 +44,7 @@ struct PlanView: View {
     /// A drag dropped onto a day that already has session(s) — resolved via an action sheet.
     struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
     struct DeleteTarget: Identifiable { let id = UUID(); let sw: ScheduledWorkout; let proposalID: UUID }
-    struct ImportContext: Identifiable { let id = UUID(); let date: Date }
+    struct ImportContext: Identifiable { let id = UUID(); let date: Date; var source: WorkoutImportImageSource? }
     struct AddContext: Identifiable { let id = UUID(); let date: Date }
 
     private let cal = Calendar.planWeek
@@ -70,13 +70,15 @@ struct PlanView: View {
         }
         .sheet(isPresented: $showChat) { AskBaselineSheet(surface: .plan) }
         .sheet(item: $addContext, onDismiss: runPendingAdd) { context in
-            AddToDaySheet(title: addSheetTitle(for: context.date), templates: plan.templates()) { option in
+            AddToDaySheet(date: context.date, templates: plan.templates()) { option in
                 pendingAdd = (context.date, option)
                 addContext = nil
             }
         }
         .fullScreenCover(item: $importContext, onDismiss: { Task { await loadPendingImports() } }) { context in
-            WorkoutImportView(suggestedDate: context.date) { scheduled in openExecution(scheduled) }
+            WorkoutImportView(suggestedDate: context.date, initialSource: context.source) { scheduled in
+                openExecution(scheduled)
+            }
         }
         .fullScreenCover(item: $detailWorkout) { scheduled in
             WorkoutDetailView(scheduledWorkoutID: scheduled.id)
@@ -270,17 +272,7 @@ struct PlanView: View {
                 }
 
                 if day.sessions.isEmpty && pendingReview == nil {
-                    Button {
-                        addContext = AddContext(date: day.date)
-                    } label: {
-                        Text("Rest day")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(BaselineColor.textFaint)
-                            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens options to add a workout")
+                    emptyDayRow(day)
                 } else {
                     ForEach(day.sessions) { scheduled in
                         WorkoutSwipeActionRow(
@@ -331,6 +323,54 @@ struct PlanView: View {
             return drop(dragged, on: day.date)
         } isTargeted: { targeted in
             dropTargetDate = targeted ? day.date : nil
+        }
+    }
+
+    /// An empty day is a decision waiting to be made. The row leads with an explicit affordance —
+    /// "Add workout" (plus glyph, opens the per-day add sheet), or "Rest day" once the athlete has
+    /// marked it — and carries a trailing one-tap moon toggle so declaring a rest day never requires
+    /// opening the sheet. Un-marking is the same tap, so the toggle is its own undo.
+    private func emptyDayRow(_ day: TrainingDay) -> some View {
+        let dayLabel = day.date.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        return HStack(spacing: BaselineSpacing.xSmall) {
+            Button {
+                addContext = AddContext(date: day.date)
+            } label: {
+                HStack(spacing: BaselineSpacing.xxSmall) {
+                    if day.isRestDay {
+                        Text("Rest day")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(BaselineColor.textMid)
+                    } else {
+                        Image(systemName: "plus.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BaselineColor.accent.opacity(0.8))
+                        Text("Add workout")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(BaselineColor.textFaint)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(day.isRestDay ? "Rest day" : "Add workout")
+            .accessibilityHint("Opens options to add training to \(dayLabel)")
+
+            Button {
+                plan.setRestDay(day.date, !day.isRestDay)
+            } label: {
+                Image(systemName: day.isRestDay ? "moon.zzz.fill" : "moon.zzz")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(day.isRestDay ? BaselineColor.accent : BaselineColor.textFaint)
+                    .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(day.isRestDay ? "Remove rest day" : "Mark as rest day")
+            .accessibilityHint(day.isRestDay
+                ? "Removes the rest-day mark from \(dayLabel)"
+                : "Marks \(dayLabel) as a rest day")
         }
     }
 
@@ -439,13 +479,6 @@ struct PlanView: View {
         pendingImports = await WorkoutImportCoordinator().pendingImports()
     }
 
-    /// Human-friendly sheet title for the day being added to — "Today"/"Tomorrow" when close, else the weekday.
-    private func addSheetTitle(for date: Date) -> String {
-        if cal.isDateInToday(date) { return "Add to Today" }
-        if cal.isDateInTomorrow(date) { return "Add to Tomorrow" }
-        return "Add to \(date.formatted(.dateTime.weekday(.wide)))"
-    }
-
     /// Runs the add-sheet choice after the sheet has finished dismissing, so the follow-on presentation
     /// isn't dropped by SwiftUI for racing the outgoing sheet.
     private func runPendingAdd() {
@@ -453,9 +486,10 @@ struct PlanView: View {
         pendingAdd = nil
         switch pending.option {
         case .buildWithBaseline: showChat = true
-        case .emptySession: addWorkout(on: pending.date)
+        case .restDay: plan.setRestDay(pending.date, true)
+        case .startEmptyWorkout: startEmptyWorkout(on: pending.date)
         case .template(let id): addFromTemplate(id, on: pending.date)
-        case .importImage: importContext = ImportContext(date: pending.date)
+        case .importImage(let source): importContext = ImportContext(date: pending.date, source: source)
         }
     }
 
@@ -484,8 +518,12 @@ struct PlanView: View {
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    private func addWorkout(on date: Date) {
-        openExecution(plan.newScheduledWorkout(on: date))   // blank workout for that date, then open the editor
+    /// "Start an empty workout": the athlete wants to train *now*. Schedule a blank workout on the
+    /// day and go straight into live logging with the timer running — identical to a template's
+    /// "Start Workout" — rather than landing on the prescription view.
+    private func startEmptyWorkout(on date: Date) {
+        openExecution(plan.newScheduledWorkout(on: date))
+        execContext?.store.startWorkout()
     }
     private func addFromTemplate(_ id: UUID, on date: Date) {
         if let sw = plan.instantiateTemplate(id, on: date) { openExecution(sw) }

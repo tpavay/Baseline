@@ -11,17 +11,13 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            TodayView()
+            TodayView(openPlanTab: { selection = .plan })
                 .toolbar(.hidden, for: .tabBar)
                 .tag(MainTab.today)
 
             PlanView()
                 .toolbar(.hidden, for: .tabBar)
                 .tag(MainTab.plan)
-
-            WorkoutView(showsFloatingTabBarClearance: true)
-                .toolbar(.hidden, for: .tabBar)
-                .tag(MainTab.train)
 
             ProfileView()
                 .toolbar(.hidden, for: .tabBar)

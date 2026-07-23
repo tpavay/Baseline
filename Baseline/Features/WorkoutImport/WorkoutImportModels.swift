@@ -1,6 +1,15 @@
 import CryptoKit
 import Foundation
 
+// MARK: - Image sources
+
+/// Where an image import's photos come from. Chosen up front (e.g. the per-day add sheet's
+/// Camera / Photos dialog) so the import screen can open straight into the right capture surface.
+enum WorkoutImportImageSource: Equatable, Sendable {
+    case camera
+    case photoLibrary
+}
+
 // MARK: - Import document
 
 /// The provider-neutral structured document returned by any workout parser. It intentionally contains

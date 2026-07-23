@@ -1,69 +1,93 @@
 import SwiftUI
+import UIKit
 
-/// The path chosen from the per-day "Add to <day>" sheet. The caller runs the follow-on presentation.
+/// The path chosen from the per-day "Add to <day>" sheet. The caller runs the follow-on action.
 enum AddToDayOption: Equatable {
     case buildWithBaseline
-    case emptySession
+    case restDay
+    case startEmptyWorkout
     case template(UUID)
-    case importImage
+    case importImage(WorkoutImportImageSource)
 }
 
-/// The per-day "Add to <day>" action sheet — the single entry point for adding training to a Plan day,
-/// replacing the old inline menu. The conversational hero (Build with Baseline) sits above three
-/// direct-control peers (empty session, template, image import), matching the principle that conversation
-/// and direct controls are complementary. Selecting a row reports the choice and lets the caller dismiss.
+/// The per-day "Add to <day>" action sheet — the single entry point for deciding a Plan day
+/// (approved redesign: `baseline-sleep-addworkout-redesign.html`, screen 3). The conversational
+/// hero sits on top, a one-tap "Make it a rest day" is its prominent peer, and the direct-control
+/// paths (start now, template, image import) follow as compact one-line rows. Selecting an option
+/// reports the choice and lets the caller dismiss.
 struct AddToDaySheet: View {
-    let title: String
+    let date: Date
     let templates: [WorkoutTemplate]
+    /// Injectable so tests can exercise both dialog shapes; the simulator has no camera.
+    var cameraAvailable = UIImagePickerController.isSourceTypeAvailable(.camera)
     let onSelect: (AddToDayOption) -> Void
+
     @Environment(\.dismiss) private var dismiss
+    @State private var showImportSourceDialog = false
+
+    /// The image sources offered for "Import from image". Pure so the routing is testable:
+    /// no camera means no dialog — the row goes straight to the photo library.
+    static func importSources(cameraAvailable: Bool) -> [WorkoutImportImageSource] {
+        cameraAvailable ? [.camera, .photoLibrary] : [.photoLibrary]
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title)
-                        .font(.system(size: 28, weight: .bold))
+                    Text(Self.title(for: date))
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(BaselineColor.textHi)
-                        .padding(.top, 6)
-                    Text("Describe it, start fresh, reuse a template, or import a written workout.")
-                        .font(.system(size: 15))
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 8)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Add training, or mark it a rest day.")
+                        .font(.system(size: 13))
                         .foregroundStyle(BaselineColor.textMid)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 4)
 
-                    groupLabel("FASTEST - LET BASELINE BUILD IT").padding(.top, 22)
                     Button { onSelect(.buildWithBaseline) } label: {
                         optionRow(icon: "sparkles",
                                   title: "Build with Baseline",
-                                  subtitle: "Describe a workout or a whole plan - get an editable draft.",
-                                  hero: true)
+                                  subtitle: "Describe it - get an editable draft.",
+                                  style: .hero)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 20)
+
+                    Button { onSelect(.restDay) } label: {
+                        optionRow(icon: "moon.zzz.fill",
+                                  title: "Make it a rest day",
+                                  subtitle: "One tap - no workout scheduled.",
+                                  style: .rest,
+                                  showsChevron: false)
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 10)
+                    .accessibilityHint("Marks this day as a rest day and closes the sheet")
 
-                    groupLabel("BUILD IT YOURSELF").padding(.top, 22)
+                    groupLabel("OR BUILD IT YOURSELF").padding(.top, 20)
                     VStack(spacing: 10) {
-                        Button { onSelect(.emptySession) } label: {
-                            optionRow(icon: "plus",
-                                      title: "Start an empty session",
-                                      subtitle: "Begin training now and log as you go - no plan needed.")
+                        Button { onSelect(.startEmptyWorkout) } label: {
+                            optionRow(icon: "play.fill",
+                                      title: "Start an empty workout",
+                                      subtitle: "Begin now - timer starts; add exercises as you go.")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityHint("Opens live logging immediately with the timer running")
 
                         NavigationLink {
                             templatePicker
                         } label: {
-                            optionRow(icon: "square.stack",
-                                      title: "From a template",
-                                      subtitle: "Choose a saved template.")
+                            optionRow(icon: "square.stack", title: "From a template")
                         }
                         .buttonStyle(.plain)
 
-                        Button { onSelect(.importImage) } label: {
-                            optionRow(icon: "doc.viewfinder",
+                        Button(action: chooseImportSource) {
+                            optionRow(icon: "camera",
                                       title: "Import from image",
-                                      subtitle: "Photograph or upload a written workout.")
+                                      subtitle: "Take a photo or pick from your library.")
                         }
                         .buttonStyle(.plain)
                     }
@@ -85,10 +109,32 @@ struct AddToDaySheet: View {
                 .background(BaselineColor.base)
             }
             .toolbar(.hidden, for: .navigationBar)
+            .confirmationDialog("Import from image", isPresented: $showImportSourceDialog) {
+                Button("Take Photo") { onSelect(.importImage(.camera)) }
+                Button("Choose from Photos") { onSelect(.importImage(.photoLibrary)) }
+                Button("Cancel", role: .cancel) {}
+            }
         }
         .presentationDetents([.height(600), .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(BaselineColor.base)
+    }
+
+    /// "Today, Jul 24" / "Tomorrow, Jul 25" / "Thursday, Jul 31" — the day being decided.
+    static func title(for date: Date) -> String {
+        let cal = Calendar.planWeek
+        let dayNumber = date.formatted(.dateTime.month(.abbreviated).day())
+        if cal.isDateInToday(date) { return "Today, \(dayNumber)" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow, \(dayNumber)" }
+        return "\(date.formatted(.dateTime.weekday(.wide))), \(dayNumber)"
+    }
+
+    private func chooseImportSource() {
+        if Self.importSources(cameraAvailable: cameraAvailable) == [.photoLibrary] {
+            onSelect(.importImage(.photoLibrary))
+        } else {
+            showImportSourceDialog = true
+        }
     }
 
     // MARK: Template picker (pushed)
@@ -146,6 +192,8 @@ struct AddToDaySheet: View {
 
     // MARK: Building blocks
 
+    private enum RowStyle { case standard, hero, rest }
+
     private func groupLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .bold))
@@ -153,40 +201,74 @@ struct AddToDaySheet: View {
             .foregroundStyle(BaselineColor.textFaint)
     }
 
-    private func optionRow(icon: String, title: String, subtitle: String, hero: Bool = false) -> some View {
-        HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(hero ? BaselineColor.accent.opacity(0.20) : BaselineColor.amethyst)
-                .frame(width: 46, height: 46)
+    private func optionRow(
+        icon: String,
+        title: String,
+        subtitle: String? = nil,
+        style: RowStyle = .standard,
+        showsChevron: Bool = true
+    ) -> some View {
+        HStack(spacing: 13) {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(iconBackground(for: style))
+                .frame(width: 40, height: 40)
                 .overlay(
                     Image(systemName: icon)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(BaselineColor.accent)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(style == .hero ? BaselineColor.base : BaselineColor.accent)
                 )
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(BaselineColor.textHi)
-                Text(subtitle)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(BaselineColor.textMid)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(BaselineColor.textMid)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(BaselineColor.textFaint)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(BaselineColor.textFaint)
+            }
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(hero ? BaselineColor.amethyst.opacity(0.55) : BaselineColor.surface.opacity(0.6))
+        .background(rowBackground(for: style))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func iconBackground(for style: RowStyle) -> Color {
+        switch style {
+        case .hero: BaselineColor.accent
+        case .rest: BaselineColor.surface
+        case .standard: BaselineColor.amethyst
+        }
+    }
+
+    @ViewBuilder private func rowBackground(for style: RowStyle) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        switch style {
+        case .hero:
+            shape
+                .fill(BaselineColor.amethyst.opacity(0.55))
+                .overlay(shape.strokeBorder(BaselineColor.accent.opacity(0.4), lineWidth: 1))
+        case .rest:
+            shape
+                .fill(BaselineColor.surface.opacity(0.5))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(hero ? BaselineColor.accent.opacity(0.55) : BaselineColor.line, lineWidth: 1)
+                    shape.strokeBorder(
+                        BaselineColor.textMid.opacity(0.4),
+                        style: StrokeStyle(lineWidth: 1, dash: [5, 4])
+                    )
                 )
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        case .standard:
+            shape
+                .fill(BaselineColor.surface.opacity(0.5))
+                .overlay(shape.strokeBorder(BaselineColor.line, lineWidth: 1))
+        }
     }
 }
