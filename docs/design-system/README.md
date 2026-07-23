@@ -102,9 +102,9 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Row radius | `BaselineRadius.row` | 12 pt |
 | Floating tab bar radius | `BaselineRadius.tabBar` | 30 pt |
 | Form row vertical padding | `BaselineSpacing.formRowVertical` | 14 pt |
-| Sleep ring | `BaselineSize.sleepRing` | 84 pt |
-| Sleep ring line width | `BaselineSize.sleepRingLineWidth` | 5 pt |
-| Sleep ring segment gap | `BaselineSize.sleepRingGapDegrees` | 8 degrees |
+| Sleep ring | `BaselineSize.sleepRing` | 92 pt |
+| Sleep ring line width | `BaselineSize.sleepRingLineWidth` | 11 pt |
+| Sleep ring segment gap | `BaselineSize.sleepRingGapDegrees` | 28 degrees |
 | Heart-rate-zone ring | `BaselineSize.zoneRing` | 118 pt |
 | Heart-rate-zone ring line width | `BaselineSize.zoneRingLineWidth` | 11 pt |
 | Heart-rate-zone segment gap | `BaselineSize.zoneRingGapDegrees` | 1.2 degrees |
@@ -151,22 +151,23 @@ Use `.standard` for normal supporting cards.
 Use `.plan` for the named amethyst-to-surface gradient and violet-tinted plan border.
 Do not recreate this chrome in feature screens.
 
-### `SegmentedRingLayout` and `SegmentedRing`
+### `SegmentedRingLayout`, `SegmentedRing`, and `RadialFillSegmentedRing`
 
 `SegmentedRingLayout` is pure geometry.
 It accepts positive segment weights, independently clamped progress values, a gap in degrees, and a start angle.
 It drops non-positive weights, defaults missing progress to zero, and prevents gaps from producing negative arcs.
 
-`SegmentedRing` renders that geometry with caller-provided colors, diameter, stroke width, track color, center content, and one accessibility summary.
-The component has no internal animation, so Reduce Motion requires no alternate path.
-Its diameter and stroke scale with Dynamic Type.
+`SegmentedRing` renders that geometry as arc-length progress with caller-provided colors, diameter, stroke width, track color, center content, and one accessibility summary.
+`RadialFillSegmentedRing` renders the same geometry with radial-fill progress: every fill arc keeps its segment's full sweep and thickens outward from the track's inner edge as progress grows, over a dim same-hue track.
+Neither component has internal animation, so Reduce Motion requires no alternate path.
+Their diameter and stroke scale with Dynamic Type.
 
-The sleep dial and heart-rate donut must use this same renderer.
+The sleep score ring and heart-rate donut must use these shared renderers.
 
-| Caller | Diameter | Stroke | Gap | Weights | Progress |
-|---|---:|---:|---:|---|---|
-| Sleep dial | 84 pt | 5 pt | 8 degrees | Three fixed bands | Independent per band |
-| Zone donut | 118 pt | 11 pt | 1.2 degrees | Five proportional zone totals | Fully completed |
+| Caller | Renderer | Diameter | Stroke | Gap | Weights | Progress |
+|---|---|---:|---:|---:|---|---|
+| Sleep score ring | `RadialFillSegmentedRing` | 92 pt | 11 pt | 28 degrees | Score component maxima 50/30/20 | Radial fill per component |
+| Zone donut | `SegmentedRing` | 118 pt | 11 pt | 1.2 degrees | Five proportional zone totals | Fully completed |
 
 The approved zone order is blue, green, violet, amber, and red.
 Domain calculations remain outside the component.
