@@ -219,14 +219,16 @@ private struct ConversationView: View {
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(BaselineColor.surface))
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(BaselineColor.line, lineWidth: 1))
-            Button {
-                service.retryFailedTurn()
-            } label: {
-                Label("Try again", systemImage: "arrow.clockwise")
+            if service.log.last?.id == m.id {
+                Button {
+                    service.retryFailedTurn()
+                } label: {
+                    Label("Try again", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.accent))
+                .disabled(service.isThinking)
+                .accessibilityHint("Re-sends your last message to Baseline")
             }
-            .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.accent))
-            .disabled(service.isThinking)
-            .accessibilityHint("Re-sends your last message to Baseline")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .transition(.opacity)

@@ -44,6 +44,35 @@ struct AskBaselineFailureBubbleRenderTests {
 
         screen.captureScreenshotIfRequested()
     }
+
+    /// A failure the athlete scrolled past by sending a new message must not keep a live, tappable
+    /// retry: only the current last-in-log failure offers one, so a superseded bubble can't fire a
+    /// silent no-op through `retryFailedTurn`'s `log.last == .failure` guard.
+    @Test func aSupersededFailureDropsItsTryAgainButton() async throws {
+        let server = try CapacityErrorServer()
+        defer { server.stop() }
+        let screen = try await ChatFailureScreen(failingOnPort: server.port)
+        defer { screen.tearDown() }
+
+        try await screen.send("First message the coach never received")
+        try await screen.settle(
+            until: {
+                guard let retry = screen.element(labeled: "Try again") else { return false }
+                return !retry.accessibilityTraits.contains(.notEnabled)
+            },
+            orRecord: "The first failed turn never rendered an enabled Try again button."
+        )
+
+        // A new message supersedes the first failure. It fails too, so a second failure bubble appears
+        // as the new last-in-log; the first must have surrendered its button.
+        try await screen.send("Second message that pushes the first failure up")
+        try await screen.settle(
+            until: { screen.elements(labeled: "Try again").count == 1 },
+            orRecord: "After a second failed turn there should be exactly one Try again button."
+        )
+        #expect(screen.elements(labeled: "Try again").count == 1,
+                "Only the last-in-log failure may expose a Try again control.")
+    }
 }
 
 // MARK: - A provider-capacity error stand-in
@@ -179,6 +208,10 @@ private final class ChatFailureScreen {
 
     func element(labeled label: String) -> NSObject? {
         Self.elements(in: window).first { $0.accessibilityLabel == label }
+    }
+
+    func elements(labeled label: String) -> [NSObject] {
+        Self.elements(in: window).filter { $0.accessibilityLabel == label }
     }
 
     /// Writes the rendered sheet to the PNG named by `FAILURE_BUBBLE_SCREENSHOT`, if set. `xcodebuild`
