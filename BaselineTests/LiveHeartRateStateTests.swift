@@ -14,6 +14,7 @@ private final class StubLiveHeartRateProvider: LiveHeartRateProviding {
     var averageBPM: Int?
     var maxBPM: Int?
     var sessionElapsed: TimeInterval = 0
+    var zoneTime = ZoneTimeAccumulator()
 
     var currentBPM: Int? { freshSample?.bpm }
     var currentZone: HeartRateZone? { freshSample.map { zoneModel.zone(forBPM: $0.bpm) } }
