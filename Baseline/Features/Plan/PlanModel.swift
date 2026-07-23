@@ -118,6 +118,9 @@ struct TrainingDay: Identifiable, Sendable {
     var id: Date { date }
     var date: Date
     var sessions: [ScheduledWorkout]      // 0..n
+    /// The athlete explicitly marked this day a rest day. Distinguishes a *decided* rest day from a
+    /// day that merely has nothing planned yet. Display-only when `sessions` is non-empty.
+    var isRestDay = false
 }
 
 struct TrainingWeek: Sendable {

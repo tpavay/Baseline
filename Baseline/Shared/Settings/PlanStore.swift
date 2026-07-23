@@ -53,6 +53,8 @@ final class PlanStore {
         repo.days(from: startDate, through: endDate, filter: filter)
     }
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? { repo.scheduledWorkout(id) }
+    /// Mark or un-mark a day as an explicit rest day (see `PlanRepository.setRestDay`).
+    func setRestDay(_ date: Date, _ isRest: Bool) { repo.setRestDay(date, isRest); reload() }
     func session(for id: UUID) -> WorkoutSession? { repo.session(forScheduled: id) }
     func completed(for id: UUID) -> CompletedWorkoutLog? { repo.completedLog(forScheduled: id) }
     /// The subset of `ids` with a completed log, resolved in one fetch (never one query per session).

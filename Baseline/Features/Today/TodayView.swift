@@ -4,6 +4,12 @@ import SwiftUI
 /// The signed-in home screen. Live evidence and persisted training facts are assembled here, then
 /// passed to a presentation-only view that mirrors the approved Today prototype.
 struct TodayView: View {
+    /// Switches the shell to the Plan tab. The "Today's Plan" card must never *push* `PlanView`:
+    /// it owns its own `NavigationStack`, and a nested stack inside a `navigationDestination`
+    /// pops straight back and then corrupts the outer path (a `comparisonTypeMismatch` fatal on
+    /// the next push). See `TodayPlanNavigationTests`.
+    let openPlanTab: () -> Void
+
     @Environment(AppSettings.self) private var settings
     @Environment(OnboardingStore.self) private var profile
     @Environment(HealthService.self) private var health
@@ -18,7 +24,8 @@ struct TodayView: View {
     @Query private var completedExercises: [SDCompletedExercise]
     @Query private var workoutSessions: [SDWorkoutSession]
 
-    init() {
+    init(openPlanTab: @escaping () -> Void = {}) {
+        self.openPlanTab = openPlanTab
         let calendar = Calendar.planWeek
         let weekStart = calendar.weekStart(for: .now)
         let windowStart = calendar.date(byAdding: .day, value: -7, to: weekStart) ?? weekStart
@@ -52,7 +59,7 @@ struct TodayView: View {
                         model: homeModel,
                         openSleep: openSleep,
                         openHRV: { path.append(.hrv) },
-                        openPlan: { path.append(.plan) }
+                        openPlan: openPlanTab
                     )
                 } else {
                     ZStack {
@@ -105,8 +112,6 @@ struct TodayView: View {
         case .hrv:
             ReadingHistoryView()
                 .floatingTabBarClearance()
-        case .plan:
-            PlanView()
         }
     }
 
@@ -333,7 +338,6 @@ struct TodayView: View {
 private enum TodayRoute: Hashable {
     case sleep
     case hrv
-    case plan
 }
 
 private enum TodayModal: Identifiable, Equatable {

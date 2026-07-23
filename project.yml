@@ -69,7 +69,7 @@ targets:
         # revising it.
         NSHealthUpdateUsageDescription: "Baseline saves the body weight you log in your morning check-in to Apple Health, and nothing else."
         NSBluetoothAlwaysUsageDescription: "Baseline connects to your heart-rate strap to take your morning HRV reading."
-        NSCameraUsageDescription: "Baseline uses the camera and flash to read your pulse from your fingertip for your morning HRV reading."
+        NSCameraUsageDescription: "Baseline uses the camera to read your pulse from your fingertip for your morning HRV reading, and to photograph written workouts you want to import."
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:

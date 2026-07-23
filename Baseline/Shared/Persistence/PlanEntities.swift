@@ -218,11 +218,22 @@ import SwiftData
     }
 }
 
+/// An explicit "this is a rest day" marker for one calendar day — set from the per-day add sheet or
+/// the Plan row's one-tap affordance. A plain per-day toggle, deliberately outside the versioned
+/// mutation history: it schedules nothing and references nothing, so un-marking is its own undo.
+@Model final class SDRestDay {
+    var id: UUID = UUID()
+    var date: Date = Date.distantPast   // startOfDay in the plan calendar
+    init(id: UUID = UUID(), date: Date = Date.distantPast) {
+        self.id = id; self.date = date
+    }
+}
+
 /// The full Plan schema — registered on the app's `ModelContainer` so it's stable across all slices.
 enum PlanSchema {
     static let models: [any PersistentModel.Type] = [
         SDProgram.self, SDProgramSection.self, SDScheduledWorkout.self, SDWorkoutRevision.self,
         SDWorkoutTemplate.self, SDWorkoutSession.self, SDCompletedLog.self, SDCompletedExercise.self,
-        SDPlanVersion.self, SDPendingProposal.self, SDSessionMutationVersion.self,
+        SDPlanVersion.self, SDPendingProposal.self, SDSessionMutationVersion.self, SDRestDay.self,
     ]
 }

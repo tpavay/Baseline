@@ -108,7 +108,7 @@ avoid painful `@Model` migrations later; only Phase-optional and the WorkoutSess
 
 | Area | Today | Gap for the Plan tab |
 |---|---|---|
-| **Nav** | `MainTabView` — floating **Today / Plan / Train / Profile** bar (`BaselineFloatingTabBar`). `Features/History` exists but isn't a tab. | Slice 1's shell has shipped. Plan opens/starts/resumes any workout; an active workout stays globally reachable; History is contextual, not a tab. |
+| **Nav** | `MainTabView` — floating **Weekly / Plan / Profile** bar (`BaselineFloatingTabBar`). The Train tab was retired; ad-hoc training now starts from the Plan day's add sheet. `Features/History` exists but isn't a tab. | Slice 1's shell has shipped. Plan opens/starts/resumes any workout; an active workout stays globally reachable; History is contextual, not a tab. |
 | **"Plan"** | `PlanningEngine.Plan` = one **day's recommendation** (`type/summary/why/avoid`) from `DecisionEngine` via `PlanAssembler`. | No week/schedule concept. Keep the engine; it feeds *today's* status only. |
 | **Workout model** | Pure value types: `Workout → WorkoutBlock → PlannedExercise → PlannedSet` (+ `Prescription`, `CoachGuidance`); performed side `WorkoutLog → PerformedExercise → SetLog` (+ `PerformedStatus`). Typed `MetricType`/`MetricValues`. Stable UUIDs already. | Reuse **as-is** as the leaf of the schedule graph. No changes to these types except additive. |
 | **Storage** | `WorkoutStore` (`@Observable @MainActor`) holds **one** `current: Workout?` + one `currentLog: WorkoutLog?`, persisted as **UserDefaults JSON**. Also `preferences`, `customDefinitions`, `recentExerciseIds`. | No multi-workout, no per-day scheduling, no programs, no versions/undo, no drag-drop. Superseded by the repository; migrated. |
@@ -519,7 +519,7 @@ writes a ref back onto the `ScheduledWorkout`, so plan restore can't disturb the
 
 ## 13. Error & empty states
 
-Empty week ("No sessions this week — ask Baseline or add one"); rest day (no marker); **migration-failure
+Empty week ("No sessions this week — ask Baseline or add one"); empty day (leads with an "Add workout" affordance plus a one-tap moon toggle to mark a rest day; only a decided rest day reads "Rest day", backed by `SDRestDay`); **migration-failure
 recovery mode** (read-only: old JSON preserved, schedule mutations blocked, diagnostic + retry/export — one
 writable store, never two, point 5); mutation validation errors (surfaced as `rejected(PlanError)`, no
 silent no-op); `confirmationRequired` diff shown before any structural change; agent ambiguity ("which

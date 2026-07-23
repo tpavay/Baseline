@@ -231,6 +231,11 @@ struct WorkoutImportView: View {
     @State private var assemblingStore: WorkoutStore?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var selectedScheduleDate: Date
+    /// A caller-chosen capture surface (the add sheet's Camera / Photos dialog) that should open as
+    /// soon as the picker screen appears. Consumed once; a restored in-flight import supersedes it.
+    @State private var pendingInitialSource: WorkoutImportImageSource?
+    @State private var showCamera = false
+    @State private var showLibraryPicker = false
     @State private var showCancelConfirmation = false
     @State private var showDiscardConfirmation = false
     @State private var showStartOverConfirmation = false
@@ -243,10 +248,15 @@ struct WorkoutImportView: View {
     private let restoresPersistedImport: Bool
     let onScheduled: (ScheduledWorkout) -> Void
 
-    init(suggestedDate: Date? = nil, onScheduled: @escaping (ScheduledWorkout) -> Void = { _ in }) {
+    init(
+        suggestedDate: Date? = nil,
+        initialSource: WorkoutImportImageSource? = nil,
+        onScheduled: @escaping (ScheduledWorkout) -> Void = { _ in }
+    ) {
         _model = State(initialValue: WorkoutImportViewModel(scheduleDate: suggestedDate))
         _reviewStore = State(initialValue: nil)
         _selectedScheduleDate = State(initialValue: suggestedDate ?? Date())
+        _pendingInitialSource = State(initialValue: initialSource)
         restoresPersistedImport = true
         self.onScheduled = onScheduled
     }
@@ -424,6 +434,18 @@ struct WorkoutImportView: View {
             }
             prepareReviewStore(for: model.session.status)
             moveAccessibilityFocus(for: model.session.status)
+            launchInitialSourceIfIdle()
+        }
+        .photosPicker(
+            isPresented: $showLibraryPicker,
+            selection: $photoItems,
+            maxSelectionCount: WorkoutImageImportLimits.maximumImageCount,
+            selectionBehavior: .ordered,
+            matching: .images
+        )
+        .fullScreenCover(isPresented: $showCamera) {
+            WorkoutImportCameraCapture(onCapture: handleCameraCapture)
+                .ignoresSafeArea()
         }
         .onAppear { syncKeepAwake() }
         .onDisappear {
@@ -514,6 +536,32 @@ struct WorkoutImportView: View {
     /// Decide, on appear, how a persisted unfinished import relates to the day this screen was opened for.
     /// Same day → resume silently. No target day (e.g. a non-day entry) → resume the most recent. A draft
     /// for a *different* day → offer Resume / Start-new instead of silently reappearing here.
+    /// Open the caller-chosen capture surface once the screen has settled on the picker state.
+    /// A restored in-flight import wins: the athlete resumes their work instead of a new capture.
+    private func launchInitialSourceIfIdle() {
+        guard let source = pendingInitialSource else { return }
+        pendingInitialSource = nil
+        guard model.session.status == .selecting, pendingOtherDayImport == nil else { return }
+        switch source {
+        case .camera:
+            guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+                showLibraryPicker = true
+                return
+            }
+            showCamera = true
+        case .photoLibrary:
+            showLibraryPicker = true
+        }
+    }
+
+    /// A camera capture feeds the exact pipeline photo-library selections use, as a one-image import.
+    private func handleCameraCapture(_ data: Data?) {
+        showCamera = false
+        guard let data else { return }
+        reviewStore = nil
+        _ = model.importImages([data], catalog: workouts.allDefinitions)
+    }
+
     private func resolvePendingImport() async {
         guard model.currentJob == nil else { return }
         let pendings = await model.pendingImports()
@@ -655,6 +703,20 @@ struct WorkoutImportView: View {
                 matching: .images
             ) {
                 importButton("Choose workout photos", systemImage: "photo.stack")
+            }
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button { showCamera = true } label: {
+                    Label("Take a photo", systemImage: "camera")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(BaselineColor.accent)
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(BaselineColor.accent.opacity(0.5), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             Spacer()
         }

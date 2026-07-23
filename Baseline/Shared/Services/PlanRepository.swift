@@ -19,6 +19,13 @@ protocol PlanRepository {
     func week(containing date: Date, filter: ProgramFilter) -> TrainingWeek
     func day(_ date: Date, filter: ProgramFilter) -> TrainingDay
     func days(from startDate: Date, through endDate: Date, filter: ProgramFilter) -> [TrainingDay]
+    /// Explicit rest-day markers (startOfDay keys) within a half-open range. Markers are global —
+    /// a rest day is a property of the athlete's calendar, not of any one program or filter.
+    func restDays(in range: Range<Date>) -> Set<Date>
+    /// Mark or un-mark a calendar day as an explicit rest day. Idempotent; not versioned — the
+    /// marker schedules nothing, so toggling it back is its own undo. Scheduling training onto a
+    /// marked day clears the marker: the workout implicitly reverses the rest decision.
+    func setRestDay(_ date: Date, _ isRest: Bool)
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout?
     func session(forScheduled id: UUID) -> WorkoutSession?
     func completedLog(forScheduled id: UUID) -> CompletedWorkoutLog?
@@ -137,11 +144,12 @@ final class SwiftDataPlanRepository: PlanRepository {
         let start = calendar.weekStart(for: date)
         let end = calendar.date(byAdding: .day, value: 7, to: start)!
         let scheduled = scheduled(in: start ..< end, filter: filter)
+        let restMarks = restDays(in: start ..< end)
         let days = (0..<7).map { offset -> TrainingDay in
             let d = calendar.date(byAdding: .day, value: offset, to: start)!
             let sessions = scheduled.filter { calendar.isDate($0.date, inSameDayAs: d) }
                 .sorted { ($0.timeOfDay?.rawValue ?? "") < ($1.timeOfDay?.rawValue ?? "") }
-            return TrainingDay(date: d, sessions: sessions)
+            return TrainingDay(date: d, sessions: sessions, isRestDay: restMarks.contains(d))
         }
         return TrainingWeek(startDate: start, days: days)
     }
@@ -149,7 +157,9 @@ final class SwiftDataPlanRepository: PlanRepository {
     func day(_ date: Date, filter: ProgramFilter) -> TrainingDay {
         let start = calendar.startOfDay(for: date)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!
-        return TrainingDay(date: start, sessions: scheduled(in: start ..< end, filter: filter))
+        return TrainingDay(date: start,
+                           sessions: scheduled(in: start ..< end, filter: filter),
+                           isRestDay: !restDays(in: start ..< end).isEmpty)
     }
 
     func days(from startDate: Date, through endDate: Date, filter: ProgramFilter) -> [TrainingDay] {
@@ -158,12 +168,43 @@ final class SwiftDataPlanRepository: PlanRepository {
         guard let end = calendar.date(byAdding: .day, value: 1, to: last) else { return [] }
         let sessions = scheduled(in: start ..< end, filter: filter)
         let sessionsByDate = Dictionary(grouping: sessions) { calendar.startOfDay(for: $0.date) }
+        let restMarks = restDays(in: start ..< end)
         let count = calendar.dateComponents([.day], from: start, to: last).day ?? 0
 
         return (0...count).compactMap { offset in
             guard let date = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
-            return TrainingDay(date: date, sessions: sessionsByDate[date, default: []])
+            return TrainingDay(date: date,
+                               sessions: sessionsByDate[date, default: []],
+                               isRestDay: restMarks.contains(date))
         }
+    }
+
+    func restDays(in range: Range<Date>) -> Set<Date> {
+        let start = range.lowerBound
+        let end = range.upperBound
+        let marks = fetch(SDRestDay.self, where: #Predicate { $0.date >= start && $0.date < end })
+        return Set(marks.map { calendar.startOfDay(for: $0.date) })
+    }
+
+    func setRestDay(_ date: Date, _ isRest: Bool) {
+        if isRest {
+            let day = calendar.startOfDay(for: date)
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+            guard fetch(SDRestDay.self, where: #Predicate { $0.date >= day && $0.date < next }).isEmpty else { return }
+            context.insert(SDRestDay(date: day))
+        } else {
+            clearRestMarker(on: date)
+        }
+        save()
+    }
+
+    /// Scheduling training onto a day implicitly reverses a rest decision, so every write that lands
+    /// a workout on a date drops the marker there — removing that workout later must return the day
+    /// to empty, never resurrect a stale "Rest day". Callers save as part of their own transaction.
+    private func clearRestMarker(on date: Date) {
+        let day = calendar.startOfDay(for: date)
+        guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+        fetch(SDRestDay.self, where: #Predicate { $0.date >= day && $0.date < next }).forEach(context.delete)
     }
 
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? {
@@ -333,7 +374,10 @@ final class SwiftDataPlanRepository: PlanRepository {
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult {
         guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { return .rejected(.notFound) }
         let diff = ScheduleDiff(changes: [.init(kind: .move, summary: "Move \(title(id)) → \(fmtDate(toDate))", scheduledID: id)])
-        return apply(.move, actor, reason, diff) { sd.date = toDate; sd.timeOfDayRaw = timeOfDay?.rawValue }
+        return apply(.move, actor, reason, diff) {
+            sd.date = toDate; sd.timeOfDayRaw = timeOfDay?.rawValue
+            clearRestMarker(on: toDate)
+        }
     }
 
     func swap(_ a: UUID, _ b: UUID, actor: PlanActor, reason: String?) -> MutationResult {
@@ -346,6 +390,7 @@ final class SwiftDataPlanRepository: PlanRepository {
             let (ad, at) = (A.date, A.timeOfDayRaw)
             A.date = B.date; A.timeOfDayRaw = B.timeOfDayRaw
             B.date = ad; B.timeOfDayRaw = at
+            clearRestMarker(on: A.date); clearRestMarker(on: B.date)
         }
     }
 
@@ -1150,6 +1195,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         let wanted = Dictionary(uniqueKeysWithValues: snap.scheduled.map { ($0.id, $0) })
         for sd in existing where wanted[sd.id] == nil { context.delete(sd) }
         for it in snap.scheduled {
+            clearRestMarker(on: it.date)
             if let sd = existing.first(where: { $0.id == it.id }) { write(it, to: sd) }
             else { let sd = SDScheduledWorkout(); write(it, to: sd); context.insert(sd) }
         }
@@ -1179,6 +1225,7 @@ final class SwiftDataPlanRepository: PlanRepository {
     }
 
     private func insertScheduled(_ sw: ScheduledWorkout) {
+        clearRestMarker(on: sw.date)
         let rid = sw.workoutRevisionID
         if firstSD(SDWorkoutRevision.self, where: #Predicate { $0.id == rid }) == nil {
             context.insert(SDWorkoutRevision(id: rid, workoutID: sw.workoutID, createdAt: sw.date, workoutJSON: PlanCoding.data(sw.workout)))

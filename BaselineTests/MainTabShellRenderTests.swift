@@ -11,6 +11,13 @@ import UIKit
 @MainActor
 @Suite(.serialized)
 struct MainTabShellRenderTests {
+    /// The shell offers exactly Weekly / Plan / Profile. Train is gone: ad-hoc training starts from
+    /// the Plan tab's per-day add sheet, and the Weekly label names what the home screen shows.
+    @Test func theShellOffersExactlyWeeklyPlanProfile() {
+        #expect(MainTab.allCases == [.today, .plan, .profile])
+        #expect(MainTab.allCases.map(\.title) == ["Weekly", "Plan", "Profile"])
+    }
+
     @Test(arguments: MainTab.allCases)
     func theShellShowsOnlyTheFloatingTabBar(_ tab: MainTab) async throws {
         let screen = try MainTabShellScreen(tab: tab)
@@ -26,24 +33,7 @@ struct MainTabShellRenderTests {
             // own label is the Plan surface's stable accessibility marker.
             #expect(screen.element(labelled: "Calendar options") != nil)
         }
-        if tab == .train {
-            let chat = try #require(screen.element(labelled: "Talk to Baseline"))
-            #expect(chat.accessibilityFrame.maxY <= screen.floatingBarTop)
-        }
         try screen.capture("shell-\(tab.title.lowercased())")
-    }
-
-    @Test func leavingTrainUnmountsTheWorkoutSurface() async throws {
-        let screen = try MainTabShellScreen(tab: .train)
-        defer { screen.tearDown() }
-        try await screen.settle()
-
-        #expect(screen.element(labelled: "No workout yet") != nil)
-        #expect(screen.activate(labelled: "Today"))
-        try await screen.settle()
-
-        #expect(screen.element(labelled: "No workout yet") == nil)
-        #expect(screen.element(labelled: "Talk to Baseline") == nil)
     }
 
     @Test func theFloatingBarDrivesRealTabSelection() async throws {
@@ -78,16 +68,14 @@ struct MainTabShellRenderTests {
     }
 }
 
+/// The signed-in shell hosted end to end: a real `UIWindow` around `MainTabView`. Reused by every
+/// suite that exercises the shell through the shared `HostedScreen` harness.
 @MainActor
-private final class MainTabShellScreen {
-    private let window: UIWindow
+final class MainTabShellScreen: HostedScreen {
+    let window: UIWindow
     private let container: ModelContainer
 
     init(tab: MainTab) throws {
-        let scene = try #require(
-            UIApplication.shared.connectedScenes.first as? UIWindowScene,
-            "No window scene: the test bundle must be hosted by the app."
-        )
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self]
             + PlanSchema.models + SleepSchema.models
         container = try ModelContainer(
@@ -105,16 +93,7 @@ private final class MainTabShellScreen {
             .environment(PlanStore(context: container.mainContext))
             .modelContainer(container)
             .preferredColorScheme(.dark)
-
-        window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
-        window.rootViewController = UIHostingController(rootView: root)
-        window.makeKeyAndVisible()
-    }
-
-    func tearDown() {
-        window.isHidden = true
-        window.rootViewController = nil
+        window = try Self.makeWindow(rootView: root)
     }
 
     var visibleSystemTabBars: [UITabBar] {
@@ -132,81 +111,9 @@ private final class MainTabShellScreen {
         return bars
     }
 
-    func element(labelled text: String) -> NSObject? {
-        Self.elements(in: window).first { $0.accessibilityLabel?.contains(text) ?? false }
-    }
-
-    func activate(labelled text: String) -> Bool {
-        element(labelled: text)?.accessibilityActivate() ?? false
-    }
-
     var floatingBarTop: CGFloat {
         MainTab.allCases
             .compactMap { element(labelled: $0.title)?.accessibilityFrame.minY }
             .min() ?? 0
-    }
-
-    func capture(_ name: String) throws {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 3
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
-        let image = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
-        let data = try #require(image.pngData())
-        let url = Self.evidenceDirectory.appendingPathComponent("\(name).png")
-        try data.write(to: url, options: .atomic)
-        print("SCREENSHOT \(url.path)")
-    }
-
-    func settle() async throws {
-        let deadline = Date().addingTimeInterval(1)
-        while Date() < deadline {
-            spin(0.05)
-            await Task.yield()
-        }
-        spin(0.1)
-    }
-
-    private func spin(_ seconds: TimeInterval) {
-        window.layoutIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
-        window.layoutIfNeeded()
-    }
-
-    private static let evidenceDirectory: URL = {
-        let base = ProcessInfo.processInfo.environment["BASELINE_EVIDENCE_DIR"].map(URL.init(fileURLWithPath:))
-            ?? URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("evidence")
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base
-    }()
-
-    private static func elements(in root: UIView) -> [NSObject] {
-        var result: [NSObject] = []
-        var seen = Set<ObjectIdentifier>()
-
-        func walk(_ object: NSObject) {
-            guard seen.insert(ObjectIdentifier(object)).inserted else { return }
-            if let view = object as? UIView {
-                if view.isAccessibilityElement { result.append(view) }
-                (view.accessibilityElements as? [NSObject])?.forEach(walk)
-                view.subviews.forEach(walk)
-            } else {
-                result.append(object)
-                let count = object.accessibilityElementCount()
-                guard count != NSNotFound, count > 0 else { return }
-                for index in 0..<count {
-                    if let child = object.accessibilityElement(at: index) as? NSObject {
-                        walk(child)
-                    }
-                }
-            }
-        }
-
-        walk(root)
-        return result
     }
 }
