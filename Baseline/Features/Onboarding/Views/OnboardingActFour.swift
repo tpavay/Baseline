@@ -3,10 +3,14 @@ import SwiftUI
 // MARK: - Shared picker components
 
 /// A two-option segmented pill (FT-IN / CM, LB / KG). `isRight` false = the left option.
+/// `fillsWidth` stretches the segments across the available width; `track` recolors the pill's
+/// background so it stays visible when the control sits on a matching surface.
 struct Segmented2: View {
     let left: String
     let right: String
     @Binding var isRight: Bool
+    var fillsWidth = false
+    var track: Color = BaselineColor.surface
 
     var body: some View {
         HStack(spacing: 4) {
@@ -14,7 +18,7 @@ struct Segmented2: View {
             segment(right, selected: isRight) { isRight = true }
         }
         .padding(4)
-        .background(Capsule().fill(BaselineColor.surface))
+        .background(Capsule().fill(track))
     }
 
     private func segment(_ title: String, selected: Bool, tap: @escaping () -> Void) -> some View {
@@ -24,7 +28,12 @@ struct Segmented2: View {
         } label: {
             Text(title)
                 .font(.bMono(11, .bold)).tracking(1)
+                .lineLimit(1)
+                // A segment label never wraps: the control claims the label's width instead of
+                // letting a tight proposal break "IMPERIAL" across two lines.
+                .fixedSize()
                 .foregroundStyle(selected ? BaselineColor.base : BaselineColor.textMid)
+                .frame(maxWidth: fillsWidth ? .infinity : nil)
                 .padding(.horizontal, 18).padding(.vertical, 7)
                 .background(Capsule().fill(selected ? BaselineColor.accent : Color.clear))
         }
