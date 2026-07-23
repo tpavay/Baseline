@@ -53,6 +53,40 @@ struct PlanRestDayTests {
         #expect(repo.day(monday, filter: .allTraining).isRestDay == false)
     }
 
+    private func workout(_ title: String) -> Workout {
+        var ex = PlannedExercise(exerciseName: "Squat", definitionId: "deadlift")
+        ex.prescription.sets = [PlannedSet(reps: 5, load: 100)]
+        return Workout(title: title, blocks: [WorkoutBlock(name: "", exercises: [ex], isDefault: true)])
+    }
+
+    /// Scheduling training onto a marked day reverses the rest decision: the marker is dropped, so
+    /// removing that workout later returns the day to empty ("Add workout"), never resurrecting a
+    /// stale "Rest day".
+    @Test func schedulingOntoARestDayClearsTheMarkerSoDeleteReturnsToEmpty() {
+        let repo = makeRepo()
+        let program = repo.addProgram(Program(name: "P", createdAt: monday))
+        repo.setRestDay(monday, true)
+        #expect(repo.day(monday, filter: .allTraining).isRestDay)
+
+        let sw = ScheduledWorkout(programID: program.id, date: monday, origin: .userCreated,
+                                  workoutID: UUID(), workoutRevisionID: UUID(), workout: workout("W"))
+        _ = repo.addWorkout(sw, actor: .user, reason: nil)
+        #expect(repo.day(monday, filter: .allTraining).isRestDay == false,
+                "Scheduling training implicitly reverses the rest decision")
+
+        // Delete is confirmation-gated: the first call returns a proposal, the second commits it.
+        guard case .confirmationRequired(_, _, let proposalID) =
+                repo.delete(sw.id, actor: .user, reason: nil, proposalID: nil) else {
+            Issue.record("Delete should require confirmation")
+            return
+        }
+        _ = repo.delete(sw.id, actor: .user, reason: nil, proposalID: proposalID)
+
+        #expect(repo.day(monday, filter: .allTraining).sessions.isEmpty)
+        #expect(repo.day(monday, filter: .allTraining).isRestDay == false,
+                "A removed workout must leave the day empty, not resurrect the cleared rest marker")
+    }
+
     @Test func restMarkerIsGlobalAcrossFilters() {
         let repo = makeRepo()
         let program = repo.addProgram(Program(name: "P", createdAt: monday))

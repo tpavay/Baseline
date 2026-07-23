@@ -522,8 +522,7 @@ struct PlanView: View {
     /// day and go straight into live logging with the timer running — identical to a template's
     /// "Start Workout" — rather than landing on the prescription view.
     private func startEmptyWorkout(on date: Date) {
-        openExecution(plan.newScheduledWorkout(on: date))
-        execContext?.store.startWorkout()
+        openExecution(plan.newScheduledWorkout(on: date)).store.startWorkout()
     }
     private func addFromTemplate(_ id: UUID, on date: Date) {
         if let sw = plan.instantiateTemplate(id, on: date) { openExecution(sw) }
@@ -562,12 +561,15 @@ struct PlanView: View {
 
     // MARK: Execution bridge — reuse WorkoutView, write through to the repository
 
-    private func openExecution(_ sw: ScheduledWorkout) {
+    @discardableResult
+    private func openExecution(_ sw: ScheduledWorkout) -> ExecContext {
         // A scratch store bound to this scheduled workout — logging + lifecycle write through immediately;
         // structural content edits are coalesced and flushed as one revision on dismiss.
         let store = WorkoutStore(units: settings, defaults: UserDefaults(suiteName: "plan.exec.buffer") ?? .standard)
         store.bind(plan.sink(forScheduled: sw.id), coalesceContent: true)
-        execContext = ExecContext(id: sw.id, store: store, original: sw.workout)
+        let context = ExecContext(id: sw.id, store: store, original: sw.workout)
+        execContext = context
+        return context
     }
 
     /// On dismiss, flush any coalesced structural edits as one immutable revision — only when the

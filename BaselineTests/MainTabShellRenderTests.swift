@@ -68,19 +68,14 @@ struct MainTabShellRenderTests {
     }
 }
 
-/// Shared app-hosted shell harness: a real `UIWindow` around `MainTabView`, with accessibility
-/// lookup/activation, screenshot capture into `evidence/`, and run-loop settling. Reused by every
-/// suite that exercises the signed-in shell end to end.
+/// The signed-in shell hosted end to end: a real `UIWindow` around `MainTabView`. Reused by every
+/// suite that exercises the shell through the shared `HostedScreen` harness.
 @MainActor
-final class MainTabShellScreen {
-    private let window: UIWindow
+final class MainTabShellScreen: HostedScreen {
+    let window: UIWindow
     private let container: ModelContainer
 
     init(tab: MainTab) throws {
-        let scene = try #require(
-            UIApplication.shared.connectedScenes.first as? UIWindowScene,
-            "No window scene: the test bundle must be hosted by the app."
-        )
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self]
             + PlanSchema.models + SleepSchema.models
         container = try ModelContainer(
@@ -98,16 +93,7 @@ final class MainTabShellScreen {
             .environment(PlanStore(context: container.mainContext))
             .modelContainer(container)
             .preferredColorScheme(.dark)
-
-        window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
-        window.rootViewController = UIHostingController(rootView: root)
-        window.makeKeyAndVisible()
-    }
-
-    func tearDown() {
-        window.isHidden = true
-        window.rootViewController = nil
+        window = try Self.makeWindow(rootView: root)
     }
 
     var visibleSystemTabBars: [UITabBar] {
@@ -125,62 +111,9 @@ final class MainTabShellScreen {
         return bars
     }
 
-    func element(labelled text: String) -> NSObject? {
-        AccessibilityElementWalker.elements(in: window)
-            .first { $0.accessibilityLabel?.contains(text) ?? false }
-    }
-
-    func activate(labelled text: String) -> Bool {
-        element(labelled: text)?.accessibilityActivate() ?? false
-    }
-
     var floatingBarTop: CGFloat {
         MainTab.allCases
             .compactMap { element(labelled: $0.title)?.accessibilityFrame.minY }
             .min() ?? 0
     }
-
-    func capture(_ name: String) throws {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 3
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
-        let image = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
-        let data = try #require(image.pngData())
-        let url = AccessibilityElementWalker.evidenceDirectory.appendingPathComponent("\(name).png")
-        try data.write(to: url, options: .atomic)
-        print("SCREENSHOT \(url.path)")
-    }
-
-    func settle() async throws {
-        let deadline = Date().addingTimeInterval(1)
-        while Date() < deadline {
-            spin(0.05)
-            await Task.yield()
-        }
-        spin(0.1)
-    }
-
-    /// Settle until `condition` holds, failing the test if it never does. For content that appears
-    /// asynchronously (e.g. the Today home model assembling from live evidence).
-    func settleUntil(
-        timeout: TimeInterval = 5,
-        _ condition: () -> Bool
-    ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return }
-            spin(0.05)
-            await Task.yield()
-        }
-        try #require(condition(), "Condition not met within \(timeout)s")
-    }
-
-    private func spin(_ seconds: TimeInterval) {
-        window.layoutIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
-        window.layoutIfNeeded()
-    }
-
 }

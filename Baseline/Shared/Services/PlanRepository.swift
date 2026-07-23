@@ -23,7 +23,8 @@ protocol PlanRepository {
     /// a rest day is a property of the athlete's calendar, not of any one program or filter.
     func restDays(in range: Range<Date>) -> Set<Date>
     /// Mark or un-mark a calendar day as an explicit rest day. Idempotent; not versioned — the
-    /// marker schedules nothing, so toggling it back is its own undo.
+    /// marker schedules nothing, so toggling it back is its own undo. Scheduling training onto a
+    /// marked day clears the marker: the workout implicitly reverses the rest decision.
     func setRestDay(_ date: Date, _ isRest: Bool)
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout?
     func session(forScheduled id: UUID) -> WorkoutSession?
@@ -186,16 +187,24 @@ final class SwiftDataPlanRepository: PlanRepository {
     }
 
     func setRestDay(_ date: Date, _ isRest: Bool) {
-        let day = calendar.startOfDay(for: date)
-        guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return }
-        let existing = fetch(SDRestDay.self, where: #Predicate { $0.date >= day && $0.date < next })
         if isRest {
-            guard existing.isEmpty else { return }
+            let day = calendar.startOfDay(for: date)
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+            guard fetch(SDRestDay.self, where: #Predicate { $0.date >= day && $0.date < next }).isEmpty else { return }
             context.insert(SDRestDay(date: day))
         } else {
-            existing.forEach(context.delete)
+            clearRestMarker(on: date)
         }
         save()
+    }
+
+    /// Scheduling training onto a day implicitly reverses a rest decision, so every write that lands
+    /// a workout on a date drops the marker there — removing that workout later must return the day
+    /// to empty, never resurrect a stale "Rest day". Callers save as part of their own transaction.
+    private func clearRestMarker(on date: Date) {
+        let day = calendar.startOfDay(for: date)
+        guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+        fetch(SDRestDay.self, where: #Predicate { $0.date >= day && $0.date < next }).forEach(context.delete)
     }
 
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? {
@@ -365,7 +374,10 @@ final class SwiftDataPlanRepository: PlanRepository {
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult {
         guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { return .rejected(.notFound) }
         let diff = ScheduleDiff(changes: [.init(kind: .move, summary: "Move \(title(id)) → \(fmtDate(toDate))", scheduledID: id)])
-        return apply(.move, actor, reason, diff) { sd.date = toDate; sd.timeOfDayRaw = timeOfDay?.rawValue }
+        return apply(.move, actor, reason, diff) {
+            sd.date = toDate; sd.timeOfDayRaw = timeOfDay?.rawValue
+            clearRestMarker(on: toDate)
+        }
     }
 
     func swap(_ a: UUID, _ b: UUID, actor: PlanActor, reason: String?) -> MutationResult {
@@ -378,6 +390,7 @@ final class SwiftDataPlanRepository: PlanRepository {
             let (ad, at) = (A.date, A.timeOfDayRaw)
             A.date = B.date; A.timeOfDayRaw = B.timeOfDayRaw
             B.date = ad; B.timeOfDayRaw = at
+            clearRestMarker(on: A.date); clearRestMarker(on: B.date)
         }
     }
 
@@ -1182,6 +1195,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         let wanted = Dictionary(uniqueKeysWithValues: snap.scheduled.map { ($0.id, $0) })
         for sd in existing where wanted[sd.id] == nil { context.delete(sd) }
         for it in snap.scheduled {
+            clearRestMarker(on: it.date)
             if let sd = existing.first(where: { $0.id == it.id }) { write(it, to: sd) }
             else { let sd = SDScheduledWorkout(); write(it, to: sd); context.insert(sd) }
         }
@@ -1211,6 +1225,7 @@ final class SwiftDataPlanRepository: PlanRepository {
     }
 
     private func insertScheduled(_ sw: ScheduledWorkout) {
+        clearRestMarker(on: sw.date)
         let rid = sw.workoutRevisionID
         if firstSD(SDWorkoutRevision.self, where: #Predicate { $0.id == rid }) == nil {
             context.insert(SDWorkoutRevision(id: rid, workoutID: sw.workoutID, createdAt: sw.date, workoutJSON: PlanCoding.data(sw.workout)))

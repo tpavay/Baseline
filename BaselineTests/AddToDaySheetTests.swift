@@ -80,77 +80,24 @@ struct AddToDaySheetTests {
 /// Hosts the sheet's content as a window root — detents are presentation chrome; the behavior under
 /// test is the option rows and their routing.
 @MainActor
-private final class AddSheetScreen {
-    private let window: UIWindow
-    private(set) var selected: [AddToDayOption] = []
+private final class AddSheetScreen: HostedScreen {
+    let window: UIWindow
+    private let recorder = SelectionRecorder()
+    var selected: [AddToDayOption] { recorder.selected }
 
     init(cameraAvailable: Bool) throws {
-        let scene = try #require(
-            UIApplication.shared.connectedScenes.first as? UIWindowScene,
-            "No window scene: the test bundle must be hosted by the app."
-        )
-        window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let recorder = self.recorder
         let root = AddToDaySheet(
             date: Calendar.planWeek.startOfDay(for: Date()),
             templates: [],
             cameraAvailable: cameraAvailable,
-            onSelect: { [weak self] option in self?.selected.append(option) }
+            onSelect: { option in recorder.selected.append(option) }
         )
         .preferredColorScheme(.dark)
-        window.rootViewController = UIHostingController(rootView: root)
-        window.makeKeyAndVisible()
+        window = try Self.makeWindow(rootView: root)
     }
 
-    func tearDown() {
-        window.isHidden = true
-        window.rootViewController = nil
-    }
-
-    func element(labelled text: String) -> NSObject? {
-        AccessibilityElementWalker.elements(in: window)
-            .first { $0.accessibilityLabel?.contains(text) ?? false }
-    }
-
-    func activate(labelled text: String) -> Bool {
-        element(labelled: text)?.accessibilityActivate() ?? false
-    }
-
-    func settle() async throws {
-        let deadline = Date().addingTimeInterval(0.6)
-        while Date() < deadline {
-            spin(0.05)
-            await Task.yield()
-        }
-        spin(0.1)
-    }
-
-    func settleUntil(timeout: TimeInterval = 3, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return }
-            spin(0.05)
-            await Task.yield()
-        }
-        try #require(condition(), "Condition not met within \(timeout)s")
-    }
-
-    private func spin(_ seconds: TimeInterval) {
-        window.layoutIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
-        window.layoutIfNeeded()
-    }
-
-    func capture(_ name: String) throws {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 3
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
-        let image = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
-        let data = try #require(image.pngData())
-        let url = AccessibilityElementWalker.evidenceDirectory.appendingPathComponent("\(name).png")
-        try data.write(to: url, options: .atomic)
-        print("SCREENSHOT \(url.path)")
+    private final class SelectionRecorder {
+        var selected: [AddToDayOption] = []
     }
 }
