@@ -520,8 +520,10 @@ final class WorkoutStore {
         return apply(w, scope)
     }
 
-    /// Replace a planned movement in place. The exercise identity, position, prescription, and
-    /// guidance stay intact; only catalog identity and incompatible logging configuration change.
+    /// Replace a planned movement in place. The exercise identity, position, and guidance stay intact.
+    /// The prescription is re-derived to the new movement via `replacingMovement`/`retainingMetrics`:
+    /// per-set values, ranges, and progressions keyed to metrics the new movement does not support are
+    /// reset to the new movement's schema, while metrics both movements share keep their values.
     @discardableResult
     func replaceExercise(_ exerciseID: UUID, with definition: ExerciseDefinition, scope: WorkoutEditScope) -> Bool {
         guard var workout = workout(scope),
@@ -562,8 +564,15 @@ final class WorkoutStore {
                 name: planned.exerciseName
             )
             // Sets logged before the swap still hold the old movement's values; strip the ones the new
-            // movement can't own so nothing stale resurfaces in the completed/history summary.
-            $0.sanitizeSetLogs(forPlanned: exerciseID, retaining: Set(definition.supported))
+            // movement can't own so nothing stale resurfaces in the completed/history summary. Scoped to
+            // the substitution so a round- or group-scoped replace never touches sets belonging to other
+            // rounds that still use the original movement.
+            $0.sanitizeSetLogs(
+                forPlanned: exerciseID,
+                retaining: Set(definition.supported),
+                groupID: groupID,
+                iteration: iteration
+            )
         }
         noteRecent(definition.id)
     }

@@ -907,14 +907,35 @@ extension WorkoutLog {
         }
     }
 
-    /// Strip metric values outside `retaining` from every logged set of a planned exercise, keeping the
+    /// Strip metric values outside `retaining` from logged sets of a planned exercise, keeping the
     /// rows. Used when a live substitution swaps the movement to a different schema: sets logged before
     /// the swap still carry the old movement's numbers (a lift's reps/load), which would otherwise
     /// resurface in the completed/history summary. Sanitizing keeps the row and its outcome while
     /// dropping the values the new movement can't own.
-    mutating func sanitizeSetLogs(forPlanned plannedID: UUID, retaining: Set<MetricType>) {
+    ///
+    /// Scoped like `setExerciseAdjustment`: a round-scoped substitution (`iteration != nil`) touches
+    /// only the sets of that round, so replacing one round of an EMOM/rounds group with a
+    /// schema-changing movement never strips the values still owned by the other rounds' original
+    /// movement. A group-wide replace (`groupID != nil, iteration == nil`) sanitizes every set of that
+    /// group; a non-grouped exercise (both nil) sanitizes all of its sets.
+    mutating func sanitizeSetLogs(
+        forPlanned plannedID: UUID,
+        retaining: Set<MetricType>,
+        groupID: UUID? = nil,
+        iteration: Int? = nil
+    ) {
         guard let index = exercises.firstIndex(where: { $0.plannedExerciseID == plannedID }) else { return }
         for logIndex in exercises[index].setLogs.indices {
+            let log = exercises[index].setLogs[logIndex]
+            let inScope: Bool
+            if iteration != nil {
+                inScope = log.groupID == groupID && log.iteration == iteration
+            } else if groupID != nil {
+                inScope = log.groupID == groupID
+            } else {
+                inScope = true
+            }
+            guard inScope else { continue }
             exercises[index].setLogs[logIndex].values =
                 exercises[index].setLogs[logIndex].values.retainingOnly(retaining)
         }

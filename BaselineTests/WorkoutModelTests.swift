@@ -361,6 +361,30 @@ struct WorkoutModelTests {
         #expect(log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 2)?.reps == 15)
     }
 
+    @Test func sanitizeSetLogsScopedToRoundLeavesOtherRoundsIntact() {
+        let exerciseID = UUID()
+        let setID = UUID()
+        let groupID = UUID()
+        var log = WorkoutLog(exercises: [PerformedExercise(plannedExerciseID: exerciseID, exerciseName: "Squat")])
+        log.upsertSetLog(forPlanned: exerciseID, name: "Squat", plannedSetID: setID,
+                         groupID: groupID, iteration: 1) { $0.reps = 5; $0.load = 100 }
+        log.upsertSetLog(forPlanned: exerciseID, name: "Squat", plannedSetID: setID,
+                         groupID: groupID, iteration: 2) { $0.reps = 5; $0.load = 100 }
+
+        // Replace only round 1 with a cardio movement whose schema is distance/duration.
+        log.sanitizeSetLogs(forPlanned: exerciseID, retaining: [.distance, .duration],
+                            groupID: groupID, iteration: 1)
+
+        // Round 1's incompatible lift values are cleared...
+        let round1 = log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 1)
+        #expect(round1?.reps == nil)
+        #expect(round1?.load == nil)
+        // ...while round 2, still the original movement, keeps every logged rep and load.
+        let round2 = log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 2)
+        #expect(round2?.reps == 5)
+        #expect(round2?.load == 100)
+    }
+
     @Test func startLogSnapshotsGroupsAndDefaultsChoices() throws {
         let bikeErg = PlannedExercise(exerciseName: "BikeErg")
         let echo = PlannedExercise(exerciseName: "Echo Bike")
