@@ -235,15 +235,6 @@ private struct WorkoutGroupHeader: View {
 
             if mode.isEditing {
                 groupExecutionEditor
-                TextField("Add group notes", text: groupGuidanceBinding, axis: .vertical)
-                    .font(.subheadline)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .lineLimit(2...10)
-                    .accessibilityLabel("Notes for \(group.label)")
-            } else if let guidance = group.guidance {
-                WorkoutInstructionText(
-                    lines: [guidance.goal].compactMap { $0 } + guidance.formCues
-                )
             }
 
             if showsLogger {
@@ -309,31 +300,6 @@ private struct WorkoutGroupHeader: View {
             get: { store.current?.allGroups.first(where: { $0.id == group.id })?.label ?? group.label },
             set: { value in store.edit(mode.editScope) { $0.updateGroup(group.id) { $0.label = value } } }
         )
-    }
-
-    private var groupGuidanceBinding: Binding<String> {
-        Binding(
-            get: {
-                store.current?.allGroups.first(where: { $0.id == group.id })?.guidance?.formCues
-                    .joined(separator: "\n\n") ?? ""
-            },
-            set: { value in
-                store.edit(mode.editScope) { workout in
-                    workout.updateGroup(group.id) { updated in
-                        updated.guidance = updatedGuidance(updated.guidance, notesText: value)
-                    }
-                }
-            }
-        )
-    }
-
-    private func updatedGuidance(_ current: CoachGuidance?, notesText: String) -> CoachGuidance? {
-        var guidance = current ?? CoachGuidance()
-        let notes = notesText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guidance.formCues = notes.isEmpty ? [] : [notes]
-        let isEmpty = guidance.goal == nil && guidance.tempo == nil && guidance.formCues.isEmpty
-            && guidance.commonMistakes.isEmpty && guidance.progressionNotes == nil
-        return isEmpty ? nil : guidance
     }
 
     private func updateRepetition(_ repetition: RepetitionRule) {
@@ -841,20 +807,17 @@ private struct WorkoutExerciseSection: View {
             if isSkipped {
                 skippedState
             } else {
-                if mode.isEditing {
-                    TextField("Add exercise notes", text: exerciseGuidanceBinding, axis: .vertical)
-                        .font(.subheadline)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .lineLimit(2...10)
-                        .accessibilityLabel("Notes for \(presentedExercise.exerciseName)")
-                    structuredTargets
-                } else {
-                    WorkoutInstructionText(
-                        lines: WorkoutPresentationFormatter.exerciseInstructions(presentedExercise),
-                        placeholder: "Add notes here..."
+                if mode.isEditing || mode.usesPerformedData {
+                    WorkoutNotesField(
+                        prompt: "Add notes here...",
+                        text: exerciseGuidanceBinding,
+                        accessibilityLabel: "Notes for \(presentedExercise.exerciseName)"
                     )
+                } else {
+                    exerciseNotesText
                 }
 
+                structuredTargets
                 qualitativeTargets
 
                 setTable
@@ -865,9 +828,6 @@ private struct WorkoutExerciseSection: View {
                     addPerformedSetButton
                 }
 
-                if mode.usesPerformedData {
-                    performedNotes
-                }
             }
         }
         .padding(.vertical, 14)
@@ -908,7 +868,6 @@ private struct WorkoutExerciseSection: View {
                         .font(.headline)
                         .foregroundStyle(BaselineColor.accent)
                         .fixedSize(horizontal: false, vertical: true)
-                    statusChip
                 }
 
                 if workoutDisplayLabel != nil {
@@ -926,18 +885,6 @@ private struct WorkoutExerciseSection: View {
 
             Spacer(minLength: 8)
             exerciseMenu
-        }
-    }
-
-    @ViewBuilder private var statusChip: some View {
-        if adjustment?.outcome == .skipped {
-            Text("Removed").workoutChip(color: BaselineColor.zoneAmber)
-        } else if adjustment?.outcome == .substituted {
-            Text("Substituted").workoutChip(color: BaselineColor.accent)
-        } else if groupID == nil, let status = performed?.status, status != .pending {
-            let presentation = status.presentation
-            Text(presentation.label)
-                .workoutChip(color: presentation.color)
         }
     }
 
@@ -959,24 +906,6 @@ private struct WorkoutExerciseSection: View {
     private var skippedStateLabel: String {
         guard groupID != nil else { return "Removed from this workout" }
         return adjustment?.iteration == nil ? "Removed from every round" : "Removed from this round"
-    }
-
-    private var performedNotes: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(performed?.athleteNotes ?? [], id: \.self) { note in
-                Text(note)
-                    .font(.subheadline)
-                    .italic()
-                    .foregroundStyle(BaselineColor.textMid)
-            }
-            if mode.isLogging {
-                WorkoutNoteEntry(prompt: "Add session note…") { note in
-                    store.editLog {
-                        $0.addNote(note, forPlanned: exercise.id, name: presentedExercise.exerciseName)
-                    }
-                }
-            }
-        }
     }
 
     @ViewBuilder private var qualitativeTargets: some View {
@@ -1001,6 +930,17 @@ private struct WorkoutExerciseSection: View {
             .font(.subheadline)
             .foregroundStyle(BaselineColor.textMid)
             .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder private var exerciseNotesText: some View {
+        let notes = exerciseNotesValue
+        if !notes.isEmpty {
+            Text(notes)
+                .font(.subheadline)
+                .foregroundStyle(BaselineColor.textMid)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Notes for \(presentedExercise.exerciseName). \(notes)")
         }
     }
 
@@ -1608,26 +1548,43 @@ private struct WorkoutExerciseSection: View {
     private var exerciseGuidanceBinding: Binding<String> {
         Binding(
             get: {
-                store.current?.exercise(exercise.id)?.guidance?.formCues
-                    .joined(separator: "\n\n") ?? ""
+                exerciseNotesValue
             },
             set: { value in
                 store.edit(mode.editScope) { workout in
                     workout.updateExercise(exercise.id) { updated in
-                        updated.guidance = updatedGuidance(updated.guidance, notesText: value)
+                        updated.guidance = CoachGuidance.notes(from: value)
+                    }
+                }
+                if mode.usesPerformedData {
+                    store.editLog { log in
+                        guard let index = log.exercises.firstIndex(where: {
+                            $0.plannedExerciseID == exercise.id
+                        }) else { return }
+                        log.exercises[index].athleteNotes = []
                     }
                 }
             }
         )
     }
 
-    private func updatedGuidance(_ current: CoachGuidance?, notesText: String) -> CoachGuidance? {
-        var guidance = current ?? CoachGuidance()
-        let notes = notesText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guidance.formCues = notes.isEmpty ? [] : [notes]
-        let isEmpty = guidance.goal == nil && guidance.tempo == nil && guidance.formCues.isEmpty
-            && guidance.commonMistakes.isEmpty && guidance.progressionNotes == nil
-        return isEmpty ? nil : guidance
+    private var exerciseNotesValue: String {
+        var notes: [String] = []
+        if let guidanceNotes = store.current?.exercise(exercise.id)?.guidance?.notesText
+            ?? presentedExercise.guidance?.notesText {
+            appendNote(guidanceNotes, to: &notes)
+        }
+        for note in performed?.athleteNotes ?? [] {
+            appendNote(note, to: &notes)
+        }
+        return notes.joined(separator: "\n\n")
+    }
+
+    private func appendNote(_ note: String, to notes: inout [String]) {
+        let value = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty, !notes.contains(value) {
+            notes.append(value)
+        }
     }
 
     @ViewBuilder private func exerciseSheet(_ destination: ExerciseSheet) -> some View {
@@ -2004,33 +1961,6 @@ private enum ExerciseSheet: Identifiable {
     }
 }
 
-private struct WorkoutNoteEntry: View {
-    let prompt: String
-    let onSubmit: (String) -> Void
-    @State private var text = ""
-
-    var body: some View {
-        HStack(spacing: 8) {
-            TextField(prompt, text: $text)
-                .font(.body)
-                .foregroundStyle(BaselineColor.textHi)
-                .onSubmit(submit)
-            if !text.isEmpty {
-                Button("Add", action: submit)
-                    .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44)
-            }
-        }
-    }
-
-    private func submit() {
-        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !note.isEmpty else { return }
-        onSubmit(note)
-        text = ""
-    }
-}
-
 // MARK: - Presentation helpers
 
 private extension WorkoutNode {
@@ -2128,18 +2058,6 @@ private extension SetRole {
         case .top: "T"
         case .backoff: "B"
         case .drop: "D"
-        }
-    }
-}
-
-private extension PerformedStatus {
-    var presentation: (label: String, color: Color) {
-        switch self {
-        case .pending: ("", BaselineColor.textFaint)
-        case .completed: ("Done", BaselineColor.zoneGreen)
-        case .skipped: ("Skipped", BaselineColor.zoneAmber)
-        case .substituted: ("Subbed", BaselineColor.accent)
-        case .modified: ("Modified", BaselineColor.accent)
         }
     }
 }

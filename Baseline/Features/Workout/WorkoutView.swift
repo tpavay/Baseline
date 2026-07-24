@@ -384,8 +384,19 @@ struct WorkoutView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let guidance = workout.guidance {
-                WorkoutInstructionText(lines: [guidance.goal].compactMap { $0 } + guidance.formCues)
+            if mode.usesPerformedData {
+                WorkoutNotesField(
+                    prompt: "Add notes here...",
+                    text: workoutGuidanceBinding,
+                    font: .body,
+                    lineLimit: 2...,
+                    accessibilityLabel: "Workout notes"
+                )
+            } else if let notes = workout.guidance?.notesText, !notes.isEmpty {
+                Text(notes)
+                    .font(.body)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
@@ -468,15 +479,11 @@ struct WorkoutView: View {
                     .font(.subheadline)
                     .foregroundStyle(BaselineColor.textMid)
             }
-            if let guidance = block.guidance {
-                WorkoutInstructionText(lines: [guidance.goal].compactMap { $0 } + guidance.formCues)
-            }
         }
     }
 
     private func shouldShowHeader(for block: WorkoutBlock, blockCount: Int) -> Bool {
         blockCount > 1 || !block.isDefault || !block.name.isEmpty || !(block.intent?.isEmpty ?? true)
-            || block.guidance != nil
     }
 
     // MARK: - Editing
@@ -494,6 +501,17 @@ struct WorkoutView: View {
         }
         editSnapshot = nil
         isEditingTemplate = false
+    }
+
+    private var workoutGuidanceBinding: Binding<String> {
+        Binding(
+            get: { store.current?.guidance?.notesText ?? "" },
+            set: { value in
+                store.edit(mode.editScope) { workout in
+                    workout.updateGuidance(CoachGuidance.notes(from: value))
+                }
+            }
+        )
     }
 
     private func finishEditing() {
