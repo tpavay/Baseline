@@ -268,13 +268,10 @@ struct UnitSystemReachTests {
 
     // MARK: - Surfaces that had drifted
 
-    @Test(arguments: [(UnitSystem.imperial, "MI"), (UnitSystem.metric, "KM")])
-    func theWeeklyDistanceAggregateFollowsTheSystem(system: UnitSystem, unit: String) {
-        let aggregate = Aggregate(key: .distance, total: 8_046.72)   // 5 miles
-        #expect(PlanFormat.aggregateUnit(.distance, in: system) == unit)
-        let expected = system == .imperial ? "5.0" : "8.0"
-        #expect(PlanFormat.aggregateValue(aggregate, in: system) == expected)
-    }
+    // The Plan tab's weekly distance tile lived here until the weekly-view redesign removed it (the
+    // Today tab's "This Week" card is the one weekly total, and it reads performed work rather than
+    // the plan). `PlanFormat` went with the tile, so this suite no longer has an aggregate case; the
+    // distance-unit contract it pinned is `UnitSystem.displayUnit(metric:exercise:)`, covered above.
 
     /// The agent narrates from this text. Group totals and adjustments used to be handed to it in raw
     /// canonical units, so it told an imperial athlete their AMRAP target was "2000 m".

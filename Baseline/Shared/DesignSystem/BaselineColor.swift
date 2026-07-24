@@ -111,6 +111,11 @@ enum BaselineSize {
     static let floatingTabBarBottom: CGFloat = 15
     static let floatingTabBarHorizontal: CGFloat = 40
     static let floatingTabSelectionHeight: CGFloat = 46
+    // Plan week strip: the status mark above a weekday letter (a completed dot or a rest moon) and the
+    // fixed slot it sits in, so every letter keeps one baseline whether or not its day is marked.
+    static let dayStatusMarkSlot: CGFloat = 10
+    static let dayStatusDot: CGFloat = 5
+    static let dayStatusMoon: CGFloat = 7
     static var floatingTabClearance: CGFloat { floatingTabBarHeight + floatingTabBarBottom }
 }
 

@@ -102,6 +102,26 @@ avoid painful `@Model` migrations later; only Phase-optional and the WorkoutSess
 - Points 2 (revisions) and 9 (`PendingPlanProposal`) already landed in round 3 — approved, unchanged.
 - **Verdict from review: ~9.8/10, implementation-ready. Stop refining, start building.**
 
+**2026-07-24 — the Plan screen is a bounded weekly grid.** The shipped surface drifted into a continuous
+181-day calendar (#58, reshaped in #67); it is back on the documented IA of §3, with three deliberate
+departures from what this document specifies:
+- **No weekly aggregates on the Plan tab.** The row summed *planned prescriptions* over a week that
+  included performed sessions, so a completed 1h17m session read as "1m". The one weekly total is the
+  Today tab's This Week card, which reads performed work (`TodayWeeklySummary`). `AggregateProvider`
+  survives as the planned-contribution resolver; `WeeklyAggregatesRow`/`AggregateCard`/`PlanFormat` are
+  gone.
+- **Days are filled cells in one grid, not floating cards.** A performed day is filled green and offers
+  its log; today's and future sessions are neutral with a reorder handle (the gesture itself is a
+  follow-up); rest and undecided days state themselves; today is marked by its accent date alone, with
+  every other day slightly muted. No status chip on a performed or planned row, and no trailing modality
+  glyph (the unexplained ◆/clock).
+- **The visible week is owned state**, moved only by the `‹ ›` pager and Today - never inferred from
+  scroll geometry, which is what let the old range header jump weeks. `PlanView` browses through
+  `PlanStore.week(containing:)`; `PlanStore.focusedDate`/`week` stay anchored to the real current week
+  because that is what "this week" means to the agent tools.
+- Components in `Baseline/Features/Plan/`: `PlanView` + `PlanWeekPresentation` (the pure day-state model
+  every rule is tested against, `BaselineTests/PlanWeekPresentationTests.swift`).
+
 ---
 
 ## 1. Existing repository assessment

@@ -52,6 +52,10 @@ final class PlanStore {
     func days(from startDate: Date, through endDate: Date) -> [TrainingDay] {
         repo.days(from: startDate, through: endDate, filter: filter)
     }
+    /// An arbitrary week's projection, sessions ordered within each day. Browsing the Plan tab reads
+    /// through here rather than moving `focusedDate`: `week` is what "this week" means to the agent
+    /// and to every non-calendar consumer, and paging a calendar must not redefine it.
+    func week(containing date: Date) -> TrainingWeek { repo.week(containing: date, filter: filter) }
     func scheduledWorkout(_ id: UUID) -> ScheduledWorkout? { repo.scheduledWorkout(id) }
     /// Mark or un-mark a day as an explicit rest day (see `PlanRepository.setRestDay`).
     func setRestDay(_ date: Date, _ isRest: Bool) { repo.setRestDay(date, isRest); reload() }

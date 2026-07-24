@@ -1,10 +1,21 @@
 import SwiftUI
 
 /// The **Plan tab** - Baseline's calendar-level training surface (`docs/implementation/plan-tab.md`).
-/// A continuous day-per-row calendar (about two months back, four ahead) with month headers, the
-/// program/collection filter, weekly aggregates for the visible week, drag-drop rescheduling, and the
-/// start/resume/complete lifecycle reached through each session's row and detail screen.
+///
+/// One week at a time: a `‹ JUL 20 – 26 ›` pager, a seven-day status strip, and a filled-cell day grid
+/// where each day is a full-width row rather than a floating card. A performed day is filled green and
+/// opens its log; today's and future sessions are neutral and carry a reorder handle; a decided rest day
+/// shows its moon; an undecided day shows a single accent "+". Today is marked by its accent date alone,
+/// and the other days sit slightly muted behind it.
+///
+/// The week is *owned* state (`weekStart`), not something inferred from scroll geometry - which is what
+/// removed the old 181-day calendar's range header jumping weeks when the list re-estimated row heights.
 struct PlanView: View {
+    /// The clock every date decision on this screen reads. Injectable so a screen test can render a
+    /// week that always contains a past, a present and a future day; production reads the live clock
+    /// on each access, so the tab still rolls over at midnight without being rebuilt.
+    var now: () -> Date = { Date() }
+
     @Environment(PlanStore.self) private var plan
     @Environment(AppSettings.self) private var settings
     @State private var execContext: ExecContext?
@@ -29,14 +40,14 @@ struct PlanView: View {
     /// The option chosen inside the add sheet, run on its dismissal so the follow-on presentation (chat,
     /// editor, import) never races the dismissing sheet.
     @State private var pendingAdd: (date: Date, option: AddToDayOption)?
-    @State private var visibleDate = Calendar.planWeek.startOfDay(for: Date())
-    @State private var scrollPosition: Date?
     @State private var detailWorkout: ScheduledWorkout?
-    /// Cached calendar projection (-60…+120 days) and derived per-session statuses. Refreshed on appear
-    /// and once per plan mutation (`plan.revision`) - never re-fetched inside `body`, which re-runs on
-    /// every scroll tick because `scrollPosition` drives `visibleDate`.
-    @State private var calendarDays: [TrainingDay] = []
-    @State private var statusByID: [UUID: ScheduleStatus] = [:]
+    /// The Monday of the week on screen - the only input to what the grid shows, moved exclusively by
+    /// the pager and the Today button. Nil until the first refresh resolves it from the clock.
+    @State private var weekStart: Date?
+    /// Cached week projection, derived statuses and the built presentation. Refreshed on appear, on each
+    /// plan mutation (`plan.revision`) and on week navigation - never fetched or rebuilt inside `body`.
+    @State private var presentation: PlanWeekPresentation?
+    @State private var sessionByID: [UUID: ScheduledWorkout] = [:]
 
     /// A live execution buffer — a scratch `WorkoutStore` driving the reused `WorkoutView`, wired to
     /// write through to the Plan repository. Identifiable so it drives a `.sheet(item:)`.
@@ -55,14 +66,24 @@ struct PlanView: View {
     struct AddContext: Identifiable { let id = UUID(); let date: Date }
 
     private let cal = Calendar.planWeek
-    private var today: Date { cal.startOfDay(for: Date()) }
+    private var today: Date { cal.startOfDay(for: now()) }
+    private var focusedWeekStart: Date { weekStart ?? cal.weekStart(for: today) }
+    /// Non-today rows sit back so the accent date on today reads first.
+    private let mutedDayOpacity = 0.72
+    /// A floor for the week label so the pager's chevrons hold still when a range straddles a month
+    /// ("JUL 27 – AUG 2" is wider than "JUL 20 – 26"); the label still grows with Dynamic Type.
+    private let weekRangeMinimumWidth: CGFloat = 132
 
     var body: some View {
         NavigationStack {
             ZStack {
                 BaselineColor.base.ignoresSafeArea()
 
-                calendarList
+                VStack(spacing: 0) {
+                    weekPager
+                    weekdayStrip
+                    dayGrid
+                }
 
                 if let msg = undoMessage { undoBar(msg) }
             }
@@ -110,43 +131,36 @@ struct PlanView: View {
             try? await Task.sleep(for: .seconds(4))
             undoMessage = nil
         }
-        .onAppear(perform: refreshCalendar)
-        .onChange(of: plan.revision) { refreshCalendar() }
+        .onAppear(perform: refreshWeek)
+        .onChange(of: plan.revision) { refreshWeek() }
         .task { await loadPendingImports() }
     }
 
-    private var calendarList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(calendarDays.enumerated()), id: \.element.date) { index, day in
-                    if index == 0 || cal.component(.month, from: calendarDays[index - 1].date) != cal.component(.month, from: day.date) {
-                        calendarMonthHeader(day.date)
-                    }
-                    calendarDayRow(day)
-                        .id(day.date)
-                }
-            }
-            .scrollTargetLayout()
-            .padding(.horizontal, BaselineSpacing.large)
-            .padding(.bottom, BaselineSpacing.screenBottom)
-        }
-        .scrollIndicators(.hidden)
-        .scrollPosition(id: $scrollPosition, anchor: .center)
-        .safeAreaInset(edge: .top, spacing: 0) { weeklyAggregates }
-        .onChange(of: scrollPosition) { _, date in
-            if let date { visibleDate = date }
-        }
+    /// One repository pass per plan mutation or week change: the seven-day projection, each session's
+    /// derived status, and the built presentation, all held in `@State` so `body` stays fetch-free.
+    private func refreshWeek() {
+        let start = focusedWeekStart
+        weekStart = start
+        let week = plan.week(containing: start)
+        let sessions = week.days.flatMap(\.sessions)
+        sessionByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        presentation = PlanWeekPresentation.build(
+            week: week,
+            statuses: plan.statuses(for: sessions, today: now()),
+            today: today,
+            calendar: cal
+        )
     }
 
-    /// One repository pass per plan mutation: the 181-day projection plus each session's derived
-    /// status, both held in `@State` so scrolling and other body re-evaluations stay fetch-free.
-    private func refreshCalendar() {
-        let start = cal.date(byAdding: .day, value: -60, to: today) ?? today
-        let end = cal.date(byAdding: .day, value: 120, to: today) ?? today
-        let days = plan.days(from: start, through: end)
-        calendarDays = days
-        statusByID = plan.statuses(for: days.flatMap(\.sessions), today: Date())
-        if scrollPosition == nil { scrollPosition = today }
+    private func showWeek(offsetBy weeks: Int) {
+        guard let moved = cal.date(byAdding: .day, value: 7 * weeks, to: focusedWeekStart) else { return }
+        weekStart = cal.weekStart(for: moved)
+        refreshWeek()
+    }
+
+    private func showCurrentWeek() {
+        weekStart = cal.weekStart(for: today)
+        refreshWeek()
     }
 
     @ToolbarContentBuilder
@@ -172,7 +186,7 @@ struct PlanView: View {
                     Button("Archived") { plan.setFilter(.collection(.archived)) }
                 }
             } label: {
-                Text(calendarMenuLabel)
+                Text(filterLabel)
                     .font(.caption.monospaced().weight(.semibold))
                     .tracking(0.8)
                     .foregroundStyle(plan.filter == .allTraining ? BaselineColor.textFaint : BaselineColor.accent)
@@ -181,29 +195,17 @@ struct PlanView: View {
         }
 
         ToolbarItem(placement: .principal) {
-            Text(visibleDate.formatted(.dateTime.month(.wide).year()))
+            Text(presentation?.monthLabel ?? focusedWeekStart.formatted(.dateTime.month(.wide).year()))
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(BaselineColor.textHi)
         }
 
         ToolbarItem(placement: .topBarTrailing) {
-            Button("Today") {
-                visibleDate = today
-                scrollPosition = today
-                plan.showWeek(of: today)
-            }
-            .font(.subheadline.weight(.bold))
-            .foregroundStyle(BaselineColor.accent)
+            Button("Today") { showCurrentWeek() }
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(BaselineColor.accent)
+                .accessibilityHint("Shows the current week")
         }
-    }
-
-    /// The leading chip doubles as filter visibility: the visible date under All Training, the active
-    /// program or collection name once a narrower filter is applied.
-    private var calendarMenuLabel: String {
-        if plan.filter == .allTraining {
-            return visibleDate.formatted(.dateTime.weekday(.abbreviated).day()).uppercased()
-        }
-        return filterLabel
     }
 
     private var filterLabel: String {
@@ -214,209 +216,357 @@ struct PlanView: View {
         }
     }
 
-    // MARK: Weekly aggregates (visible week, pinned above the calendar)
+    // MARK: Week pager
 
-    private var weeklyAggregates: some View {
-        let weekStart = cal.weekStart(for: visibleDate)
-        let weekEnd = cal.date(byAdding: .day, value: 7, to: weekStart) ?? weekStart
-        let sessions = calendarDays
-            .filter { $0.date >= weekStart && $0.date < weekEnd }
-            .flatMap(\.sessions)
-        let aggs = AggregateProvider.aggregates(for: sessions).filter { $0.key != .sessions }
-        return VStack(alignment: .leading, spacing: BaselineSpacing.xxSmall) {
-            InstrumentLabel(visibleWeekRangeLabel, tracking: 1)
-            if aggs.isEmpty {
-                Text("No planned volume yet.").font(.caption).foregroundStyle(BaselineColor.textFaint)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: BaselineSpacing.xSmall) {
-                        ForEach(aggs) { AggregateCard(aggregate: $0) }
-                    }
+    private var weekPager: some View {
+        HStack(spacing: BaselineSpacing.medium) {
+            pagerButton(systemImage: "chevron.left", label: "Previous week") { showWeek(offsetBy: -1) }
+            InstrumentLabel(presentation?.rangeLabel ?? "", color: BaselineColor.textMid, tracking: 1.5)
+                .frame(minWidth: weekRangeMinimumWidth)
+                .accessibilityAddTraits(.isHeader)
+            pagerButton(systemImage: "chevron.right", label: "Next week") { showWeek(offsetBy: 1) }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, BaselineSpacing.xSmall)
+    }
+
+    private func pagerButton(systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(BaselineColor.textFaint)
+                .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: Seven-day strip
+
+    private var weekdayStrip: some View {
+        HStack(spacing: BaselineSpacing.xxxSmall) {
+            ForEach(presentation?.weekdays ?? []) { cell in
+                VStack(spacing: BaselineSpacing.xxxSmall) {
+                    weekdayMark(cell.mark)
+                        .frame(height: BaselineSize.dayStatusMarkSlot)
+                    Text(cell.letter)
+                        .font(.caption2.monospaced().weight(cell.isToday ? .heavy : .semibold))
+                        .foregroundStyle(cell.isToday ? BaselineColor.accent : BaselineColor.textFaint)
                 }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(weekdayAccessibilityLabel(cell))
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, BaselineSpacing.compact)
+        .padding(.horizontal, BaselineSpacing.xSmall)
+        .background(
+            RoundedRectangle(cornerRadius: BaselineRadius.search, style: .continuous)
+                .fill(BaselineColor.surface.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: BaselineRadius.search, style: .continuous)
+                        .strokeBorder(BaselineColor.line, lineWidth: BaselineSize.hairline)
+                )
+        )
         .padding(.horizontal, BaselineSpacing.large)
-        .padding(.vertical, BaselineSpacing.xSmall)
-        .background(BaselineColor.base)
-        .overlay(alignment: .bottom) { Hairline() }
+        .padding(.bottom, BaselineSpacing.medium)
     }
 
-    private var visibleWeekRangeLabel: String {
-        let start = cal.weekStart(for: visibleDate)
-        let end = cal.date(byAdding: .day, value: 6, to: start) ?? start
-        return "\(start.formatted(.dateTime.month(.abbreviated).day())) – \(end.formatted(.dateTime.day()))".uppercased()
+    @ViewBuilder
+    private func weekdayMark(_ mark: PlanWeekdayMark) -> some View {
+        switch mark {
+        case .none:
+            Color.clear
+        case .completed:
+            Circle()
+                .fill(BaselineColor.zoneGreen)
+                .frame(width: BaselineSize.dayStatusDot, height: BaselineSize.dayStatusDot)
+        case .rest:
+            Image(systemName: "moon.fill")
+                .font(.system(size: BaselineSize.dayStatusMoon))
+                .foregroundStyle(BaselineColor.textFaint)
+        }
     }
 
-    private func calendarMonthHeader(_ date: Date) -> some View {
-        InstrumentLabel(date.formatted(.dateTime.month(.wide).year()).uppercased(), tracking: 1.2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, BaselineSpacing.xxxSmall)
-            .padding(.top, BaselineSpacing.row)
-            .padding(.bottom, BaselineSpacing.compact)
-            .background(BaselineColor.base)
-            .overlay(alignment: .bottom) { Hairline() }
+    private func weekdayAccessibilityLabel(_ cell: PlanWeekdayCell) -> String {
+        let day = cell.date.formatted(.dateTime.weekday(.wide))
+        if cell.isToday { return "\(day), today" }
+        switch cell.mark {
+        case .completed: return "\(day), workout completed"
+        case .rest: return "\(day), rest day"
+        case .none: return day
+        }
     }
 
-    private func calendarDayRow(_ day: TrainingDay) -> some View {
-        let isToday = cal.isDate(day.date, inSameDayAs: today)
-        let isFuture = day.date > today
-        let isDropTarget = dropTargetDate.map { cal.isDate($0, inSameDayAs: day.date) } ?? false
-        let pendingReview = reviewableImport(for: day.date)
+    // MARK: Day grid
 
-        return HStack(alignment: .center, spacing: BaselineSpacing.medium) {
+    private var dayGrid: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(presentation?.days ?? []) { row in
+                    dayGroup(row)
+                }
+                Hairline(color: BaselineColor.line.opacity(0.7))
+            }
+            .padding(.bottom, BaselineSpacing.screenBottom)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    /// A day is a stack of full-width cells sharing one top rule: its sessions (plus an "add a second"
+    /// cell on today and future days), or its rest marker, or the single "+" of an undecided day.
+    private func dayGroup(_ row: PlanDayRow) -> some View {
+        let pendingReview = reviewableImport(for: row.date)
+        let isDropTarget = dropTargetDate.map { cal.isDate($0, inSameDayAs: row.date) } ?? false
+        return VStack(spacing: 0) {
+            Hairline(color: BaselineColor.line.opacity(0.7))
+            if let pendingReview {
+                importCell(row, summary: pendingReview)
+            }
+            switch row.content {
+            case .sessions(let entries):
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    if let scheduled = sessionByID[entry.id] {
+                        sessionCell(row, entry, scheduled: scheduled, showsDate: pendingReview == nil && index == 0)
+                    }
+                }
+                if row.showsAddAnother {
+                    addAnotherCell(row)
+                }
+            case .rest:
+                restCell(row, showsDate: pendingReview == nil)
+            case .empty:
+                if pendingReview == nil { emptyCell(row) }
+            }
+        }
+        .background(isDropTarget ? BaselineColor.accent.opacity(0.12) : .clear)
+        .opacity(row.isToday ? 1 : mutedDayOpacity)
+        .dropDestination(for: String.self) { items, _ in
+            guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
+            return drop(dragged, on: row.date)
+        } isTargeted: { targeted in
+            dropTargetDate = targeted ? row.date : nil
+        }
+    }
+
+    /// The shared cell scaffold: a leading date column (blank but reserved on a day's later cells so
+    /// every title lines up) and the cell's own content, filling the row edge to edge.
+    private func cell<Content: View>(
+        _ row: PlanDayRow,
+        showsDate: Bool,
+        dateTint: Color,
+        fill: Color = .clear,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .center, spacing: BaselineSpacing.medium) {
             VStack(spacing: BaselineSpacing.xxxSmall) {
-                Text(day.date.formatted(.dateTime.day()))
+                Text(row.dayNumber)
                     .font(.headline.monospacedDigit().weight(.bold))
-                Text(day.date.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                Text(row.weekdayAbbreviation)
                     .font(.caption2.monospaced().weight(.semibold))
                     .tracking(0.8)
             }
-            .foregroundStyle(isToday ? BaselineColor.accent : BaselineColor.textMid)
-            .frame(width: BaselineSize.minimumTapTarget - BaselineSpacing.xxSmall)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(day.date.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+            .foregroundStyle(dateTint)
+            .frame(width: dateColumnWidth)
+            .opacity(showsDate ? 1 : 0)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(dayLabel(row.date))
+            .accessibilityHidden(!showsDate)
 
-            VStack(alignment: .leading, spacing: BaselineSpacing.compact) {
-                if let pendingReview {
-                    calendarImportButton(pendingReview, date: day.date)
-                }
+            content()
+        }
+        .padding(.horizontal, BaselineSpacing.large)
+        .padding(.vertical, BaselineSpacing.xSmall)
+        .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+        .background(fill)
+    }
 
-                if day.sessions.isEmpty && pendingReview == nil {
-                    emptyDayRow(day)
-                } else {
-                    ForEach(day.sessions) { scheduled in
-                        WorkoutSwipeActionRow(
-                            actionTitle: "Delete",
-                            systemImage: "trash",
-                            contentBackground: isToday || isDropTarget ? .clear : BaselineColor.base,
-                            action: { handle(.delete, scheduled) }
-                        ) {
-                            calendarSessionButton(scheduled)
+    /// Every cell reserves the same leading column, so titles, glyphs and the "+" of a day's later
+    /// cells all line up under its date.
+    private var dateColumnWidth: CGFloat { BaselineSize.minimumTapTarget - BaselineSpacing.xxSmall }
+
+    private func dateTint(_ row: PlanDayRow) -> Color {
+        if row.isToday { return BaselineColor.accent }
+        if row.sessions.contains(where: \.isCompleted) { return BaselineColor.zoneGreen }
+        return BaselineColor.textMid
+    }
+
+    // MARK: Cells
+
+    private func sessionCell(
+        _ row: PlanDayRow,
+        _ entry: PlanSessionEntry,
+        scheduled: ScheduledWorkout,
+        showsDate: Bool
+    ) -> some View {
+        WorkoutSwipeActionRow(
+            actionTitle: "Delete",
+            systemImage: "trash",
+            contentBackground: BaselineColor.base,
+            action: { handle(.delete, scheduled) }
+        ) {
+            cell(row,
+                 showsDate: showsDate,
+                 dateTint: dateTint(row),
+                 fill: entry.isCompleted ? BaselineColor.zoneGreen.opacity(0.13) : .clear) {
+                Button {
+                    detailWorkout = scheduled
+                } label: {
+                    HStack(spacing: BaselineSpacing.xSmall) {
+                        if entry.showsReorderHandle { reorderHandle }
+                        VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                            Text(entry.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(BaselineColor.textHi)
+                                .lineLimit(1)
+                            HStack(spacing: BaselineSpacing.xxSmall) {
+                                if entry.isCompleted == false, let (label, color) = PlanStatusStyle.chip(entry.status) {
+                                    Text(label)
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(color)
+                                }
+                                Text(entry.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(entry.isCompleted ? BaselineColor.zoneGreen : BaselineColor.textMid)
+                                    .lineLimit(1)
+                            }
                         }
-                        .draggable(scheduled.id.uuidString)
+                        Spacer(minLength: BaselineSpacing.xSmall)
+                        if entry.isCompleted {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(BaselineColor.zoneGreen)
+                                .accessibilityHidden(true)
+                        }
                     }
+                    .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityHint(entry.isCompleted ? "Opens the logged session" : "Opens workout details")
+                .contextMenu { sessionMenu(scheduled, status: entry.status) }
+                // The context menu is invisible to assistive tech, so its primary start/resume/review
+                // action must also be a custom action or the session cannot be started from the
+                // calendar at all.
+                .accessibilityAction(named: Text(openLabel(entry.status))) { handle(.open, scheduled) }
             }
+        }
+        .draggable(entry.id.uuidString)
+    }
 
-            if let first = day.sessions.first {
-                Image(systemName: isCardio(first) ? "clock.arrow.circlepath" : "diamond.fill")
-                    .font(.caption)
-                    .foregroundStyle(isCardio(first) ? BaselineColor.zoneBlue : BaselineColor.accent)
-                    .accessibilityHidden(true)
+    /// Rendered, not yet wired: drag-to-reorder is its own change. It stays decorative to assistive
+    /// tech until the gesture lands, so VoiceOver is never offered a control that does nothing.
+    private var reorderHandle: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(BaselineColor.textFaint)
+            .accessibilityHidden(true)
+    }
+
+    /// An undecided day is a decision waiting to be made, and the whole row is the invitation: one
+    /// accent "+" opening the per-day add sheet (which is also where "Make it a rest day" lives).
+    private func emptyCell(_ row: PlanDayRow) -> some View {
+        cell(row, showsDate: true, dateTint: dateTint(row)) {
+            Button {
+                addContext = AddContext(date: row.date)
+            } label: {
+                plusGlyph
+                    .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget)
+                    .contentShape(Rectangle())
             }
-        }
-        .padding(.horizontal, isToday ? BaselineSpacing.compact : BaselineSpacing.xxxSmall)
-        .padding(.vertical, BaselineSpacing.medium)
-        .frame(maxWidth: .infinity, minHeight: BaselineSize.tabBarHeight, alignment: .leading)
-        .background {
-            if isDropTarget {
-                RoundedRectangle(cornerRadius: BaselineRadius.row)
-                    .fill(BaselineColor.accent.opacity(0.12))
-            } else if isToday {
-                RoundedRectangle(cornerRadius: BaselineRadius.row)
-                    .fill(
-                        LinearGradient(
-                            colors: [BaselineColor.amethyst.opacity(0.5), BaselineColor.surface.opacity(0.35)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-        }
-        .overlay(alignment: .bottom) {
-            Hairline(color: isToday ? BaselineColor.accent.opacity(0.4) : BaselineColor.line.opacity(0.7))
-        }
-        .opacity(isFuture ? 0.68 : 1)
-        .contentShape(Rectangle())
-        .dropDestination(for: String.self) { items, _ in
-            guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
-            return drop(dragged, on: day.date)
-        } isTargeted: { targeted in
-            dropTargetDate = targeted ? day.date : nil
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add workout")
+            .accessibilityHint("Opens options to add training to \(dayLabel(row.date))")
         }
     }
 
-    /// An empty day is a decision waiting to be made. The row leads with an explicit affordance —
-    /// "Add workout" (plus glyph, opens the per-day add sheet), or "Rest day" once the athlete has
-    /// marked it — and carries a trailing one-tap moon toggle so declaring a rest day never requires
-    /// opening the sheet. Un-marking is the same tap, so the toggle is its own undo.
-    private func emptyDayRow(_ day: TrainingDay) -> some View {
-        let dayLabel = day.date.formatted(.dateTime.weekday(.wide).month(.wide).day())
-        return HStack(spacing: BaselineSpacing.xSmall) {
+    /// A second session on a day that already has one - offered on today and future days only.
+    private func addAnotherCell(_ row: PlanDayRow) -> some View {
+        Button {
+            addContext = AddContext(date: row.date)
+        } label: {
+            HStack(spacing: BaselineSpacing.medium) {
+                Color.clear.frame(width: dateColumnWidth, height: BaselineSize.hairline)
+                plusGlyph.frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, BaselineSpacing.large)
+            .padding(.bottom, BaselineSpacing.compact)
+            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add another workout")
+        .accessibilityHint("Adds a second session to \(dayLabel(row.date))")
+    }
+
+    private var plusGlyph: some View {
+        Image(systemName: "plus")
+            .font(.system(size: BaselineSize.selectionGlyph, weight: .light))
+            .foregroundStyle(BaselineColor.accent)
+    }
+
+    /// A decided rest day: a moon and the word for it. The moon is its own undo - the same tap that
+    /// declared the day un-declares it - and the label opens the add sheet, so replacing rest with
+    /// training never needs the day to be cleared first.
+    private func restCell(_ row: PlanDayRow, showsDate: Bool) -> some View {
+        cell(row, showsDate: showsDate, dateTint: dateTint(row)) {
+            HStack(spacing: 0) {
+                Button {
+                    plan.setRestDay(row.date, false)
+                } label: {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(BaselineColor.textFaint)
+                        .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove rest day")
+                .accessibilityHint("Removes the rest-day mark from \(dayLabel(row.date))")
+
+                Button {
+                    addContext = AddContext(date: row.date)
+                } label: {
+                    Text("Rest day")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(BaselineColor.textMid)
+                        .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Rest day")
+                .accessibilityHint("Opens options to add training to \(dayLabel(row.date))")
+            }
+        }
+    }
+
+    private func importCell(_ row: PlanDayRow, summary: WorkoutImportPendingSummary) -> some View {
+        cell(row, showsDate: true, dateTint: dateTint(row)) {
             Button {
-                addContext = AddContext(date: day.date)
+                importContext = ImportContext(date: row.date)
             } label: {
-                HStack(spacing: BaselineSpacing.xxSmall) {
-                    if day.isRestDay {
-                        Text("Rest day")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(BaselineColor.textMid)
-                    } else {
-                        Image(systemName: "plus.circle")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(BaselineColor.accent.opacity(0.8))
-                        Text("Add workout")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(BaselineColor.textFaint)
-                    }
+                VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                    Text("Import ready to review")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BaselineColor.textHi)
+                    Text("Tap to review and save")
+                        .font(.caption)
+                        .foregroundStyle(BaselineColor.textMid)
                 }
                 .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(day.isRestDay ? "Rest day" : "Add workout")
-            .accessibilityHint("Opens options to add training to \(dayLabel)")
-
-            Button {
-                plan.setRestDay(day.date, !day.isRestDay)
-            } label: {
-                Image(systemName: day.isRestDay ? "moon.zzz.fill" : "moon.zzz")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(day.isRestDay ? BaselineColor.accent : BaselineColor.textFaint)
-                    .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(day.isRestDay ? "Remove rest day" : "Mark as rest day")
-            .accessibilityHint(day.isRestDay
-                ? "Removes the rest-day mark from \(dayLabel)"
-                : "Marks \(dayLabel) as a rest day")
+            .accessibilityHint("Opens the imported workout to review and save")
         }
     }
 
-    private func calendarSessionButton(_ scheduled: ScheduledWorkout) -> some View {
-        let status = statusByID[scheduled.id] ?? .planned
-        return Button {
-            detailWorkout = scheduled
-        } label: {
-            VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
-                Text(scheduled.workout.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(BaselineColor.textHi)
-                    .lineLimit(1)
-                HStack(spacing: BaselineSpacing.xxSmall) {
-                    if let (label, color) = PlanStatusStyle.chip(status) {
-                        Text(label)
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(color)
-                    }
-                    Text(calendarSubtitle(scheduled))
-                        .font(.caption)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens workout details")
-        .contextMenu { sessionMenu(scheduled, status: status) }
-        // The context menu is invisible to assistive tech, so its primary start/resume/review action
-        // must also be a custom action or the session cannot be started from the calendar at all.
-        .accessibilityAction(named: Text(openLabel(status))) { handle(.open, scheduled) }
+    private func dayLabel(_ date: Date) -> String {
+        date.formatted(.dateTime.weekday(.wide).month(.wide).day())
     }
+
+    // MARK: Session actions
 
     /// Plan-level organization for a session, one press away from its row: start/resume, move within
     /// its week, duplicate, skip/unskip, delete. Mirrors what the old timeline card's menu offered.
@@ -449,39 +599,6 @@ struct PlanView: View {
     private func weekDates(around date: Date) -> [Date] {
         let start = cal.weekStart(for: date)
         return (0 ..< 7).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
-    }
-
-    private func calendarImportButton(_ summary: WorkoutImportPendingSummary, date: Date) -> some View {
-        Button {
-            importContext = ImportContext(date: date)
-        } label: {
-            VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
-                Text("Import ready to review")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(BaselineColor.textHi)
-                Text("Tap to review and save")
-                    .font(.caption)
-                    .foregroundStyle(BaselineColor.textMid)
-            }
-            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens the imported workout to review and save")
-    }
-
-    private func calendarSubtitle(_ scheduled: ScheduledWorkout) -> String {
-        let descriptors = scheduled.workout.allExercises.prefix(2).map(\.exerciseName)
-        let work = descriptors.isEmpty ? (scheduled.workout.goal ?? "Training") : descriptors.joined(separator: " + ")
-        let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }
-            .map { MetricFormat.durationLong($0.total) } ?? "Planned"
-        return "\(work) · \(duration)"
-    }
-
-    private func isCardio(_ scheduled: ScheduledWorkout) -> Bool {
-        let exercises = scheduled.workout.allExercises
-        return exercises.isEmpty == false && exercises.allSatisfy {
-            [.cycling, .running, .erg].contains($0.definition.category)
-        }
     }
 
     /// Refresh the unfinished-import snapshots that drive the per-day resume affordance. Delegates to the
@@ -554,8 +671,8 @@ struct PlanView: View {
     }
 
     /// A drag dropped on `day`. Empty day → move directly; occupied → offer Move/Swap. The occupancy
-    /// check queries the repository for that exact day: the calendar spans months, so the focused-week
-    /// projection cannot answer for an arbitrary drop target.
+    /// check queries the repository for that exact day so it stays correct for a day the cached week
+    /// projection has since had mutated underneath it.
     private func drop(_ dragged: UUID, on day: Date) -> Bool {
         dropTargetDate = nil
         guard let sw = plan.scheduledWorkout(dragged), !cal.isDate(sw.date, inSameDayAs: day) else { return false }
@@ -605,52 +722,4 @@ struct PlanView: View {
         if ctx.store.current != ctx.original { ctx.store.flush() }
         plan.reload()
     }
-}
-
-// MARK: - Aggregate card
-
-struct AggregateCard: View {
-    @Environment(AppSettings.self) private var settings
-    let aggregate: Aggregate
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(PlanFormat.aggregateTitle(aggregate.key)).font(.caption.weight(.semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(PlanFormat.aggregateValue(aggregate, in: settings.unitSystem)).font(.headline).bold().foregroundStyle(BaselineColor.textHi)
-                if let u = PlanFormat.aggregateUnit(aggregate.key, in: settings.unitSystem) { Text(u).font(.caption.weight(.bold)).foregroundStyle(BaselineColor.textFaint) }
-            }
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6).frame(minWidth: 88, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).strokeBorder(BaselineColor.line, lineWidth: 1))
-    }
-}
-
-// MARK: - Formatting
-
-enum PlanFormat {
-    static func aggregateTitle(_ k: AggregateKey) -> String {
-        switch k { case .sessions: "SESSIONS"; case .duration: "DURATION"; case .distance: "RUNNING"; case .strengthSets: "STRENGTH"; case .calories: "CALORIES" }
-    }
-    /// Distance follows the athlete's unit system like every other display path — it used to be
-    /// hard-coded to miles, which read as "MI" to a metric athlete. The weekly card sums a whole
-    /// week's work across every exercise, so it resolves with no exercise in hand: endurance, which
-    /// is the sense the "RUNNING" tile is counting in.
-    static func aggregateUnit(_ k: AggregateKey, in system: UnitSystem) -> String? {
-        switch k {
-        case .distance: system.displayUnit(metric: .distance, exercise: nil).short.uppercased()
-        case .strengthSets: "SETS"
-        case .calories: "CAL"
-        default: nil
-        }
-    }
-    static func aggregateValue(_ a: Aggregate, in system: UnitSystem) -> String {
-        switch a.key {
-        case .duration: return durationShort(Int(a.total))
-        case .distance:
-            return String(format: "%.1f", MetricConvert.fromCanonical(a.total, .distance,
-                                                                      to: system.displayUnit(metric: .distance, exercise: nil)))
-        case .strengthSets, .sessions, .calories: return String(Int(a.total))
-        }
-    }
-    static func durationShort(_ seconds: Int) -> String { MetricFormat.durationLong(Double(seconds)) }
 }
