@@ -924,9 +924,10 @@ final class SwiftDataPlanRepository: PlanRepository {
     /// the normalized completed-exercise rows those logs indexed — matching only on this workout's id.
     /// The Plan entities carry no SwiftData cascade relationships (they link by loose `UUID` foreign keys,
     /// see `PlanEntities.swift`), so deleting only the schedule row strands these rows as orphans that keep
-    /// feeding history/PRs (`history`/`mostRecentPerformance`) and the Today weekly cards. Every path that
-    /// erases a scheduled workout funnels through here so a deleted session stops contributing everywhere
-    /// and no future call site can forget a table again.
+    /// feeding history/PRs (`history`/`mostRecentPerformance`) and the Today weekly cards. `delete` and
+    /// `purgeProvisionalWorkout` both route through here so their deleted schedule rows stop contributing
+    /// everywhere. Note `applySnapshot` (undo/restore) deletes `SDScheduledWorkout` rows directly and does
+    /// NOT cascade the performed footprint — a known, separately-tracked gap, not a case this helper covers.
     private func deletePerformedFootprint(scheduledWorkoutID id: UUID) {
         for log in fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id }) {
             let logID = log.id
