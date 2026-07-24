@@ -237,20 +237,25 @@ final class SwiftDataPlanRepository: PlanRepository {
     }
 
     func mostRecentPerformance(exerciseDefinitionID: String, before: Date) -> ExercisePerformance? {
+        performances(exerciseDefinitionID: exerciseDefinitionID, before: before).first
+    }
+
+    func history(exerciseDefinitionID: String, limit: Int) -> [ExercisePerformance] {
+        Array(performances(exerciseDefinitionID: exerciseDefinitionID).prefix(limit))
+    }
+
+    /// The completed rows for one exercise identity, newest first, without the records that hold only
+    /// a session note. One pipeline, so the "previous" hint and the History screen can never disagree
+    /// about which sessions count as history. Lazy: a caller taking the first row decodes one row.
+    private func performances(
+        exerciseDefinitionID: String,
+        before: Date = .distantFuture
+    ) -> some Collection<ExercisePerformance> {
         let defID: String? = exerciseDefinitionID
         return fetch(SDCompletedExercise.self, where: #Predicate { $0.exerciseDefinitionID == defID && $0.date < before })
             .sorted { $0.date > $1.date }
             .lazy.map(mapPerformance)
-            .first { $0.hasLoggedValues }
-    }
-
-    func history(exerciseDefinitionID: String, limit: Int) -> [ExercisePerformance] {
-        let defID: String? = exerciseDefinitionID
-        return Array(fetch(SDCompletedExercise.self, where: #Predicate { $0.exerciseDefinitionID == defID })
-            .sorted { $0.date > $1.date }
-            .lazy.map(mapPerformance)
-            .filter(\.hasLoggedValues)
-            .prefix(limit))
+            .filter(\.hasLoggedSets)
     }
 
     private func mapPerformance(_ sd: SDCompletedExercise) -> ExercisePerformance {

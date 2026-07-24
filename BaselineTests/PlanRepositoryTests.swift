@@ -267,6 +267,33 @@ struct PlanRepositoryTests {
         #expect(history.map(\.date) == [monday])
     }
 
+    /// An imported workout can prescribe coach text ("6-8 reps") with no typed metrics, so ticking its
+    /// sets complete logs rows that carry no numbers. That is still training the athlete did, and both
+    /// history surfaces must keep it — otherwise their only session for a movement vanishes.
+    @Test func historyKeepsASessionCompletedWithoutTypedNumbers() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let sw = seed(repo, date: monday, program: prog.id)
+        let ex = sw.workout.allExercises.first!
+
+        repo.startSession(forScheduled: sw.id, now: monday)
+        repo.updateSessionLog(forScheduled: sw.id) { log in
+            for set in ex.prescription.sets {
+                log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
+                    s.completed = true
+                }
+            }
+        }
+        _ = repo.completeSession(forScheduled: sw.id, acknowledgingOpenWork: true, now: monday)
+
+        let tuesday = cal.date(byAdding: .day, value: 1, to: monday)!
+        #expect(repo.history(exerciseDefinitionID: "deadlift", limit: 10).map(\.date) == [monday])
+        let prev = repo.mostRecentPerformance(exerciseDefinitionID: "deadlift", before: tuesday)
+        #expect(prev?.date == monday)
+        #expect(prev?.sets.count == ex.prescription.sets.count)
+        #expect(prev?.sets.allSatisfy(\.isEmpty) == true)
+    }
+
     /// Drives the two-step delete (propose → confirm) the UI uses, returning nothing but asserting the
     /// erase applied. Keeps the cascade tests below focused on *what* the delete removes.
     @discardableResult
