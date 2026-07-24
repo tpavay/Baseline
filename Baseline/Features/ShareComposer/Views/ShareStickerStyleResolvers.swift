@@ -22,19 +22,4 @@ extension RGBAColor {
     var color: Color {
         Color(.sRGB, red: r, green: g, blue: b, opacity: a)
     }
-
-    init(_ color: Color) {
-        let ui = UIColor(color)
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
-        self.init(r: Double(r), g: Double(g), b: Double(b), a: Double(a))
-    }
-
-    var isTextHi: Bool {
-        abs(r - Self.textHi.r) < 0.01 && abs(g - Self.textHi.g) < 0.01
-            && abs(b - Self.textHi.b) < 0.01 && a > 0.97
-    }
 }

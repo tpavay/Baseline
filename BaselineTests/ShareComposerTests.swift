@@ -16,7 +16,7 @@ struct WorkoutLogSummaryTests {
         #expect(summary.heaviestLoadKilograms == 100)
         #expect(summary.totalDistanceMeters == 0)
 
-        let text = WorkoutShareTextSummary.make(from: summary, unitForMetric: ShareComposerFixtures.metricUnits)
+        let text = WorkoutShareTextSummary.make(from: summary, units: ShareComposerFixtures.units)
         #expect(text.contains("Lower Strength"))
         #expect(text.contains("Duration: 01:12:00"))
         #expect(text.contains("Back Squat - 2 sets"))
@@ -35,7 +35,7 @@ struct WorkoutLogSummaryTests {
         #expect(summary.totalDurationSeconds == 1500)
         #expect(summary.averagePaceSecondsPerMeter == 0.3)
 
-        let text = WorkoutShareTextSummary.make(from: summary, unitForMetric: ShareComposerFixtures.metricUnits)
+        let text = WorkoutShareTextSummary.make(from: summary, units: ShareComposerFixtures.units)
         #expect(text.contains("5 km Progression"))
         #expect(text.contains("Distance: 5 km"))
         #expect(text.contains("Average pace: 5:00/km"))
@@ -50,7 +50,7 @@ struct BaselineShareStatResolverTests {
     @Test func strengthStatsResolveAgainstBaselineMetrics() throws {
         let resolver = BaselineShareStatResolver(
             summary: ShareComposerFixtures.strengthSummary(),
-            unitForMetric: ShareComposerFixtures.metricUnits
+            units: ShareComposerFixtures.units
         )
 
         #expect(try #require(resolver.resolve(.duration)).value == "1h 12m")
@@ -65,7 +65,7 @@ struct BaselineShareStatResolverTests {
     @Test func cardioStatsOmitStrengthOnlyValues() throws {
         let resolver = BaselineShareStatResolver(
             summary: ShareComposerFixtures.cardioSummary(),
-            unitForMetric: ShareComposerFixtures.metricUnits
+            units: ShareComposerFixtures.units
         )
 
         #expect(try #require(resolver.resolve(.totalDistance)).value == "5 km")
@@ -78,12 +78,101 @@ struct BaselineShareStatResolverTests {
 }
 
 @MainActor
+struct ShareUnitResolverTests {
+
+    /// A share card is a display surface, so the floor/endurance distance rule has to reach it: a sled
+    /// push logged in metres must not read "0.02 km" because the summary forgot which exercise it was.
+    @Test func perExerciseUnitsSurviveIntoTheShareTextAndTotals() {
+        let store = WorkoutStore(
+            units: StubUnitSystem(.imperial),
+            defaults: UserDefaults(suiteName: "share-units-\(UUID().uuidString)")!
+        )
+        let sled = PlannedExercise(exerciseName: "Sled Push", definitionId: "sled_push", selectedMetrics: [.distance])
+        let run = PlannedExercise(exerciseName: "Run", definitionId: "run", selectedMetrics: [.distance])
+        let workout = Workout(title: "Hybrid", blocks: [WorkoutBlock(name: "", exercises: [sled, run])])
+        let log = WorkoutLog(exercises: [
+            PerformedExercise(
+                plannedExerciseID: sled.id,
+                exerciseName: "Sled Push",
+                setLogs: [SetLog(distance: 20, outcome: .completed)]
+            ),
+            PerformedExercise(
+                plannedExerciseID: run.id,
+                exerciseName: "Run",
+                setLogs: [SetLog(distance: 1_609.344, outcome: .completed)]
+            )
+        ], isComplete: true)
+
+        let units = ShareUnitResolver(workout: workout, store: store)
+        let summary = WorkoutLogSummary(
+            title: "Hybrid",
+            log: log,
+            startedAt: ShareComposerFixtures.startedAt,
+            finishedAt: ShareComposerFixtures.finishedAt,
+            units: units
+        )
+        let text = WorkoutShareTextSummary.make(from: summary, units: units)
+
+        #expect(text.contains("20 m"))
+        #expect(text.contains("1 mi"))
+        // The one distance total covers both movements, and any floor work puts the whole total in metres.
+        #expect(BaselineShareStatResolver(summary: summary, units: units).resolve(.totalDistance)?.value.hasSuffix(" m") == true)
+    }
+}
+
+@MainActor
+struct ShareStickerInstanceTests {
+
+    /// The export clips to the card, so a normalized position outside 0...1 would be visible while
+    /// editing and missing from the shared image.
+    @Test func positionIsClampedToTheCanvasOnEveryWrite() {
+        var sticker = ShareStickerInstance(kind: .duration, position: CGPoint(x: -0.4, y: 1.8))
+        #expect(sticker.position == CGPoint(x: 0, y: 1))
+
+        sticker.position = CGPoint(x: 1.4, y: -0.2)
+        #expect(sticker.position == CGPoint(x: 1, y: 0))
+
+        sticker.position = CGPoint(x: 0.3, y: 0.7)
+        #expect(sticker.position == CGPoint(x: 0.3, y: 0.7))
+    }
+}
+
+@MainActor
+struct CompletedWorkoutFinishTimeTests {
+
+    /// A standalone log has no plan record to read a finish time back from, so completion has to leave
+    /// one behind — otherwise reopening the workout tomorrow shares a multi-day "duration".
+    @Test func standaloneCompletionPersistsTheFinishInstant() {
+        let suite = "finish-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = WorkoutStore(units: StubUnitSystem(.metric), defaults: defaults)
+        store.create(title: "Ad-hoc", goal: nil)
+        store.startWorkout()
+        #expect(store.currentLogFinishedAt == nil)
+
+        let before = Date()
+        store.completeWorkout(awaitingReconciliationDecision: false)
+        let finishedAt = store.currentLogFinishedAt
+
+        #expect(finishedAt != nil)
+        #expect(finishedAt.map { $0.timeIntervalSince(before) < 5 } == true)
+
+        // And it survives the app being reopened, which is exactly when "now" would have been wrong.
+        let reopened = WorkoutStore(units: StubUnitSystem(.metric), defaults: defaults)
+        #expect(reopened.currentLogFinishedAt == finishedAt)
+
+        reopened.discardLog()
+        #expect(reopened.currentLogFinishedAt == nil)
+    }
+}
+
+@MainActor
 struct ShareComposerRenderTests {
 
     @Test func rendererProducesStorySizedBaselineCard() async throws {
         let viewModel = ShareComposerViewModel(
             summary: ShareComposerFixtures.strengthSummary(),
-            unitForMetric: ShareComposerFixtures.metricUnits
+            units: ShareComposerFixtures.units
         )
         let image = try #require(await ShareComposerExporter().renderImage(viewModel: viewModel))
 
@@ -142,7 +231,7 @@ private enum ShareComposerFixtures {
             ], isComplete: true),
             startedAt: startedAt,
             finishedAt: finishedAt,
-            unitForMetric: metricUnits
+            units: units
         )
     }
 
@@ -160,11 +249,13 @@ private enum ShareComposerFixtures {
             ], isComplete: true),
             startedAt: startedAt,
             finishedAt: startedAt.addingTimeInterval(1_620),
-            unitForMetric: metricUnits
+            units: units
         )
     }
 
-    static func metricUnits(_ metric: MetricType) -> MetricUnit {
+    static let units = ShareUnitResolver.withoutExerciseContext(metricUnits)
+
+    nonisolated static func metricUnits(_ metric: MetricType) -> MetricUnit {
         switch metric {
         case .distance:
             return .kilometers
@@ -191,7 +282,7 @@ private final class ShareComposerScreen: HostedScreen {
 
     init(summary: WorkoutLogSummary) throws {
         window = try Self.makeWindow(
-            rootView: ShareComposerView(summary: summary, unitForMetric: ShareComposerFixtures.metricUnits)
+            rootView: ShareComposerView(summary: summary, units: ShareComposerFixtures.units)
                 .preferredColorScheme(.dark)
         )
     }

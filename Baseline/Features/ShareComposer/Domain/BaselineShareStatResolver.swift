@@ -1,9 +1,12 @@
 import Foundation
 
 /// Resolves Baseline completed-workout aggregates into share-sticker display values.
+///
+/// Every value here is a workout-level total, so it resolves through `unitForTotals` — no single
+/// exercise owns the number, and the workout's composition decides the unit.
 struct BaselineShareStatResolver {
     let summary: WorkoutLogSummary
-    let unitForMetric: (MetricType) -> MetricUnit
+    let units: ShareUnitResolver
 
     func availableKinds() -> [ShareStatStickerKind] {
         ShareStatStickerKind.allCases.filter { resolve($0) != nil }
@@ -28,35 +31,38 @@ struct BaselineShareStatResolver {
             return stat(kind, "REPS", summary.totalReps.formatted(.number.grouping(.automatic)))
         case .totalVolume:
             guard summary.totalVolumeKilograms > 0 else { return nil }
-            let unit = unitForMetric(.load)
             return stat(
                 kind,
                 "VOLUME",
-                MetricFormat.value(summary.totalVolumeKilograms, .load, unit: unit)
+                MetricFormat.value(summary.totalVolumeKilograms, .load, unit: units.unitForTotals(.load))
             )
         case .heaviestLoad:
             guard let load = summary.heaviestLoadKilograms else { return nil }
             return stat(
                 kind,
                 "HEAVIEST",
-                MetricFormat.value(load, .load, unit: unitForMetric(.load))
+                MetricFormat.value(load, .load, unit: units.unitForTotals(.load))
             )
         case .totalDistance:
             guard summary.totalDistanceMeters > 0 else { return nil }
             return stat(
                 kind,
                 "DISTANCE",
-                MetricFormat.value(summary.totalDistanceMeters, .distance, unit: unitForMetric(.distance))
+                MetricFormat.value(summary.totalDistanceMeters, .distance, unit: units.unitForTotals(.distance))
             )
         case .totalDuration:
             guard summary.totalDurationSeconds > 0 else { return nil }
             return stat(kind, "WORK TIME", MetricFormat.durationLong(summary.totalDurationSeconds))
         case .totalCalories:
             guard summary.totalCalories > 0 else { return nil }
-            return stat(kind, "CAL", MetricFormat.value(summary.totalCalories, .calories, unit: unitForMetric(.calories)))
+            return stat(
+                kind,
+                "CAL",
+                MetricFormat.value(summary.totalCalories, .calories, unit: units.unitForTotals(.calories))
+            )
         case .avgPace:
             guard let pace = summary.averagePaceSecondsPerMeter else { return nil }
-            return stat(kind, "AVG PACE", MetricFormat.value(pace, .pace, unit: unitForMetric(.pace)))
+            return stat(kind, "AVG PACE", MetricFormat.value(pace, .pace, unit: units.unitForTotals(.pace)))
         }
     }
 

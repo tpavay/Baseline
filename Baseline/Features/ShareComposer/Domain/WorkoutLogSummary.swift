@@ -38,7 +38,7 @@ struct WorkoutLogSummary: Equatable, Sendable {
         finishedAt: Date,
         averageHeartRate: Int? = nil,
         maxHeartRate: Int? = nil,
-        unitForMetric: (MetricType) -> MetricUnit
+        units: ShareUnitResolver
     ) {
         self.title = title
         self.startedAt = startedAt
@@ -84,7 +84,8 @@ struct WorkoutLogSummary: Equatable, Sendable {
                 setSummaries.append(
                     Self.setSummary(
                         set,
-                        unitForMetric: unitForMetric
+                        plannedExerciseID: exercise.plannedExerciseID,
+                        units: units
                     )
                 )
             }
@@ -112,28 +113,32 @@ struct WorkoutLogSummary: Equatable, Sendable {
 
     private static func setSummary(
         _ set: SetLog,
-        unitForMetric: (MetricType) -> MetricUnit
+        plannedExerciseID: UUID?,
+        units: ShareUnitResolver
     ) -> String {
+        func unit(_ metric: MetricType) -> MetricUnit {
+            units.unitForExercise(metric, plannedExerciseID)
+        }
         var parts: [String] = []
         if let reps = set.reps {
             parts.append("\(reps) reps")
         }
         if let load = set.load {
-            parts.append(MetricFormat.value(load, .load, unit: unitForMetric(.load)))
+            parts.append(MetricFormat.value(load, .load, unit: unit(.load)))
         }
         if let duration = set.duration {
             parts.append(MetricFormat.duration(Double(duration)))
         }
         if let distance = set.distance {
-            parts.append(MetricFormat.value(distance, .distance, unit: unitForMetric(.distance)))
+            parts.append(MetricFormat.value(distance, .distance, unit: unit(.distance)))
         }
         if let pace = Self.setPace(set) {
-            parts.append(MetricFormat.value(pace, .pace, unit: unitForMetric(.pace)))
+            parts.append(MetricFormat.value(pace, .pace, unit: unit(.pace)))
         } else if let pace = set.values[.pace] {
-            parts.append(MetricFormat.value(pace, .pace, unit: unitForMetric(.pace)))
+            parts.append(MetricFormat.value(pace, .pace, unit: unit(.pace)))
         }
         if let calories = set.calories {
-            parts.append(MetricFormat.value(calories, .calories, unit: unitForMetric(.calories)))
+            parts.append(MetricFormat.value(calories, .calories, unit: unit(.calories)))
         }
         return parts.isEmpty ? "Completed" : parts.joined(separator: " · ")
     }

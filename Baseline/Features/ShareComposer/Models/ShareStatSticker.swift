@@ -20,8 +20,6 @@ enum ShareStatStickerKind: String, CaseIterable, Identifiable, Codable, Sendable
     case avgPace
 
     var id: String { rawValue }
-
-    var supportsComposite: Bool { true }
 }
 
 /// Visual treatment for a stat sticker.
@@ -31,12 +29,6 @@ enum ShareStickerStyle: String, CaseIterable, Identifiable, Codable, Sendable {
     case chip
 
     var id: String { rawValue }
-
-    func next() -> ShareStickerStyle {
-        let all = ShareStickerStyle.allCases
-        let idx = all.firstIndex(of: self) ?? 0
-        return all[(idx + 1) % all.count]
-    }
 }
 
 /// System-font-only type choices for v1.
@@ -67,12 +59,6 @@ enum ShareTextBackground: String, CaseIterable, Identifiable, Codable, Sendable 
     case surface
 
     var id: String { rawValue }
-
-    func next() -> ShareTextBackground {
-        let all = ShareTextBackground.allCases
-        let idx = all.firstIndex(of: self) ?? 0
-        return all[(idx + 1) % all.count]
-    }
 }
 
 /// SwiftUI-free RGBA color stored on the model so view models stay out of SwiftUI.
@@ -83,23 +69,6 @@ struct RGBAColor: Equatable, Codable, Sendable {
     var a: Double
 
     static let textHi = RGBAColor(r: 0.953, g: 0.941, b: 0.973, a: 1)
-    static let accent = RGBAColor(r: 0.608, g: 0.427, b: 1, a: 1)
-    static let green = RGBAColor(r: 0.204, g: 0.824, b: 0.482, a: 1)
-    static let blue = RGBAColor(r: 0.298, g: 0.553, b: 1, a: 1)
-}
-
-/// Arrangement for a multi-metric sticker.
-enum ShareStatLayout: String, CaseIterable, Identifiable, Codable, Sendable {
-    case row
-    case grid
-    case column
-
-    var id: String { rawValue }
-}
-
-/// A reference to one resolvable stat.
-struct ShareStatRef: Hashable, Codable, Sendable {
-    var kind: ShareStatStickerKind
 }
 
 /// One placed sticker on the share canvas.
@@ -107,20 +76,22 @@ struct ShareStickerInstance: Identifiable, Equatable {
     let id: UUID
     var kind: ShareStatStickerKind
     var style: ShareStickerStyle
-    /// Center point normalized to the canvas, 0...1.
-    var position: CGPoint
+    /// Center point normalized to the canvas, clamped to 0...1 on every write.
+    ///
+    /// The export canvas clips to the card, so a sticker whose centre escaped the canvas would be
+    /// visible while editing and simply absent from the shared image. Clamping here rather than in the
+    /// drag handler means no future writer can reintroduce that.
+    var position: CGPoint {
+        get { normalizedPosition }
+        set { normalizedPosition = Self.clampedToCanvas(newValue) }
+    }
+    private var normalizedPosition: CGPoint
     var scale: CGFloat
     /// Rotation in radians, stored without SwiftUI `Angle`.
     var rotationRadians: Double
     var font: ShareStickerFont
     var color: RGBAColor
     var textBackground: ShareTextBackground
-    var extraStats: [ShareStatRef]
-    var layout: ShareStatLayout
-
-    var primaryStatRef: ShareStatRef { ShareStatRef(kind: kind) }
-    var statRefs: [ShareStatRef] { [primaryStatRef] + extraStats }
-    var isComposite: Bool { !extraStats.isEmpty }
 
     init(
         id: UUID = UUID(),
@@ -131,21 +102,21 @@ struct ShareStickerInstance: Identifiable, Equatable {
         rotationRadians: Double = 0,
         font: ShareStickerFont = .baseline,
         color: RGBAColor = .textHi,
-        textBackground: ShareTextBackground = .none,
-        extraStats: [ShareStatRef] = [],
-        layout: ShareStatLayout = .row
+        textBackground: ShareTextBackground = .none
     ) {
         self.id = id
         self.kind = kind
         self.style = style
-        self.position = position
+        self.normalizedPosition = Self.clampedToCanvas(position)
         self.scale = scale
         self.rotationRadians = rotationRadians
         self.font = font
         self.color = color
         self.textBackground = textBackground
-        self.extraStats = extraStats
-        self.layout = layout
+    }
+
+    private static func clampedToCanvas(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: min(max(point.x, 0), 1), y: min(max(point.y, 0), 1))
     }
 }
 

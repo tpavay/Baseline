@@ -10,7 +10,7 @@ import UIKit
 @Observable
 final class ShareComposerViewModel {
     let summary: WorkoutLogSummary
-    private let unitForMetric: (MetricType) -> MetricUnit
+    private let units: ShareUnitResolver
 
     var stickers: [ShareStickerInstance]
     var selectedID: UUID?
@@ -25,64 +25,28 @@ final class ShareComposerViewModel {
 
     init(
         summary: WorkoutLogSummary,
-        unitForMetric: @escaping (MetricType) -> MetricUnit
+        units: ShareUnitResolver
     ) {
         self.summary = summary
-        self.unitForMetric = unitForMetric
+        self.units = units
         self.stickers = Self.defaultStickers(for: summary)
         self.selectedID = stickers.first?.id
     }
 
     private var resolver: BaselineShareStatResolver {
-        BaselineShareStatResolver(summary: summary, unitForMetric: unitForMetric)
+        BaselineShareStatResolver(summary: summary, units: units)
     }
 
     var shareText: String {
-        WorkoutShareTextSummary.make(from: summary, unitForMetric: unitForMetric)
+        WorkoutShareTextSummary.make(from: summary, units: units)
     }
 
     func availableStats() -> [ResolvedShareStat] {
         resolver.availableKinds().compactMap { resolver.resolve($0) }
     }
 
-    func resolved(_ ref: ShareStatRef) -> ResolvedShareStat? {
-        resolver.resolve(ref.kind)
-    }
-
-    func resolvedStats(for instance: ShareStickerInstance) -> [ResolvedShareStat] {
-        instance.statRefs.compactMap { resolved($0) }
-    }
-
     func resolve(_ instance: ShareStickerInstance) -> ResolvedShareStat? {
-        resolved(instance.primaryStatRef)
-    }
-
-    func paletteRefs(for instance: ShareStickerInstance) -> [ShareStatRef] {
-        resolver.availableKinds()
-            .filter(\.supportsComposite)
-            .map(ShareStatRef.init(kind:))
-    }
-
-    func setLayout(_ layout: ShareStatLayout, for id: UUID) {
-        guard let i = stickers.firstIndex(where: { $0.id == id }) else { return }
-        stickers[i].layout = layout
-    }
-
-    /// Add/remove a metric on a composite sticker. Keeps at least one metric and caps the total at 4.
-    func toggleStat(_ ref: ShareStatRef, for id: UUID) {
-        guard let i = stickers.firstIndex(where: { $0.id == id }) else { return }
-        var sticker = stickers[i]
-        guard sticker.kind.supportsComposite, ref.kind.supportsComposite else { return }
-        if sticker.primaryStatRef == ref {
-            guard !sticker.extraStats.isEmpty else { return }
-            let promoted = sticker.extraStats.removeFirst()
-            sticker.kind = promoted.kind
-        } else if let idx = sticker.extraStats.firstIndex(of: ref) {
-            sticker.extraStats.remove(at: idx)
-        } else if sticker.statRefs.count < 4 {
-            sticker.extraStats.append(ref)
-        }
-        stickers[i] = sticker
+        resolver.resolve(instance.kind)
     }
 
     func addSticker(kind: ShareStatStickerKind, style: ShareStickerStyle = .display) {

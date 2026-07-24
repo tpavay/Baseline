@@ -2,23 +2,18 @@ import Foundation
 
 /// Builds the clean clipboard and system-share text form for a completed workout.
 enum WorkoutShareTextSummary {
-    static func make(from summary: WorkoutLogSummary, unitForMetric: @escaping (MetricType) -> MetricUnit) -> String {
+    static func make(from summary: WorkoutLogSummary, units: ShareUnitResolver) -> String {
         var lines: [String] = [
             summary.title,
             DateFormatter.shareTextDate.string(from: summary.finishedAt),
             "Duration: \(WorkoutPresentationFormatter.elapsedDuration(from: summary.startedAt, to: summary.finishedAt))"
         ]
 
-        if let distance = BaselineShareStatResolver(
-            summary: summary,
-            unitForMetric: unitForMetric
-        ).resolve(.totalDistance) {
+        let resolver = BaselineShareStatResolver(summary: summary, units: units)
+        if let distance = resolver.resolve(.totalDistance) {
             lines.append("Distance: \(distance.value)")
         }
-        if let pace = BaselineShareStatResolver(
-            summary: summary,
-            unitForMetric: unitForMetric
-        ).resolve(.avgPace) {
+        if let pace = resolver.resolve(.avgPace) {
             lines.append("Average pace: \(pace.value)")
         }
 

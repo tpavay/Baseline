@@ -64,6 +64,13 @@ final class WorkoutStore {
     private(set) var currentLogStartedAt: Date? {
         didSet { persist(currentLogStartedAt, Self.logStartedAtKey) }
     }
+    /// The instant this log was finished, written once at completion and persisted alongside the start
+    /// instant. A standalone log has no plan record to read a finish time back from, so without this a
+    /// completed workout reopened tomorrow would have to guess — and "now" is the one answer that is
+    /// always wrong.
+    private(set) var currentLogFinishedAt: Date? {
+        didSet { persist(currentLogFinishedAt, Self.logFinishedAtKey) }
+    }
 
     // MARK: - Plan binding (this store is the shared editing surface; a sink write-throughs to the repo)
 
@@ -220,9 +227,12 @@ final class WorkoutStore {
         current = s.workout
         currentLog = s.log
         currentLogStartedAt = s.startedAt
+        currentLogFinishedAt = s.log?.isComplete == true ? sink?.completed()?.finishedAt : nil
         isSyncing = false
     }
 
+    /// The plan's completed record for this session, when there is one. Nil for a standalone log, which
+    /// is why the finish instant is persisted here rather than read from the plan on demand.
     var currentCompletedLog: CompletedWorkoutLog? {
         guard currentLog?.isComplete == true else { return nil }
         return sink?.completed()
@@ -362,6 +372,7 @@ final class WorkoutStore {
     private static let key = "workout.current"
     private static let logKey = "workout.currentLog"
     private static let logStartedAtKey = "workout.currentLogStartedAt"
+    private static let logFinishedAtKey = "workout.currentLogFinishedAt"
     private static let prefKey = "workout.preferences"
     private static let customKey = "workout.customDefinitions"
     private static let recentKey = "workout.recentExercises"
@@ -375,6 +386,9 @@ final class WorkoutStore {
         current = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Workout.self, from: $0) }
         currentLog = defaults.data(forKey: Self.logKey).flatMap { try? JSONDecoder().decode(WorkoutLog.self, from: $0) }
         currentLogStartedAt = defaults.data(forKey: Self.logStartedAtKey).flatMap {
+            try? JSONDecoder().decode(Date.self, from: $0)
+        }
+        currentLogFinishedAt = defaults.data(forKey: Self.logFinishedAtKey).flatMap {
             try? JSONDecoder().decode(Date.self, from: $0)
         }
         preferences = defaults.data(forKey: Self.prefKey).flatMap { try? JSONDecoder().decode(ExercisePreferences.self, from: $0) } ?? ExercisePreferences()
@@ -392,6 +406,7 @@ final class WorkoutStore {
         current = transientWorkout
         currentLog = nil
         currentLogStartedAt = nil
+        currentLogFinishedAt = nil
         preferences = source.preferences
         customDefinitions = source.customDefinitions
         recentExerciseIds = source.recentExerciseIds
@@ -508,8 +523,17 @@ final class WorkoutStore {
     /// endurance unit. Any floor movement in the mix — or no distance-bearing movement at all, which
     /// is absence of evidence rather than evidence of endurance — puts the whole total back in meters.
     func displayUnit(_ metric: MetricType, forTotalsIn group: WorkoutGroup) -> MetricUnit {
+        displayUnit(metric, forTotalsAcross: group.children.flatMap(\.exercises))
+    }
+
+    /// The same composition rule for a whole workout's total — what a share card's DISTANCE stat is.
+    func displayUnit(_ metric: MetricType, forTotalsIn workout: Workout) -> MetricUnit {
+        displayUnit(metric, forTotalsAcross: workout.allExercises)
+    }
+
+    private func displayUnit(_ metric: MetricType, forTotalsAcross exercises: [PlannedExercise]) -> MetricUnit {
         guard metric == .distance else { return displayUnit(metric) }
-        let distanceMovements = group.children.flatMap(\.exercises)
+        let distanceMovements = exercises
             .map(resolvedDefinition(for:))
             .filter { $0.supported.contains(.distance) }
         guard !distanceMovements.isEmpty,
@@ -593,6 +617,7 @@ final class WorkoutStore {
         } else {
             guard let w = current, currentLog == nil else { return }
             currentLogStartedAt = Date()
+            currentLogFinishedAt = nil
             currentLog = w.startLog()
         }
     }
@@ -609,8 +634,12 @@ final class WorkoutStore {
     /// plan resolves it here, because no prompt will ever appear to resolve it later. Required, not
     /// defaulted: a caller that omitted it would silently close a prompt that had not been shown yet.
     func completeWorkout(awaitingReconciliationDecision: Bool) {
+        let finishedAt = Date()
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
+        // The plan writes its own finish instant for a session; a standalone log has nowhere else to
+        // record one, so both branches leave the same fact behind for surfaces that reopen the log.
+        currentLogFinishedAt = currentCompletedLog?.finishedAt ?? finishedAt
         if !awaitingReconciliationDecision { sink?.resolveSessionDecision() }
     }
 
@@ -721,6 +750,7 @@ final class WorkoutStore {
             isSyncing = true
             currentLog = nil
             currentLogStartedAt = nil
+            currentLogFinishedAt = nil
             isSyncing = false
             return
         }
@@ -1084,15 +1114,19 @@ final class WorkoutStore {
                 isSyncing = true
                 currentLog = nil
                 currentLogStartedAt = nil
+                currentLogFinishedAt = nil
                 isSyncing = false
             }
             return outcome
         } else if let make = makeTodayScheduled, let newSink = make(w) {
             // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
             sink = newSink; coalesceContent = false; pendingPlanEdit = nil
-            isSyncing = true; current = w; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
+            isSyncing = true
+            current = w; currentLog = nil; currentLogStartedAt = nil; currentLogFinishedAt = nil
+            isSyncing = false
         } else {
-            current = w; currentLog = nil; currentLogStartedAt = nil   // standalone (no plan)
+            // standalone (no plan)
+            current = w; currentLog = nil; currentLogStartedAt = nil; currentLogFinishedAt = nil
         }
         return .done
     }

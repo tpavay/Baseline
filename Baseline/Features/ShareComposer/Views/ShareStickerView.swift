@@ -3,7 +3,7 @@ import SwiftUI
 /// A placed sticker with pan, pinch, rotate, snap, and delete interactions.
 struct ShareStickerView: View {
     @Binding var instance: ShareStickerInstance
-    let stats: [ResolvedShareStat]
+    let stat: ResolvedShareStat
     let canvasSize: CGSize
     var canvasScale: CGFloat = 1
     let isSelected: Bool
@@ -14,7 +14,6 @@ struct ShareStickerView: View {
     let snapCenter: (CGPoint) -> CGPoint
     let onDragEnded: (CGPoint) -> Void
     let onDragCancelled: () -> Void
-    let onInteractionChanged: (Bool) -> Void
 
     @GestureState private var dragTranslation: CGSize = .zero
     @GestureState private var gestureScale: CGFloat = 1
@@ -29,6 +28,12 @@ struct ShareStickerView: View {
 
     private var transformActive: Bool { scaleActive || rotationActive }
 
+    /// The scale the sticker is actually drawn at. The chrome divides its own line metrics by this so a
+    /// hairline outline stays a hairline on a sticker the athlete has pinched to 6x.
+    private var effectiveScale: CGFloat {
+        max(instance.scale * gestureScale * canvasScale, 0.01)
+    }
+
     private var baseCenter: CGPoint {
         CGPoint(x: instance.position.x * canvasSize.width, y: instance.position.y * canvasSize.height)
     }
@@ -39,27 +44,30 @@ struct ShareStickerView: View {
         let displayCenter = snapCenter(rawCenter)
         let displayRotation = snappedAngle(instance.rotationRadians + gestureRotation.radians)
 
-        ShareStickerVisual(instance: instance, stats: stats)
+        ShareStickerVisual(instance: instance, stat: stat)
+            .overlay(selectionChrome)
             .padding(editingHitSlop)
             .contentShape(Rectangle())
-            .scaleEffect(instance.scale * gestureScale * canvasScale * (isOverTrash ? 0.35 : 1))
+            .scaleEffect(effectiveScale * (isOverTrash ? 0.35 : 1))
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isOverTrash)
             .rotationEffect(.radians(displayRotation))
             .position(displayCenter)
-            .overlay(selectionChrome(displayCenter: displayCenter, rotation: displayRotation))
             .highPriorityGesture(combinedGesture)
             .onTapGesture(perform: onSelect)
     }
 
+    /// Drawn as an overlay on the sticker content so the outline tracks the real bounds of whatever the
+    /// stat renders as — a long value or a chip-style row is boxed correctly rather than to a guess.
     @ViewBuilder
-    private func selectionChrome(displayCenter: CGPoint, rotation: Double) -> some View {
+    private var selectionChrome: some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: BaselineRadius.control, style: .continuous)
-                .stroke(BaselineColor.accent.opacity(0.75), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                .frame(width: 168, height: 82)
-                .scaleEffect(instance.scale * canvasScale)
-                .rotationEffect(.radians(rotation))
-                .position(displayCenter)
+            let scale = effectiveScale
+            RoundedRectangle(cornerRadius: BaselineRadius.control / scale, style: .continuous)
+                .stroke(
+                    BaselineColor.accent.opacity(0.75),
+                    style: StrokeStyle(lineWidth: 1 / scale, dash: [5 / scale, 4 / scale])
+                )
+                .padding(-6 / scale)
                 .allowsHitTesting(false)
         }
     }
@@ -96,7 +104,7 @@ struct ShareStickerView: View {
                 onDragChanged(center)
             }
             .onEnded { value in
-                guard dragActive, !transformActive else {
+                guard dragActive, !transformActive, canvasSize.width > 0, canvasSize.height > 0 else {
                     cancelDragIfNeeded()
                     return
                 }
@@ -105,7 +113,6 @@ struct ShareStickerView: View {
                 instance.position = CGPoint(x: snapped.x / canvasSize.width, y: snapped.y / canvasSize.height)
                 onDragEnded(snapped)
                 dragActive = false
-                syncInteractionState()
             }
 
         let magnify = MagnifyGesture()
@@ -114,7 +121,6 @@ struct ShareStickerView: View {
             .onEnded { value in
                 instance.scale = max(0.3, min(instance.scale * value.magnification, 6))
                 scaleActive = false
-                syncInteractionState()
             }
 
         let rotate = RotateGesture()
@@ -130,41 +136,30 @@ struct ShareStickerView: View {
                 rotationSnapped = false
                 instance.rotationRadians = snappedAngle(instance.rotationRadians + value.rotation.radians)
                 rotationActive = false
-                syncInteractionState()
             }
 
         return drag.simultaneously(with: magnify).simultaneously(with: rotate)
     }
 
     private func beginDrag() {
-        if dragActive == false {
-            dragActive = true
-            onInteractionChanged(true)
-        }
+        dragActive = true
     }
 
     private func beginScale() {
         onSelect()
         scaleActive = true
         cancelDragIfNeeded()
-        onInteractionChanged(true)
     }
 
     private func beginRotation() {
         onSelect()
         rotationActive = true
         cancelDragIfNeeded()
-        onInteractionChanged(true)
     }
 
     private func cancelDragIfNeeded() {
         guard dragActive else { return }
         dragActive = false
         onDragCancelled()
-        syncInteractionState()
-    }
-
-    private func syncInteractionState() {
-        onInteractionChanged(dragActive || scaleActive || rotationActive)
     }
 }

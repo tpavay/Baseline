@@ -46,20 +46,24 @@ struct ShareComposerExporter {
         }
     }
 
-    func presentShareSheet(image: UIImage) {
+    /// Returns false when there is no window to present from, so the caller can say so rather than
+    /// leaving a tapped share button looking like it did nothing.
+    @discardableResult
+    func presentShareSheet(image: UIImage) -> Bool {
         present(items: [image])
     }
 
-    func presentShareSheet(text: String) {
+    @discardableResult
+    func presentShareSheet(text: String) -> Bool {
         present(items: [text])
     }
 
-    private func present(items: [Any]) {
+    private func present(items: [Any]) -> Bool {
         guard let scene = UIApplication.shared.connectedScenes
             .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
               let root = scene.keyWindow?.rootViewController
         else {
-            return
+            return false
         }
         let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
         var presenter = root
@@ -71,5 +75,6 @@ struct ShareComposerExporter {
             pop.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.maxY - 40, width: 0, height: 0)
         }
         presenter.present(activityVC, animated: true)
+        return true
     }
 }

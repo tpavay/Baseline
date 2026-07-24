@@ -1,6 +1,16 @@
 import SwiftUI
 import UIKit
 
+/// Everything the composer needs, captured at the moment the athlete asks to share.
+///
+/// Presenting on this rather than a bool is what guarantees the composer always has content: there is
+/// no state in which the cover is up and the summary is gone.
+struct ShareComposerRequest: Identifiable {
+    let id = UUID()
+    let summary: WorkoutLogSummary
+    let units: ShareUnitResolver
+}
+
 /// Baseline-branded post-workout share composer v1.
 struct ShareComposerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -10,12 +20,11 @@ struct ShareComposerView: View {
     @State private var toast: String?
     @State private var showAddStat = false
     @State private var showStyle = false
-    @State private var activeInteraction = false
 
     private let exporter = ShareComposerExporter()
 
-    init(summary: WorkoutLogSummary, unitForMetric: @escaping (MetricType) -> MetricUnit) {
-        _viewModel = State(initialValue: ShareComposerViewModel(summary: summary, unitForMetric: unitForMetric))
+    init(summary: WorkoutLogSummary, units: ShareUnitResolver) {
+        _viewModel = State(initialValue: ShareComposerViewModel(summary: summary, units: units))
     }
 
     var body: some View {
@@ -23,7 +32,7 @@ struct ShareComposerView: View {
             BaselineColor.base.ignoresSafeArea()
             VStack(spacing: 0) {
                 ShareComposerHeader(onClose: dismiss.callAsFunction)
-                ShareComposerCanvas(viewModel: viewModel, activeInteraction: $activeInteraction)
+                ShareComposerCanvas(viewModel: viewModel)
                     .padding(.horizontal, 18)
                     .padding(.top, 6)
                 ShareComposerControls(
@@ -73,13 +82,17 @@ struct ShareComposerView: View {
     }
 
     private func shareText() {
-        exporter.presentShareSheet(text: viewModel.shareText)
+        if !exporter.presentShareSheet(text: viewModel.shareText) {
+            showToast("Could not open the share sheet")
+        }
     }
 
     private func shareImage() {
         Task {
             guard let image = await renderImage() else { return }
-            exporter.presentShareSheet(image: image)
+            if !exporter.presentShareSheet(image: image) {
+                showToast("Could not open the share sheet")
+            }
         }
     }
 
@@ -142,29 +155,27 @@ private struct ShareComposerHeader: View {
 
 private struct ShareComposerCanvas: View {
     @Bindable var viewModel: ShareComposerViewModel
-    @Binding var activeInteraction: Bool
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: ShareCardMetrics.cornerRadius, style: .continuous)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let canvasScale = size.width / 390
+            let canvasScale = size.width / ShareCardMetrics.designWidth
 
             ZStack {
-                ShareCardBackground(background: viewModel.background)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(BaselineColor.line, lineWidth: BaselineSize.hairline)
-                    )
-                ShareExportHeader(summary: viewModel.summary, canvasScale: canvasScale)
+                ShareCardBackground(background: viewModel.background, canvasScale: canvasScale)
+
+                ShareCardHeader(summary: viewModel.summary, canvasScale: canvasScale)
                     .allowsHitTesting(false)
 
                 ForEach($viewModel.stickers) { $sticker in
-                    let stats = viewModel.resolvedStats(for: sticker)
-                    if stats.isEmpty == false {
+                    if let stat = viewModel.resolve(sticker) {
                         ShareStickerView(
                             instance: $sticker,
-                            stats: stats,
+                            stat: stat,
                             canvasSize: size,
                             canvasScale: canvasScale,
                             isSelected: viewModel.selectedID == sticker.id,
@@ -177,8 +188,7 @@ private struct ShareComposerCanvas: View {
                             onDragEnded: { center in
                                 viewModel.handleDragEnded(id: sticker.id, center: center, canvasSize: size)
                             },
-                            onDragCancelled: viewModel.cancelDragFeedback,
-                            onInteractionChanged: { activeInteraction = $0 }
+                            onDragCancelled: viewModel.cancelDragFeedback
                         )
                     }
                 }
@@ -186,45 +196,18 @@ private struct ShareComposerCanvas: View {
                 ShareComposerGuides(viewModel: viewModel, canvasSize: size)
                 ShareComposerTrash(viewModel: viewModel, canvasSize: size)
 
-                VStack {
-                    Spacer()
-                    BaselineWordmark(size: 14 * canvasScale, color: BaselineColor.textHi.opacity(0.92))
-                        .shadow(color: .black.opacity(0.45), radius: 4 * canvasScale, x: 0, y: 1)
-                        .padding(.bottom, 24 * canvasScale)
-                }
-                .allowsHitTesting(false)
+                ShareCardWordmark(canvasScale: canvasScale)
+                    .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .onTapGesture { viewModel.deselect() }
+            // The export clips to the card, so the preview has to as well: anything the athlete cannot
+            // see here is not in the image they share.
+            .clipShape(cardShape)
+            .overlay(cardShape.stroke(BaselineColor.line, lineWidth: BaselineSize.hairline))
         }
         .aspectRatio(9.0 / 16.0, contentMode: .fit)
         .frame(maxWidth: .infinity)
-    }
-}
-
-private struct ShareExportHeader: View {
-    let summary: WorkoutLogSummary
-    let canvasScale: CGFloat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            InstrumentLabel("Workout complete", color: BaselineColor.textMid, tracking: 1.8)
-            Text(summary.title)
-                .font(.system(size: 26 * canvasScale, weight: .bold, design: .default))
-                .foregroundStyle(BaselineColor.textHi)
-                .lineLimit(3)
-                .minimumScaleFactor(0.45)
-                .padding(.top, 8 * canvasScale)
-            Text(WorkoutPresentationFormatter.elapsedDuration(from: summary.startedAt, to: summary.finishedAt))
-                .font(.system(size: 11 * canvasScale, weight: .medium, design: .monospaced))
-                .tracking(1)
-                .foregroundStyle(BaselineColor.textMid)
-                .padding(.top, 10 * canvasScale)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 28 * canvasScale)
-        .padding(.top, 48 * canvasScale)
     }
 }
 
@@ -398,11 +381,6 @@ private struct ShareStickerStyleSheet: View {
                         Text("None").tag(ShareTextBackground.none)
                         Text("Dark").tag(ShareTextBackground.dark)
                         Text("Surface").tag(ShareTextBackground.surface)
-                    }
-                    Picker("Layout", selection: $viewModel.stickers[selectedIndex].layout) {
-                        Text("Row").tag(ShareStatLayout.row)
-                        Text("Grid").tag(ShareStatLayout.grid)
-                        Text("Column").tag(ShareStatLayout.column)
                     }
                 } else {
                     Text("Select a sticker to edit its style.")
