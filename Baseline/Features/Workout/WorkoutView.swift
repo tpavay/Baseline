@@ -385,10 +385,14 @@ struct WorkoutView: View {
             }
 
             if let notes = workout.guidance?.notesText, !notes.isEmpty {
-                Text(notes)
-                    .font(.body)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .fixedSize(horizontal: false, vertical: true)
+                if mode.usesPerformedData {
+                    WorkoutPlanNote(text: notes, font: .body, accessibilityLabel: "Plan note")
+                } else {
+                    Text(notes)
+                        .font(.body)
+                        .foregroundStyle(BaselineColor.textMid)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if mode.usesPerformedData {

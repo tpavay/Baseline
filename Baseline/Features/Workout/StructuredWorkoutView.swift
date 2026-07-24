@@ -856,12 +856,12 @@ private struct WorkoutExerciseSection: View {
             isPresented: $showRemoveConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Remove and Discard Sets", role: .destructive) {
+            Button(removeConfirmationTitle, role: .destructive) {
                 store.removeExerciseFromWorkout(exercise.id, scope: mode.editScope)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You have already logged sets for this exercise. Removing it from this workout discards them.")
+            Text(removeConfirmationMessage)
         }
     }
 
@@ -910,6 +910,16 @@ private struct WorkoutExerciseSection: View {
         }
     }
 
+    private var removeConfirmationTitle: String {
+        store.hasLoggedSets(forExercise: exercise.id) ? "Remove and Discard Sets" : "Remove and Discard Note"
+    }
+
+    private var removeConfirmationMessage: String {
+        store.hasLoggedSets(forExercise: exercise.id)
+            ? "You have already logged sets for this exercise. Removing it from this workout discards them."
+            : "You have written a note for this exercise. Removing it from this workout discards it."
+    }
+
     private var skippedStateLabel: String {
         guard groupID != nil else { return "Removed from this workout" }
         return adjustment?.iteration == nil ? "Removed from every round" : "Removed from this round"
@@ -943,11 +953,18 @@ private struct WorkoutExerciseSection: View {
     @ViewBuilder private var plannedNotesText: some View {
         let notes = plannedNotesValue
         if !notes.isEmpty {
-            Text(notes)
-                .font(.subheadline)
-                .foregroundStyle(BaselineColor.textMid)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Notes for \(presentedExercise.exerciseName). \(notes)")
+            if mode.usesPerformedData {
+                WorkoutPlanNote(
+                    text: notes,
+                    accessibilityLabel: "Plan note for \(presentedExercise.exerciseName)"
+                )
+            } else {
+                Text(notes)
+                    .font(.subheadline)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Notes for \(presentedExercise.exerciseName). \(notes)")
+            }
         }
     }
 

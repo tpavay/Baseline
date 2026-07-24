@@ -997,9 +997,18 @@ extension WorkoutLog {
         }
     }
 
-    /// Whether the log holds any actually-logged set for a planned exercise — the signal for confirming
-    /// before a destructive true-remove would discard real logged work.
+    /// Whether the log holds anything the athlete recorded for a planned exercise — logged sets or a
+    /// session note. This is the signal for confirming before a destructive true-remove would discard
+    /// real logged work, and a note they typed is real logged work.
     func hasLoggedWork(forPlanned plannedID: UUID) -> Bool {
+        guard let performed = performed(forPlanned: plannedID) else { return false }
+        return performed.setLogs.contains { !$0.values.isEmpty || $0.completed }
+            || !performed.notesText.isEmpty
+    }
+
+    /// Whether any logged *set* exists for a planned exercise, which is what a discard warning needs to
+    /// say honestly what is about to be lost.
+    func hasLoggedSets(forPlanned plannedID: UUID) -> Bool {
         performed(forPlanned: plannedID)?.setLogs.contains { !$0.values.isEmpty || $0.completed } ?? false
     }
 

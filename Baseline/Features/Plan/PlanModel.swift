@@ -184,4 +184,9 @@ struct ExercisePerformance: Identifiable, Codable, Equatable, Sendable {
     var exerciseDefinitionID: String?     // stable catalog identity
     var exerciseName: String
     var sets: [MetricValues]              // per-set actuals
+
+    /// Whether this row carries an actual the athlete could compare against. A performed record can
+    /// exist purely to hold a session note or a status, and a "previous" hint with no numbers in it
+    /// tells them less than showing nothing while hiding the session that did have numbers.
+    var hasLoggedValues: Bool { sets.contains { !$0.isEmpty } }
 }

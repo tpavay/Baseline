@@ -702,6 +702,11 @@ final class WorkoutStore {
         currentLog?.hasLoggedWork(forPlanned: exerciseID) ?? false
     }
 
+    /// Whether that work includes logged sets, so a discard warning can name what it is discarding.
+    func hasLoggedSets(forExercise exerciseID: UUID) -> Bool {
+        currentLog?.hasLoggedSets(forPlanned: exerciseID) ?? false
+    }
+
     /// Whether a block holds any exercise with real logged work — the confirm signal for block deletion.
     func hasLoggedWork(inBlock blockID: UUID) -> Bool {
         guard let log = currentLog, let block = current?.blocks.first(where: { $0.id == blockID }) else { return false }

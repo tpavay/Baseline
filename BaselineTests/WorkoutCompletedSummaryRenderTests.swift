@@ -20,14 +20,19 @@ struct WorkoutCompletedSummaryRenderTests {
         #expect(screen.hasLabel(containing: "Pull-Up"))
         #expect(screen.hasLabel(containing: "Run"))
         #expect(screen.hasLabel(containing: "Notes for Back Squat"))
-        #expect(screen.hasAccessibleText(containing: "Existing note for Back Squat."))
         #expect(screen.hasAccessibleText(containing: "Felt stable under load."))
+        // The workout-level note the athlete typed is read back into the field they typed it in.
+        #expect(screen.hasAccessibleText(containing: "Kept the session short."))
         // The note the athlete typed stays a performed fact; it is never folded into the plan's guidance.
         #expect(screen.performedNotes(forExerciseAt: 0) == ["Felt stable under load."])
         #expect(screen.plannedNotes(forExerciseAt: 0) == ["Existing note for Back Squat."])
+        // The plan's own note is read-only context, announced as such rather than as a second Notes field.
+        #expect(screen.hasLabel(containing: "Plan note for Back Squat. Existing note for Back Squat."))
+        #expect(screen.hasLabel(containing: "Notes for Back Squat. Existing note") == false)
         #expect(screen.hasLabel(containing: "Set completed"))
         #expect(screen.canFocusInput(labelled: "Workout notes"))
         #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))
+        #expect(screen.canFocusInput(labelled: "Plan note for Back Squat") == false)
 
         #expect(screen.hasLabel(containing: "Done") == false)
         #expect(screen.hasLabel(containing: "Modified") == false)
@@ -132,6 +137,8 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         guard exercises.count == 4 else { return }
 
         store.editLog { log in
+            log.setNotes("Kept the session short.")
+
             logSet(for: exercises[0], in: &log, outcome: .completed)
             log.setStatus(.completed, forPlanned: exercises[0].id, name: exercises[0].exerciseName)
             log.addNote(
