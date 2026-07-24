@@ -73,4 +73,13 @@ protocol LiveHeartRateSource: AnyObject {
     func startLiveMonitoring()
     /// Leave live streaming and drop the connection.
     func stopLiveMonitoring()
+
+    /// Re-arm the live HR subscription on the existing GATT link without dropping it. The monitor's
+    /// staleness watchdog calls this when samples go silent while the peripheral still reports
+    /// connected — the notification subscription may have lapsed even though the link is up.
+    func resubscribeLive()
+    /// Cancel and re-establish the peripheral connection for live monitoring. The watchdog escalates
+    /// to this when a re-subscribe did not restore the sample stream; the reconnect re-subscribes on
+    /// its own once characteristics are rediscovered.
+    func reconnectLive()
 }

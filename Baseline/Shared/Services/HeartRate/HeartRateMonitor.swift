@@ -15,11 +15,31 @@ final class HeartRateMonitor {
 
     /// A live sample older than this is treated as absent, and a gap longer than this is not
     /// credited to any zone (the strap was effectively silent, so its zone is unknown). ~5 s covers
-    /// several missed ~1 Hz notifications. Tunable.
+    /// several missed ~1 Hz notifications. This is the *soft* staleness threshold: once crossed the
+    /// HUD drops the live number to "No signal — check the strap" and the watchdog re-subscribes.
+    /// Tunable (captain-facing).
     static let freshnessWindow: TimeInterval = 5
+
+    /// The *hard* staleness threshold. If samples are still silent this long after the last one while
+    /// the link still reports connected, a re-subscribe has not helped, so the watchdog cancels and
+    /// reconnects the peripheral (which surfaces as "Reconnecting…"). Must be > `freshnessWindow`.
+    /// Tunable (captain-facing).
+    static let reconnectWindow: TimeInterval = 10
+
+    /// How often the staleness watchdog re-evaluates freshness while monitoring. Converts freshness
+    /// from a pull (recomputed only on a SwiftUI re-render) into a push, so a silent strap downgrades
+    /// off its last number within ~one tick of crossing `freshnessWindow`. Tunable.
+    static let watchdogInterval: TimeInterval = 1
 
     /// The most recent sample received, regardless of freshness. `freshSample` applies the window.
     private(set) var latestSample: HeartRateSample?
+
+    /// The latest sample if it is still within the freshness window, else nil — the honest "is the
+    /// number live?" verdict the HUD renders. **Stored, not computed**: the watchdog recomputes and
+    /// mutates it on a tick, so this is an *observed* property change that pushes a SwiftUI re-render
+    /// even when no new sample or connection-status change occurs. That closes the freeze where a
+    /// silent-but-connected strap left the last `.streaming` value painted forever.
+    private(set) var freshSample: HeartRateSample?
 
     /// Seconds-in-zone accumulated over the current monitoring run.
     private(set) var zoneTime = ZoneTimeAccumulator()
@@ -40,6 +60,16 @@ final class HeartRateMonitor {
     /// Clock time at which `latestSample` was ingested (the monitor's own arrival stamp).
     @ObservationIgnored private var latestSampleAt: Date?
 
+    /// The repeating staleness watchdog for the current run; cancelled on `stopMonitoring()`.
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
+
+    /// How far recovery has escalated for the *current* stale episode, so each step fires at most
+    /// once and a fresh sample resets it. `.healthy` while data flows.
+    @ObservationIgnored private var recoveryStage: RecoveryStage = .healthy
+
+    /// Escalation ladder the watchdog walks while a strap is silent but the link still reads connected.
+    private enum RecoveryStage { case healthy, resubscribed, reconnecting }
+
     init(
         source: any LiveHeartRateSource,
         zoneModel: HeartRateZoneModel,
@@ -51,15 +81,6 @@ final class HeartRateMonitor {
     }
 
     // MARK: - Derived live state
-
-    /// The latest sample if it arrived within the freshness window, else nil (stale → absent).
-    var freshSample: HeartRateSample? {
-        guard let latestSample, let latestSampleAt,
-              now().timeIntervalSince(latestSampleAt) <= Self.freshnessWindow else {
-            return nil
-        }
-        return latestSample
-    }
 
     /// Current BPM if a fresh sample exists, else nil.
     var currentBPM: Int? { freshSample?.bpm }
@@ -92,6 +113,8 @@ final class HeartRateMonitor {
         isMonitoring = true
         latestSample = nil
         latestSampleAt = nil
+        freshSample = nil
+        recoveryStage = .healthy
         zoneTime = ZoneTimeAccumulator()
         stats = SessionHeartRateStats()
 
@@ -103,16 +126,74 @@ final class HeartRateMonitor {
             }
         }
         source.startLiveMonitoring()
+        startWatchdog()
     }
 
     /// Stop live monitoring and detach the stream. Accumulated `zoneTime` is retained for a summary.
     func stopMonitoring() {
         guard isMonitoring else { return }
         isMonitoring = false
+        watchdog?.cancel()
+        watchdog = nil
         source.onLiveSample = nil
         source.stopLiveMonitoring()
         latestSample = nil
         latestSampleAt = nil
+        freshSample = nil
+        recoveryStage = .healthy
+    }
+
+    // MARK: - Staleness watchdog
+
+    /// Start the repeating watchdog that re-evaluates freshness on a fixed cadence. BLE has no
+    /// "signal lost" push — silence is the only signal — so nothing else re-renders the HUD when a
+    /// connected strap simply stops notifying. The tick supplies that missing push.
+    ///
+    /// The production timer uses wall-clock `Task.sleep`; the freshness/recovery *decision* it drives
+    /// (`checkLiveness`) reads the injected clock, so tests advance that clock and call `checkLiveness`
+    /// directly for full determinism (no real sleeping).
+    private func startWatchdog() {
+        watchdog?.cancel()
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.watchdogInterval))
+                guard let self, !Task.isCancelled else { return }
+                self.checkLiveness()
+            }
+        }
+    }
+
+    /// One watchdog evaluation. Recomputes the freshness verdict from the injected clock — mutating
+    /// the observed `freshSample` so the HUD re-renders and honestly drops a silent strap off its last
+    /// number — and, while the link still reports connected, escalates recovery at most once per
+    /// stage: re-subscribe first, then reconnect. A real disconnect has its own auto-reconnect path in
+    /// `BluetoothManager`, so recovery here only targets the silent-but-connected case.
+    ///
+    /// Internal (not private) and clock-driven so tests can drive a deterministic tick.
+    func checkLiveness() {
+        guard isMonitoring else { return }
+        guard let latestSampleAt else {
+            freshSample = nil
+            return
+        }
+
+        let silence = now().timeIntervalSince(latestSampleAt)
+        guard silence > Self.freshnessWindow else {
+            freshSample = latestSample          // still fresh
+            recoveryStage = .healthy
+            return
+        }
+
+        freshSample = nil                       // stale → honest blank, not a frozen number
+
+        guard source.connectionStatus == .connected else { return }
+        if silence > Self.reconnectWindow, recoveryStage != .reconnecting {
+            recoveryStage = .reconnecting
+            source.reconnectLive()
+        } else if recoveryStage == .healthy {
+            recoveryStage = .resubscribed
+            source.resubscribeLive()
+        }
     }
 
     // MARK: - Ingestion
@@ -131,6 +212,8 @@ final class HeartRateMonitor {
         }
         latestSample = sample
         latestSampleAt = t
+        freshSample = sample          // a just-arrived sample is fresh by definition
+        recoveryStage = .healthy      // data is flowing again — reset recovery escalation
         stats.record(bpm: sample.bpm, at: t)
     }
 }

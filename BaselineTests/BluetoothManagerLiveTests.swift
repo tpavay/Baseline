@@ -119,4 +119,29 @@ struct BluetoothManagerLiveTests {
         #expect(bt.captureMode == .reading)
         bt.stopReadingCapture()
     }
+
+    // MARK: - Live recovery guards (watchdog-driven re-subscribe / reconnect)
+
+    /// The staleness watchdog can call recovery at any time; both must be safe no-ops when there is no
+    /// live session, so a spurious call never touches the reading path or a dead connection.
+    @Test func recoveryCallsAreNoOpsWhenNotLive() {
+        let bt = BluetoothManager()
+        bt.resubscribeLive()
+        bt.reconnectLive()
+        #expect(bt.captureMode == .idle)
+        #expect(bt.liveSample == nil)
+    }
+
+    /// Live, but nothing connected yet: recovery is guarded on the peripheral/characteristic, so it is
+    /// a no-op rather than a crash, and the live session is left intact.
+    @Test func recoveryWithoutAConnectionLeavesLiveIntact() {
+        let bt = BluetoothManager()
+        bt.startLiveMonitoring()
+        #expect(bt.captureMode == .live)
+        bt.reconnectLive()                       // no peripheral → guarded no-op
+        bt.resubscribeLive()                     // no characteristic → guarded no-op
+        #expect(bt.captureMode == .live)
+        bt.stopLiveMonitoring()
+        #expect(bt.captureMode == .idle)
+    }
 }

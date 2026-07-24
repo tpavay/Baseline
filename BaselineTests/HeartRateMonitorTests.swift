@@ -10,9 +10,13 @@ private final class FakeLiveHeartRateSource: LiveHeartRateSource {
     var onLiveSample: ((HeartRateSample) -> Void)?
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private(set) var resubscribeCount = 0
+    private(set) var reconnectCount = 0
 
     func startLiveMonitoring() { startCount += 1 }
     func stopLiveMonitoring() { stopCount += 1 }
+    func resubscribeLive() { resubscribeCount += 1 }
+    func reconnectLive() { reconnectCount += 1 }
 
     /// Emit a sample as a worn strap would. The monitor re-stamps arrival with its own clock, so
     /// `receivedAt` here is arbitrary provenance.
@@ -73,6 +77,7 @@ struct HeartRateMonitorTests {
         source.emit(bpm: 150)                       // ingested at t0
 
         clock.advance(by: 6)                        // 6 s > 5 s window → stale
+        monitor.checkLiveness()                     // the watchdog tick pushes the downgrade
         #expect(monitor.freshSample == nil)
         #expect(monitor.currentBPM == nil)
         #expect(monitor.currentZone == nil)
@@ -176,6 +181,7 @@ struct HeartRateMonitorTests {
         source.emit(bpm: 140)                   // t0
         clock.advance(by: 2); source.emit(bpm: 160)   // t0+2
         clock.advance(by: 6)                    // stale: current blanks, aggregates must not
+        monitor.checkLiveness()                 // watchdog tick pushes the freshness downgrade
 
         #expect(monitor.currentBPM == nil)      // honest: no live number
         #expect(monitor.averageBPM == 150)      // but the recorded aggregates persist
@@ -196,6 +202,108 @@ struct HeartRateMonitorTests {
         #expect(monitor.averageBPM == nil)
         #expect(monitor.maxBPM == nil)
         #expect(monitor.sessionElapsed == 0)
+    }
+
+    // MARK: - Staleness watchdog (the freeze fix)
+
+    /// The core regression: a connected strap goes silent (no new sample, no disconnect). The watchdog
+    /// tick must downgrade the display off its last number **without** a new sample arriving, and the
+    /// resolver must render the honest `.noSignal` state rather than the frozen reading.
+    @Test func watchdogDowngradesSilentStrapWithoutANewSample() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        source.connectionStatus = .connected
+        monitor.startMonitoring()
+        source.emit(bpm: 133)                                   // last real reading, e.g. the stuck 133
+        #expect(LiveHeartRateStateResolver.resolve(monitor) == .streaming(
+            bpm: 133, zone: monitor.zoneModel.zone(forBPM: 133),
+            position: monitor.zoneModel.position(forBPM: 133)))
+
+        clock.advance(by: 6)                                    // strap stops sending; link stays up
+        monitor.checkLiveness()                                 // watchdog tick (the push the app lacked)
+
+        #expect(monitor.freshSample == nil)                    // no longer painting 133
+        #expect(monitor.currentBPM == nil)
+        #expect(LiveHeartRateStateResolver.resolve(monitor) == .noSignal)   // "No signal — check the strap"
+    }
+
+    /// On first crossing the soft window the watchdog re-subscribes (cheap, keeps the link); if silence
+    /// continues past the hard window it escalates to a reconnect. Each fires exactly once per episode.
+    @Test func watchdogResubscribesThenReconnectsOnContinuedSilence() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        source.connectionStatus = .connected
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+
+        clock.advance(by: 6)                                    // > freshnessWindow (5) → re-subscribe
+        monitor.checkLiveness()
+        #expect(source.resubscribeCount == 1)
+        #expect(source.reconnectCount == 0)
+
+        clock.advance(by: 1)                                    // still silent, still < reconnectWindow
+        monitor.checkLiveness()
+        #expect(source.resubscribeCount == 1)                  // not re-fired
+        #expect(source.reconnectCount == 0)
+
+        clock.advance(by: 5)                                    // total 12 s > reconnectWindow (10)
+        monitor.checkLiveness()
+        #expect(source.reconnectCount == 1)                    // escalated to reconnect
+
+        clock.advance(by: 3)
+        monitor.checkLiveness()
+        #expect(source.reconnectCount == 1)                    // still only once per episode
+    }
+
+    /// A recovered sample resets the ladder: the number returns and a *later* silent episode re-arms
+    /// recovery from scratch (re-subscribe again).
+    @Test func freshSampleReturnsAndRecoveryResetsOnNewSample() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        source.connectionStatus = .connected
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+        clock.advance(by: 6); monitor.checkLiveness()          // stale → re-subscribe
+        #expect(source.resubscribeCount == 1)
+
+        source.emit(bpm: 148)                                  // strap recovers
+        #expect(monitor.currentBPM == 148)                     // number returns
+
+        clock.advance(by: 6); monitor.checkLiveness()          // a new stale episode
+        #expect(monitor.currentBPM == nil)
+        #expect(source.resubscribeCount == 2)                  // recovery re-armed, not stuck
+    }
+
+    /// Recovery only targets the silent-but-connected case: if the link is not `.connected` (a real
+    /// disconnect, which `BluetoothManager` auto-reconnects on its own), the watchdog still blanks the
+    /// number but does not fire re-subscribe/reconnect.
+    @Test func watchdogDoesNotDriveRecoveryWhenNotConnected() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+        source.connectionStatus = .connecting                  // link already re-establishing
+        clock.advance(by: 6); monitor.checkLiveness()
+
+        #expect(monitor.freshSample == nil)                    // still honestly blanks
+        #expect(source.resubscribeCount == 0)
+        #expect(source.reconnectCount == 0)
+        #expect(LiveHeartRateStateResolver.resolve(monitor) == .reconnecting)  // sample seen earlier
+    }
+
+    /// The watchdog is torn down with the session: no ticks fire after `stopMonitoring()`, and a fresh
+    /// `startMonitoring()` clears any leftover fresh sample.
+    @Test func stopMonitoringStopsTheWatchdog() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+        monitor.stopMonitoring()
+
+        clock.advance(by: 6)
+        monitor.checkLiveness()                                // guarded by isMonitoring → no-op
+        #expect(monitor.freshSample == nil)
+        #expect(source.resubscribeCount == 0)
     }
 
     // MARK: - Lifecycle

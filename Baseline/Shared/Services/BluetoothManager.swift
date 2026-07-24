@@ -215,6 +215,23 @@ final class BluetoothManager: NSObject {
         peripheral.setNotifyValue(true, for: hrCharacteristic)
     }
 
+    /// Recovery step 1 (watchdog): re-issue the live HR subscription on the existing link. This
+    /// addresses a silently-dropped CCCD subscription where the peripheral stays connected but stops
+    /// notifying. No-op unless a live session is active.
+    func resubscribeLive() {
+        guard liveActive else { return }
+        subscribeLive()
+    }
+
+    /// Recovery step 2 (watchdog): tear the live link down so it re-establishes from scratch, used
+    /// when a re-subscribe did not restore the stream. Cancelling triggers `didDisconnectPeripheral`,
+    /// which auto-reconnects while a live session is active (and rediscovery re-subscribes because
+    /// `streaming` stays true). No-op unless a live session is active.
+    func reconnectLive() {
+        guard liveActive, let peripheral, let central else { return }
+        central.cancelPeripheralConnection(peripheral)
+    }
+
     /// Dispatch an incoming `0x2A37` payload to the live or reading ingest per `route(for:)`.
     /// Internal so the routing + isolation can be exercised in tests with an explicit intent (the
     /// pure ingests below touch no CoreBluetooth state).
@@ -386,6 +403,20 @@ extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
         guard connectedDeviceID == peripheral.identifier else { return }
         connectedDeviceID = nil
         connectedDeviceName = nil
+
+        // Live monitoring wants a continuous stream, so a drop auto-reconnects instead of going idle.
+        // CoreBluetooth completes the connect when the strap is back in range, and characteristic
+        // rediscovery re-subscribes (streaming is still true), so the HUD recovers on its own. This
+        // covers both a real transient disconnect and the watchdog's `reconnectLive()` cancel. The
+        // reading path keeps its original idle behavior.
+        if liveActive {
+            status = .connecting
+            self.peripheral = peripheral
+            peripheral.delegate = self
+            central.connect(peripheral)
+            return
+        }
+
         if status == .connected { status = .idle }
     }
 
