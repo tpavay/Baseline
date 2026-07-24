@@ -68,6 +68,10 @@ struct PlanDayRow: Identifiable, Equatable, Sendable {
 
 struct PlanWeekPresentation: Equatable, Sendable {
     let weekStart: Date
+    /// The calendar day this projection's `isToday` / `isPast` / `showsAddAnother` rules were resolved
+    /// against. The view compares it with the live clock so a rolled-over day rebuilds the cache
+    /// instead of leaving yesterday marked as today.
+    let today: Date
     /// "JUL 20 – 26", or "JUL 28 – AUG 3" when the week straddles a month boundary.
     let rangeLabel: String
     /// The navigation title for the focused week.
@@ -110,8 +114,9 @@ struct PlanWeekPresentation: Equatable, Sendable {
         }
         return PlanWeekPresentation(
             weekStart: calendar.startOfDay(for: week.startDate),
+            today: startOfToday,
             rangeLabel: rangeLabel(weekStart: week.startDate, calendar: calendar),
-            monthLabel: week.startDate.formatted(.dateTime.month(.wide).year()),
+            monthLabel: monthLabel(weekStart: week.startDate, calendar: calendar),
             weekdays: days.map { row in
                 PlanWeekdayCell(
                     date: row.date,
@@ -142,6 +147,20 @@ struct PlanWeekPresentation: Equatable, Sendable {
             return work
         }
         return "\(work) · \(MetricFormat.durationLong(planned.total))"
+    }
+
+    /// The navigation title names the months the visible week actually covers, exactly like
+    /// `rangeLabel` does: a week running "JUL 27 – AUG 2" is not a July week.
+    static func monthLabel(weekStart: Date, calendar: Calendar = .planWeek) -> String {
+        let start = calendar.startOfDay(for: weekStart)
+        let end = calendar.date(byAdding: .day, value: 6, to: start) ?? start
+        guard calendar.component(.month, from: start) != calendar.component(.month, from: end) else {
+            return start.formatted(.dateTime.month(.wide).year())
+        }
+        let startText = calendar.component(.year, from: start) == calendar.component(.year, from: end)
+            ? start.formatted(.dateTime.month(.wide))
+            : start.formatted(.dateTime.month(.wide).year())
+        return "\(startText) – \(end.formatted(.dateTime.month(.wide).year()))"
     }
 
     private static func rangeLabel(weekStart: Date, calendar: Calendar) -> String {

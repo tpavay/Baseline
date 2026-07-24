@@ -84,13 +84,9 @@ final class MainTabShellScreen: HostedScreen {
     /// - Parameter seed: run against the in-memory context *before* the shell is hosted, so a tab's
     ///   `@Query` sees the athlete's history on its first assembly (e.g. a completed session with
     ///   heart-rate metrics behind the Weekly time-in-zone card).
-    /// - Parameter seedPlan: run against the live plan store before the window is built, so a suite
-    ///   can open the shell onto a realistic week (completed session, rest day, two-session day)
-    ///   instead of the empty plan a fresh in-memory container starts with.
     init(tab: MainTab,
          heartRateZones: HeartRateZoneSettingsStore? = nil,
-         seed: ((ModelContext) -> Void)? = nil,
-         seedPlan: ((PlanStore) -> Void)? = nil) throws {
+         seed: ((ModelContext) -> Void)? = nil) throws {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self]
             + PlanSchema.models + SleepSchema.models
         container = try ModelContainer(
@@ -100,7 +96,6 @@ final class MainTabShellScreen: HostedScreen {
         seed?(container.mainContext)
         try? container.mainContext.save()
         plan = PlanStore(context: container.mainContext)
-        seedPlan?(plan)
         self.heartRateZones = heartRateZones
             ?? HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 })
         let root = MainTabView(initialSelection: tab)

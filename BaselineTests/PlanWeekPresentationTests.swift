@@ -206,6 +206,30 @@ struct PlanWeekPresentationTests {
         #expect(PlanWeekPresentation.build(week: straddling, statuses: [:], today: today, calendar: cal).rangeLabel == "JUL 27 – AUG 2")
     }
 
+    /// The navigation title has to name the months the visible week actually covers - a week running
+    /// "JUL 27 – AUG 2" titled "July 2026" names a month six of its seven days are not in.
+    @Test func theMonthLabelNamesEveryMonthTheVisibleWeekCovers() {
+        let july = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 7, 22)), days: [])
+        #expect(build(july).monthLabel == "July 2026")
+
+        let straddling = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 7, 30)), days: [])
+        #expect(build(straddling).monthLabel == "July – August 2026")
+    }
+
+    /// A week straddling New Year names both years, so the title is never ambiguous.
+    @Test func theMonthLabelNamesBothYearsAcrossTheTurnOfTheYear() {
+        let newYear = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 12, 31)), days: [])
+        #expect(build(newYear).monthLabel == "December 2026 – January 2027")
+    }
+
+    // MARK: The day the projection was built for
+
+    /// The view caches this projection, so it has to carry the day its `isToday`/`isPast` rules were
+    /// resolved against - that is what lets a rolled-over day be detected and rebuilt.
+    @Test func thePresentationRecordsTheDayItsRulesWereResolvedAgainst() {
+        #expect(build(week()).today == cal.startOfDay(for: today))
+    }
+
     private func dateFrom(_ year: Int, _ month: Int, _ day: Int) -> Date {
         cal.date(from: DateComponents(year: year, month: month, day: day))!
     }

@@ -101,6 +101,40 @@ struct PlanWeeklyViewRenderTests {
         #expect(screen.element(labelled: "Wednesday, today") != nil)
     }
 
+    // MARK: Crossing midnight on a resident process
+
+    /// Leaving the tab open across midnight must not keep yesterday marked as today: the day-derived
+    /// state is rebuilt from the live clock, while the week the athlete was looking at stays put.
+    @Test func crossingMidnightMovesTheTodayMarkerWithoutPagingTheVisibleWeek() async throws {
+        let screen = try PlanWeekScreen()
+        defer { screen.tearDown() }
+        try await screen.settleUntil { screen.element(labelled: "Wednesday, today") != nil }
+
+        screen.advanceClock(byDays: 1)
+
+        try await screen.settleUntil { screen.element(labelled: "Thursday, today") != nil }
+        #expect(screen.element(labelled: "Wednesday, today") == nil)
+        #expect(screen.element(labelled: "JUL 20 – 26") != nil, "The same week is still on screen")
+    }
+
+    /// `PlanStore.week` is what "this week" means to the agent, so crossing a week boundary has to
+    /// re-anchor it - without silently paging the week the athlete chose to look at.
+    @Test func crossingIntoANewWeekReanchorsTheStoresWeekButNotTheVisibleOne() async throws {
+        let screen = try PlanWeekScreen()
+        defer { screen.tearDown() }
+        try await screen.settleUntil { screen.element(labelled: "JUL 20 – 26") != nil }
+        let cal = Calendar.planWeek
+        #expect(cal.isDate(screen.plan.week.startDate, inSameDayAs: cal.weekStart(for: Self.fixedNow)))
+
+        screen.advanceClock(byDays: 7)
+
+        let nextWeekStart = cal.weekStart(for: cal.date(byAdding: .day, value: 7, to: Self.fixedNow)!)
+        try await screen.settleUntil { screen.element(labelled: "Wednesday, today") == nil }
+        #expect(cal.isDate(screen.plan.week.startDate, inSameDayAs: nextWeekStart),
+                "The agent's \"this week\" follows the clock")
+        #expect(screen.element(labelled: "JUL 20 – 26") != nil, "The athlete's visible week stays where they left it")
+    }
+
     // MARK: Regressions the redesign must not break
 
     /// Tapping the "+" of an undecided day reaches the same per-day add sheet as before, including
@@ -212,6 +246,7 @@ final class PlanWeekScreen: HostedScreen {
     let window: UIWindow
     let plan: PlanStore
     private let container: ModelContainer
+    private let clock: PlanTestClock
 
     private static let cal = Calendar.planWeek
 
@@ -219,21 +254,33 @@ final class PlanWeekScreen: HostedScreen {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
         container = try ModelContainer(for: Schema(models),
                                        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        plan = PlanStore(context: container.mainContext)
+        plan = PlanStore(context: container.mainContext, today: now)
         Self.seed(plan, now: now)
+        let clock = PlanTestClock(now)
+        self.clock = clock
 
-        let root = PlanView(now: { now })
+        let root = PlanView(now: { clock.now })
             .environment(plan)
             .environment(AppSettings())
             .environment(BluetoothManager())
             .environment(OnboardingStore())
             .environment(WorkoutStore(units: AppSettings()))
+            // Starting a session from a row presents the real `WorkoutView`, which reads the zone
+            // store; without it the execution sheet traps instead of opening.
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             .modelContainer(container)
             .preferredColorScheme(.dark)
         window = try Self.makeWindow(rootView: root)
     }
 
     var isPresentingCover: Bool { window.rootViewController?.presentedViewController != nil }
+
+    /// Move the clock forward and tell the screen the calendar day turned over, exactly as the system
+    /// does at midnight for a process that stayed resident.
+    func advanceClock(byDays days: Int) {
+        clock.now = Self.cal.date(byAdding: .day, value: days, to: clock.now)!
+        NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+    }
 
     /// Mon: performed · Tue: missed · Wed (today): two sessions · Thu: rest · Fri: planned · Sat/Sun: empty.
     private static func seed(_ plan: PlanStore, now: Date) {
@@ -261,6 +308,21 @@ final class PlanWeekScreen: HostedScreen {
         var exercise = PlannedExercise(exerciseName: "Row", definitionId: "row")
         exercise.prescription.sets = [PlannedSet(duration: 1_800, distance: 5_000)]
         return Workout(title: title, blocks: [WorkoutBlock(name: "", exercises: [exercise], isDefault: true)])
+    }
+}
+
+/// A clock the test can move under a screen that is already hosted, so one `PlanView` can be walked
+/// across midnight the way a resident app crosses it. Lock-guarded because `PlanView.now` is a plain
+/// non-isolated closure and the screen reads it from the render loop.
+private final class PlanTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ value: Date) { self.value = value }
+
+    var now: Date {
+        get { lock.withLock { value } }
+        set { lock.withLock { value = newValue } }
     }
 }
 

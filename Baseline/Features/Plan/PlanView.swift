@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// The **Plan tab** - Baseline's calendar-level training surface (`docs/implementation/plan-tab.md`).
@@ -12,12 +13,14 @@ import SwiftUI
 /// removed the old 181-day calendar's range header jumping weeks when the list re-estimated row heights.
 struct PlanView: View {
     /// The clock every date decision on this screen reads. Injectable so a screen test can render a
-    /// week that always contains a past, a present and a future day; production reads the live clock
-    /// on each access, so the tab still rolls over at midnight without being rebuilt.
+    /// week that always contains a past, a present and a future day. Production reads the live clock
+    /// on each access, and the day-derived cache is rebuilt whenever the calendar day turns over -
+    /// on foreground and on `NSCalendarDayChanged` - so the tab never leaves yesterday marked today.
     var now: () -> Date = { Date() }
 
     @Environment(PlanStore.self) private var plan
     @Environment(AppSettings.self) private var settings
+    @Environment(\.scenePhase) private var scenePhase
     @State private var execContext: ExecContext?
     @State private var showChat = false
     @State private var dropTargetDate: Date?
@@ -131,8 +134,15 @@ struct PlanView: View {
             try? await Task.sleep(for: .seconds(4))
             undoMessage = nil
         }
-        .onAppear(perform: refreshWeek)
+        .onAppear(perform: syncToCurrentDay)
         .onChange(of: plan.revision) { refreshWeek() }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            syncToCurrentDay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            syncToCurrentDay()
+        }
         .task { await loadPendingImports() }
     }
 
@@ -152,6 +162,25 @@ struct PlanView: View {
         )
     }
 
+    /// Brings the screen back onto the real calendar day after the clock has moved underneath it:
+    /// rebuild the day-derived cache when the day it was built for has passed, and re-anchor the
+    /// store's focused week when the current week itself has moved. The visible week stays where the
+    /// athlete left it - only the today/past marking follows the clock.
+    private func syncToCurrentDay() {
+        reanchorFocusedWeek()
+        if presentation?.today != today { refreshWeek() }
+    }
+
+    /// `PlanStore.week` is what "this week" means to the agent and to every non-calendar consumer, so
+    /// it has to track the real current week on a process that outlives a week boundary. Paging the
+    /// calendar deliberately never comes through here (see `showWeek(offsetBy:)`), and the guard keeps
+    /// the `reload()` inside `showWeek(of:)` from bouncing off `.onChange(of: plan.revision)`.
+    private func reanchorFocusedWeek() {
+        let currentDay = today
+        guard cal.weekStart(for: plan.focusedDate) != cal.weekStart(for: currentDay) else { return }
+        plan.showWeek(of: currentDay)
+    }
+
     private func showWeek(offsetBy weeks: Int) {
         guard let moved = cal.date(byAdding: .day, value: 7 * weeks, to: focusedWeekStart) else { return }
         weekStart = cal.weekStart(for: moved)
@@ -160,6 +189,7 @@ struct PlanView: View {
 
     private func showCurrentWeek() {
         weekStart = cal.weekStart(for: today)
+        reanchorFocusedWeek()
         refreshWeek()
     }
 
@@ -195,7 +225,7 @@ struct PlanView: View {
         }
 
         ToolbarItem(placement: .principal) {
-            Text(presentation?.monthLabel ?? focusedWeekStart.formatted(.dateTime.month(.wide).year()))
+            Text(presentation?.monthLabel ?? PlanWeekPresentation.monthLabel(weekStart: focusedWeekStart, calendar: cal))
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(BaselineColor.textHi)
         }
@@ -328,7 +358,10 @@ struct PlanView: View {
             case .sessions(let entries):
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     if let scheduled = sessionByID[entry.id] {
-                        sessionCell(row, entry, scheduled: scheduled, showsDate: pendingReview == nil && index == 0)
+                        sessionCell(row, entry,
+                                    scheduled: scheduled,
+                                    showsDate: pendingReview == nil && index == 0,
+                                    isDropTarget: isDropTarget)
                     }
                 }
                 if row.showsAddAnother {
@@ -394,16 +427,20 @@ struct PlanView: View {
 
     // MARK: Cells
 
+    /// The swipe row's own background has to stay opaque so the sliding content hides the Delete
+    /// action behind it - except while the day is a drop target, where an opaque row would paint over
+    /// the highlight `dayGroup` draws behind the whole day.
     private func sessionCell(
         _ row: PlanDayRow,
         _ entry: PlanSessionEntry,
         scheduled: ScheduledWorkout,
-        showsDate: Bool
+        showsDate: Bool,
+        isDropTarget: Bool
     ) -> some View {
         WorkoutSwipeActionRow(
             actionTitle: "Delete",
             systemImage: "trash",
-            contentBackground: BaselineColor.base,
+            contentBackground: isDropTarget ? .clear : BaselineColor.base,
             action: { handle(.delete, scheduled) }
         ) {
             cell(row,
