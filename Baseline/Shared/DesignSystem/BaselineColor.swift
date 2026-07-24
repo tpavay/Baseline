@@ -82,7 +82,6 @@ enum BaselineSize {
     static let pickerRowMinimumHeight: CGFloat = 62
     static let exerciseAsset: CGFloat = 92
     static let avatar: CGFloat = 58
-    static let tabBarHeight: CGFloat = 60
     static let miniMuscleMapHeight: CGFloat = 30
     static let muscleMapHeight: CGFloat = 180
     static let chartHeight: CGFloat = 108
