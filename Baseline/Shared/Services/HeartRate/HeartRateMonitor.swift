@@ -31,6 +31,13 @@ final class HeartRateMonitor {
     /// off its last number within ~one tick of crossing `freshnessWindow`. Tunable.
     static let watchdogInterval: TimeInterval = 1
 
+    /// Upper bound on `reconnectLive()` escalations within a single stale episode. Once silence
+    /// crosses the hard window the watchdog keeps retrying the reconnect on a `reconnectWindow`
+    /// cadence — so the HUD is not stranded on "No signal" forever when the link flaps back to
+    /// connected but the strap stays quiet — yet bounds the total so a permanently dead strap can
+    /// never spin an unbounded, battery-draining reconnect loop. Tunable.
+    static let maxReconnectAttempts = 5
+
     /// The most recent sample received, regardless of freshness. `freshSample` applies the window.
     private(set) var latestSample: HeartRateSample?
 
@@ -63,12 +70,20 @@ final class HeartRateMonitor {
     /// The repeating staleness watchdog for the current run; cancelled on `stopMonitoring()`.
     @ObservationIgnored private var watchdog: Task<Void, Never>?
 
-    /// How far recovery has escalated for the *current* stale episode, so each step fires at most
-    /// once and a fresh sample resets it. `.healthy` while data flows.
+    /// How far recovery has escalated for the *current* stale episode. Gates the one-shot re-subscribe
+    /// step; a fresh sample resets it. `.healthy` while data flows.
     @ObservationIgnored private var recoveryStage: RecoveryStage = .healthy
 
     /// Escalation ladder the watchdog walks while a strap is silent but the link still reads connected.
     private enum RecoveryStage { case healthy, resubscribed, reconnecting }
+
+    /// Clock time of the watchdog's last `reconnectLive()` for the current stale episode, so repeated
+    /// reconnects are spaced by `reconnectWindow` instead of firing every tick. nil until the first.
+    @ObservationIgnored private var lastReconnectAt: Date?
+
+    /// Count of `reconnectLive()` escalations in the current stale episode, bounded by
+    /// `maxReconnectAttempts`. Reset by a fresh sample or a new run.
+    @ObservationIgnored private var reconnectAttempts = 0
 
     init(
         source: any LiveHeartRateSource,
@@ -114,7 +129,7 @@ final class HeartRateMonitor {
         latestSample = nil
         latestSampleAt = nil
         freshSample = nil
-        recoveryStage = .healthy
+        resetRecovery()
         zoneTime = ZoneTimeAccumulator()
         stats = SessionHeartRateStats()
 
@@ -140,7 +155,15 @@ final class HeartRateMonitor {
         latestSample = nil
         latestSampleAt = nil
         freshSample = nil
+        resetRecovery()
+    }
+
+    /// Return the recovery ladder to its healthy baseline: no escalation, no reconnect history. Called
+    /// on start, stop, and whenever a fresh sample proves the strap is streaming again.
+    private func resetRecovery() {
         recoveryStage = .healthy
+        lastReconnectAt = nil
+        reconnectAttempts = 0
     }
 
     // MARK: - Staleness watchdog
@@ -165,8 +188,12 @@ final class HeartRateMonitor {
 
     /// One watchdog evaluation. Recomputes the freshness verdict from the injected clock — mutating
     /// the observed `freshSample` so the HUD re-renders and honestly drops a silent strap off its last
-    /// number — and, while the link still reports connected, escalates recovery at most once per
-    /// stage: re-subscribe first, then reconnect. A real disconnect has its own auto-reconnect path in
+    /// number — and, while the link still reports connected, walks the recovery ladder: a one-shot
+    /// re-subscribe on first crossing the soft window, then a reconnect once the hard window is
+    /// crossed. If silence persists after that first reconnect the reconnect keeps retrying on a
+    /// `reconnectWindow` cadence up to `maxReconnectAttempts`, so the HUD is not stranded on "No
+    /// signal" while the link flaps back to connected but the strap stays quiet — bounded so a dead
+    /// strap can never spin an unbounded loop. A real disconnect has its own auto-reconnect path in
     /// `BluetoothManager`, so recovery here only targets the silent-but-connected case.
     ///
     /// Internal (not private) and clock-driven so tests can drive a deterministic tick.
@@ -180,15 +207,19 @@ final class HeartRateMonitor {
         let silence = now().timeIntervalSince(latestSampleAt)
         guard silence > Self.freshnessWindow else {
             freshSample = latestSample          // still fresh
-            recoveryStage = .healthy
+            resetRecovery()
             return
         }
 
         freshSample = nil                       // stale → honest blank, not a frozen number
 
         guard source.connectionStatus == .connected else { return }
-        if silence > Self.reconnectWindow, recoveryStage != .reconnecting {
+        if silence > Self.reconnectWindow {
+            let due = lastReconnectAt.map { now().timeIntervalSince($0) >= Self.reconnectWindow } ?? true
+            guard due, reconnectAttempts < Self.maxReconnectAttempts else { return }
             recoveryStage = .reconnecting
+            reconnectAttempts += 1
+            lastReconnectAt = now()
             source.reconnectLive()
         } else if recoveryStage == .healthy {
             recoveryStage = .resubscribed
@@ -213,7 +244,7 @@ final class HeartRateMonitor {
         latestSample = sample
         latestSampleAt = t
         freshSample = sample          // a just-arrived sample is fresh by definition
-        recoveryStage = .healthy      // data is flowing again — reset recovery escalation
+        resetRecovery()               // data is flowing again — reset recovery escalation
         stats.record(bpm: sample.bpm, at: t)
     }
 }

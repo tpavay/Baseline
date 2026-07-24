@@ -48,6 +48,13 @@ final class BluetoothManager: NSObject {
     @ObservationIgnored var onLiveSample: ((HeartRateSample) -> Void)?
     @ObservationIgnored private var liveActive = false
 
+    /// A live session wants a continuous stream, so a failed connect re-attempts the same strap
+    /// rather than giving up. Bounded to this many consecutive failures before falling back to the
+    /// honest idle state (so the athlete can re-tap) — a dead strap must never spin an unbounded,
+    /// battery-draining reconnect loop. Reset on a successful connect or a live sample.
+    static let maxLiveReconnectAttempts = 5
+    @ObservationIgnored private var liveReconnectAttempts = 0
+
     // Created lazily: instantiating CBCentralManager triggers the system Bluetooth
     // permission prompt, so it must not exist until the athlete initiates a scan/reading.
     @ObservationIgnored private var central: CBCentralManager?
@@ -97,6 +104,17 @@ final class BluetoothManager: NSObject {
         if readingActive { return .reading }
         if liveActive { return .live }
         return .idle
+    }
+
+    /// What a failed connect should do next. Extracted so the bounded live-reconnect ladder is
+    /// unit-testable without a `CBPeripheral`.
+    enum LiveConnectFailureAction: Equatable { case retry, giveUp }
+
+    /// Pure decision for `didFailToConnect`: while a live session is active and the consecutive-failure
+    /// budget is not spent, retry the same strap; otherwise fall back to the honest idle state. The
+    /// reading path is never in `liveActive`, so it always gives up (its original behavior).
+    static func liveConnectFailureAction(liveActive: Bool, attempts: Int) -> LiveConnectFailureAction {
+        (liveActive && attempts < maxLiveReconnectAttempts) ? .retry : .giveUp
     }
 
     /// Pure routing decision for an incoming heart-rate measurement. Extracted so the live/reading
@@ -187,6 +205,7 @@ final class BluetoothManager: NSObject {
         guard !readingActive else { return }
         liveSample = nil
         liveActive = true
+        liveReconnectAttempts = 0
         streaming = true
         intent = .live
         _ = ensureCentral()
@@ -245,6 +264,7 @@ final class BluetoothManager: NSObject {
     /// Parse a live `0x2A37` payload into a `HeartRateSample`, publish it, and notify any observer.
     private func ingestLive(_ data: Data) {
         guard let sample = HeartRateSample.parse(data) else { return }
+        liveReconnectAttempts = 0           // a live sample arrived — the link is healthy, re-arm the budget
         liveSample = sample
         onLiveSample?(sample)               // invoked on the main queue; see LiveHeartRateSource
     }
@@ -391,12 +411,27 @@ extension BluetoothManager: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connectedDeviceID = peripheral.identifier
         connectedDeviceName = peripheral.name
+        liveReconnectAttempts = 0            // a live connect succeeded — re-arm the reconnect budget
         status = .connected
         peripheral.discoverServices([hrService, batteryService, deviceInfoService, pmdService])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        status = .idle
+        // A live session mirrors `didDisconnectPeripheral`: retry the same strap instead of going idle,
+        // so a transient connect failure does not strand the HUD. `central.connect` returns to the run
+        // loop between attempts (no tight spin), and the attempt bound guarantees an honest fallback to
+        // idle once exhausted. The reading path keeps its original idle behavior.
+        switch Self.liveConnectFailureAction(liveActive: liveActive, attempts: liveReconnectAttempts) {
+        case .giveUp:
+            liveReconnectAttempts = 0
+            status = .idle
+        case .retry:
+            liveReconnectAttempts += 1
+            self.peripheral = peripheral
+            peripheral.delegate = self
+            status = .connecting
+            central.connect(peripheral)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {

@@ -144,4 +144,25 @@ struct BluetoothManagerLiveTests {
         bt.stopLiveMonitoring()
         #expect(bt.captureMode == .idle)
     }
+
+    // MARK: - Bounded live-reconnect on a failed connect (the didFailToConnect ladder)
+
+    /// The pure decision behind `didFailToConnect`: while a live session is active a failed connect
+    /// retries the same strap up to the bound, then gives up honestly so the session can fall back to
+    /// idle. The reading path (never `liveActive`) always gives up — its original behavior.
+    @Test func failedLiveConnectRetriesWhileLiveThenGivesUpAtTheBound() {
+        // Reading path / no live session: never retries, mirroring the original idle fallback.
+        #expect(BluetoothManager.liveConnectFailureAction(liveActive: false, attempts: 0) == .giveUp)
+        #expect(BluetoothManager.liveConnectFailureAction(liveActive: false, attempts: 3) == .giveUp)
+
+        // Live session: retries for every attempt strictly below the bound…
+        for attempt in 0..<BluetoothManager.maxLiveReconnectAttempts {
+            #expect(BluetoothManager.liveConnectFailureAction(liveActive: true, attempts: attempt) == .retry)
+        }
+        // …then gives up once the consecutive-failure budget is spent (honest re-tap fallback).
+        #expect(BluetoothManager.liveConnectFailureAction(
+            liveActive: true, attempts: BluetoothManager.maxLiveReconnectAttempts) == .giveUp)
+        #expect(BluetoothManager.liveConnectFailureAction(
+            liveActive: true, attempts: BluetoothManager.maxLiveReconnectAttempts + 1) == .giveUp)
+    }
 }

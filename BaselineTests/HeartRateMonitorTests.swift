@@ -255,6 +255,36 @@ struct HeartRateMonitorTests {
         #expect(source.reconnectCount == 1)                    // still only once per episode
     }
 
+    /// After the first reconnect the strap stays silent while the link flaps back to `.connected`.
+    /// The watchdog must not sit on "No signal" forever: it keeps retrying the reconnect, but spaced by
+    /// `reconnectWindow` (not every tick) and bounded by `maxReconnectAttempts`.
+    @Test func watchdogKeepsReconnectingOnACadenceUpToTheBound() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        source.connectionStatus = .connected
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+
+        clock.advance(by: 6); monitor.checkLiveness()          // soft window → re-subscribe
+        #expect(source.resubscribeCount == 1)
+
+        clock.advance(by: 5); monitor.checkLiveness()          // 11 s > reconnectWindow → first reconnect
+        #expect(source.reconnectCount == 1)
+
+        clock.advance(by: 3); monitor.checkLiveness()          // only 3 s since last reconnect → spaced out
+        #expect(source.reconnectCount == 1)
+
+        // The link stays connected but silent; each further `reconnectWindow` elapsed fires one more
+        // reconnect, until the per-episode bound is reached — then it stops (no unbounded loop).
+        for expected in 2...HeartRateMonitor.maxReconnectAttempts {
+            clock.advance(by: HeartRateMonitor.reconnectWindow); monitor.checkLiveness()
+            #expect(source.reconnectCount == expected)
+        }
+        clock.advance(by: HeartRateMonitor.reconnectWindow); monitor.checkLiveness()
+        #expect(source.reconnectCount == HeartRateMonitor.maxReconnectAttempts)   // bounded, not still climbing
+        #expect(monitor.currentBPM == nil)                     // still honestly blank throughout
+    }
+
     /// A recovered sample resets the ladder: the number returns and a *later* silent episode re-arms
     /// recovery from scratch (re-subscribe again).
     @Test func freshSampleReturnsAndRecoveryResetsOnNewSample() {
