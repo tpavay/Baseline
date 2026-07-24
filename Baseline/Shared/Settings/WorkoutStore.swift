@@ -91,6 +91,7 @@ final class WorkoutStore {
         let resolveSessionDecision: () -> Void
         let resolveAbandonedSessionDecision: () -> Void
         let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
+        let completed: () -> CompletedWorkoutLog?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
 
         init(
@@ -111,6 +112,7 @@ final class WorkoutStore {
             resolveSessionDecision: @escaping () -> Void,
             resolveAbandonedSessionDecision: @escaping () -> Void,
             reload: @escaping () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?,
+            completed: (() -> CompletedWorkoutLog?)? = nil,
             planWorkout: @escaping () -> Workout?
         ) {
             self.pushWorkout = pushWorkout
@@ -175,6 +177,7 @@ final class WorkoutStore {
             self.resolveSessionDecision = resolveSessionDecision
             self.resolveAbandonedSessionDecision = resolveAbandonedSessionDecision
             self.reload = reload
+            self.completed = completed ?? { nil }
             self.planWorkout = planWorkout
         }
     }
@@ -218,6 +221,11 @@ final class WorkoutStore {
         currentLog = s.log
         currentLogStartedAt = s.startedAt
         isSyncing = false
+    }
+
+    var currentCompletedLog: CompletedWorkoutLog? {
+        guard currentLog?.isComplete == true else { return nil }
+        return sink?.completed()
     }
 
     /// Push the buffered plan edit (the manual editor calls this on dismiss), then clear the buffer.

@@ -25,6 +25,7 @@ struct WorkoutView: View {
     @State private var isEditingTemplate = false
     @State private var editSnapshot: Workout?
     @State private var showChat = false
+    @State private var showShareComposer = false
     @State private var showFinishConfirmation = false
     @State private var showDiscardConfirmation = false
     @State private var showSaveTemplate = false
@@ -66,6 +67,11 @@ struct WorkoutView: View {
         }
         .tint(BaselineColor.accent)
         .sheet(isPresented: $showChat) { AskBaselineSheet(surface: .workout) }
+        .fullScreenCover(isPresented: $showShareComposer) {
+            if let summary = shareSummary {
+                ShareComposerView(summary: summary, unitForMetric: { store.displayUnit($0) })
+            }
+        }
         .alert("Save as template", isPresented: $showSaveTemplate) {
             TextField("Template name", text: $templateName)
             Button("Save") { saveTemplate() }
@@ -216,6 +222,22 @@ struct WorkoutView: View {
         return "Workout"
     }
 
+    private var shareSummary: WorkoutLogSummary? {
+        guard let workout = store.current,
+              let log = store.currentLog,
+              log.isComplete,
+              let startedAt = store.currentLogStartedAt
+        else { return nil }
+        let finishedAt = store.currentCompletedLog?.finishedAt ?? Date()
+        return WorkoutLogSummary(
+            title: workout.title,
+            log: log,
+            startedAt: startedAt,
+            finishedAt: finishedAt,
+            unitForMetric: { store.displayUnit($0) }
+        )
+    }
+
     @ViewBuilder private var navigationTitleView: some View {
         if mode == .log, let startedAt = store.currentLogStartedAt {
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -280,6 +302,14 @@ struct WorkoutView: View {
                             if mode == .view {
                                 startButton
                                     .padding(.bottom, 22)
+                            }
+
+                            if mode == .completed, shareSummary != nil {
+                                Button("Share workout", systemImage: "square.and.arrow.up") {
+                                    showShareComposer = true
+                                }
+                                .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.textHi))
+                                .padding(.bottom, 18)
                             }
 
                             ForEach(workout.blocks) { block in
