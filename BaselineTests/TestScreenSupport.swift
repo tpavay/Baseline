@@ -39,6 +39,26 @@ extension HostedScreen {
         element(labelled: text)?.accessibilityActivate() ?? false
     }
 
+    /// Pin the tallest scroll view to its bottom, then lay out. Content inside a `LazyVStack` below the
+    /// fold is never materialized and so never reaches the accessibility tree — a card at the end of a
+    /// long screen is invisible to `element(labelled:)` until it has been scrolled into view.
+    @discardableResult
+    func scrollToBottom() -> Bool {
+        var scrollViews: [UIScrollView] = []
+        func walk(_ view: UIView) {
+            if let scrollView = view as? UIScrollView { scrollViews.append(scrollView) }
+            view.subviews.forEach(walk)
+        }
+        walk(window)
+        guard let scrollView = scrollViews.max(by: { $0.contentSize.height < $1.contentSize.height }),
+              scrollView.contentSize.height > scrollView.bounds.height else { return false }
+        let bottom = scrollView.contentSize.height - scrollView.bounds.height
+            + scrollView.adjustedContentInset.bottom
+        scrollView.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+        window.layoutIfNeeded()
+        return true
+    }
+
     func settle() async throws {
         let deadline = Date().addingTimeInterval(1)
         while Date() < deadline {

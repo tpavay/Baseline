@@ -171,6 +171,7 @@ private final class Screen {
             .environment(plan)
             .environment(BluetoothManager())
             .environment(OnboardingStore(defaults: try #require(UserDefaults(suiteName: "e2e-onboarding-\(UUID().uuidString)"))))
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             .modelContainer(container)
             .preferredColorScheme(.dark)
 

@@ -11,6 +11,7 @@ struct ProfileView: View {
     @Environment(BluetoothManager.self) private var bluetooth
     @Environment(HealthService.self) private var health
     @Environment(PlanStore.self) private var plan
+    @Environment(HeartRateZoneSettingsStore.self) private var heartRateZones
     @Query(sort: \Reading.date, order: .reverse) private var readings: [Reading]
     @State private var selectedSection = ProfileSection.workouts
     @State private var showSettings = false
@@ -91,7 +92,7 @@ struct ProfileView: View {
                             row(icon: "circle.hexagongrid.fill", title: "Readiness Setup",
                                 subtitle: "Which inputs build your score", destination: .soon)
                             NavigationLink {
-                                HeartRateZoneSettingsView(store: HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears }))
+                                HeartRateZoneSettingsView(store: heartRateZones)
                             } label: {
                                 rowBody(icon: "waveform.path.ecg.rectangle.fill", title: "Heart Rate Zones",
                                         subtitle: "Karvonen / LTHR zones", trailing: .chevron)
@@ -519,6 +520,7 @@ struct ProfileView: View {
         .environment(BluetoothManager())
         .environment(HealthService())
         .environment(PlanStore(context: container.mainContext))
+        .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
         .modelContainer(container)
         .preferredColorScheme(.dark)
 }

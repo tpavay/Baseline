@@ -20,7 +20,7 @@ final class HeartRateZoneSettingsStore {
 
     private let defaults: UserDefaults
     private let ageYearsProvider: () -> Int?
-    private enum Keys { static let settings = "heartRateZones.settings" }
+    fileprivate enum Keys { static let settings = "heartRateZones.settings" }
 
     /// - Parameters:
     ///   - defaults: injectable for tests.
@@ -42,6 +42,14 @@ final class HeartRateZoneSettingsStore {
     /// The well-formed model for the current committed config (always non-nil: stored state is
     /// validated on write).
     var model: HeartRateZoneModel? { settings.validatedModel(ageYears: ageYears) }
+
+    /// The zone model every surface should read: the committed config's model when present, else the
+    /// age-estimated Tanaka fallback. Non-optional so no caller re-implements
+    /// `model ?? HeartRateZoneModel(age:)` — that duplicated fallback used to live at each ad-hoc
+    /// construction site (Today, Workout) and was the seam where displayed bands could drift. Reading
+    /// it through this single injected `@Observable` store is what makes a zone edit propagate
+    /// reactively to every open surface.
+    var resolvedModel: HeartRateZoneModel { model ?? HeartRateZoneModel(age: ageYears) }
 
     /// Validate a candidate config against the current age without committing it.
     func validate(_ candidate: HeartRateZoneSettings) -> HeartRateZoneSettings.ValidationError? {
@@ -65,5 +73,23 @@ final class HeartRateZoneSettingsStore {
         if let data = try? JSONEncoder().encode(settings) {
             defaults.set(data, forKey: Keys.settings)
         }
+    }
+}
+
+extension UserDefaults {
+    /// A throwaway suite for previews and hosted test harnesses, which must construct a real store to
+    /// satisfy the environment but must never read or write the athlete's actual zone config.
+    static var previewEmpty: UserDefaults {
+        UserDefaults(suiteName: "hr-zone-preview-\(UUID().uuidString)")!
+    }
+
+    /// `previewEmpty` pre-loaded with a config, bypassing the gated write so a preview can show a
+    /// state the store itself would refuse to commit.
+    static func previewSeeded(_ settings: HeartRateZoneSettings) -> UserDefaults {
+        let defaults = previewEmpty
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: HeartRateZoneSettingsStore.Keys.settings)
+        }
+        return defaults
     }
 }

@@ -102,6 +102,9 @@ private final class Bed {
             .environment(settings)
             .environment(BluetoothManager())
             .environment(OnboardingStore(defaults: try #require(UserDefaults(suiteName: "units-e2e-ob-\(UUID().uuidString)"))))
+            // `PlanView` starts the session in `WorkoutView`, which reads the shared zone store; a
+            // throwaway suite keeps this harness off the athlete's real config.
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             .modelContainer(container)
             .preferredColorScheme(.dark)
 

@@ -76,16 +76,28 @@ final class MainTabShellScreen: HostedScreen {
     /// The live plan store the shell is driving, exposed so flow tests can read the plan back the way
     /// the athlete would open it tomorrow (e.g. asserting a discarded empty workout left the day empty).
     let plan: PlanStore
+    /// The one zone store the whole shell reads, mirroring `RootView`'s single injected instance and
+    /// exposed so a test can edit it exactly as the Profile editor does and watch every tab follow.
+    let heartRateZones: HeartRateZoneSettingsStore
     private let container: ModelContainer
 
-    init(tab: MainTab) throws {
+    /// - Parameter seed: run against the in-memory context *before* the shell is hosted, so a tab's
+    ///   `@Query` sees the athlete's history on its first assembly (e.g. a completed session with
+    ///   heart-rate metrics behind the Weekly time-in-zone card).
+    init(tab: MainTab,
+         heartRateZones: HeartRateZoneSettingsStore? = nil,
+         seed: ((ModelContext) -> Void)? = nil) throws {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self]
             + PlanSchema.models + SleepSchema.models
         container = try ModelContainer(
             for: Schema(models),
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
+        seed?(container.mainContext)
+        try? container.mainContext.save()
         plan = PlanStore(context: container.mainContext)
+        self.heartRateZones = heartRateZones
+            ?? HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 })
         let root = MainTabView(initialSelection: tab)
             .environment(AuthViewModel())
             .environment(AppSettings())
@@ -95,6 +107,7 @@ final class MainTabShellScreen: HostedScreen {
             .environment(OnboardingStore())
             .environment(WorkoutStore(units: AppSettings()))
             .environment(plan)
+            .environment(self.heartRateZones)
             .modelContainer(container)
             .preferredColorScheme(.dark)
         window = try Self.makeWindow(rootView: root)

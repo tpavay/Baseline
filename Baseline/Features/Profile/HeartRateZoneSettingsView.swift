@@ -387,18 +387,3 @@ struct HeartRateZoneSettingsForm {
     }
     .preferredColorScheme(.light)
 }
-
-private extension UserDefaults {
-    /// A throwaway suite for previews so they never touch or mutate real settings.
-    static var previewEmpty: UserDefaults {
-        UserDefaults(suiteName: "hr-zone-preview-\(UUID().uuidString)")!
-    }
-
-    static func previewSeeded(_ settings: HeartRateZoneSettings) -> UserDefaults {
-        let d = previewEmpty
-        if let data = try? JSONEncoder().encode(settings) {
-            d.set(data, forKey: "heartRateZones.settings")
-        }
-        return d
-    }
-}

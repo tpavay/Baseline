@@ -51,6 +51,7 @@ private final class ScreenFixture {
     private let health = HealthService()
     private let context = TrainingContextStore()
     private let onboarding: OnboardingStore
+    private let heartRateZones = HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 })
 
     init() throws {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models + SleepSchema.models
@@ -105,6 +106,7 @@ private final class ScreenFixture {
             .environment(onboarding)
             .environment(workouts)
             .environment(plan)
+            .environment(heartRateZones)
             .modelContainer(container)
             .preferredColorScheme(.dark)
     }

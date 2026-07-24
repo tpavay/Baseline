@@ -15,6 +15,7 @@ struct TodayView: View {
     @Environment(HealthService.self) private var health
     @Environment(TrainingContextStore.self) private var context
     @Environment(PlanStore.self) private var planStore
+    @Environment(HeartRateZoneSettingsStore.self) private var heartRateZones
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
@@ -121,7 +122,8 @@ struct TodayView: View {
             entries: entries,
             completedLogs: completedLogs,
             completedExercises: completedExercises,
-            workoutSessions: workoutSessions
+            workoutSessions: workoutSessions,
+            zoneModel: heartRateZones.resolvedModel
         )
     }
 
@@ -159,6 +161,12 @@ struct TodayView: View {
             constraints: context.activeConstraints
         )
 
+        // Scoped to the `.task(id: refreshKey)` path: when the signature moves, SwiftUI cancels the
+        // previous assembly, but cancellation only takes effect where it is observed and every state
+        // write below happens after an await. The unstructured `Task { await reassemble() }` runs
+        // (dismissal, scenePhase) are never cancelled, so this guard does not order them.
+        guard !Task.isCancelled else { return }
+
         if let night = sleepRepository.night(for: .now),
            let analysis = sleepRepository.analysis(for: .now) {
             todaySleep = SleepDetailContext(night: night, analysis: analysis, decision: decision)
@@ -166,8 +174,7 @@ struct TodayView: View {
             todaySleep = nil
         }
 
-        let zoneModel = HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears }).model
-            ?? HeartRateZoneModel(age: profile.draft.ageYears)
+        let zoneModel = heartRateZones.resolvedModel
         let weekly = TodayWeeklySummary.build(
             sessions: completedSessionSamples,
             exercises: completedExerciseSamples,
@@ -346,15 +353,23 @@ struct TodayView: View {
 /// row's id plus its content marker in means a delete drops an id, and a future in-place log edit changes
 /// a metrics blob — either way the signature moves and `reassemble()` re-fires. `Hasher` is seeded per
 /// process, which is fine: this value is only ever compared against the previous value within one run.
+///
+/// The resolved zone model is folded in too, so a zone edit in Profile rebuilds the time-in-zone
+/// durations and BPM ranges through the *same* `.task(id:)` the data changes use. That coalescing is
+/// deliberate: the zone editor commits to the shared store on every valid keystroke, and routing
+/// those edits through one cancellable task means typing "185" reassembles once at the end rather
+/// than racing three overlapping evidence assemblies whose writes could land out of order.
 enum TodayRefreshSignature {
     static func make(
         readings: [Reading],
         entries: [ReadinessEntry],
         completedLogs: [SDCompletedLog],
         completedExercises: [SDCompletedExercise],
-        workoutSessions: [SDWorkoutSession]
+        workoutSessions: [SDWorkoutSession],
+        zoneModel: HeartRateZoneModel
     ) -> String {
         var hasher = Hasher()
+        hasher.combine(zoneModel)
         hasher.combine(readings.count)
         hasher.combine(entries.count)
         for log in completedLogs {
@@ -401,5 +416,6 @@ private enum TodayModal: Identifiable, Equatable {
         .environment(TrainingContextStore())
         .environment(OnboardingStore())
         .environment(PlanStore(context: container.mainContext))
+        .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
         .modelContainer(container)
 }

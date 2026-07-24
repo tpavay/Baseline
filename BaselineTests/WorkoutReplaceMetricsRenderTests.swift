@@ -116,6 +116,7 @@ private final class ReplaceScreen {
             .environment(plan)
             .environment(BluetoothManager())
             .environment(OnboardingStore(defaults: try #require(UserDefaults(suiteName: "replace-onboarding-\(UUID().uuidString)"))))
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             .modelContainer(container)
             .preferredColorScheme(.dark)
 

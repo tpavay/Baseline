@@ -7,7 +7,19 @@ struct RootView: View {
     @Environment(AuthViewModel.self) private var authVM
     @Environment(PlanStore.self) private var plan
     @Environment(WorkoutStore.self) private var workouts
-    @State private var onboarding = OnboardingStore()
+    @State private var onboarding: OnboardingStore
+    /// The single, shared heart-rate-zone settings store for the whole signed-in app. Created once
+    /// here (its age closure reads the same `onboarding` instance) and injected into `MainTabView`,
+    /// so Today, the live workout monitor, and the Profile editor all read and mutate one
+    /// `@Observable` instance — a zone edit in one place reactively refreshes every open surface.
+    @State private var heartRateZones: HeartRateZoneSettingsStore
+
+    init() {
+        let onboarding = OnboardingStore()
+        _onboarding = State(initialValue: onboarding)
+        _heartRateZones = State(initialValue: HeartRateZoneSettingsStore(
+            ageYears: { [onboarding] in onboarding.draft.ageYears }))
+    }
 
     var body: some View {
         Group {
@@ -17,6 +29,7 @@ struct RootView: View {
             if authVM.state == .authenticated {
                 MainTabView()
                     .environment(onboarding)
+                    .environment(heartRateZones)
             } else {
                 AuthView()
             }
