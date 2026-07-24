@@ -52,14 +52,41 @@ struct WorkoutModelTests {
         #expect(w.blocks.first { $0.id == warm }?.exercises.first?.id == bench)     // same identity, new home
     }
 
-    @Test func substituteKeepsIdentityAndPosition() {
+    @Test func replaceKeepsIdentityAndPositionAndResetsIncompatibleValues() {
         var (w, _, _, bench) = sample()
-        let ok = w.substituteExercise(bench, withName: "Dumbbell press",
-                                      prescription: Prescription(sets: [PlannedSet(reps: 10, load: 25)]))
+        let run = ExerciseCatalog.resolve("Run")
+        #expect(run.id == "run")
+        let ok = w.replaceExercise(bench, with: run)
         #expect(ok)
         let ex = w.allExercises.first { $0.id == bench }
-        #expect(ex?.exerciseName == "Dumbbell press")
-        #expect(ex?.prescription.sets.count == 1)
+        #expect(ex?.id == bench)                                   // same identity + position
+        #expect(ex?.exerciseName == run.name)
+        #expect(ex?.definitionId == "run")
+        #expect(ex?.prescription.sets.count == 2)                  // set shape preserved
+        // The lift's reps/load must not linger under a movement that logs neither.
+        let noLiftMetrics = ex?.prescription.sets.allSatisfy { $0.reps == nil && $0.load == nil }
+        #expect(noLiftMetrics == true)
+        #expect(ex?.selectedMetrics.contains(.reps) == false)
+        #expect(ex?.selectedMetrics.contains(.load) == false)
+    }
+
+    @Test func replaceWithinSharedSchemaKeepsCompatibleValues() {
+        var w = Workout(title: "Legs")
+        let str = w.addBlock(name: "Strength")
+        let back = ExerciseCatalog.resolve("back squat")
+        var squat = PlannedExercise(exerciseName: back.name, definitionId: back.id)
+        squat.selectedMetrics = [.reps, .load]
+        squat.prescription.sets = [PlannedSet(reps: 5, load: 100)]
+        w.addExercise(squat, toBlock: str)
+        let front = ExerciseCatalog.resolve("front squat")
+        #expect(front.id == "front_squat")
+        #expect(front.supported.contains(.reps) && front.supported.contains(.load))
+        let replaced = w.replaceExercise(squat.id, with: front)
+        #expect(replaced)
+        let ex = w.allExercises.first { $0.id == squat.id }
+        // Both movements share reps/load, so the sensible per-set values are preserved.
+        #expect(ex?.prescription.sets.first?.reps == 5)
+        #expect(ex?.prescription.sets.first?.load == 100)
     }
 
     @Test func editingCoachGuidance() {
@@ -332,6 +359,30 @@ struct WorkoutModelTests {
         #expect(log.performed(forPlanned: exerciseID)?.setLogs.count == 2)
         #expect(log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 1)?.reps == 12)
         #expect(log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 2)?.reps == 15)
+    }
+
+    @Test func sanitizeSetLogsScopedToRoundLeavesOtherRoundsIntact() {
+        let exerciseID = UUID()
+        let setID = UUID()
+        let groupID = UUID()
+        var log = WorkoutLog(exercises: [PerformedExercise(plannedExerciseID: exerciseID, exerciseName: "Squat")])
+        log.upsertSetLog(forPlanned: exerciseID, name: "Squat", plannedSetID: setID,
+                         groupID: groupID, iteration: 1) { $0.reps = 5; $0.load = 100 }
+        log.upsertSetLog(forPlanned: exerciseID, name: "Squat", plannedSetID: setID,
+                         groupID: groupID, iteration: 2) { $0.reps = 5; $0.load = 100 }
+
+        // Replace only round 1 with a cardio movement whose schema is distance/duration.
+        log.sanitizeSetLogs(forPlanned: exerciseID, retaining: [.distance, .duration],
+                            groupID: groupID, iteration: 1)
+
+        // Round 1's incompatible lift values are cleared...
+        let round1 = log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 1)
+        #expect(round1?.reps == nil)
+        #expect(round1?.load == nil)
+        // ...while round 2, still the original movement, keeps every logged rep and load.
+        let round2 = log.setLog(forPlanned: exerciseID, plannedSetID: setID, groupID: groupID, iteration: 2)
+        #expect(round2?.reps == 5)
+        #expect(round2?.load == 100)
     }
 
     @Test func startLogSnapshotsGroupsAndDefaultsChoices() throws {

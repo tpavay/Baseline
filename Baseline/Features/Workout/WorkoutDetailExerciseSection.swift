@@ -11,8 +11,12 @@ struct WorkoutDetailExerciseSection: View {
     }
 
     private var metrics: [MetricType] {
+        // Columns follow the exercise's metric schema (its selected metrics), intersected with the
+        // metrics that were actually logged, so a substituted movement shows its own metrics and never
+        // a previous movement's. Fall back to raw present values only when there is no schema to lean on.
         let present = MetricType.allCases.filter { metric in rows.contains { $0[metric] != nil } }
-        return Array((present.isEmpty ? planned.selectedMetrics : present).prefix(3))
+        let schema = planned.selectedMetrics.filter(present.contains)
+        return Array((schema.isEmpty ? present : schema).prefix(3))
     }
 
     private var muscleLabel: String {

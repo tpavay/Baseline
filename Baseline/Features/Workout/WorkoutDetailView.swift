@@ -76,7 +76,7 @@ struct WorkoutDetailView: View {
 
                             ForEach(workout.allExercises) { exercise in
                                 WorkoutDetailExerciseSection(
-                                    planned: exercise,
+                                    planned: effectiveExercise(exercise),
                                     performed: performedExercise(for: exercise)
                                 )
                             }
@@ -319,6 +319,13 @@ struct WorkoutDetailView: View {
         case 4: BaselineColor.zoneAmber
         default: BaselineColor.zoneRed
         }
+    }
+
+    /// Fold any live-log substitution into the exercise so history renders the movement the athlete
+    /// actually performed — its identity, muscles, and metric schema — rather than the original plan.
+    /// A declined "update plan?" leaves the substitution on the log only, so this is where it surfaces.
+    private func effectiveExercise(_ exercise: PlannedExercise) -> PlannedExercise {
+        snapshot?.log?.effectiveExercise(for: exercise) ?? exercise
     }
 
     private func performedExercise(for exercise: PlannedExercise) -> PerformedExercise? {

@@ -228,6 +228,15 @@ struct MetricValues: Codable, Equatable, Sendable {
     var present: [MetricType] { MetricType.allCases.filter { storage[$0] != nil } }
     var isEmpty: Bool { storage.isEmpty }
 
+    /// A copy keeping only values whose metric is in `allowed`. Used when a movement is replaced with
+    /// one whose schema differs: a value is just a number under a key with no schema tag, so a lift's
+    /// `reps`/`load` would otherwise linger on a cardio exercise and resurface wherever columns are
+    /// derived from which values are present. Sanitizing at the swap keeps the data honest to the
+    /// movement that owns it.
+    func retainingOnly(_ allowed: Set<MetricType>) -> MetricValues {
+        MetricValues(storage.filter { allowed.contains($0.key) })
+    }
+
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode([String: Double].self)
         storage = Dictionary(uniqueKeysWithValues: raw.compactMap { key, value in

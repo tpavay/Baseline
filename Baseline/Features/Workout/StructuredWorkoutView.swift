@@ -797,6 +797,16 @@ private struct WorkoutExerciseSection: View {
         ) ?? exercise
     }
 
+    /// The exercise a Metrics/Units sheet should read and write: the effective (substitution-aware)
+    /// instance while logging, the plain planned instance otherwise. Metrics/Units config is only
+    /// offered for non-grouped log exercises, so the exercise-wide substitution overlay is the right
+    /// scope to reflect.
+    private func configuredExercise(_ id: UUID) -> PlannedExercise? {
+        guard let planned = store.current?.exercise(id) else { return nil }
+        guard mode.usesPerformedData, let log = store.currentLog else { return planned }
+        return log.effectiveExercise(for: planned)
+    }
+
     private var isSkipped: Bool { adjustment?.outcome == .skipped }
 
     private var workoutDisplayLabel: String? {
@@ -1636,22 +1646,26 @@ private struct WorkoutExerciseSection: View {
                     iteration: targetIteration
                 )
             }
-        case .configure(let id, let name, let focus):
-            if let current = store.current?.exercise(id) {
+        case .configure(let id, _, let focus):
+            // Present and edit the exercise the athlete is actually looking at. A live substitution
+            // overlays the planned instance, so the sheet must read the substituted movement (its
+            // supported metrics, its current selection) and writes must route through the substitution —
+            // otherwise the editor validates against the hidden original and the selection can't move.
+            if let current = configuredExercise(id) {
                 MetricConfigSheet(
                     exercise: current,
                     focus: focus,
                     unitFor: { store.displayUnit($0, for: current) },
                     onSetDefault: { enabled, units in
                         store.setExercisePreference(
-                            exerciseNamed: name,
+                            exerciseNamed: current.exerciseName,
                             scope: .exercise,
                             units: units,
                             selected: enabled
                         )
                     }
                 ) { enabled, units in
-                    store.setLoggingConfig(exerciseID: id, enabled: enabled, units: units, scope: mode.editScope)
+                    store.setLoggingConfigForActiveExercise(exerciseID: id, enabled: enabled, units: units, scope: mode.editScope)
                 }
             }
         case .prescription(let id):
@@ -1664,26 +1678,12 @@ private struct WorkoutExerciseSection: View {
         groupID targetGroupID: UUID?,
         iteration targetIteration: Int?
     ) {
-        let supported = Set(definition.supported)
-        var selectedMetrics = presentedExercise.selectedMetrics.filter { supported.contains($0) }
-        if selectedMetrics.isEmpty { selectedMetrics = definition.defaults }
-        let substitution = LoggedExerciseSubstitution(
-            exerciseName: definition.name,
-            definitionId: definition.id == ExerciseCatalog.generic.id ? nil : definition.id,
-            selectedMetrics: selectedMetrics,
-            displayUnits: presentedExercise.displayUnits.filter { supported.contains($0.key) },
-            prescription: presentedExercise.prescription
+        store.substituteLoggedExercise(
+            exerciseID: exercise.id,
+            with: definition,
+            groupID: targetGroupID,
+            iteration: targetIteration
         )
-        store.editLog {
-            $0.setExerciseAdjustment(
-                plannedExerciseID: exercise.id,
-                groupID: targetGroupID,
-                iteration: targetIteration,
-                outcome: .substituted,
-                substitution: substitution,
-                name: exercise.exerciseName
-            )
-        }
     }
 
     private func removeExercise(groupID targetGroupID: UUID?, iteration targetIteration: Int?) {

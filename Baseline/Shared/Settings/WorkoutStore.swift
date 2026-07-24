@@ -520,8 +520,10 @@ final class WorkoutStore {
         return apply(w, scope)
     }
 
-    /// Replace a planned movement in place. The exercise identity, position, prescription, and
-    /// guidance stay intact; only catalog identity and incompatible logging configuration change.
+    /// Replace a planned movement in place. The exercise identity, position, and guidance stay intact.
+    /// The prescription is re-derived to the new movement via `replacingMovement`/`retainingMetrics`:
+    /// per-set values, ranges, and progressions keyed to metrics the new movement does not support are
+    /// reset to the new movement's schema, while metrics both movements share keep their values.
     @discardableResult
     func replaceExercise(_ exerciseID: UUID, with definition: ExerciseDefinition, scope: WorkoutEditScope) -> Bool {
         guard var workout = workout(scope),
@@ -529,6 +531,50 @@ final class WorkoutStore {
         apply(workout, scope)
         noteRecent(definition.id)
         return true
+    }
+
+    /// Replace the movement for a live-session exercise as a log-side substitution: the saved plan and
+    /// template are left untouched, the session's log carries the swap. Re-derives the metric schema to
+    /// the new movement and sanitizes both the substitution's prescription and any already-logged
+    /// values, so a previous movement's numbers can never ride along or resurface at completion. The one
+    /// live-log replace path, built on the same `replacingMovement` as the plan/agent edits.
+    func substituteLoggedExercise(
+        exerciseID: UUID,
+        with definition: ExerciseDefinition,
+        groupID: UUID? = nil,
+        iteration: Int? = nil
+    ) {
+        guard let planned = current?.exercise(exerciseID) else { return }
+        let base = currentLog?.effectiveExercise(for: planned, groupID: groupID, iteration: iteration) ?? planned
+        let replaced = base.replacingMovement(with: definition)
+        let substitution = LoggedExerciseSubstitution(
+            exerciseName: replaced.exerciseName,
+            definitionId: replaced.definitionId,
+            selectedMetrics: replaced.selectedMetrics,
+            displayUnits: replaced.displayUnits,
+            prescription: replaced.prescription
+        )
+        editLog {
+            $0.setExerciseAdjustment(
+                plannedExerciseID: exerciseID,
+                groupID: groupID,
+                iteration: iteration,
+                outcome: .substituted,
+                substitution: substitution,
+                name: planned.exerciseName
+            )
+            // Sets logged before the swap still hold the old movement's values; strip the ones the new
+            // movement can't own so nothing stale resurfaces in the completed/history summary. Scoped to
+            // the substitution so a round- or group-scoped replace never touches sets belonging to other
+            // rounds that still use the original movement.
+            $0.sanitizeSetLogs(
+                forPlanned: exerciseID,
+                retaining: Set(definition.supported),
+                groupID: groupID,
+                iteration: iteration
+            )
+        }
+        noteRecent(definition.id)
     }
 
     /// Begin performing. Bound → the plan creates the session; unbound → a local performed log.
@@ -1459,6 +1505,49 @@ final class WorkoutStore {
             }
         }
         return apply(workout, scope)
+    }
+
+    /// Apply a logging-config edit to the exercise the athlete is actually looking at. During a live
+    /// session a top-level substitution overlays the planned exercise, so an edit written to the plan
+    /// would land on a hidden layer the overlay discards — and the plain setter would even validate the
+    /// request against the *old* movement, locking out any metric only the new movement supports. When a
+    /// substitution is active this updates the substitution itself and validates against the substituted
+    /// movement; otherwise it is the ordinary plan/session config edit.
+    @discardableResult
+    func setLoggingConfigForActiveExercise(
+        exerciseID: UUID,
+        enabled: [MetricType]?,
+        units: [MetricType: MetricUnit] = [:],
+        scope: WorkoutEditScope
+    ) -> Bool {
+        guard let log = currentLog,
+              let adjustment = log.exerciseAdjustment(for: exerciseID),
+              adjustment.outcome == .substituted,
+              var substitution = adjustment.substitution else {
+            return setLoggingConfig(exerciseID: exerciseID, enabled: enabled, units: units, scope: scope)
+        }
+        let definition = substitution.definitionId.flatMap(ExerciseCatalog.definition(id:)) ?? ExerciseCatalog.generic
+        let supported = Set(definition.supported)
+        let requested = (enabled ?? []) + Array(units.keys)
+        guard requested.allSatisfy(supported.contains) else { return false }
+        if let enabled {
+            substitution.selectedMetrics = MetricType.allCases.filter { enabled.contains($0) }
+        }
+        for (metric, unit) in units where metric.displayUnits.contains(unit) {
+            substitution.displayUnits[metric] = unit
+        }
+        let plannedName = workout(scope)?.exercise(exerciseID)?.exerciseName ?? substitution.exerciseName
+        editLog {
+            $0.setExerciseAdjustment(
+                plannedExerciseID: exerciseID,
+                groupID: adjustment.groupID,
+                iteration: adjustment.iteration,
+                outcome: .substituted,
+                substitution: substitution,
+                name: plannedName
+            )
+        }
+        return true
     }
 
     /// Turn an incorrectly inferred either/or choice into one required ordered group. Name matching
@@ -4129,14 +4218,7 @@ final class WorkoutStore {
         to exerciseID: UUID,
         in workout: inout Workout
     ) -> Bool {
-        workout.updateExercise(exerciseID) { planned in
-            planned.exerciseName = definition.name
-            planned.definitionId = definition.id == ExerciseCatalog.generic.id ? nil : definition.id
-            let supported = Set(definition.supported)
-            planned.selectedMetrics = planned.selectedMetrics.filter { supported.contains($0) }
-            if planned.selectedMetrics.isEmpty { planned.selectedMetrics = definition.defaults }
-            planned.displayUnits = planned.displayUnits.filter { supported.contains($0.key) }
-        }
+        workout.replaceExercise(exerciseID, with: definition)
     }
 
     // MARK: - Persistence

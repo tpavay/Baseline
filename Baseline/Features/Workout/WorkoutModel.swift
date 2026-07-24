@@ -98,6 +98,24 @@ struct PlannedSet: Identifiable, Codable, Equatable, Sendable {
         }
         return copy
     }
+
+    /// A copy whose every metric-keyed field — values, target ranges, progressions, and each
+    /// alternative's values/ranges — is restricted to `allowed`. Applied when the backing movement is
+    /// replaced so no target or logged number keyed to a metric the new movement doesn't support can
+    /// survive under it.
+    func retainingMetrics(_ allowed: Set<MetricType>) -> PlannedSet {
+        var copy = self
+        copy.values = values.retainingOnly(allowed)
+        copy.ranges = ranges.filter { allowed.contains($0.metric) }
+        copy.progressions = progressions.filter { allowed.contains($0.metric) }
+        copy.alternatives = alternatives.map { alternative in
+            var updated = alternative
+            updated.values = alternative.values.retainingOnly(allowed)
+            updated.ranges = alternative.ranges.filter { allowed.contains($0.metric) }
+            return updated
+        }
+        return copy
+    }
 }
 
 enum PlannedSetMoveDestination: Equatable, Sendable {
@@ -137,6 +155,13 @@ struct Prescription: Codable, Equatable, Sendable {
         tempo = try container.decodeIfPresent(String.self, forKey: .tempo)
         intensityTargets = try container.decodeIfPresent([IntensityTarget].self, forKey: .intensityTargets) ?? []
     }
+
+    /// A copy with every set's metric-keyed data restricted to `allowed`. See `PlannedSet.retainingMetrics`.
+    func retainingMetrics(_ allowed: Set<MetricType>) -> Prescription {
+        var copy = self
+        copy.sets = sets.map { $0.retainingMetrics(allowed) }
+        return copy
+    }
 }
 
 /// Authored "how and why to do it" — kept separate from the prescription and from Athlete Notes.
@@ -163,6 +188,24 @@ struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     /// The catalog definition backing this exercise (generic when uncurated).
     var definition: ExerciseDefinition { definitionId.flatMap(ExerciseCatalog.definition(id:)) ?? ExerciseCatalog.generic }
     var supportedMetrics: [MetricType] { definition.supported }
+
+    /// The single definition of what "replace this exercise" means, kept view- and store-free so every
+    /// entry point agrees. It swaps catalog identity, re-derives the instance's metric schema to the new
+    /// movement (keeping the metrics both movements share, falling back to the new movement's defaults
+    /// when the overlap is empty), drops unit overrides the new movement can't use, and sanitizes every
+    /// per-set value so a previous movement's numbers can never linger under a metric the new movement
+    /// doesn't support. The instance keeps its identity and position — only the movement changes.
+    func replacingMovement(with definition: ExerciseDefinition) -> PlannedExercise {
+        var updated = self
+        updated.exerciseName = definition.name
+        updated.definitionId = definition.id == ExerciseCatalog.generic.id ? nil : definition.id
+        let supported = Set(definition.supported)
+        updated.selectedMetrics = selectedMetrics.filter { supported.contains($0) }
+        if updated.selectedMetrics.isEmpty { updated.selectedMetrics = definition.defaults }
+        updated.displayUnits = displayUnits.filter { supported.contains($0.key) }
+        updated.prescription = prescription.retainingMetrics(supported)
+        return updated
+    }
 }
 
 struct Workout: Identifiable, Codable, Equatable, Sendable {
@@ -375,14 +418,12 @@ extension Workout {
         }
     }
 
-    /// Swap the movement while keeping the exercise's identity + position (so history/undo stay
-    /// stable). Prescription is replaced; guidance is dropped unless carried by the caller.
+    /// Replace the movement backing an exercise in place, keeping identity + position so history/undo
+    /// stay stable. Delegates to `PlannedExercise.replacingMovement`, the one definition of replace that
+    /// the live-log substitution and the plan/agent edits also build on.
     @discardableResult
-    mutating func substituteExercise(_ id: UUID, withName name: String, prescription: Prescription) -> Bool {
-        updateExercise(id) {
-            $0.exerciseName = name
-            $0.prescription = prescription
-        }
+    mutating func replaceExercise(_ id: UUID, with definition: ExerciseDefinition) -> Bool {
+        updateExercise(id) { $0 = $0.replacingMovement(with: definition) }
     }
 
     @discardableResult
@@ -863,6 +904,40 @@ extension WorkoutLog {
         exercises[index].setLogs.removeAll { log in
             guard let plannedSetID = log.plannedSetID else { return false }
             return plannedSetIDs.contains(plannedSetID)
+        }
+    }
+
+    /// Strip metric values outside `retaining` from logged sets of a planned exercise, keeping the
+    /// rows. Used when a live substitution swaps the movement to a different schema: sets logged before
+    /// the swap still carry the old movement's numbers (a lift's reps/load), which would otherwise
+    /// resurface in the completed/history summary. Sanitizing keeps the row and its outcome while
+    /// dropping the values the new movement can't own.
+    ///
+    /// Scoped like `setExerciseAdjustment`: a round-scoped substitution (`iteration != nil`) touches
+    /// only the sets of that round, so replacing one round of an EMOM/rounds group with a
+    /// schema-changing movement never strips the values still owned by the other rounds' original
+    /// movement. A group-wide replace (`groupID != nil, iteration == nil`) sanitizes every set of that
+    /// group; a non-grouped exercise (both nil) sanitizes all of its sets.
+    mutating func sanitizeSetLogs(
+        forPlanned plannedID: UUID,
+        retaining: Set<MetricType>,
+        groupID: UUID? = nil,
+        iteration: Int? = nil
+    ) {
+        guard let index = exercises.firstIndex(where: { $0.plannedExerciseID == plannedID }) else { return }
+        for logIndex in exercises[index].setLogs.indices {
+            let log = exercises[index].setLogs[logIndex]
+            let inScope: Bool
+            if iteration != nil {
+                inScope = log.groupID == groupID && log.iteration == iteration
+            } else if groupID != nil {
+                inScope = log.groupID == groupID
+            } else {
+                inScope = true
+            }
+            guard inScope else { continue }
+            exercises[index].setLogs[logIndex].values =
+                exercises[index].setLogs[logIndex].values.retainingOnly(retaining)
         }
     }
 
