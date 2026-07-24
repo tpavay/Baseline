@@ -81,13 +81,20 @@ final class MainTabShellScreen: HostedScreen {
     let heartRateZones: HeartRateZoneSettingsStore
     private let container: ModelContainer
 
-    init(tab: MainTab, heartRateZones: HeartRateZoneSettingsStore? = nil) throws {
+    /// - Parameter seed: run against the in-memory context *before* the shell is hosted, so a tab's
+    ///   `@Query` sees the athlete's history on its first assembly (e.g. a completed session with
+    ///   heart-rate metrics behind the Weekly time-in-zone card).
+    init(tab: MainTab,
+         heartRateZones: HeartRateZoneSettingsStore? = nil,
+         seed: ((ModelContext) -> Void)? = nil) throws {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self]
             + PlanSchema.models + SleepSchema.models
         container = try ModelContainer(
             for: Schema(models),
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
+        seed?(container.mainContext)
+        try? container.mainContext.save()
         plan = PlanStore(context: container.mainContext)
         self.heartRateZones = heartRateZones
             ?? HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 })
