@@ -33,7 +33,7 @@ Today            Plan                  Train            Profile
 
 *Status: Today, Train (execution editor), the Plan calendar, and Workout Detail exist, and the Program object is modeled. The remaining Plan Engine slices are sequenced in `docs/implementation/plan-tab.md`.*
 - **Today** — the day's recommendation (readiness → plan). Opened every day.
-- **Plan** — the week/calendar of workout cards, each with its status (incl. "AI modified" badges); tap a card → **Workout Detail**. The primary action is **Talk to Baseline / Edit with Baseline** (not a generic "Adjust Plan"). *(Calendar and Workout Detail shipped; remaining behavior is sequenced in `docs/implementation/plan-tab.md`.)*
+- **Plan** — one bounded week at a time: every day is a row, and a day's sessions are cells in it; tap a session → **Workout Detail**. The primary action is **Talk to Baseline / Edit with Baseline** (not a generic "Adjust Plan"). *(The weekly grid and Workout Detail shipped; the day-state rules and the remaining behavior are owned by `docs/implementation/plan-tab.md`.)*
 - **Train** — the **current** session being executed (not a library). Collapsible blocks; per-exercise `•••` menu; set logging. Opened every workout.
 - **Profile** — setup, devices, integrations. Occasional.
 

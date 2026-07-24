@@ -167,22 +167,21 @@ disagree (none block Slice 1):
 ```
 Plan tab
 ├─ Program filter        All Training ▾  (Programs… / Collections: Ad Hoc, Completed, Archived)
-├─ Week nav              ‹  JUL 06 – 12  ›   + calendar picker      (swipe between weeks)
-├─ 7-day status strip    M T W T F S S      explicit state glyphs (not recovery-color dots)
-├─ Weekly aggregates     objective totals, modality-adaptive, horizontally scrollable
-├─ Timeline              every day, chronological; 0/1/many session cards per day
+├─ Week nav              ‹  JUL 20 – 26  ›   + Today               (one bounded week at a time)
+├─ 7-day status strip    M T W T F S S      explicit state marks (not recovery-color dots)
+├─ Day grid              all seven days; 0/1/many session cells per day, one hairline between days
 │   └─ Day
-│       └─ ScheduledWorkout card (adaptive by modality)
-│           ├─ status chip (today-only physiological / else attribution / else execution)
-│           ├─ overflow ⋯  (Move/Swap/Duplicate/Edit/Replace/Skip/Delete/Talk to Baseline)
-│           ├─ inline expand (▶/▼) — summary without leaving the page
-│           └─ primary action: Start / Resume / View Log / Preview / Start-late
+│       └─ Session cell (day-state rules: the 2026-07-24 entry in §0, modeled by `PlanWeekPresentation`)
+│           ├─ status chip only where it says something the cell does not (Missed / Skipped /
+│           │  In progress / Paused) - never on a performed or a merely planned session
+│           ├─ long-press menu (Start/Resume/View · Move to · Duplicate · Skip/Unskip · Delete)
+│           └─ tap opens workout detail; a performed session opens its log
 └─ Persistent Baseline entry (floating, Maps-style; prompt becomes context-sensitive on expand)
 
 Workout detail / execution = existing WorkoutView (planning ↔ active logging are two states of it)
 ```
 
-Page hierarchy (your point 9): `Week → card → (inline expand) → detail → Start → logging → complete → back to Week`.
+Page hierarchy (your point 9): `Week → day cell → detail → Start → logging → complete → back to Week`.
 Logging is a **state of the workout**, not a separate page.
 
 ---
@@ -478,31 +477,33 @@ readiness/load/constraints/rationale (those come from the engines + stored diffs
 
 ## 9. Screen & component breakdown (Slices 1 & 3)
 
-`Baseline/Features/Plan/`: `PlanView` (root), `ProgramFilterMenu`, `WeekNavBar`, `SevenDayStrip`,
-`WeeklyAggregatesRow` (+ `AggregateCard`), `Timeline` (+ `DayHeader`, `ScheduledWorkoutCard`), status
-`StatusChip`, `WorkoutOverflowMenu`, and the persistent `ContextualChatBar` (context-sensitive prompt).
-Workout **detail/execution reuses `WorkoutView`** opened from a card. Cards are one component with
-modality-specific summary subviews (strength / running / cardio-erg / hybrid / recovery) chosen off
-`ScheduledWorkout.workout` categories.
+`Baseline/Features/Plan/`: `PlanView` (root; the filter menu, week pager, seven-day strip and day grid
+are sections of it), `PlanWeekPresentation` (the pure day-state model every rule is tested against),
+`PlanStatusStyle` (status → chip), `AddToDaySheet` (add a session / make it a rest day), plus the shared
+`WorkoutSwipeActionRow`. Workout **detail/execution reuses `WorkoutView`** opened from a cell.
 
 **`AggregateProvider` (point 6).** Each workout *contributes* typed metric amounts
 (`[MetricContribution]`: duration, distance, strength sets, vertical gain, calories, zone time, …) derived
 from its content/tags. `AggregateProvider.aggregates(for: [ScheduledWorkout]) -> [Aggregate]` sums the
-contributions present in the current week/filter; `WeeklyAggregatesRow` renders **whatever aggregates
-exist** (horizontally scrollable), never a hardcoded three. This scales to any modality without touching
-the view — a running week surfaces distance/quality, a strength week surfaces sets/volume, HYROX surfaces
-run distance + station volume + carries.
+contributions present in a set of sessions, and scales to any modality without a hardcoded metric list.
+It has no weekly row of its own on the Plan tab (see the 2026-07-24 entry in §0): its consumers are the
+per-session planned figures on Today, Profile, Workout detail, and the Plan cell subtitle.
 
 ---
 
 ## 10. Drag-and-drop behavior (Slice 3)
 
-Long-press → lift → drag → everything shifts → drop, on the timeline (Things/Reminders-style), driven
+Long-press → lift → drag → everything shifts → drop, on the week grid (Things/Reminders-style), driven
 **only** by the Slice-2 mutation API. Drop targets: another day (move), within a day (reorder), onto an
 occupied day → action sheet (**Swap / Add as second session / Move only**). Before applying a structural
 change, show the `ScheduleDiff` ("You moved Threshold → Thursday; Recovery Ride → Tuesday. Accept?").
-Undo available after every mutation. Implemented with a custom drag layer over the timeline (SwiftUI
-`.draggable`/drop or a hand-rolled offset drag if reorder fidelity needs it — decided at Slice 3 spike).
+Undo available after every mutation.
+
+**Shipped as of 2026-07-24:** cross-day drag (`.draggable` + `.dropDestination` on each day, occupied
+drop → Move/Swap dialog, undo bar). **Within-day reorder is not wired yet** - the session cell renders a
+reorder handle that is deliberately decorative and `accessibilityHidden` until its gesture lands, so
+assistive tech is never offered a control that does nothing. `Move to` in the cell's long-press menu is
+the non-gesture path meanwhile.
 
 ---
 
@@ -510,8 +511,8 @@ Undo available after every mutation. Implemented with a custom drag layer over t
 
 Model supports many active programs, many sessions/day (AM/PM via `timeOfDay`), standalone ad-hoc
 workouts, and per-workout immutable `origin` + `programID`. Filter (`ProgramFilter`: `.allTraining`,
-`.program(id)`, `.collection(adHoc/completed/archived)`) runs against `Program` from day one; the strip,
-aggregates, and timeline all respect it. All Training merges every active program chronologically.
+`.program(id)`, `.collection(adHoc/completed/archived)`) runs against `Program` from day one; the strip
+and the day grid both respect it. All Training merges every active program chronologically.
 
 ---
 
@@ -541,7 +542,7 @@ writes a ref back onto the `ScheduledWorkout`, so plan restore can't disturb the
 
 ## 13. Error & empty states
 
-Empty week ("No sessions this week — ask Baseline or add one"); empty day (leads with an "Add workout" affordance plus a one-tap moon toggle to mark a rest day; only a decided rest day reads "Rest day", backed by `SDRestDay`); **migration-failure
+Empty week ("No sessions this week — ask Baseline or add one"); undecided day (a single centered "+" opening the add sheet, which is also where "Make it a rest day" lives - an undecided day carries no row-level moon; only a decided rest day reads "Rest day", backed by `SDRestDay`, and its moon is the one-tap un-mark); **migration-failure
 recovery mode** (read-only: old JSON preserved, schedule mutations blocked, diagnostic + retry/export — one
 writable store, never two, point 5); mutation validation errors (surfaced as `rejected(PlanError)`, no
 silent no-op); `confirmationRequired` diff shown before any structural change; agent ambiguity ("which
@@ -552,9 +553,11 @@ Tuesday session?"); occupied-drop conflict (action sheet); offline (local-first,
 ## 14. Accessibility requirements
 
 44pt+ tap targets on every control; VoiceOver labels describe **state + action** ("Threshold run,
-Tuesday, modified today, double-tap to start"); Dynamic Type must not break the timeline (cards reflow,
-aggregates scroll); status conveyed by glyph + text, never color alone (your day-strip point); drag-drop
-has a non-gesture fallback via the ⋯ menu (Move/Reorder) so it isn't gesture-only; reduced-motion honored.
+Tuesday, modified today, double-tap to start"); Dynamic Type must not break the grid (cells reflow);
+status conveyed by glyph + text, never color alone (your day-strip point); drag-drop has a non-gesture
+fallback in the long-press menu (Move to) so it isn't gesture-only, and the session cell's primary
+start/resume/review is a custom accessibility action because that menu is invisible to assistive tech;
+a rendered-but-unwired control stays `accessibilityHidden` (§10); reduced-motion honored.
 
 ---
 
@@ -640,12 +643,12 @@ space).
 | Spec requirement | Where |
 |---|---|
 | Program filter (All Training / programs / collections) | §3, §11; Slice 1 (shell) + Slice 4 (real programs) |
-| Week nav (prev/next, swipe, calendar, current-week) | §3; Slice 1 (5) |
+| Week nav (prev/next pager, current-week via Today) | §3; Slice 1 (5), reshaped 2026-07-24 (§0) |
 | 7-day strip with explicit states (not recovery dots) | §3, §12, §14; Slice 1 (5) |
-| Dynamic weekly aggregates (modality-adaptive, objective) | §3, §11; Slice 1 (6) |
-| Chronological timeline, all days, quiet-completed, today-emphasized | §3, §9; Slice 1 (7) |
+| Dynamic weekly aggregates (modality-adaptive, objective) | Built in Slice 1 (6), **removed from the Plan tab 2026-07-24** (§0) - the Today tab's This Week card is the one weekly total, and it reads performed work |
+| Bounded week, all seven days, performed-marked, today-emphasized | §3, §9; Slice 1 (7), reshaped 2026-07-24 (§0) |
 | Multiple sessions/day (AM/PM) | §4, §11; Slice 1 (7) |
-| Adaptive cards by modality | §9; Slice 1 (7) |
+| One uniform session cell (no modality glyph) | §3, §9; 2026-07-24 (§0) |
 | Status chip via pure resolver (today physiological / attribution / execution; never stored) | §12; Slice 1 (7) + Slice 2 (attribution) |
 | Modification "why" from deterministic state + stored diff, never invented | §12, §8; Slice 1/2/4 |
 | Overflow actions (Move/Swap/Duplicate/Edit/Replace/Skip/Delete/Talk) | §9, §10; Slice 3 (13) |
@@ -672,11 +675,11 @@ space).
 | Stable ExerciseInstanceID preserved across revisions | §4; Slice 2 (10) |
 | Programs own goals; workouts link supported goals | §4 (fwd-compat fields; authoring deferred) |
 | WorkoutTag on ScheduledWorkout (filter / replace-all / distribution) | §4 |
-| AggregateProvider — workouts contribute metrics; row renders what exists | §9; Slice 1 (6) |
+| AggregateProvider — workouts contribute metrics, consumers render what exists | §9; Slice 1 (6) |
 | WorkoutSession (active/paused/completed/discarded); frozen CompletedWorkoutLog | §4, §12 |
 | RecurrenceRule? + WorkoutTemplate modeled (fwd-compat, no v1 authoring) | §4, §5 |
 | Migrations, no data wipe | §5; Slice 1 (4) |
-| UI fixes: action not hidden behind chat/tab; safe-area; multi-session; strip states; adaptive aggregates; quiet-completed; prominent-active; tap targets; VoiceOver; Dynamic Type | §9, §13, §14, §17 |
+| UI fixes: action not hidden behind chat/tab; safe-area; multi-session; strip states; performed-marked; prominent-active; tap targets; VoiceOver; Dynamic Type | §9, §13, §14, §17 |
 | "Prev-performance" column | **Slice 2 (12b)** — `SDCompletedExercise` index + `mostRecentPerformance` query by stable identity; not tied to program collections |
 
 **No arbitrary deferrals remain.** The Previous column moved into Slice 2 (it's a repository query, not a

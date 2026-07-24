@@ -12,10 +12,10 @@ final class PlanStore {
     private(set) var focusedDate: Date
     private(set) var week: TrainingWeek
     /// Monotonic change counter, bumped by `reload()` on schedule-affecting mutations. Views that
-    /// cache expensive repository projections in `@State` (the Plan calendar, Profile history,
+    /// cache expensive repository projections in `@State` (the Plan tab's week, Profile history,
     /// Workout detail) watch this with `.onChange` so they re-fetch exactly once per mutation
     /// instead of once per body evaluation. Live set-log write-throughs deliberately do not bump
-    /// it: a logged rep changes no scheduled content, and invalidating the 181-day calendar and
+    /// it: a logged rep changes no scheduled content, and invalidating the week projection and
     /// year-history caches per set would re-hydrate them continuously during execution.
     private(set) var revision = 0
 
