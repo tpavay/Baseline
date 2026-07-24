@@ -1,0 +1,78 @@
+name: Provider Live Guard
+
+# Paid, opt-in ground-truth check that the LIVE Anthropic API accepts every served tool schema and
+# that a real conversation round-trip completes (docs/tool-schema-contract.md, layers 1 and 4). It
+# spends real provider tokens (~$0.46/run), so it deliberately does NOT run on every PR. The per-PR
+# provider-rejection guarantee is the FREE offline contract lint in ci.yml's `functions-verify` job
+# (functions/test/toolSchemaContract.test.js); this workflow is the periodic/opt-in backstop that
+# catches anything the lint's model of the provider missed, and provider-side validator drift.
+#
+# Why this cannot be made free: Anthropic's free count_tokens endpoint does NOT validate tool
+# schemas - it returns 200 even for a top-level `oneOf`, the exact construct that 400s every
+# conversation on the messages endpoint (the 2026-07 outage; re-verified 2026-07-23). Only a real
+# messages request proves acceptance, and a request the provider ACCEPTS is billed for its input
+# tokens (a rejected one 400s for $0). So the live acceptance guarantee costs money and lives here,
+# gated behind an explicit opt-in.
+#
+# Runs when:
+#   - manually dispatched (workflow_dispatch),
+#   - weekly on a schedule (a canary that catches provider-side validator drift),
+#   - a pull request carries the `provider-smoke` label (deliberate per-PR opt-in).
+#
+# Note: GitHub fires `schedule` only from the repository's default branch, so the weekly canary
+# activates once this file reaches that branch. The dispatch and label paths work from any branch
+# immediately. ANTHROPIC_API_KEY is the dev project's key, mirrored from Firebase Secret Manager
+# into an Actions secret (see docs/tool-schema-contract.md).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: provider-live-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  provider-live:
+    name: Provider Schema Preflight & Conversation Smoke (live, paid)
+    # Non-PR events (manual dispatch, weekly schedule) always run; a pull_request runs only when it
+    # carries the `provider-smoke` label, so an unrelated label change never triggers a paid run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'provider-smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix functions ci
+
+      # Both scripts read functions/lib and fail hard when the API key secret is missing - a skipped
+      # run would give a false "provider accepts these schemas" signal. The one non-fatal provider
+      # error is an exhausted credit balance (a billing outage with zero schema signal): the scripts
+      # skip with a ::warning annotation instead of misreporting "fix the schema" - see
+      # functions/scripts/provider-outage.js.
+      - name: Preflight every served toolset against the live provider
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm --prefix functions run preflight:providers
+
+      - name: Live conversation round-trip per provider
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm --prefix functions run smoke:conversation

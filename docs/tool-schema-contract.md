@@ -12,15 +12,40 @@ PR #59 fixed the schemas and pinned "no top-level combinators"; this contract ge
 
 | Layer | Where | What it proves | When it runs |
 |---|---|---|---|
-| 1. Real-provider preflight | `functions/scripts/preflight-tool-schemas.js` | The live Anthropic API **accepts every served toolset variant** (all schema-version-gated variants, exactly as the runtime serves them, real system prompt included). Minimal `max_tokens: 1` request per variant - a schema-acceptance check, not a generation. | CI job `functions-provider-preflight` on every functions PR; `npm run preflight:providers` locally |
-| 2. Offline contract lint | `functions/src/toolSchemaContract.ts` + `functions/test/toolSchemaContract.test.js` | Every served tool schema stays inside the documented safe subset (allowlist). Catches most problems in milliseconds with no network. Absorbs the PR #59 regression test. | `npm test` (so also CI job `functions-verify`) |
+| 1. Real-provider preflight | `functions/scripts/preflight-tool-schemas.js` | The live Anthropic API **accepts every served toolset variant** (all schema-version-gated variants, exactly as the runtime serves them, real system prompt included). Minimal `max_tokens: 1` request per variant - a schema-acceptance check, not a generation. | **Paid, gated** - CI workflow `provider-live-guard.yml` (manual dispatch, weekly schedule, or a PR labeled `provider-smoke`); `npm run preflight:providers` locally. **Not on every PR.** |
+| 2. Offline contract lint | `functions/src/toolSchemaContract.ts` + `functions/test/toolSchemaContract.test.js` | Every served tool schema stays inside the documented safe subset (allowlist). Catches most problems in milliseconds with no network. Absorbs the PR #59 regression test. **This is the per-PR provider-rejection guard.** | `npm test` (so also CI job `functions-verify`) - every functions PR, **$0** |
 | 3. Cross-provider profiles | `toolSchemaContract.ts` (`ProviderSchemaProfile`) | The lint is structured per provider: enforced profiles must pass; the conservative cross-provider core reports **advisories** (latent fragility), pinned in the test. | with layer 2 |
-| 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the full wave9 toolset. | CI job `functions-provider-preflight`; `npm run smoke:conversation` locally |
-| 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-provider-preflight` (`npm run tokens:check`); regenerate with `npm run tokens:measure` |
+| 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the full wave9 toolset. | **Paid, gated** - CI workflow `provider-live-guard.yml` (same triggers as layer 1); `npm run smoke:conversation` locally. **Not on every PR.** |
+| 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-token-fixture` (`npm run tokens:check`, **free** `count_tokens`) - every functions PR, **$0**; regenerate with `npm run tokens:measure` |
 
 The offline lint approximates the provider's validator; the preflight *is* the provider's validator.
-Keep both: the lint gives instant, explained feedback and covers providers you cannot cheaply call; the preflight is ground truth and catches anything the lint's model of the provider missed.
+Keep both: the lint gives instant, explained feedback on every PR at no cost and covers providers you cannot cheaply call; the preflight is ground truth and catches anything the lint's model of the provider missed, and it runs deliberately (dispatch / schedule / label) rather than on every PR.
 The preflight submits the runtime's exact request shape - prompt-caching `cache_control` breakpoints included (`functions/src/promptCaching.ts`) - so a provider rejecting the cache placement also cannot reach a green build.
+
+## Where each layer runs: free per-PR vs paid-and-gated
+
+Routine CI (every PR/push) spends **$0** of real provider tokens.
+The provider-rejection guarantee on the per-PR path is carried entirely by **offline/free means**:
+
+- **Layer 2 (offline lint)** is the load-bearing per-PR acceptance guard. It runs in `functions-verify` via `npm test`, rejects top-level `oneOf`/`anyOf`/`allOf`/`not` and every construct outside the allowlist, and fails the required `CI` check with no network and no spend. A PR that reintroduces the 2026-07 top-level-`oneOf` schema fails here.
+- **Layer 5 (`tokens:check`)** also runs every functions PR but is **free**: it uses Anthropic's `count_tokens` endpoint, which is not billed. It is a **cost** guard only.
+
+The paid layers (1 real-provider preflight, 4 conversation smoke) moved **off** the per-PR path into the opt-in `provider-live-guard.yml` workflow. They run only when deliberately requested: `workflow_dispatch`, a weekly `schedule` canary, or a PR carrying the `provider-smoke` label.
+
+### Why `count_tokens` cannot replace the paid preflight
+
+`count_tokens` is free, so it is tempting to use it as a per-PR acceptance check. It **does not work for that** - verified against the live API on 2026-07-23:
+
+| Endpoint | Top-level `oneOf` tool schema | Cost of that request |
+|---|---|---|
+| `POST /v1/messages/count_tokens` | **HTTP 200** (returns a token count; no schema validation) | free either way |
+| `POST /v1/messages` | **HTTP 400** `invalid_request_error`: `input_schema does not support oneOf, allOf, or anyOf at the top level` | **$0** (a rejected request is not billed) |
+
+So the free endpoint gives a false pass on the exact construct that took down every conversation in 2026-07.
+Only the `messages` endpoint rejects it.
+And a request the provider *accepts* is billed for its input tokens (~120K across the 6 served variants ≈ $0.36/run), so proving live acceptance on every PR cannot be free.
+Hence: the offline lint is the per-PR guard, and the live `messages` preflight is a gated backstop.
+**Do not weaken the offline lint on the assumption that `count_tokens` (or any free check) covers acceptance - it does not.**
 
 ## The safe subset
 
@@ -69,18 +94,31 @@ Nothing currently served violates the enforced profile; all 6 variants return 20
 2. Add its `ProviderSchemaProfile` to `toolSchemaContract.ts` and append it to `ENFORCED_PROFILES`.
    The advisories above tell you in advance which existing constructs its adapter must rewrite or its profile must allow.
 3. Register a factory in the `PROVIDERS` table of `scripts/conversation-smoke.js`, and extend the preflight script with the provider's minimal validation call.
-4. Add its API key as a repository Actions secret and wire it into the `functions-provider-preflight` job.
+4. Add its API key as a repository Actions secret and wire it into the `provider-live` job of `.github/workflows/provider-live-guard.yml`.
 
 That is the whole procedure - "add its constraint profile + run the preflight", not "discover breakage in production".
 
 ## CI wiring, key, and cost
 
-- CI job: `functions-provider-preflight` in `.github/workflows/ci.yml`, gated on the `changes` filter's `functions` output, feeding the single required `CI` check.
-- Key: repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together.
-- The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would let a provider-rejected schema reach a green build.
-- One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema" on every functions PR.
-  The schemas are unverified by such a run; top up the account behind the secret and re-run the job.
-- Cost per run: 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ a few cents, plus ~90 free `count_tokens` requests for the token-fixture check, only on PRs that touch `functions/`.
+**Free, every functions PR** (`.github/workflows/ci.yml`, gated on the `changes` filter's `functions` output, feeding the single required `CI` check):
+
+- `functions-verify` runs `npm test`, which includes the offline contract lint (layer 2/3) - the per-PR provider-rejection guard. **$0.**
+- `functions-token-fixture` runs `npm run tokens:check` against the free `count_tokens` endpoint (layer 5, a cost guard). **$0.**
+
+No real-provider **`messages`** request runs on the per-PR path, so routine CI spends nothing on provider tokens.
+
+**Paid, opt-in** (`.github/workflows/provider-live-guard.yml`, the `provider-live` job - layers 1 and 4):
+
+- Triggers: `workflow_dispatch` (manual), a weekly `schedule` canary, or a PR labeled `provider-smoke`. Never on an unlabeled PR.
+- To run it on a specific PR, add the `provider-smoke` label; to run it ad hoc, dispatch the workflow from the Actions tab.
+- `schedule` fires only from the default branch, so the weekly canary activates once the workflow file reaches that branch.
+
+**Key** (both workflows): repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together. (This is currently the same key as production; separating keys per environment is a follow-up.)
+
+- The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would give a false "provider accepts these schemas" signal.
+- One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema".
+  The schemas are unverified by such a run; top up the account behind the secret and re-run the workflow.
+- Cost: the gated run is 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ $0.46 in real tokens. The per-PR `tokens:check` is ~90 **free** `count_tokens` requests.
 
 ## Keeping the contract honest
 

@@ -444,18 +444,22 @@ jobs:
       - name: Run tests
         run: npm --prefix functions test
 
-  # Real-provider guard for the conversation tool schemas (docs/tool-schema-contract.md).
-  # The offline contract lint in `npm test` approximates the provider's request validator;
-  # this job asks the validator itself: every served toolset variant is submitted to the live
-  # Anthropic API in a minimal max_tokens=1 request (schema-acceptance check, not a
-  # generation), then one real conversation round-trip runs through the same provider class
-  # the runtime uses. In 2026-07 a top-level `oneOf` in one tool 400'd every conversation
-  # request and was only caught by manual real-API testing - this automates that test, so a
-  # schema any supported model rejects cannot reach a green build. Costs a few cents per run
-  # and only runs when the functions area changed. ANTHROPIC_API_KEY is the dev project's key,
-  # mirrored from Firebase Secret Manager into an Actions secret.
-  functions-provider-preflight:
-    name: Provider Schema Preflight & Conversation Smoke
+  # Free per-PR tool-schema cost guard (docs/tool-schema-contract.md). `tokens:check` hits
+  # Anthropic's count_tokens endpoint, which is NOT billed - it returns a token count, never a
+  # completion - so this job spends $0 of provider tokens on every functions PR. It verifies the
+  # committed token fixture (src/toolSchemaTokens.json) against live counts, so a PR that fattens a
+  # served schema must regenerate the fixture and the per-request token delta becomes a visible diff.
+  #
+  # IMPORTANT - this is a COST guard, not an acceptance guard. count_tokens does NOT validate tool
+  # schemas: it returns 200 even for a top-level `oneOf`, the exact construct that 400s every
+  # conversation on the messages endpoint (the 2026-07 outage; re-verified 2026-07-23). The per-PR
+  # provider-rejection guarantee is therefore the OFFLINE contract lint that runs in `functions-verify`
+  # (functions/test/toolSchemaContract.test.js), which rejects top-level combinators and every
+  # construct outside the documented safe subset with no network and no spend. The paid live-API
+  # ground-truth checks (real-provider preflight + conversation smoke) moved off the per-PR path into
+  # the opt-in `.github/workflows/provider-live-guard.yml` workflow. See docs/tool-schema-contract.md.
+  functions-token-fixture:
+    name: Tool-Schema Token Fixture (free count_tokens)
     needs: changes
     if: needs.changes.outputs.functions == 'true'
     runs-on: ubuntu-latest
@@ -475,26 +479,12 @@ jobs:
       - name: Install dependencies
         run: npm --prefix functions ci
 
-      # Both scripts read functions/lib and fail hard when the API key secret is missing -
-      # a skipped preflight would let a provider-rejected schema reach a green build. The one
-      # non-fatal provider error is an exhausted credit balance (a billing outage with zero
-      # schema signal): the scripts skip with a ::warning annotation instead of misreporting
-      # "fix the schema" - see functions/scripts/provider-outage.js.
-      - name: Preflight every served toolset against the live provider
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npm --prefix functions run preflight:providers
-
-      - name: Live conversation round-trip per provider
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npm --prefix functions run smoke:conversation
-
-      # Bytes are not tokens: src/toolSchemaTokens.json pins the measured per-request token cost
-      # of every served toolset (recorded as tool_schema_tokens on each generation). Verifying it
-      # against the free count_tokens endpoint forces a PR that fattens a schema to regenerate the
-      # fixture, making "this PR added N tokens to every request" a visible diff in review.
-      - name: Verify tool-schema token fixture against live counts
+      # count_tokens is free, so this spends no provider tokens. Bytes are not tokens:
+      # src/toolSchemaTokens.json pins the measured per-request token cost of every served toolset
+      # (recorded as tool_schema_tokens on each generation). Verifying it against the free
+      # count_tokens endpoint forces a PR that fattens a schema to regenerate the fixture, making
+      # "this PR added N tokens to every request" a visible diff in review.
+      - name: Verify tool-schema token fixture against live counts (free)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: npm --prefix functions run tokens:check
@@ -516,7 +506,7 @@ jobs:
       - ios-test
       - ios-build-staging
       - functions-verify
-      - functions-provider-preflight
+      - functions-token-fixture
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

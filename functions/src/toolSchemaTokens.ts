@@ -8,10 +8,10 @@ import type { ServedToolset } from "./tools";
  * `tool_schema_bytes` is recorded per generation but bytes are not tokens: the wave9 toolset is
  * 75,770 bytes and 22,213 input tokens. These numbers are static per (toolset, model), so they are
  * NOT measured per request. `scripts/measure-tool-schema-tokens.js` counts them with Anthropic's
- * free `count_tokens` endpoint and writes the committed fixture `toolSchemaTokens.json`; the CI
- * provider-preflight job verifies the fixture matches live counts on every functions PR, so a PR
- * that fattens a schema shows up as a fixture diff ("this PR added N tokens to every request") at
- * review time.
+ * free `count_tokens` endpoint and writes the committed fixture `toolSchemaTokens.json`; the free
+ * CI `functions-token-fixture` job verifies the fixture matches live counts on every functions PR,
+ * so a PR that fattens a schema shows up as a fixture diff ("this PR added N tokens to every
+ * request") at review time.
  *
  * Each generation records its toolset's total as `tool_schema_tokens` next to `tool_schema_bytes`
  * (llmObservability.ts), which lets input tokens decompose into schema / prompt / conversation in

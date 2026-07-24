@@ -87,7 +87,8 @@ const JSON_TYPES = new Set(["object", "array", "string", "number", "integer", "b
 
 /**
  * What the Anthropic Messages API accepts, held to the narrowest shape Baseline actually needs.
- * Verified against the live API by scripts/preflight-tool-schemas.js on every functions PR.
+ * Verified against the live API by scripts/preflight-tool-schemas.js in the gated
+ * provider-live-guard.yml workflow (not every PR); this offline lint is the per-PR guard.
  * Top-level combinators stay banned even though nested ones pass: a top-level combinator is the
  * exact construct that 400s every conversation request (PR #59).
  */

@@ -10,10 +10,13 @@
 //   ANTHROPIC_API_KEY=... npm run tokens:measure   # rewrite the fixture (then commit the diff)
 //   ANTHROPIC_API_KEY=... npm run tokens:check     # CI: fail when the fixture is stale
 //
-// The check runs in the CI provider-preflight job, so a PR that changes any served schema must
-// regenerate the fixture - which makes "this PR added N tokens to every request" a visible diff
-// at review time. Token counts are deterministic per (model, input), so check mode is exact.
-// Requires `npm run build` first (reads ../lib). Cost: ~90 free count_tokens requests.
+// The check runs in the free per-PR CI job `functions-token-fixture` (count_tokens is not billed),
+// so a PR that changes any served schema must regenerate the fixture - which makes "this PR added N
+// tokens to every request" a visible diff at review time. This is a COST guard only: count_tokens
+// does NOT validate schemas (it returns 200 for a top-level `oneOf`), so provider acceptance is
+// guarded offline by toolSchemaContract.ts and, as a gated backstop, by the real-messages preflight
+// (see docs/tool-schema-contract.md). Token counts are deterministic per (model, input), so check
+// mode is exact. Requires `npm run build` first (reads ../lib). Cost: ~90 free count_tokens requests.
 "use strict";
 
 const fs = require("node:fs");

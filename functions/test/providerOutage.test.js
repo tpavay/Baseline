@@ -2,8 +2,8 @@
 //
 // Anthropic reports an exhausted credit balance with the same HTTP 400 invalid_request_error a
 // schema rejection uses; only the message distinguishes them. Misclassifying either direction is
-// costly: billing→rejection blocks every functions PR with "fix the schema" (the 2026-07 CI
-// failure), rejection→billing lets a provider-rejected schema reach a green build.
+// costly: billing→rejection fails the paid provider-live-guard run with "fix the schema" (the
+// 2026-07 CI failure), rejection→billing lets a provider-rejected schema reach a green build.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 

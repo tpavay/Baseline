@@ -4,8 +4,8 @@
 // status and error type a genuine schema rejection uses - so the only discriminator is the
 // message. The distinction matters: a schema rejection is caused by this repo's code and must
 // block the merge, while a drained billing account is an infrastructure outage that carries zero
-// signal about schema validity and would otherwise block every functions PR with the misdiagnosis
-// "fix the schema". The scripts treat the billing outage as a loudly-annotated skip instead
+// signal about schema validity and would otherwise fail the paid provider-live-guard run with the
+// misdiagnosis "fix the schema". The scripts treat the billing outage as a loudly-annotated skip instead
 // (2026-07: a zero-balance key failed all 6 variants with "credit balance is too low").
 "use strict";
 
