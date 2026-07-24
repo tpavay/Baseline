@@ -520,7 +520,7 @@ struct ProfileView: View {
         .environment(BluetoothManager())
         .environment(HealthService())
         .environment(PlanStore(context: container.mainContext))
-        .environment(HeartRateZoneSettingsStore())
+        .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
         .modelContainer(container)
         .preferredColorScheme(.dark)
 }

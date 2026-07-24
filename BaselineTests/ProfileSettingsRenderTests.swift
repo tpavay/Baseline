@@ -84,6 +84,7 @@ private final class ProfileSettingsScreen {
             .environment(BluetoothManager())
             .environment(HealthService())
             .environment(PlanStore(context: container.mainContext))
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             .modelContainer(container)
             .dynamicTypeSize(dynamicTypeSize)
             .preferredColorScheme(.dark)

@@ -63,8 +63,9 @@ final class HeartRateMonitor {
 
     /// The athlete's zone boundaries. A `var` so a mid-workout settings edit can be applied live:
     /// `WorkoutView` reassigns this from the shared `HeartRateZoneSettingsStore` when zones change,
-    /// and because it is an observed property the gauge, `currentZone`, and zone-time credit all
-    /// re-resolve against the new bands without restarting the run.
+    /// and because it is an observed property the gauge and `currentZone` re-resolve against the new
+    /// bands without restarting the run. `zoneTime` is *not* re-bucketed: `ingest` credits each
+    /// interval to the zone in force when the sample arrived, so a swap only steers future credit.
     var zoneModel: HeartRateZoneModel
 
     /// Clock time at which `latestSample` was ingested (the monitor's own arrival stamp).

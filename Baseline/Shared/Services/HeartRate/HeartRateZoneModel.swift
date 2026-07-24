@@ -12,10 +12,10 @@ import Foundation
 /// Max HR comes from an explicit user value when supplied, else **Tanaka** (`208 − 0.7·age`). Zones
 /// are a coaching aid: they communicate intensity, never fabricated precision, and never silently
 /// overwrite an athlete's tested max (see `baseline-live-heart-rate`).
-struct HeartRateZoneModel: Equatable, Sendable {
+struct HeartRateZoneModel: Hashable, Sendable {
 
     /// How the boundaries were derived, preserved so a historical zone can be explained/reproduced.
-    enum Method: Equatable, Sendable {
+    enum Method: Hashable, Sendable {
         /// Karvonen / Heart Rate Reserve — used whenever `restingHR` is present.
         case heartRateReserve
         /// Percent of max HR — the fallback when no resting HR is known.

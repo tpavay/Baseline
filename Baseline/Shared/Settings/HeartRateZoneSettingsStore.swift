@@ -75,3 +75,21 @@ final class HeartRateZoneSettingsStore {
         }
     }
 }
+
+extension UserDefaults {
+    /// A throwaway suite for previews and hosted test harnesses, which must construct a real store to
+    /// satisfy the environment but must never read or write the athlete's actual zone config.
+    static var previewEmpty: UserDefaults {
+        UserDefaults(suiteName: "hr-zone-preview-\(UUID().uuidString)")!
+    }
+
+    /// `previewEmpty` pre-loaded with a config, bypassing the gated write so a preview can show a
+    /// state the store itself would refuse to commit.
+    static func previewSeeded(_ settings: HeartRateZoneSettings) -> UserDefaults {
+        let defaults = previewEmpty
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: "heartRateZones.settings")
+        }
+        return defaults
+    }
+}

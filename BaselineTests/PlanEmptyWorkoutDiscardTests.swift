@@ -211,6 +211,7 @@ private final class DiscardBed {
                     .environment(bed.plan)
                     .environment(BluetoothManager())
                     .environment(OnboardingStore())
+                    .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             }
         }
     }

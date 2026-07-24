@@ -102,6 +102,6 @@ struct BaselineFloatingTabBar: View {
         .environment(OnboardingStore())
         .environment(WorkoutStore(units: AppSettings()))
         .environment(PlanStore(context: container.mainContext))
-        .environment(HeartRateZoneSettingsStore())
+        .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
         .modelContainer(container)
 }

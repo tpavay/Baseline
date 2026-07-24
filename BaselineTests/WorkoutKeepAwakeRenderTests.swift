@@ -117,6 +117,7 @@ private final class WorkoutScreen {
             .environment(PlanStore(context: container.mainContext))
             .environment(BluetoothManager())
             .environment(OnboardingStore(defaults: defaults))
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
             .modelContainer(container)
             .preferredColorScheme(.dark)
 

@@ -89,9 +89,6 @@ struct TodayView: View {
             }
         }
         .task(id: refreshKey) { await reassemble() }
-        // A zone edit in Profile mutates the shared store; rebuild the Weekly card's time-in-zone
-        // durations and BPM ranges against the new model rather than waiting for the next reload.
-        .onChange(of: heartRateZones.resolvedModel) { _, _ in Task { await reassemble() } }
         .onAppear { maybeShowMorningPrompt(auto: true) }
         .onChange(of: readings.count) { _, _ in maybeShowMorningPrompt(auto: true) }
         .onChange(of: scenePhase) { _, phase in
@@ -125,7 +122,8 @@ struct TodayView: View {
             entries: entries,
             completedLogs: completedLogs,
             completedExercises: completedExercises,
-            workoutSessions: workoutSessions
+            workoutSessions: workoutSessions,
+            zoneModel: heartRateZones.resolvedModel
         )
     }
 
@@ -162,6 +160,11 @@ struct TodayView: View {
             dailyContext: context.daily,
             constraints: context.activeConstraints
         )
+
+        // A superseded run must not publish its stale evidence over the newer one's. `.task(id:)`
+        // cancels the previous assembly when the signature moves, but cancellation only takes effect
+        // where it is observed, and every state write below happens after an await.
+        guard !Task.isCancelled else { return }
 
         if let night = sleepRepository.night(for: .now),
            let analysis = sleepRepository.analysis(for: .now) {
@@ -349,15 +352,23 @@ struct TodayView: View {
 /// row's id plus its content marker in means a delete drops an id, and a future in-place log edit changes
 /// a metrics blob — either way the signature moves and `reassemble()` re-fires. `Hasher` is seeded per
 /// process, which is fine: this value is only ever compared against the previous value within one run.
+///
+/// The resolved zone model is folded in too, so a zone edit in Profile rebuilds the time-in-zone
+/// durations and BPM ranges through the *same* `.task(id:)` the data changes use. That coalescing is
+/// deliberate: the zone editor commits to the shared store on every valid keystroke, and routing
+/// those edits through one cancellable task means typing "185" reassembles once at the end rather
+/// than racing three overlapping evidence assemblies whose writes could land out of order.
 enum TodayRefreshSignature {
     static func make(
         readings: [Reading],
         entries: [ReadinessEntry],
         completedLogs: [SDCompletedLog],
         completedExercises: [SDCompletedExercise],
-        workoutSessions: [SDWorkoutSession]
+        workoutSessions: [SDWorkoutSession],
+        zoneModel: HeartRateZoneModel
     ) -> String {
         var hasher = Hasher()
+        hasher.combine(zoneModel)
         hasher.combine(readings.count)
         hasher.combine(entries.count)
         for log in completedLogs {
@@ -404,6 +415,6 @@ private enum TodayModal: Identifiable, Equatable {
         .environment(TrainingContextStore())
         .environment(OnboardingStore())
         .environment(PlanStore(context: container.mainContext))
-        .environment(HeartRateZoneSettingsStore())
+        .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
         .modelContainer(container)
 }

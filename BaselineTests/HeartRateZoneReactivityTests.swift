@@ -14,6 +14,9 @@ import Testing
 ///      from the shared store — the mid-workout path `WorkoutView` wires via `onChange`.
 ///   4. The boundary math itself is unchanged: `resolvedModel` equals the old
 ///      `model ?? HeartRateZoneModel(age:)` fallback expression it replaced.
+///
+/// The wiring those units sit behind — one injected instance, and each surface's subscription to it —
+/// is covered by `HeartRateZoneWiringTests` below.
 @MainActor
 struct HeartRateZoneReactivityTests {
 

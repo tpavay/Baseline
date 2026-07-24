@@ -147,7 +147,9 @@ struct WorkoutView: View {
             syncKeepAwake()
         }
         // A mid-workout zone edit must reach the *running* monitor: swap its live `zoneModel` so the
-        // gauge, current zone, and zone-time credit all re-resolve without tearing down the session.
+        // gauge and current zone re-resolve without tearing down the session. Zone-time is an
+        // accumulator credited at sample-arrival time, so only subsequent seconds use the new bands —
+        // seconds already banked keep the attribution they were earned under.
         .onChange(of: heartRateZones.resolvedModel) { _, newModel in
             hrMonitor?.zoneModel = newModel
         }
@@ -574,5 +576,5 @@ struct WorkoutView: View {
         .environment(PlanStore(context: container.mainContext))
         .environment(BluetoothManager())
         .environment(OnboardingStore())
-        .environment(HeartRateZoneSettingsStore())
+        .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 28 }))
 }

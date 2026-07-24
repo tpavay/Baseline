@@ -76,14 +76,27 @@ struct TodayCardRecomputeTests {
         )
     }
 
-    private func signature(_ context: ModelContext) -> String {
+    private func signature(_ context: ModelContext,
+                           zoneModel: HeartRateZoneModel = HeartRateZoneModel(maxHR: 200)) -> String {
         TodayRefreshSignature.make(
             readings: [],
             entries: [],
             completedLogs: (try? context.fetch(FetchDescriptor<SDCompletedLog>())) ?? [],
             completedExercises: (try? context.fetch(FetchDescriptor<SDCompletedExercise>())) ?? [],
-            workoutSessions: (try? context.fetch(FetchDescriptor<SDWorkoutSession>())) ?? []
+            workoutSessions: (try? context.fetch(FetchDescriptor<SDWorkoutSession>())) ?? [],
+            zoneModel: zoneModel
         )
+    }
+
+    /// A zone edit is a card input like any other: it must move the signature so `.task(id:)` re-fires
+    /// (and, being one cancellable task, coalesces the editor's per-keystroke commits).
+    @Test func editingZonesMovesTheRefreshSignature() {
+        let (repo, context) = makeStore()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        completeDeadlift(repo, program: prog.id, load: 100)
+
+        #expect(signature(context, zoneModel: HeartRateZoneModel(maxHR: 190)) != signature(context))
+        #expect(signature(context) == signature(context))
     }
 
     private func confirmDelete(_ repo: SwiftDataPlanRepository, _ id: UUID) {
