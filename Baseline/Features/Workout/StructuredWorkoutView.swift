@@ -911,13 +911,22 @@ private struct WorkoutExerciseSection: View {
     }
 
     private var removeConfirmationTitle: String {
-        store.hasLoggedSets(forExercise: exercise.id) ? "Remove and Discard Sets" : "Remove and Discard Note"
+        switch (store.hasLoggedSets(forExercise: exercise.id), store.hasSessionNote(forExercise: exercise.id)) {
+        case (true, true): "Remove and Discard Sets and Note"
+        case (false, true): "Remove and Discard Note"
+        default: "Remove and Discard Sets"
+        }
     }
 
     private var removeConfirmationMessage: String {
-        store.hasLoggedSets(forExercise: exercise.id)
-            ? "You have already logged sets for this exercise. Removing it from this workout discards them."
-            : "You have written a note for this exercise. Removing it from this workout discards it."
+        switch (store.hasLoggedSets(forExercise: exercise.id), store.hasSessionNote(forExercise: exercise.id)) {
+        case (true, true):
+            "You have already logged sets and written a note for this exercise. Removing it from this workout discards both."
+        case (false, true):
+            "You have written a note for this exercise. Removing it from this workout discards it."
+        default:
+            "You have already logged sets for this exercise. Removing it from this workout discards them."
+        }
     }
 
     private var skippedStateLabel: String {

@@ -707,6 +707,11 @@ final class WorkoutStore {
         currentLog?.hasLoggedSets(forPlanned: exerciseID) ?? false
     }
 
+    /// Whether that work includes a session note the athlete typed.
+    func hasSessionNote(forExercise exerciseID: UUID) -> Bool {
+        currentLog?.hasSessionNote(forPlanned: exerciseID) ?? false
+    }
+
     /// Whether a block holds any exercise with real logged work — the confirm signal for block deletion.
     func hasLoggedWork(inBlock blockID: UUID) -> Bool {
         guard let log = currentLog, let block = current?.blocks.first(where: { $0.id == blockID }) else { return false }

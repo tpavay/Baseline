@@ -570,8 +570,20 @@ struct WorkoutSessionEditingTests {
         store.editLog { $0.setNotes("Tweaked my back on the warm-up", forPlanned: ex.id, name: ex.exerciseName) }
 
         #expect(store.hasLoggedWork(forExercise: ex.id))
+        #expect(store.hasSessionNote(forExercise: ex.id))
         #expect(store.hasLoggedSets(forExercise: ex.id) == false)
         #expect(store.hasLoggedWork(inBlock: store.current!.blocks[0].id))
+
+        // Sets and a note together: the discard warning reads both flags, so both stay true.
+        store.editLog {
+            $0.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName,
+                            plannedSetID: ex.prescription.sets[0].id) { set in
+                set.values[.load] = 100
+                set.completed = true
+            }
+        }
+        #expect(store.hasLoggedSets(forExercise: ex.id))
+        #expect(store.hasSessionNote(forExercise: ex.id))
     }
 
     /// A fresh store bound after the workout is over — the app relaunching, then the agent asked to

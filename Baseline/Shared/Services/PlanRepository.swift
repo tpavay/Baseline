@@ -247,7 +247,10 @@ final class SwiftDataPlanRepository: PlanRepository {
     func history(exerciseDefinitionID: String, limit: Int) -> [ExercisePerformance] {
         let defID: String? = exerciseDefinitionID
         return Array(fetch(SDCompletedExercise.self, where: #Predicate { $0.exerciseDefinitionID == defID })
-            .sorted { $0.date > $1.date }.prefix(limit).compactMap(mapPerformance))
+            .sorted { $0.date > $1.date }
+            .lazy.map(mapPerformance)
+            .filter(\.hasLoggedValues)
+            .prefix(limit))
     }
 
     private func mapPerformance(_ sd: SDCompletedExercise) -> ExercisePerformance {

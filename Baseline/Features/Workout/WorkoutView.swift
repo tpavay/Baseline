@@ -378,10 +378,19 @@ struct WorkoutView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let goal = workout.goal, !goal.isEmpty {
-                Text(goal)
-                    .font(.body)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .fixedSize(horizontal: false, vertical: true)
+                if mode.usesPerformedData {
+                    WorkoutPlanNote(
+                        text: goal,
+                        caption: "GOAL",
+                        font: .body,
+                        accessibilityLabel: "Workout goal"
+                    )
+                } else {
+                    Text(goal)
+                        .font(.body)
+                        .foregroundStyle(BaselineColor.textMid)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if let notes = workout.guidance?.notesText, !notes.isEmpty {

@@ -29,10 +29,16 @@ struct WorkoutCompletedSummaryRenderTests {
         // The plan's own note is read-only context, announced as such rather than as a second Notes field.
         #expect(screen.hasLabel(containing: "Plan note for Back Squat. Existing note for Back Squat."))
         #expect(screen.hasLabel(containing: "Notes for Back Squat. Existing note") == false)
+        // Same at the workout level: the goal and the plan note are captioned context, and the session
+        // notes field is the only thing in the header that accepts typing.
+        #expect(screen.hasLabel(containing: "Workout goal. Keep the completed log readable."))
+        #expect(screen.hasLabel(containing: "Plan note. Hold the paces we agreed on."))
         #expect(screen.hasLabel(containing: "Set completed"))
         #expect(screen.canFocusInput(labelled: "Workout notes"))
         #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))
         #expect(screen.canFocusInput(labelled: "Plan note for Back Squat") == false)
+        #expect(screen.canFocusInput(labelled: "Workout goal") == false)
+        #expect(screen.canFocusInput(labelled: "Plan note.") == false)
 
         #expect(screen.hasLabel(containing: "Done") == false)
         #expect(screen.hasLabel(containing: "Modified") == false)
@@ -64,6 +70,9 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         self.store = store
         store.create(title: "Logged Cleanup Session", goal: "Keep the completed log readable.")
+        store.edit(.plan) { workout in
+            workout.updateGuidance(CoachGuidance(formCues: ["Hold the paces we agreed on."]))
+        }
         let blockID = try #require(store.current?.blocks.first?.id)
         for exercise in Self.exercises {
             store.addExercise(exercise, toBlockID: blockID, scope: .plan)

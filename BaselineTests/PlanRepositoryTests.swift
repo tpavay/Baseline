@@ -260,6 +260,11 @@ struct PlanRepositoryTests {
         )
         #expect(prev?.date == monday)
         #expect(prev?.sets.first?[.load] == 100)
+
+        // History has to agree with the previous hint: an empty card would take the "most recent"
+        // position from the session that actually has numbers to compare against.
+        let history = repo.history(exerciseDefinitionID: "deadlift", limit: 10)
+        #expect(history.map(\.date) == [monday])
     }
 
     /// Drives the two-step delete (propose → confirm) the UI uses, returning nothing but asserting the
