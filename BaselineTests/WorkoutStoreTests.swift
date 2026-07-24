@@ -233,9 +233,11 @@ struct WorkoutStoreTests {
         addExercise(s, name: "Treadmill Run", inBlockNamed: "Main Run", sets: 1, durationSeconds: 1_800)
 
         let originalIDs = try #require(s.current?.allExercises.map(\.id))
+        // Distinguish the two sets with a metric the replacement movement (Run) also supports, so the
+        // per-set value sanitize on replace has nothing to strip and the prescription survives intact.
         s.edit(.plan) { workout in
-            _ = workout.updateExercise(originalIDs[0]) { $0.prescription.sets[0].rpe = 2 }
-            _ = workout.updateExercise(originalIDs[1]) { $0.prescription.sets[0].rpe = 3 }
+            _ = workout.updateExercise(originalIDs[0]) { $0.prescription.sets[0].distance = 500 }
+            _ = workout.updateExercise(originalIDs[1]) { $0.prescription.sets[0].distance = 3_000 }
         }
 
         let before = try #require(s.current?.allExercises)
@@ -254,6 +256,73 @@ struct WorkoutStoreTests {
         #expect(after.allSatisfy { $0.exerciseName == "Run" })
         #expect(after.allSatisfy { $0.definitionId == "run" })
         #expect(after.allSatisfy { prescriptions[$0.id] == $0.prescription })
+    }
+
+    @Test func liveLogSubstitutionResetsSchemaSanitizesLoggedValuesAndUnlocksConfig() throws {
+        let s = store()
+        s.create(title: "Push", goal: nil)
+        s.addBlock(name: "Main", intent: nil)
+        addExercise(s, name: "Bench press", inBlockNamed: "Main", sets: 1, reps: 8, load: 60)
+        s.startWorkout()
+        let exID = try #require(s.current?.allExercises.first?.id)
+        let originalDefinitionId = s.current?.exercise(exID)?.definitionId
+        let originalName = try #require(s.current?.exercise(exID)?.exerciseName)
+        // A set logged under the lift's schema, before any substitution.
+        s.editLog { $0.logSet(SetLog(reps: 8, load: 60, outcome: .completed), forPlanned: exID, name: originalName) }
+
+        let run = ExerciseCatalog.resolve("Run")
+        #expect(run.id == "run")
+        s.substituteLoggedExercise(exerciseID: exID, with: run)
+
+        // The plan/template is never touched by a live-log substitution.
+        #expect(s.current?.exercise(exID)?.definitionId == originalDefinitionId)
+        #expect(s.current?.exercise(exID)?.exerciseName == originalName)
+
+        // The visible (effective) exercise now presents the run's schema — no lift metrics linger.
+        let planned = try #require(s.current?.exercise(exID))
+        let effective = try #require(s.currentLog?.effectiveExercise(for: planned))
+        #expect(effective.definitionId == "run")
+        #expect(effective.selectedMetrics.contains(.reps) == false)
+        #expect(effective.selectedMetrics.contains(.load) == false)
+        let effectiveHasNoLiftMetrics = effective.prescription.sets.allSatisfy { $0.reps == nil && $0.load == nil }
+        #expect(effectiveHasNoLiftMetrics)
+
+        // The set logged before the swap no longer carries the old movement's numbers.
+        let logged = try #require(s.currentLog?.performed(forPlanned: exID)?.setLogs.first)
+        #expect(logged.reps == nil)
+        #expect(logged.load == nil)
+
+        // Metric selection is editable and validates against the NEW movement: a run metric enables...
+        #expect(s.setLoggingConfigForActiveExercise(
+            exerciseID: exID, enabled: [.duration, .distance, .cadence], scope: .session))
+        let afterEnable = try #require(s.currentLog?.effectiveExercise(for: planned))
+        #expect(afterEnable.selectedMetrics.contains(.cadence))
+        // ...while a metric the run can't log is rejected rather than silently applied or crashing the guard.
+        #expect(s.setLoggingConfigForActiveExercise(exerciseID: exID, enabled: [.load], scope: .session) == false)
+    }
+
+    @Test func planReplaceLiftWithCardioResetsPerSetValues() throws {
+        let s = store()
+        s.create(title: "Legs", goal: nil)
+        s.addBlock(name: "Main", intent: nil)
+        addExercise(s, name: "Bench press", inBlockNamed: "Main", sets: 2, reps: 8, load: 60)
+        let exID = try #require(s.current?.allExercises.first?.id)
+        #expect(s.current?.exercise(exID)?.prescription.sets.first?.load == 60)
+
+        // The agent/UI replace entry point shares the same `applyReplacement`/`replacingMovement` path.
+        #expect(s.replaceExercise(
+            exerciseInstanceID: exID,
+            with: "Run",
+            expectedRevisionToken: try #require(s.mutationTarget(.plan)?.revisionToken)
+        ).succeeded)
+
+        let after = try #require(s.current?.exercise(exID))
+        #expect(after.definitionId == "run")
+        #expect(after.selectedMetrics.contains(.reps) == false)
+        #expect(after.selectedMetrics.contains(.load) == false)
+        // No lift numbers survive under the cardio movement.
+        let planHasNoLiftMetrics = after.prescription.sets.allSatisfy { $0.reps == nil && $0.load == nil }
+        #expect(planHasNoLiftMetrics)
     }
 
     @Test func startWorkoutAndLoggedActualsPersistWithoutTouchingPlan() {

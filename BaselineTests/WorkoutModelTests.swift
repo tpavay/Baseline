@@ -52,14 +52,41 @@ struct WorkoutModelTests {
         #expect(w.blocks.first { $0.id == warm }?.exercises.first?.id == bench)     // same identity, new home
     }
 
-    @Test func substituteKeepsIdentityAndPosition() {
+    @Test func replaceKeepsIdentityAndPositionAndResetsIncompatibleValues() {
         var (w, _, _, bench) = sample()
-        let ok = w.substituteExercise(bench, withName: "Dumbbell press",
-                                      prescription: Prescription(sets: [PlannedSet(reps: 10, load: 25)]))
+        let run = ExerciseCatalog.resolve("Run")
+        #expect(run.id == "run")
+        let ok = w.replaceExercise(bench, with: run)
         #expect(ok)
         let ex = w.allExercises.first { $0.id == bench }
-        #expect(ex?.exerciseName == "Dumbbell press")
-        #expect(ex?.prescription.sets.count == 1)
+        #expect(ex?.id == bench)                                   // same identity + position
+        #expect(ex?.exerciseName == run.name)
+        #expect(ex?.definitionId == "run")
+        #expect(ex?.prescription.sets.count == 2)                  // set shape preserved
+        // The lift's reps/load must not linger under a movement that logs neither.
+        let noLiftMetrics = ex?.prescription.sets.allSatisfy { $0.reps == nil && $0.load == nil }
+        #expect(noLiftMetrics == true)
+        #expect(ex?.selectedMetrics.contains(.reps) == false)
+        #expect(ex?.selectedMetrics.contains(.load) == false)
+    }
+
+    @Test func replaceWithinSharedSchemaKeepsCompatibleValues() {
+        var w = Workout(title: "Legs")
+        let str = w.addBlock(name: "Strength")
+        let back = ExerciseCatalog.resolve("back squat")
+        var squat = PlannedExercise(exerciseName: back.name, definitionId: back.id)
+        squat.selectedMetrics = [.reps, .load]
+        squat.prescription.sets = [PlannedSet(reps: 5, load: 100)]
+        w.addExercise(squat, toBlock: str)
+        let front = ExerciseCatalog.resolve("front squat")
+        #expect(front.id == "front_squat")
+        #expect(front.supported.contains(.reps) && front.supported.contains(.load))
+        let replaced = w.replaceExercise(squat.id, with: front)
+        #expect(replaced)
+        let ex = w.allExercises.first { $0.id == squat.id }
+        // Both movements share reps/load, so the sensible per-set values are preserved.
+        #expect(ex?.prescription.sets.first?.reps == 5)
+        #expect(ex?.prescription.sets.first?.load == 100)
     }
 
     @Test func editingCoachGuidance() {
