@@ -43,6 +43,14 @@ final class HeartRateZoneSettingsStore {
     /// validated on write).
     var model: HeartRateZoneModel? { settings.validatedModel(ageYears: ageYears) }
 
+    /// The zone model every surface should read: the committed config's model when present, else the
+    /// age-estimated Tanaka fallback. Non-optional so no caller re-implements
+    /// `model ?? HeartRateZoneModel(age:)` — that duplicated fallback used to live at each ad-hoc
+    /// construction site (Today, Workout) and was the seam where displayed bands could drift. Reading
+    /// it through this single injected `@Observable` store is what makes a zone edit propagate
+    /// reactively to every open surface.
+    var resolvedModel: HeartRateZoneModel { model ?? HeartRateZoneModel(age: ageYears) }
+
     /// Validate a candidate config against the current age without committing it.
     func validate(_ candidate: HeartRateZoneSettings) -> HeartRateZoneSettings.ValidationError? {
         candidate.validate(ageYears: ageYears)

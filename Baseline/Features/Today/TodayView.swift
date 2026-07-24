@@ -15,6 +15,7 @@ struct TodayView: View {
     @Environment(HealthService.self) private var health
     @Environment(TrainingContextStore.self) private var context
     @Environment(PlanStore.self) private var planStore
+    @Environment(HeartRateZoneSettingsStore.self) private var heartRateZones
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
 
@@ -88,6 +89,9 @@ struct TodayView: View {
             }
         }
         .task(id: refreshKey) { await reassemble() }
+        // A zone edit in Profile mutates the shared store; rebuild the Weekly card's time-in-zone
+        // durations and BPM ranges against the new model rather than waiting for the next reload.
+        .onChange(of: heartRateZones.resolvedModel) { _, _ in Task { await reassemble() } }
         .onAppear { maybeShowMorningPrompt(auto: true) }
         .onChange(of: readings.count) { _, _ in maybeShowMorningPrompt(auto: true) }
         .onChange(of: scenePhase) { _, phase in
@@ -166,8 +170,7 @@ struct TodayView: View {
             todaySleep = nil
         }
 
-        let zoneModel = HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears }).model
-            ?? HeartRateZoneModel(age: profile.draft.ageYears)
+        let zoneModel = heartRateZones.resolvedModel
         let weekly = TodayWeeklySummary.build(
             sessions: completedSessionSamples,
             exercises: completedExerciseSamples,
@@ -401,5 +404,6 @@ private enum TodayModal: Identifiable, Equatable {
         .environment(TrainingContextStore())
         .environment(OnboardingStore())
         .environment(PlanStore(context: container.mainContext))
+        .environment(HeartRateZoneSettingsStore())
         .modelContainer(container)
 }

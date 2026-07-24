@@ -19,7 +19,7 @@ struct WorkoutView: View {
     @Environment(WorkoutStore.self) private var store
     @Environment(PlanStore.self) private var plan
     @Environment(BluetoothManager.self) private var bluetooth
-    @Environment(OnboardingStore.self) private var profile
+    @Environment(HeartRateZoneSettingsStore.self) private var heartRateZones
     @Environment(\.dismiss) private var dismiss
 
     @State private var isEditingTemplate = false
@@ -145,6 +145,11 @@ struct WorkoutView: View {
         .onChange(of: mode) { _, _ in
             syncLiveMonitor()
             syncKeepAwake()
+        }
+        // A mid-workout zone edit must reach the *running* monitor: swap its live `zoneModel` so the
+        // gauge, current zone, and zone-time credit all re-resolve without tearing down the session.
+        .onChange(of: heartRateZones.resolvedModel) { _, newModel in
+            hrMonitor?.zoneModel = newModel
         }
     }
 
@@ -307,9 +312,7 @@ struct WorkoutView: View {
             return
         }
         guard hrMonitor == nil else { return }
-        let settings = HeartRateZoneSettingsStore(ageYears: { [profile] in profile.draft.ageYears })
-        let model = settings.model ?? HeartRateZoneModel(age: profile.draft.ageYears)
-        let monitor = HeartRateMonitor(source: bluetooth, zoneModel: model)
+        let monitor = HeartRateMonitor(source: bluetooth, zoneModel: heartRateZones.resolvedModel)
         hrMonitor = monitor
         monitor.startMonitoring()
     }
@@ -571,4 +574,5 @@ struct WorkoutView: View {
         .environment(PlanStore(context: container.mainContext))
         .environment(BluetoothManager())
         .environment(OnboardingStore())
+        .environment(HeartRateZoneSettingsStore())
 }

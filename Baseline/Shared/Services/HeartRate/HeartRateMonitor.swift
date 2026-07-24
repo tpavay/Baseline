@@ -61,7 +61,10 @@ final class HeartRateMonitor {
     @ObservationIgnored private let source: any LiveHeartRateSource
     @ObservationIgnored private let now: @MainActor () -> Date
 
-    /// The athlete's zone boundaries. Swappable so settings changes (Slice 2) re-resolve zones.
+    /// The athlete's zone boundaries. A `var` so a mid-workout settings edit can be applied live:
+    /// `WorkoutView` reassigns this from the shared `HeartRateZoneSettingsStore` when zones change,
+    /// and because it is an observed property the gauge, `currentZone`, and zone-time credit all
+    /// re-resolve against the new bands without restarting the run.
     var zoneModel: HeartRateZoneModel
 
     /// Clock time at which `latestSample` was ingested (the monitor's own arrival stamp).
