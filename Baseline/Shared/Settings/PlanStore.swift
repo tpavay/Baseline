@@ -160,6 +160,10 @@ final class PlanStore {
     }
     @discardableResult func setSkipped(_ id: UUID, _ skipped: Bool, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.setSkipped(id, skipped, actor: actor, reason: reason) }
     @discardableResult func delete(_ id: UUID, proposalID: UUID? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.delete(id, actor: actor, reason: reason, proposalID: proposalID) }
+    /// Discard an empty workout that was scheduled only to start logging: fully remove it so the day
+    /// returns to undecided (see `PlanRepository.purgeProvisionalWorkout`). Reloads so the calendar
+    /// drops the placeholder immediately.
+    @discardableResult func purgeProvisional(_ id: UUID, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.purgeProvisionalWorkout(id, actor: actor, reason: reason) }
     @discardableResult func undo(actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.undo(actor: actor) }
     @discardableResult func restore(versionID: UUID, actor: PlanActor = .user) -> MutationResult { defer { reload() }; return repo.restore(versionID: versionID, actor: actor) }
 

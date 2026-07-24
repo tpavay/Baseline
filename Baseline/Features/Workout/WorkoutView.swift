@@ -9,6 +9,13 @@ struct WorkoutView: View {
     /// "Remove Workout" that hands removal back to the presenter (Plan). Absent for standalone use.
     var onRequestDelete: (() -> Void)?
 
+    /// When present, this log belongs to a *provisional* empty workout — one scheduled solely to start
+    /// logging right now (Plan's "Start an empty workout"). Discarding it is not "keep the plan, drop
+    /// the log": there is no plan to keep, so discard hands the whole placeholder back to the presenter
+    /// to purge and dismisses to Plan, rather than dropping to a blank template view. Absent for a real
+    /// scheduled workout, whose discard keeps the saved revision and stays put.
+    var onRequestDiscard: (() -> Void)?
+
     @Environment(WorkoutStore.self) private var store
     @Environment(PlanStore.self) private var plan
     @Environment(BluetoothManager.self) private var bluetooth
@@ -89,11 +96,22 @@ struct WorkoutView: View {
         } message: { reconciliation in
             Text("We noticed changes from your plan:\n\(reconciliation.diff.summaryLine)")
         }
-        .alert("Discard this log?", isPresented: $showDiscardConfirmation) {
-            Button("Discard Log", role: .destructive) { store.discardLog() }
+        .alert(onRequestDiscard != nil ? "Discard this workout?" : "Discard this log?", isPresented: $showDiscardConfirmation) {
+            Button(onRequestDiscard != nil ? "Discard Workout" : "Discard Log", role: .destructive) {
+                if let onRequestDiscard {
+                    // Provisional empty workout: the presenter removes the placeholder entirely and this
+                    // dismisses back to Plan, rather than dropping to a blank template view.
+                    onRequestDiscard()
+                    dismiss()
+                } else {
+                    store.discardLog()
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Everything you logged will be removed, along with any exercises you added, removed, replaced, or reordered during this workout. Your saved plan stays as it was.")
+            Text(onRequestDiscard != nil
+                ? "This workout and anything you logged in it will be removed, and the day is left with no workout scheduled."
+                : "Everything you logged will be removed, along with any exercises you added, removed, replaced, or reordered during this workout. Your saved plan stays as it was.")
         }
         .confirmationDialog(
             "A template named \"\(templateName)\" already exists",
@@ -172,7 +190,7 @@ struct WorkoutView: View {
                         }
                         Divider()
                         Button(role: .destructive) { showDiscardConfirmation = true } label: {
-                            Label("Discard Log", systemImage: "trash")
+                            Label(onRequestDiscard != nil ? "Discard Workout" : "Discard Log", systemImage: "trash")
                         }
                     }
                 } label: {

@@ -17,6 +17,10 @@ struct PlanView: View {
     /// A scheduled workout the user chose to remove from inside its editor. The deletion runs on sheet
     /// dismissal (in `flushExecution`) so the alert/undo never races the dismissing execution sheet.
     @State private var queuedDeletionID: UUID?
+    /// A provisional empty workout the user discarded from live logging. Purged on sheet dismissal (in
+    /// `flushExecution`), same deferral as `queuedDeletionID`, so the placeholder leaves the day empty
+    /// and the discard lands the user back on the Plan page.
+    @State private var queuedProvisionalPurgeID: UUID?
     /// Unfinished image imports, so a day whose import is still being reviewed shows a resume affordance
     /// instead of silently losing the draft off-screen.
     @State private var pendingImports: [WorkoutImportPendingSummary] = []
@@ -40,6 +44,9 @@ struct PlanView: View {
         let id: UUID
         let store: WorkoutStore
         let original: Workout
+        /// This scheduled workout was created only to start an empty workout right now; discarding its
+        /// log purges the placeholder instead of keeping a blank scheduled workout on the day.
+        var isProvisionalEmpty = false
     }
     /// A drag dropped onto a day that already has session(s) — resolved via an action sheet.
     struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
@@ -66,7 +73,11 @@ struct PlanView: View {
             .toolbarBackground(.visible, for: .navigationBar)
         }
         .sheet(item: $execContext, onDismiss: flushExecution) { ctx in
-            WorkoutView(onRequestDelete: { queuedDeletionID = ctx.id }).environment(ctx.store)
+            WorkoutView(
+                onRequestDelete: { queuedDeletionID = ctx.id },
+                onRequestDiscard: ctx.isProvisionalEmpty ? { queuedProvisionalPurgeID = ctx.id } : nil
+            )
+            .environment(ctx.store)
         }
         .sheet(isPresented: $showChat) { AskBaselineSheet(surface: .plan) }
         .sheet(item: $addContext, onDismiss: runPendingAdd) { context in
@@ -522,7 +533,7 @@ struct PlanView: View {
     /// day and go straight into live logging with the timer running — identical to a template's
     /// "Start Workout" — rather than landing on the prescription view.
     private func startEmptyWorkout(on date: Date) {
-        openExecution(plan.newScheduledWorkout(on: date)).store.startWorkout()
+        openExecution(plan.newScheduledWorkout(on: date), isProvisionalEmpty: true).store.startWorkout()
     }
     private func addFromTemplate(_ id: UUID, on date: Date) {
         if let sw = plan.instantiateTemplate(id, on: date) { openExecution(sw) }
@@ -562,12 +573,12 @@ struct PlanView: View {
     // MARK: Execution bridge — reuse WorkoutView, write through to the repository
 
     @discardableResult
-    private func openExecution(_ sw: ScheduledWorkout) -> ExecContext {
+    private func openExecution(_ sw: ScheduledWorkout, isProvisionalEmpty: Bool = false) -> ExecContext {
         // A scratch store bound to this scheduled workout — logging + lifecycle write through immediately;
         // structural content edits are coalesced and flushed as one revision on dismiss.
         let store = WorkoutStore(units: settings, defaults: UserDefaults(suiteName: "plan.exec.buffer") ?? .standard)
         store.bind(plan.sink(forScheduled: sw.id), coalesceContent: true)
-        let context = ExecContext(id: sw.id, store: store, original: sw.workout)
+        let context = ExecContext(id: sw.id, store: store, original: sw.workout, isProvisionalEmpty: isProvisionalEmpty)
         execContext = context
         return context
     }
@@ -584,6 +595,11 @@ struct PlanView: View {
                 apply(result, "Removed")
             }
             return   // the workout is being removed — skip the normal write-through flush
+        }
+        if let id = queuedProvisionalPurgeID {
+            queuedProvisionalPurgeID = nil
+            plan.purgeProvisional(id)   // discarded empty workout — leave the day undecided
+            return
         }
         guard let ctx = execContext else { return }
         if ctx.store.current != ctx.original { ctx.store.flush() }
