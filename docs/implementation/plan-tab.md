@@ -115,10 +115,12 @@ departures from what this document specifies:
   follow-up); rest and undecided days state themselves; today is marked by its accent date alone, with
   every other day slightly muted. No status chip on a performed or planned row, and no trailing modality
   glyph (the unexplained ◆/clock).
-- **The visible week is owned state**, moved only by the `‹ ›` pager and Today - never inferred from
-  scroll geometry, which is what let the old range header jump weeks. `PlanView` browses through
-  `PlanStore.week(containing:)`; `PlanStore.focusedDate`/`week` stay anchored to the real current week
-  because that is what "this week" means to the agent tools.
+- **The visible week is owned state**, moved by the `‹ ›` pager, by Today, and by a calendar rollover
+  that finds the athlete still on what was then the current week - never inferred from scroll geometry,
+  which is what let the old range header jump weeks. A week the athlete deliberately paged to is left
+  alone across a rollover. `PlanView` browses through `PlanStore.week(containing:)`;
+  `PlanStore.focusedDate`/`week` stay anchored to the real current week because that is what "this week"
+  means to the agent tools.
 - Components in `Baseline/Features/Plan/`: `PlanView` + `PlanWeekPresentation` (the pure day-state model
   every rule is tested against, `BaselineTests/PlanWeekPresentationTests.swift`).
 

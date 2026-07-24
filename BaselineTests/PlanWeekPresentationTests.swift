@@ -210,16 +210,23 @@ struct PlanWeekPresentationTests {
     /// "JUL 27 – AUG 2" titled "July 2026" names a month six of its seven days are not in.
     @Test func theMonthLabelNamesEveryMonthTheVisibleWeekCovers() {
         let july = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 7, 22)), days: [])
-        #expect(build(july).monthLabel == "July 2026")
+        #expect(build(july).monthLabel == "Jul 2026")
 
         let straddling = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 7, 30)), days: [])
-        #expect(build(straddling).monthLabel == "July – August 2026")
+        #expect(build(straddling).monthLabel == "Jul – Aug 2026")
     }
 
     /// A week straddling New Year names both years, so the title is never ambiguous.
     @Test func theMonthLabelNamesBothYearsAcrossTheTurnOfTheYear() {
         let newYear = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 12, 31)), days: [])
-        #expect(build(newYear).monthLabel == "December 2026 – January 2027")
+        #expect(build(newYear).monthLabel == "Dec 2026 – Jan 2027")
+    }
+
+    /// The title sits in the principal toolbar slot between the filter chip and Today, so even the
+    /// longest form has to stay short - abbreviated months are what keeps it from truncating there.
+    @Test func theMonthLabelStaysShortEnoughForThePrincipalToolbarSlot() {
+        let widest = TrainingWeek(startDate: cal.weekStart(for: dateFrom(2026, 12, 31)), days: [])
+        #expect(build(widest).monthLabel.count <= 20)
     }
 
     // MARK: The day the projection was built for

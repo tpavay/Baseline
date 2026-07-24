@@ -117,9 +117,10 @@ struct PlanWeeklyViewRenderTests {
         #expect(screen.element(labelled: "JUL 20 – 26") != nil, "The same week is still on screen")
     }
 
-    /// `PlanStore.week` is what "this week" means to the agent, so crossing a week boundary has to
-    /// re-anchor it - without silently paging the week the athlete chose to look at.
-    @Test func crossingIntoANewWeekReanchorsTheStoresWeekButNotTheVisibleOne() async throws {
+    /// An app left resident on the current week and foregrounded the next week must land on the real
+    /// current week - not strand the athlete on last week's grid with no day marked today - and
+    /// `PlanStore.week`, which is what "this week" means to the agent, has to follow the clock too.
+    @Test func crossingIntoANewWeekCarriesForwardAWeekTheAthleteNeverPagedAwayFrom() async throws {
         let screen = try PlanWeekScreen()
         defer { screen.tearDown() }
         try await screen.settleUntil { screen.element(labelled: "JUL 20 – 26") != nil }
@@ -128,11 +129,34 @@ struct PlanWeeklyViewRenderTests {
 
         screen.advanceClock(byDays: 7)
 
+        try await screen.settleUntil { screen.element(labelled: "JUL 27 – AUG 2") != nil }
+        #expect(screen.element(labelled: "Wednesday, today") != nil, "Today is marked again")
+        #expect(screen.count(labelled: "Add workout") == 7, "The whole new week is undecided")
         let nextWeekStart = cal.weekStart(for: cal.date(byAdding: .day, value: 7, to: Self.fixedNow)!)
-        try await screen.settleUntil { screen.element(labelled: "Wednesday, today") == nil }
         #expect(cal.isDate(screen.plan.week.startDate, inSameDayAs: nextWeekStart),
                 "The agent's \"this week\" follows the clock")
-        #expect(screen.element(labelled: "JUL 20 – 26") != nil, "The athlete's visible week stays where they left it")
+    }
+
+    /// A week the athlete deliberately paged to is theirs: crossing a week boundary re-anchors the
+    /// store behind it but never moves the grid out from under them.
+    @Test func crossingIntoANewWeekLeavesADeliberatelyPagedWeekAlone() async throws {
+        let screen = try PlanWeekScreen()
+        defer { screen.tearDown() }
+        try await screen.settleUntil { screen.element(labelled: "JUL 20 – 26") != nil }
+        let cal = Calendar.planWeek
+
+        #expect(screen.activate(labelled: "Previous week"))
+        try await screen.settleUntil { screen.element(labelled: "JUL 13 – 19") != nil }
+        #expect(cal.isDate(screen.plan.week.startDate, inSameDayAs: cal.weekStart(for: Self.fixedNow)),
+                "Paging never moves the agent's week")
+
+        screen.advanceClock(byDays: 7)
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "JUL 13 – 19") != nil, "The paged week is still on screen")
+        let nextWeekStart = cal.weekStart(for: cal.date(byAdding: .day, value: 7, to: Self.fixedNow)!)
+        #expect(cal.isDate(screen.plan.week.startDate, inSameDayAs: nextWeekStart),
+                "The agent's \"this week\" still follows the clock")
     }
 
     // MARK: Regressions the redesign must not break

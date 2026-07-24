@@ -150,17 +150,19 @@ struct PlanWeekPresentation: Equatable, Sendable {
     }
 
     /// The navigation title names the months the visible week actually covers, exactly like
-    /// `rangeLabel` does: a week running "JUL 27 – AUG 2" is not a July week.
+    /// `rangeLabel` does: a week running "JUL 27 – AUG 2" is not a July week. Months are abbreviated
+    /// so a straddling week ("Jul – Aug 2026") still fits the principal toolbar slot between the
+    /// filter chip and Today.
     static func monthLabel(weekStart: Date, calendar: Calendar = .planWeek) -> String {
         let start = calendar.startOfDay(for: weekStart)
         let end = calendar.date(byAdding: .day, value: 6, to: start) ?? start
         guard calendar.component(.month, from: start) != calendar.component(.month, from: end) else {
-            return start.formatted(.dateTime.month(.wide).year())
+            return start.formatted(.dateTime.month(.abbreviated).year())
         }
         let startText = calendar.component(.year, from: start) == calendar.component(.year, from: end)
-            ? start.formatted(.dateTime.month(.wide))
-            : start.formatted(.dateTime.month(.wide).year())
-        return "\(startText) – \(end.formatted(.dateTime.month(.wide).year()))"
+            ? start.formatted(.dateTime.month(.abbreviated))
+            : start.formatted(.dateTime.month(.abbreviated).year())
+        return "\(startText) – \(end.formatted(.dateTime.month(.abbreviated).year()))"
     }
 
     private static func rangeLabel(weekStart: Date, calendar: Calendar) -> String {

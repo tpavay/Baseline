@@ -44,8 +44,9 @@ struct PlanView: View {
     /// editor, import) never races the dismissing sheet.
     @State private var pendingAdd: (date: Date, option: AddToDayOption)?
     @State private var detailWorkout: ScheduledWorkout?
-    /// The Monday of the week on screen - the only input to what the grid shows, moved exclusively by
-    /// the pager and the Today button. Nil until the first refresh resolves it from the clock.
+    /// The Monday of the week on screen - the only input to what the grid shows. Moved by the pager,
+    /// by the Today button, and by a calendar rollover that finds the athlete still on what was then
+    /// the current week. Nil until the first refresh resolves it from the clock.
     @State private var weekStart: Date?
     /// Cached week projection, derived statuses and the built presentation. Refreshed on appear, on each
     /// plan mutation (`plan.revision`) and on week navigation - never fetched or rebuilt inside `body`.
@@ -140,7 +141,7 @@ struct PlanView: View {
             guard phase == .active else { return }
             syncToCurrentDay()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
             syncToCurrentDay()
         }
         .task { await loadPendingImports() }
@@ -163,12 +164,23 @@ struct PlanView: View {
     }
 
     /// Brings the screen back onto the real calendar day after the clock has moved underneath it:
-    /// rebuild the day-derived cache when the day it was built for has passed, and re-anchor the
-    /// store's focused week when the current week itself has moved. The visible week stays where the
-    /// athlete left it - only the today/past marking follows the clock.
+    /// carry the visible week forward when the athlete was still sitting on what was then the current
+    /// week, re-anchor the store's focused week, and rebuild the day-derived cache when the day it was
+    /// built for has passed. A week the athlete deliberately paged to is never moved for them.
     private func syncToCurrentDay() {
+        carryVisibleWeekForward()
         reanchorFocusedWeek()
         if presentation?.today != today { refreshWeek() }
+    }
+
+    /// The cached projection records the day its rules were resolved against, which is what tells a
+    /// week the athlete chose from a week they merely left open: if the week on screen is still the
+    /// one that contained *that* day, it was the current week and the clock should carry it forward.
+    private func carryVisibleWeekForward() {
+        guard let previousDay = presentation?.today else { return }
+        let currentWeek = cal.weekStart(for: today)
+        guard cal.weekStart(for: previousDay) == focusedWeekStart, currentWeek != focusedWeekStart else { return }
+        weekStart = currentWeek
     }
 
     /// `PlanStore.week` is what "this week" means to the agent and to every non-calendar consumer, so
