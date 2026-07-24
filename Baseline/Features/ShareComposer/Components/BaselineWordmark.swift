@@ -1,6 +1,9 @@
 import SwiftUI
 
 /// Baseline wordmark burned into exported workout cards.
+///
+/// The mark is drawn as a template tinted to the lettering: the source artwork is a 1024px dark-purple
+/// glyph, which at wordmark size on a dark card reads as a smudge next to the lettering it sits beside.
 struct BaselineWordmark: View {
     var size: CGFloat = 14
     var color: Color = BaselineColor.textHi
@@ -9,8 +12,9 @@ struct BaselineWordmark: View {
         HStack(spacing: size * 0.42) {
             Image("BaselineIconNoBackground")
                 .resizable()
-                .renderingMode(.original)
+                .renderingMode(.template)
                 .scaledToFit()
+                .foregroundStyle(color)
                 .frame(width: size * 1.55, height: size * 1.55)
                 .accessibilityHidden(true)
 

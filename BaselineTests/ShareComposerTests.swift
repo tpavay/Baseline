@@ -138,6 +138,35 @@ struct ShareStickerInstanceTests {
 }
 
 @MainActor
+struct ShareComposerViewModelTests {
+
+    /// A sticker whose stat resolves to nil renders nothing on either canvas, so seeding one would leave
+    /// an entry the athlete can neither see, select, nor drag to the trash.
+    @Test func everySeededStickerResolves() {
+        let skippedEverything = WorkoutLogSummary(
+            title: "Bailed",
+            log: WorkoutLog(exercises: [
+                PerformedExercise(
+                    exerciseName: "Back Squat",
+                    setLogs: [SetLog(reps: 5, load: 100, outcome: .skipped)]
+                )
+            ], isComplete: true),
+            startedAt: ShareComposerFixtures.startedAt,
+            finishedAt: ShareComposerFixtures.finishedAt,
+            units: ShareComposerFixtures.units
+        )
+        let viewModel = ShareComposerViewModel(summary: skippedEverything, units: ShareComposerFixtures.units)
+
+        #expect(viewModel.stickers.isEmpty == false)
+        #expect(viewModel.stickers.allSatisfy { viewModel.resolve($0) != nil })
+
+        // And the same invariant holds for the one other way a sticker gets added.
+        viewModel.addSticker(kind: .totalSets)
+        #expect(viewModel.stickers.allSatisfy { viewModel.resolve($0) != nil })
+    }
+}
+
+@MainActor
 struct CompletedWorkoutFinishTimeTests {
 
     /// A standalone log has no plan record to read a finish time back from, so completion has to leave
@@ -163,6 +192,21 @@ struct CompletedWorkoutFinishTimeTests {
 
         reopened.discardLog()
         #expect(reopened.currentLogFinishedAt == nil)
+    }
+
+    /// Completing can be refused — there was no live session, or no log to mark. Nothing finished, so
+    /// nothing may claim a finish instant.
+    @Test func aRefusedCompletionRecordsNoFinishInstant() {
+        let store = WorkoutStore(
+            units: StubUnitSystem(.metric),
+            defaults: UserDefaults(suiteName: "finish-\(UUID().uuidString)")!
+        )
+        store.create(title: "Ad-hoc", goal: nil)
+
+        store.completeWorkout(awaitingReconciliationDecision: false)
+
+        #expect(store.currentLog == nil)
+        #expect(store.currentLogFinishedAt == nil)
     }
 }
 

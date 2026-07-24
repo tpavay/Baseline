@@ -29,7 +29,10 @@ final class ShareComposerViewModel {
     ) {
         self.summary = summary
         self.units = units
-        self.stickers = Self.defaultStickers(for: summary)
+        let resolver = BaselineShareStatResolver(summary: summary, units: units)
+        // A stat that resolves to nil renders nothing, so seeding one would leave an invisible sticker
+        // the athlete can neither select nor delete.
+        self.stickers = Self.defaultStickers(for: summary).filter { resolver.resolve($0.kind) != nil }
         self.selectedID = stickers.first?.id
     }
 
@@ -50,6 +53,7 @@ final class ShareComposerViewModel {
     }
 
     func addSticker(kind: ShareStatStickerKind, style: ShareStickerStyle = .display) {
+        guard resolver.resolve(kind) != nil else { return }
         let offset = CGFloat(stickers.count % 5) * 0.04
         let instance = ShareStickerInstance(
             kind: kind,
