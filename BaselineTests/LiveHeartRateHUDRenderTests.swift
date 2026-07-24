@@ -10,7 +10,7 @@ import UIKit
 struct LiveHeartRateHUDRenderTests {
 
     @Test func streamingHUDShowsGaugeStatsAndZoneBreakdownWithoutAStatusLine() throws {
-        let harness = try LiveHeartRateRenderHarness(provider: .streaming(bpm: 152))
+        let harness = try LiveHeartRateRenderHarness(provider: PreviewLiveHeartRateProvider.streaming(bpm: 152))
         defer { harness.tearDown() }
 
         let image = harness.renderedImage()
@@ -31,7 +31,7 @@ struct LiveHeartRateHUDRenderTests {
     }
 
     @Test func noSignalHUDKeepsAggregatesBlanksTheNumberAndShowsTheStatus() throws {
-        let harness = try LiveHeartRateRenderHarness(provider: .noSignal())
+        let harness = try LiveHeartRateRenderHarness(provider: PreviewLiveHeartRateProvider.noSignal())
         defer { harness.tearDown() }
 
         let image = harness.renderedImage()
@@ -45,7 +45,7 @@ struct LiveHeartRateHUDRenderTests {
     }
 
     @Test func disconnectedHUDBeforeAnySessionShowsOnlyTheGaugeFrameAndStatus() throws {
-        let harness = try LiveHeartRateRenderHarness(provider: .disconnected())
+        let harness = try LiveHeartRateRenderHarness(provider: PreviewLiveHeartRateProvider.disconnected())
         defer { harness.tearDown() }
 
         let image = harness.renderedImage()
@@ -57,6 +57,68 @@ struct LiveHeartRateHUDRenderTests {
 
         harness.capture(image, named: "live-hr-hud-disconnected")
     }
+
+    /// The freeze fix, rendered end-to-end. A live monitor shows a real reading (the stuck "133"),
+    /// then the strap goes silent while the GATT link stays `.connected`. With no new sample and no
+    /// disconnect event, the old pull-model HUD stayed frozen on 133 forever; the watchdog tick now
+    /// repaints it to the honest "No signal — check the strap" degraded state. Captures both frames.
+    @Test func watchdogRepaintsAFrozenReadingToNoSignalInTheHUD() throws {
+        let clock = RenderClock()
+        let source = RenderLiveSource()
+        source.connectionStatus = .connected
+        let monitor = HeartRateMonitor(source: source, zoneModel: .preview, now: clock.now)
+        monitor.startMonitoring()
+        defer { monitor.stopMonitoring() }
+        source.emit(bpm: 133)
+
+        // Before: the HUD paints the real live number — this is the value that used to freeze.
+        let liveHarness = try LiveHeartRateRenderHarness(provider: monitor)
+        let liveImage = liveHarness.renderedImage()
+        #expect(liveHarness.accessibilitySpokenText.contains { $0.contains("133 beats per minute") })
+        liveHarness.capture(liveImage, named: "live-hr-hud-watchdog-before-frozen-133")
+        liveHarness.tearDown()
+
+        // Strap stops sending; link stays connected. The watchdog tick pushes the downgrade.
+        clock.advance(by: HeartRateMonitor.freshnessWindow + 1)
+        monitor.checkLiveness()
+
+        let degradedHarness = try LiveHeartRateRenderHarness(provider: monitor)
+        defer { degradedHarness.tearDown() }
+        let degradedImage = degradedHarness.renderedImage()
+        let spoken = degradedHarness.accessibilitySpokenText
+        #expect(spoken.contains { $0.contains("No signal") })          // honest degraded state
+        #expect(!spoken.contains { $0.contains("beats per minute") })  // the frozen number is gone
+        degradedHarness.capture(degradedImage, named: "live-hr-hud-watchdog-after-no-signal")
+    }
+}
+
+// MARK: - Watchdog render fixtures
+
+/// A hand-advanced clock so the render test drives the monitor's freshness deterministically.
+@MainActor
+private final class RenderClock {
+    private(set) var current = Date(timeIntervalSince1970: 1_000_000)
+    func advance(by seconds: TimeInterval) { current += seconds }
+    var now: @MainActor () -> Date { { [self] in current } }
+}
+
+/// A controllable live source that pushes samples through the real `onLiveSample` seam, so the HUD is
+/// driven by an actual `HeartRateMonitor` (and its watchdog) rather than a static preview provider.
+private final class RenderLiveSource: LiveHeartRateSource {
+    var liveSample: HeartRateSample?
+    var connectionStatus: BluetoothManager.Status = .connected
+    var onLiveSample: ((HeartRateSample) -> Void)?
+
+    func startLiveMonitoring() {}
+    func stopLiveMonitoring() {}
+    func resubscribeLive() {}
+    func reconnectLive() {}
+
+    func emit(bpm: Int, contact: HeartRateSample.SensorContact = .detected) {
+        let sample = HeartRateSample(bpm: bpm, sensorContact: contact, receivedAt: .distantPast)
+        liveSample = sample
+        onLiveSample?(sample)
+    }
 }
 
 // MARK: - Harness
@@ -67,7 +129,7 @@ struct LiveHeartRateHUDRenderTests {
 private final class LiveHeartRateRenderHarness {
     private let window: UIWindow
 
-    init(provider: PreviewLiveHeartRateProvider) throws {
+    init(provider: any LiveHeartRateProviding) throws {
         let scene = try #require(
             UIApplication.shared.connectedScenes.first as? UIWindowScene,
             "The visual test must run in the app-hosted test bundle."
