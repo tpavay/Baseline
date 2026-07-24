@@ -384,19 +384,21 @@ struct WorkoutView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if mode.usesPerformedData {
-                WorkoutNotesField(
-                    prompt: "Add notes here...",
-                    text: workoutGuidanceBinding,
-                    font: .body,
-                    lineLimit: 2...,
-                    accessibilityLabel: "Workout notes"
-                )
-            } else if let notes = workout.guidance?.notesText, !notes.isEmpty {
+            if let notes = workout.guidance?.notesText, !notes.isEmpty {
                 Text(notes)
                     .font(.body)
                     .foregroundStyle(BaselineColor.textMid)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if mode.usesPerformedData {
+                WorkoutNotesField(
+                    prompt: "Add notes here...",
+                    text: sessionNotesBinding,
+                    font: .body,
+                    lineLimit: 2...,
+                    accessibilityLabel: "Workout notes"
+                )
             }
 
             HStack(spacing: 8) {
@@ -503,13 +505,13 @@ struct WorkoutView: View {
         isEditingTemplate = false
     }
 
-    private var workoutGuidanceBinding: Binding<String> {
+    /// Workout-level notes typed while logging or reviewing a session. They belong to the log, so
+    /// promoting the session's shape to the plan can never carry them into a saved plan revision.
+    private var sessionNotesBinding: Binding<String> {
         Binding(
-            get: { store.current?.guidance?.notesText ?? "" },
+            get: { store.currentLog?.notesText ?? "" },
             set: { value in
-                store.edit(mode.editScope) { workout in
-                    workout.updateGuidance(CoachGuidance.notes(from: value))
-                }
+                store.editLog { $0.setNotes(value) }
             }
         )
     }

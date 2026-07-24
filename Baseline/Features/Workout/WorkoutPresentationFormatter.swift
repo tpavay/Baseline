@@ -54,16 +54,6 @@ enum WorkoutPresentationFormatter {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    static func exerciseInstructions(_ exercise: PlannedExercise) -> [String] {
-        let intensity = exercise.prescription.intensityTargets
-            .map(intensityLabel)
-            .filter { qualitativeLoadTarget(from: $0) == nil }
-            .filter(isMeaningfulInstruction)
-        let guidance = [exercise.guidance?.goal].compactMap { $0 }
-            + (exercise.guidance?.formCues ?? [])
-        return deduplicated(intensity + guidance.filter(isMeaningfulInstruction))
-    }
-
     static func qualitativeLoadTargets(_ exercise: PlannedExercise) -> [String] {
         deduplicated(
             exercise.prescription.intensityTargets
@@ -72,10 +62,17 @@ enum WorkoutPresentationFormatter {
         )
     }
 
+    /// The intensity targets worth showing as their own row. Import can leave a bare number behind as a
+    /// descriptive target; those carry no meaning on their own, so they stay out of every surface that
+    /// renders targets rather than only the ones that once filtered them.
     static func structuredIntensityTargets(_ exercise: PlannedExercise) -> [String] {
         deduplicated(
             exercise.prescription.intensityTargets.compactMap { target in
-                qualitativeLoadTarget(from: intensityLabel(target)) == nil ? intensityLabel(target) : nil
+                let label = intensityLabel(target)
+                guard qualitativeLoadTarget(from: label) == nil, isMeaningfulInstruction(label) else {
+                    return nil
+                }
+                return label
             }
         )
     }

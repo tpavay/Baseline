@@ -285,6 +285,32 @@ struct WorkoutSessionEditingTests {
         #expect(store.captureSessionReconciliation() == nil)
     }
 
+    /// Notes typed on the logging and completed surfaces are performed facts. They live on the log, so
+    /// even the athlete who does opt in to "Update Plan" alongside a real structural edit cannot
+    /// overwrite their coach guidance with "shoulder felt off today".
+    @Test func sessionNotesCannotReachThePlanThroughReconciliation() async {
+        var planned = exercise("Squat")
+        planned.guidance = CoachGuidance(formCues: ["Coach: sit between the hips"])
+        let (plan, store, id) = startedSession(workout("W", [planned]))
+        let ex = store.current!.allExercises[0]
+
+        store.editLog {
+            $0.setNotes("Shoulder felt off today")
+            $0.setNotes("Kept the last set light", forPlanned: ex.id, name: ex.exerciseName)
+        }
+        #expect(store.captureSessionReconciliation() == nil)
+
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        await finishAndAccept(store)
+
+        let promoted = plan.scheduledWorkout(id)?.workout
+        #expect(promoted?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+        #expect(promoted?.guidance == nil)
+        #expect(promoted?.allExercises.first?.guidance?.formCues == ["Coach: sit between the hips"])
+        #expect(store.currentLog?.notesText == "Shoulder felt off today")
+        #expect(store.currentLog?.performed(forPlanned: ex.id)?.notesText == "Kept the last set light")
+    }
+
     @Test func anEditedSessionReportsWhatChanged() {
         let (_, store, _) = startedSession()
 

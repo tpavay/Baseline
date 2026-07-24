@@ -589,7 +589,7 @@ struct WorkoutImportTests {
         ])
     }
 
-    @Test func materializesAndRoundTripsNotesAtEveryLevel() throws {
+    @Test func foldsBlockAndGroupNotesIntoTheWorkoutNotesItCanShow() throws {
         let longWorkoutNote = "Start conservatively and keep transitions smooth.\n\nIf breathing becomes ragged, reduce the machine pace before changing the strength work."
         let longBlockNote = "Complete this block continuously. The listed loads are ceilings, not targets, and clean movement takes priority."
         let groupNote = "Move directly from the run into the carry."
@@ -609,9 +609,15 @@ struct WorkoutImportTests {
         )
 
         let workout = WorkoutImportDraftBuilder.build(document, catalog: ExerciseCatalog.definitions).draft.workout
-        #expect(workout.guidance?.formCues == [longWorkoutNote])
-        #expect(workout.blocks.first?.guidance?.formCues == [longBlockNote])
-        #expect(workout.allGroups.first?.guidance?.formCues == [groupNote])
+        // Only the workout and the exercise render notes, so block and group text folds upward tagged
+        // with the section it described rather than landing where nothing can show or edit it.
+        #expect(workout.guidance?.formCues == [
+            longWorkoutNote,
+            "Main: \(longBlockNote)",
+            "Three rounds: \(groupNote)",
+        ])
+        #expect(workout.blocks.first?.guidance == nil)
+        #expect(workout.allGroups.first?.guidance == nil)
         #expect(workout.allExercises.first?.guidance?.formCues == [exerciseNote])
 
         let decoded = try JSONDecoder().decode(Workout.self, from: JSONEncoder().encode(workout))
@@ -2109,24 +2115,29 @@ struct ResumableWorkoutImportJobTests {
         let p3LongNote = try #require(exactTextByID["p3-long-context"])
         let p4LongNote = try #require(exactTextByID["p4-long-context"])
 
-        // Materialization must preserve both exact note text and structural ownership. A
-        // flattened assertion would still pass if a group or block note were promoted to the
-        // workout, which changes how the imported workout is presented and edited.
+        // Materialization must preserve exact note text. Block and group notes fold up to the workout
+        // tagged with the section they came from, because those two levels have no surface of their own
+        // — a note left on one would be preserved into a place the athlete can never read or edit.
         let workoutGuidanceNotes = guidanceNotes(materialized.guidance)
-        #expect(workoutGuidanceNotes == workoutGuidanceExpected)
-        #expect(!workoutGuidanceNotes.contains(p2LongNote))
-        #expect(!workoutGuidanceNotes.contains(p3LongNote))
-        #expect(!workoutGuidanceNotes.contains(p4LongNote))
+        #expect(workoutGuidanceNotes.prefix(workoutGuidanceExpected.count).elementsEqual(workoutGuidanceExpected))
+        for folded in [p2LongNote, p3LongNote, p4LongNote] {
+            #expect(
+                workoutGuidanceNotes.contains { $0.hasSuffix(folded) },
+                "folded section note must survive into the workout notes"
+            )
+        }
+        #expect(workoutGuidanceNotes.contains(
+            "Performance Layer: StairMaster - 70 minutes total - ideally with a weight vest or ruck."
+        ))
+        #expect(workoutGuidanceNotes.contains(
+            "70 minute AMRAP: Work through aerobic intervals then alternate A & B after the 6 sets for the duration of the AMRAP."
+        ))
 
         let materializedMED = try #require(materialized.blocks.first { $0.name == "Minimum Effective Dose (MED)" })
         let materializedPerformance = try #require(materialized.blocks.first { $0.name == "Performance Layer" })
         let materializedMDV = try #require(materialized.blocks.first { $0.name == "Maximum Daily Volume (MDV)" })
-        #expect(guidanceNotes(materializedMED.guidance).isEmpty)
-        #expect(guidanceNotes(materializedPerformance.guidance) == [
-            p3LongNote,
-            "StairMaster - 70 minutes total - ideally with a weight vest or ruck.",
-        ])
-        #expect(guidanceNotes(materializedMDV.guidance).isEmpty)
+        #expect(materialized.blocks.allSatisfy { $0.guidance == nil })
+        #expect(materialized.allGroups.allSatisfy { $0.guidance == nil })
 
         let materializedPerformanceGroups = materializedPerformance.nodes.compactMap { node -> WorkoutGroup? in
             guard case .group(let group) = node else { return nil }
@@ -2140,29 +2151,11 @@ struct ResumableWorkoutImportJobTests {
             ["Stair Stepper", "Box Step-Over", "Hand-Release Push-Up"],
             ["Stair Stepper", "Dual Dumbbell Push Press", "Wall Balls"],
         ])
-        #expect(guidanceNotes(materializedPerformanceGroups[0].guidance) == [
-            "Ideally use a weight vest during this phase.",
-        ])
-        #expect(guidanceNotes(materializedPerformanceGroups[1].guidance) == [
-            "Complete this phase without the weight vest.",
-        ])
+        #expect(workoutGuidanceNotes.contains { $0.hasSuffix("Ideally use a weight vest during this phase.") })
+        #expect(workoutGuidanceNotes.contains { $0.hasSuffix("Complete this phase without the weight vest.") })
 
-        guard case .group(let materializedAMRAP) = try #require(materializedMED.nodes.first) else {
-            Issue.record("Expected one materialized AMRAP parent group.")
-            return
-        }
-        #expect(guidanceNotes(materializedAMRAP.guidance) == [
-            p2LongNote,
-            "Work through aerobic intervals then alternate A & B after the 6 sets for the duration of the AMRAP.",
-        ])
-        #expect(!guidanceNotes(materializedMED.guidance).contains(p2LongNote))
-
-        guard case .group(let materializedSkiCore) = try #require(materializedMDV.nodes.first) else {
-            Issue.record("Expected one materialized ski and core parent group.")
-            return
-        }
-        #expect(guidanceNotes(materializedSkiCore.guidance) == [p4LongNote])
-        #expect(!guidanceNotes(materializedMDV.guidance).contains(p4LongNote))
+        #expect(materializedMED.nodes.count == 1)
+        #expect(materializedMDV.nodes.count == 1)
 
         let deadlift = try #require(materialized.allExercises.first { $0.definitionId == "deadlift" })
         let sled = try #require(materialized.allExercises.first { $0.definitionId == "sled_pull" })

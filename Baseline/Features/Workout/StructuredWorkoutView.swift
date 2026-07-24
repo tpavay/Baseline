@@ -807,14 +807,21 @@ private struct WorkoutExerciseSection: View {
             if isSkipped {
                 skippedState
             } else {
-                if mode.isEditing || mode.usesPerformedData {
+                if mode.isEditing {
                     WorkoutNotesField(
                         prompt: "Add notes here...",
-                        text: exerciseGuidanceBinding,
+                        text: plannedNotesBinding,
                         accessibilityLabel: "Notes for \(presentedExercise.exerciseName)"
                     )
                 } else {
-                    exerciseNotesText
+                    plannedNotesText
+                    if mode.usesPerformedData {
+                        WorkoutNotesField(
+                            prompt: "Add notes here...",
+                            text: sessionNotesBinding,
+                            accessibilityLabel: "Notes for \(presentedExercise.exerciseName)"
+                        )
+                    }
                 }
 
                 structuredTargets
@@ -933,8 +940,8 @@ private struct WorkoutExerciseSection: View {
         }
     }
 
-    @ViewBuilder private var exerciseNotesText: some View {
-        let notes = exerciseNotesValue
+    @ViewBuilder private var plannedNotesText: some View {
+        let notes = plannedNotesValue
         if !notes.isEmpty {
             Text(notes)
                 .font(.subheadline)
@@ -1545,46 +1552,40 @@ private struct WorkoutExerciseSection: View {
         }
     }
 
-    private var exerciseGuidanceBinding: Binding<String> {
+    /// The planned coach notes, edited only where the plan itself is being edited.
+    private var plannedNotesBinding: Binding<String> {
         Binding(
-            get: {
-                exerciseNotesValue
-            },
+            get: { plannedNotesValue },
             set: { value in
                 store.edit(mode.editScope) { workout in
                     workout.updateExercise(exercise.id) { updated in
                         updated.guidance = CoachGuidance.notes(from: value)
                     }
                 }
-                if mode.usesPerformedData {
-                    store.editLog { log in
-                        guard let index = log.exercises.firstIndex(where: {
-                            $0.plannedExerciseID == exercise.id
-                        }) else { return }
-                        log.exercises[index].athleteNotes = []
-                    }
+            }
+        )
+    }
+
+    /// What the athlete writes while logging or reviewing a session. It is a performed fact, so it is
+    /// written to the log's own record and never to the planned guidance — a session note is
+    /// structurally unable to reach the plan, including through the completion "Update Plan" opt-in.
+    private var sessionNotesBinding: Binding<String> {
+        Binding(
+            get: { performed?.notesText ?? "" },
+            set: { value in
+                store.editLog { log in
+                    log.setNotes(
+                        value,
+                        forPlanned: exercise.id,
+                        name: presentedExercise.exerciseName
+                    )
                 }
             }
         )
     }
 
-    private var exerciseNotesValue: String {
-        var notes: [String] = []
-        if let guidanceNotes = store.current?.exercise(exercise.id)?.guidance?.notesText
-            ?? presentedExercise.guidance?.notesText {
-            appendNote(guidanceNotes, to: &notes)
-        }
-        for note in performed?.athleteNotes ?? [] {
-            appendNote(note, to: &notes)
-        }
-        return notes.joined(separator: "\n\n")
-    }
-
-    private func appendNote(_ note: String, to notes: inout [String]) {
-        let value = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !value.isEmpty, !notes.contains(value) {
-            notes.append(value)
-        }
+    private var plannedNotesValue: String {
+        store.current?.exercise(exercise.id)?.guidance?.notesText ?? ""
     }
 
     @ViewBuilder private func exerciseSheet(_ destination: ExerciseSheet) -> some View {

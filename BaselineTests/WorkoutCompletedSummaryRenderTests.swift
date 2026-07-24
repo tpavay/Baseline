@@ -20,7 +20,11 @@ struct WorkoutCompletedSummaryRenderTests {
         #expect(screen.hasLabel(containing: "Pull-Up"))
         #expect(screen.hasLabel(containing: "Run"))
         #expect(screen.hasLabel(containing: "Notes for Back Squat"))
+        #expect(screen.hasAccessibleText(containing: "Existing note for Back Squat."))
         #expect(screen.hasAccessibleText(containing: "Felt stable under load."))
+        // The note the athlete typed stays a performed fact; it is never folded into the plan's guidance.
+        #expect(screen.performedNotes(forExerciseAt: 0) == ["Felt stable under load."])
+        #expect(screen.plannedNotes(forExerciseAt: 0) == ["Existing note for Back Squat."])
         #expect(screen.hasLabel(containing: "Set completed"))
         #expect(screen.canFocusInput(labelled: "Workout notes"))
         #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))
@@ -39,6 +43,7 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
     private let defaults: UserDefaults
     private let suiteName: String
     private let container: ModelContainer
+    private let store: WorkoutStore
 
     init() async throws {
         suiteName = "WorkoutCompletedSummaryRenderTests.\(UUID().uuidString)"
@@ -52,6 +57,7 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         )
 
         let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        self.store = store
         store.create(title: "Logged Cleanup Session", goal: "Keep the completed log readable.")
         let blockID = try #require(store.current?.blocks.first?.id)
         for exercise in Self.exercises {
@@ -85,6 +91,20 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
             ($0.accessibilityLabel?.contains(text) ?? false)
                 || ($0.accessibilityValue?.contains(text) ?? false)
         }
+    }
+
+    func performedNotes(forExerciseAt index: Int) -> [String] {
+        guard let exercise = plannedExercise(at: index) else { return [] }
+        return store.currentLog?.performed(forPlanned: exercise.id)?.athleteNotes ?? []
+    }
+
+    func plannedNotes(forExerciseAt index: Int) -> [String] {
+        plannedExercise(at: index)?.guidance?.formCues ?? []
+    }
+
+    private func plannedExercise(at index: Int) -> PlannedExercise? {
+        let exercises = store.current?.allExercises ?? []
+        return index < exercises.count ? exercises[index] : nil
     }
 
     func canFocusInput(labelled label: String) -> Bool {
