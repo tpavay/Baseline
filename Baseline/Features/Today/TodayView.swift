@@ -161,9 +161,10 @@ struct TodayView: View {
             constraints: context.activeConstraints
         )
 
-        // A superseded run must not publish its stale evidence over the newer one's. `.task(id:)`
-        // cancels the previous assembly when the signature moves, but cancellation only takes effect
-        // where it is observed, and every state write below happens after an await.
+        // Scoped to the `.task(id: refreshKey)` path: when the signature moves, SwiftUI cancels the
+        // previous assembly, but cancellation only takes effect where it is observed and every state
+        // write below happens after an await. The unstructured `Task { await reassemble() }` runs
+        // (dismissal, scenePhase) are never cancelled, so this guard does not order them.
         guard !Task.isCancelled else { return }
 
         if let night = sleepRepository.night(for: .now),

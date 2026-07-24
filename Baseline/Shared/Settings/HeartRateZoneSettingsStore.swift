@@ -20,7 +20,7 @@ final class HeartRateZoneSettingsStore {
 
     private let defaults: UserDefaults
     private let ageYearsProvider: () -> Int?
-    private enum Keys { static let settings = "heartRateZones.settings" }
+    fileprivate enum Keys { static let settings = "heartRateZones.settings" }
 
     /// - Parameters:
     ///   - defaults: injectable for tests.
@@ -88,7 +88,7 @@ extension UserDefaults {
     static func previewSeeded(_ settings: HeartRateZoneSettings) -> UserDefaults {
         let defaults = previewEmpty
         if let data = try? JSONEncoder().encode(settings) {
-            defaults.set(data, forKey: "heartRateZones.settings")
+            defaults.set(data, forKey: HeartRateZoneSettingsStore.Keys.settings)
         }
         return defaults
     }
