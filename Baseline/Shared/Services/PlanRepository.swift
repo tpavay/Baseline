@@ -900,19 +900,40 @@ final class SwiftDataPlanRepository: PlanRepository {
         }
         context.delete(prop)
         let diff = ScheduleDiff(changes: [.init(kind: .remove, summary: "Delete \(title(id))", scheduledID: id)])
-        return apply(.delete, actor, reason, diff) { context.delete(sd) }
+        // Erase the whole footprint, not just the schedule row: a completed session's performed rows have
+        // no cascade (see `deletePerformedFootprint`), so leaving them behind keeps a deleted session
+        // contributing to history/PRs and the Today "This Week"/"Movement Balance" cards indefinitely.
+        return apply(.delete, actor, reason, diff) {
+            deletePerformedFootprint(scheduledWorkoutID: id)
+            context.delete(sd)
+        }
     }
 
     func purgeProvisionalWorkout(_ id: UUID, actor: PlanActor, reason: String?) -> MutationResult {
         guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { return .rejected(.notFound) }
         let diff = ScheduleDiff(changes: [.init(kind: .remove, summary: "Discard \(title(id))", scheduledID: id)])
-        // Remove the whole footprint of the placeholder — sessions and any completed log included — so
-        // no orphaned session survives to resurface the day as occupied, then the scheduled workout.
+        // Remove the whole footprint of the placeholder — sessions and any completed log/exercise index
+        // included — so no orphaned row survives to resurface the day as occupied or pollute history.
         return apply(.delete, actor, reason, diff) {
-            fetch(SDWorkoutSession.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
-            fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
+            deletePerformedFootprint(scheduledWorkoutID: id)
             context.delete(sd)
         }
+    }
+
+    /// Erases the full performed footprint of a scheduled workout — its session(s), completed log(s), and
+    /// the normalized completed-exercise rows those logs indexed — matching only on this workout's id.
+    /// The Plan entities carry no SwiftData cascade relationships (they link by loose `UUID` foreign keys,
+    /// see `PlanEntities.swift`), so deleting only the schedule row strands these rows as orphans that keep
+    /// feeding history/PRs (`history`/`mostRecentPerformance`) and the Today weekly cards. Every path that
+    /// erases a scheduled workout funnels through here so a deleted session stops contributing everywhere
+    /// and no future call site can forget a table again.
+    private func deletePerformedFootprint(scheduledWorkoutID id: UUID) {
+        for log in fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id }) {
+            let logID = log.id
+            fetch(SDCompletedExercise.self, where: #Predicate { $0.completedLogID == logID }).forEach(context.delete)
+            context.delete(log)
+        }
+        fetch(SDWorkoutSession.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
     }
 
     func undo(actor: PlanActor) -> MutationResult {

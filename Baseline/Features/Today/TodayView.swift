@@ -116,9 +116,13 @@ struct TodayView: View {
     }
 
     private var refreshKey: String {
-        [readings.count, entries.count, completedLogs.count, completedExercises.count, workoutSessions.count]
-            .map(String.init)
-            .joined(separator: "-")
+        TodayRefreshSignature.make(
+            readings: readings,
+            entries: entries,
+            completedLogs: completedLogs,
+            completedExercises: completedExercises,
+            workoutSessions: workoutSessions
+        )
     }
 
     private func reassembleAfterDismissal() {
@@ -332,6 +336,40 @@ struct TodayView: View {
 
     private func duration(for type: ReadingType) -> TimeInterval {
         type == .morning ? TimeInterval(settings.morningReadingDurationSeconds) : type.duration
+    }
+}
+
+/// The identity fed to `TodayView`'s `.task(id:)` so the weekly summary reassembles on the data changes
+/// that actually move the "This Week" / "Movement Balance" cards. It hashes the *identity and content* of
+/// the performed rows, not just their counts: a count-only key never changed when a completed session was
+/// deleted (or edited in place), so the cards stayed stale. Reading the performed rows and folding each
+/// row's id plus its content marker in means a delete drops an id, and a future in-place log edit changes
+/// a metrics blob — either way the signature moves and `reassemble()` re-fires. `Hasher` is seeded per
+/// process, which is fine: this value is only ever compared against the previous value within one run.
+enum TodayRefreshSignature {
+    static func make(
+        readings: [Reading],
+        entries: [ReadinessEntry],
+        completedLogs: [SDCompletedLog],
+        completedExercises: [SDCompletedExercise],
+        workoutSessions: [SDWorkoutSession]
+    ) -> String {
+        var hasher = Hasher()
+        hasher.combine(readings.count)
+        hasher.combine(entries.count)
+        for log in completedLogs {
+            hasher.combine(log.id)
+            hasher.combine(log.finishedAt)
+        }
+        for exercise in completedExercises {
+            hasher.combine(exercise.id)
+            hasher.combine(exercise.metricsJSON)
+        }
+        for session in workoutSessions {
+            hasher.combine(session.id)
+            hasher.combine(session.statusRaw)
+        }
+        return String(hasher.finalize())
     }
 }
 
