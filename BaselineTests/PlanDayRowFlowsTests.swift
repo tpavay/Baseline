@@ -3,26 +3,29 @@ import Testing
 import UIKit
 @testable import Baseline
 
-/// The Plan calendar's per-day flows, driven end to end through the real shell: empty rows carry a
-/// visible "Add workout" affordance plus a one-tap rest-day toggle, and the add sheet's "Start an
-/// empty workout" opens live logging with the timer already counting.
+/// The Plan calendar's per-day flows, driven end to end through the real shell: an undecided day is a
+/// single "+" that opens the per-day add sheet, that sheet's one-tap rest-day path decides the day,
+/// the rest row's moon is its own undo, and "Start an empty workout" opens live logging with the
+/// timer already counting.
 @MainActor
 @Suite(.serialized)
 struct PlanDayRowFlowsTests {
 
-    /// Empty rows lead with "Add workout" (the old copy said "Rest day" on every day with no way to
-    /// tell it was tappable). The trailing moon marks a decided rest day in one tap, relabels the
-    /// row, and the same tap takes it back.
-    @Test func emptyRowsOfferAddWorkoutAndAOneTapRestToggle() async throws {
+    /// The weekly redesign made an undecided day a single accent "+" - the rest-day decision moved
+    /// into the sheet it opens ("Make it a rest day"), and the moon on the decided row still takes it
+    /// straight back, so declaring and un-declaring a rest day both stay one tap from the row.
+    @Test func theEmptyDayPlusDecidesARestDayAndTheMoonUndoesIt() async throws {
         let screen = try MainTabShellScreen(tab: .plan)
         defer { screen.tearDown() }
         try await screen.settle()
 
         try await screen.settleUntil { screen.element(labelled: "Add workout") != nil }
-        #expect(screen.element(labelled: "Mark as rest day") != nil)
         #expect(screen.element(labelled: "Remove rest day") == nil)
 
-        #expect(screen.activate(labelled: "Mark as rest day"))
+        #expect(screen.activate(labelled: "Add workout"))
+        try await screen.settleUntil { screen.element(labelled: "Make it a rest day") != nil }
+        #expect(screen.activate(labelled: "Make it a rest day"))
+
         try await screen.settleUntil { screen.element(labelled: "Remove rest day") != nil }
         #expect(screen.element(labelled: "Rest day") != nil)
         try screen.capture("plan-page")

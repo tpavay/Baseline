@@ -3,8 +3,8 @@ import Foundation
 /// Pure, unit-testable resolvers over the Plan domain model. No SwiftData, no engines, no UI — they take
 /// stored facts and compute what the UI shows. Per `docs/implementation/plan-tab.md`:
 /// - **Status is never persisted** — `ScheduleStatusResolver` derives it on read.
-/// - **Aggregates are contribution-based** — each workout contributes typed amounts; the row renders
-///   whatever exists rather than a hardcoded three cards.
+/// - **Aggregates are contribution-based** - each workout contributes typed amounts; a caller renders
+///   whatever exists rather than a hardcoded metric list.
 
 // MARK: - Schedule status (derived, never stored)
 
@@ -69,7 +69,7 @@ enum ScheduleStatusResolver {
     }
 }
 
-// MARK: - Weekly aggregates (contribution-based)
+// MARK: - Planned aggregates (contribution-based)
 
 enum AggregateKey: String, Sendable, CaseIterable {
     case sessions, duration, distance, strengthSets, calories
@@ -86,8 +86,10 @@ struct Aggregate: Equatable, Sendable, Identifiable {
     var id: AggregateKey { key }
 }
 
-/// Each workout contributes typed amounts derived from its content; the Plan view renders whatever
-/// aggregates exist for the current week/filter. Adding a modality never touches the view.
+/// Each workout contributes typed amounts derived from its *planned* content, and a caller renders
+/// whatever aggregates exist for the sessions it asked about. Adding a modality never touches a view.
+/// This resolves plan intent only - a weekly total of what was actually performed comes from the
+/// completed logs behind the Today tab's This Week card, never from summing prescriptions.
 enum AggregateProvider {
     /// What one workout's *planned* content contributes.
     static func contributions(of workout: Workout) -> [MetricContribution] {

@@ -123,6 +123,9 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Floating tab bar horizontal inset | `BaselineSize.floatingTabBarHorizontal` | 40 pt |
 | Floating tab selection height | `BaselineSize.floatingTabSelectionHeight` | 46 pt |
 | Floating tab page clearance | `BaselineSize.floatingTabClearance` | bar height + bottom inset (75 pt) |
+| Plan week-strip status mark slot | `BaselineSize.dayStatusMarkSlot` | 10 pt |
+| Plan week-strip completed dot | `BaselineSize.dayStatusDot` | 5 pt |
+| Plan week-strip rest moon | `BaselineSize.dayStatusMoon` | 7 pt |
 | Compact internal gap | `BaselineSpacing.compact` | 6 pt |
 | Tile gap | `BaselineSpacing.tile` | 9 pt |
 | Section stack gap | `BaselineSpacing.section` | 14 pt |
@@ -133,7 +136,6 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Screen margin | `BaselineSpacing.screen` | 24 pt |
 | Screen bottom clearance | `BaselineSpacing.screenBottom` | 90 pt |
 | Profile avatar | `BaselineSize.avatar` | 58 pt |
-| Plan calendar row minimum height | `BaselineSize.tabBarHeight` | 60 pt |
 | Compact muscle map | `BaselineSize.miniMuscleMapHeight` | 30 pt |
 | Full muscle map | `BaselineSize.muscleMapHeight` | 180 pt |
 | Heart-rate chart | `BaselineSize.chartHeight` | 108 pt |
