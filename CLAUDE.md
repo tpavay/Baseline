@@ -170,6 +170,8 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
   Those suites read the screen through the accessibility tree, which UIKit only publishes on a simulator that has application accessibility switched on.
   A freshly created simulator does not, and every render suite then finds zero elements, so run
   `xcrun simctl spawn <device> defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool true` (and `AccessibilityEnabled`) before the app launches; CI does this in `ci.yml`.
+  The share composer's save-to-Photos test needs the same kind of pre-seeded device state - add-only Photos authorization, which a test cannot request without raising an unanswerable system alert - so a fresh simulator also needs
+  `xcrun simctl privacy <device> grant photos-add com.tylerpavay.Baseline`; that grant is keyed by bundle id and survives the install, and `ci.yml` applies it in the same step as accessibility.
 - Render suites rewrite the committed screenshots in `evidence/`, so a test run dirties images unrelated to your change; `git restore` that churn and commit only the captures your work actually changed.
   A local full-suite `xcodebuild test` also randomly kills a few render tests with "Test crashed with signal kill" under simulator load; they pass in isolation and in CI, so rerun a suspect test alone before treating it as broken.
 
