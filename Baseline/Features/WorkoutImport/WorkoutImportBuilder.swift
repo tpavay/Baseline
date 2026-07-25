@@ -9,10 +9,13 @@ struct WorkoutImportBuildResult: Sendable {
 enum WorkoutImportDraftBuilder {
     static func build(_ document: ParsedWorkoutDocument, catalog: [ExerciseDefinition]) -> WorkoutImportBuildResult {
         var context = BuildContext(catalog: catalog)
-        let blocks = document.blocks.map { parsedBlock in
-            WorkoutBlock(name: parsedBlock.name, intent: parsedBlock.intent,
-                         nodes: parsedBlock.nodes.map { context.buildNode($0) },
-                         guidance: guidance(from: parsedBlock.notes))
+        // Baseline shows notes at two levels, the workout and the exercise. Block and group notes are
+        // folded upward, tagged with the section they described, so imported coach text lands somewhere
+        // the athlete can read and edit it instead of a bucket nothing renders.
+        let blocks = document.blocks.map { parsedBlock -> WorkoutBlock in
+            context.foldNotes(parsedBlock.notes, from: parsedBlock.name)
+            return WorkoutBlock(name: parsedBlock.name, intent: parsedBlock.intent,
+                                nodes: parsedBlock.nodes.map { context.buildNode($0) })
         }
 
         if blocks.flatMap(\.exercises).isEmpty {
@@ -20,7 +23,9 @@ enum WorkoutImportDraftBuilder {
                                         message: "No exercises were found. Try again with clearer workout photos."))
         }
         let workout = Workout(title: document.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Imported workout" : document.title,
-                              goal: document.goal, guidance: guidance(from: document.notes), blocks: blocks)
+                              goal: document.goal,
+                              guidance: guidance(from: document.notes + context.foldedNotes),
+                              blocks: blocks)
         return WorkoutImportBuildResult(draft: WorkoutTemplateDraft(workout: workout, tags: classify(document)),
                                         issues: context.issues, evidence: context.evidence)
     }
@@ -29,6 +34,17 @@ enum WorkoutImportDraftBuilder {
         let catalog: [ExerciseDefinition]
         var issues: [WorkoutImportIssue] = []
         var evidence: [WorkoutImportEvidence] = []
+        /// Block and group notes, in document order, waiting to join the workout's own notes.
+        var foldedNotes: [String] = []
+
+        mutating func foldNotes(_ notes: [String], from owner: String) {
+            let owner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
+            for note in notes {
+                let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !note.isEmpty else { continue }
+                foldedNotes.append(owner.isEmpty ? note : "\(owner): \(note)")
+            }
+        }
 
         mutating func buildNode(_ parsed: ParsedWorkoutNode) -> WorkoutNode {
             switch parsed {
@@ -51,12 +67,11 @@ enum WorkoutImportDraftBuilder {
                 let execution = GroupExecution(repetition: repetition, cadence: cadence,
                                                scoring: WorkoutImportDraftBuilder.parseScoring(parsedGroup.scoring, metric: parsedGroup.scoreMetric),
                                                adjustments: adjustments)
+                foldNotes(parsedGroup.notes, from: parsedGroup.label)
                 let children = parsedGroup.children.map { buildNode($0) }
-                var guidance: CoachGuidance?
-                if !parsedGroup.notes.isEmpty { guidance = CoachGuidance(formCues: parsedGroup.notes) }
                 let group = WorkoutGroup(id: id, label: parsedGroup.label,
                                          phase: parsedGroup.phase.flatMap { WorkoutPhase(rawValue: WorkoutImportDraftBuilder.normalize($0)) },
-                                         execution: execution, children: children, guidance: guidance,
+                                         execution: execution, children: children, guidance: nil,
                                          doseLayer: parsedGroup.doseLayer.flatMap { DoseLayer(rawValue: WorkoutImportDraftBuilder.normalize($0)) },
                                          isOptional: parsedGroup.isOptional)
                 evidence.append(.init(nodeID: id, sourceObservationIDs: parsedGroup.sourceObservationIDs))

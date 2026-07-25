@@ -285,6 +285,32 @@ struct WorkoutSessionEditingTests {
         #expect(store.captureSessionReconciliation() == nil)
     }
 
+    /// Notes typed on the logging and completed surfaces are performed facts. They live on the log, so
+    /// even the athlete who does opt in to "Update Plan" alongside a real structural edit cannot
+    /// overwrite their coach guidance with "shoulder felt off today".
+    @Test func sessionNotesCannotReachThePlanThroughReconciliation() async {
+        var planned = exercise("Squat")
+        planned.guidance = CoachGuidance(formCues: ["Coach: sit between the hips"])
+        let (plan, store, id) = startedSession(workout("W", [planned]))
+        let ex = store.current!.allExercises[0]
+
+        store.editLog {
+            $0.setNotes("Shoulder felt off today")
+            $0.setNotes("Kept the last set light", forPlanned: ex.id, name: ex.exerciseName)
+        }
+        #expect(store.captureSessionReconciliation() == nil)
+
+        store.edit(.session) { $0.addExercise(self.exercise("Bench press"), toBlock: $0.blocks[0].id) }
+        await finishAndAccept(store)
+
+        let promoted = plan.scheduledWorkout(id)?.workout
+        #expect(promoted?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+        #expect(promoted?.guidance == nil)
+        #expect(promoted?.allExercises.first?.guidance?.formCues == ["Coach: sit between the hips"])
+        #expect(store.currentLog?.notesText == "Shoulder felt off today")
+        #expect(store.currentLog?.performed(forPlanned: ex.id)?.notesText == "Kept the last set light")
+    }
+
     @Test func anEditedSessionReportsWhatChanged() {
         let (_, store, _) = startedSession()
 
@@ -510,6 +536,54 @@ struct WorkoutSessionEditingTests {
 
         #expect(plan.scheduledWorkout(id)?.workout.blocks.contains { $0.name == "Finisher" } == true)
         #expect(plan.scheduledWorkout(id)?.workout.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
+    }
+
+    /// The notes the athlete types on the logging screen have to be there when they come back to it —
+    /// a relaunch, or reopening the completed summary. Both levels persist with the session log.
+    @Test func sessionNotesSurviveALaunchAndComeBackToTheSameFields() async {
+        let (plan, store, id) = startedSession()
+        let ex = store.current!.allExercises[0]
+        store.editLog {
+            $0.setNotes("Legs heavy from yesterday")
+            $0.setNotes("Dropped to 90kg", forPlanned: ex.id, name: ex.exerciseName)
+        }
+
+        let relaunched = buffer()
+        relaunched.bind(plan.sink(forScheduled: id), coalesceContent: false)
+
+        #expect(relaunched.currentLog?.notesText == "Legs heavy from yesterday")
+        #expect(relaunched.currentLog?.performed(forPlanned: ex.id)?.notesText == "Dropped to 90kg")
+
+        await finishAndDecline(relaunched)
+        #expect(relaunched.currentLog?.notesText == "Legs heavy from yesterday")
+        #expect(plan.completed(for: id)?.log.notesText == "Legs heavy from yesterday")
+    }
+
+    /// A note the athlete typed is logged work: removing the exercise mid-session must warn before it
+    /// discards one, exactly as it does for logged sets.
+    @Test func aTypedSessionNoteCountsAsLoggedWork() {
+        let (_, store, _) = startedSession()
+        let ex = store.current!.allExercises[0]
+
+        #expect(store.hasLoggedWork(forExercise: ex.id) == false)
+
+        store.editLog { $0.setNotes("Tweaked my back on the warm-up", forPlanned: ex.id, name: ex.exerciseName) }
+
+        #expect(store.hasLoggedWork(forExercise: ex.id))
+        #expect(store.hasSessionNote(forExercise: ex.id))
+        #expect(store.hasLoggedSets(forExercise: ex.id) == false)
+        #expect(store.hasLoggedWork(inBlock: store.current!.blocks[0].id))
+
+        // Sets and a note together: the discard warning reads both flags, so both stay true.
+        store.editLog {
+            $0.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName,
+                            plannedSetID: ex.prescription.sets[0].id) { set in
+                set.values[.load] = 100
+                set.completed = true
+            }
+        }
+        #expect(store.hasLoggedSets(forExercise: ex.id))
+        #expect(store.hasSessionNote(forExercise: ex.id))
     }
 
     /// A fresh store bound after the workout is over — the app relaunching, then the agent asked to

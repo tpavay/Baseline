@@ -194,6 +194,61 @@ struct WorkoutModelTests {
         #expect(w.allExercises.first?.prescription.sets.first?.load == 60)
     }
 
+    // MARK: - Notes
+
+    @Test func guidanceNotesTextGathersEveryComponentAndRoundTripsWhatIsTyped() {
+        let guidance = CoachGuidance(
+            goal: "Own the eccentric",
+            tempo: "3-1-1",
+            formCues: ["Ribs stacked", "   "],
+            commonMistakes: ["Heels lifting"],
+            progressionNotes: "Add 2.5kg next week"
+        )
+        #expect(guidance.notesText == """
+        Own the eccentric
+
+        3-1-1
+
+        Ribs stacked
+
+        Heels lifting
+
+        Add 2.5kg next week
+        """)
+
+        // A field bound to this value must give back exactly what was typed, including the trailing
+        // space of a half-written sentence — trimming on read runs words together as they are typed.
+        let typed = "shoulder felt off "
+        #expect(CoachGuidance.notes(from: typed)?.notesText == typed)
+        #expect(CoachGuidance.notes(from: "   \n ") == nil)
+    }
+
+    @Test func sessionNotesStayOnTheLogAndNeverTouchPlannedGuidance() {
+        var (w, _, _, bench) = sample()
+        w.updateExercise(bench) { $0.guidance = CoachGuidance(formCues: ["Coach: pause on the chest"]) }
+        var log = w.startLog()
+
+        log.setNotes("Left shoulder felt off ", forPlanned: bench, name: "Bench press")
+        log.setNotes("Cut this one short")
+        #expect(log.performed(forPlanned: bench)?.notesText == "Left shoulder felt off ")
+        #expect(log.notesText == "Cut this one short")
+        #expect(w.exercise(bench)?.guidance?.formCues == ["Coach: pause on the chest"])
+
+        // Clearing the field empties the record instead of deleting it or writing a blank note.
+        log.setNotes("", forPlanned: bench, name: "Bench press")
+        log.setNotes("")
+        #expect(log.performed(forPlanned: bench)?.athleteNotes == [])
+        #expect(log.athleteNotes == [])
+    }
+
+    @Test func clearingNotesForAnUnloggedExerciseCreatesNoPerformedRecord() {
+        let (w, _, _, _) = sample()
+        var log = w.startLog()
+        let untouched = UUID()
+        log.setNotes("", forPlanned: untouched, name: "Ad-hoc curl")
+        #expect(log.performed(forPlanned: untouched) == nil)
+    }
+
     @Test func loggingAnAdHocExerciseCreatesAPerformedRecord() {
         let (w, _, _, _) = sample()
         var log = w.startLog()

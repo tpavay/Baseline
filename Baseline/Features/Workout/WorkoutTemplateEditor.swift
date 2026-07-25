@@ -43,15 +43,18 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
                 .foregroundStyle(BaselineColor.textHi)
                 .textInputAutocapitalization(.sentences)
 
-            TextField("Add workout notes", text: workoutGoalBinding, axis: .vertical)
+            TextField("Workout goal", text: workoutGoalBinding, axis: .vertical)
                 .font(.body)
                 .foregroundStyle(BaselineColor.textMid)
                 .lineLimit(2...6)
 
-            TextField("Add detailed workout instructions", text: workoutGuidanceBinding, axis: .vertical)
-                .font(.body)
-                .foregroundStyle(BaselineColor.textMid)
-                .lineLimit(2...12)
+            WorkoutNotesField(
+                prompt: "Add notes here...",
+                text: workoutGuidanceBinding,
+                font: .body,
+                lineLimit: 2...,
+                accessibilityLabel: "Workout notes"
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 12)
@@ -97,10 +100,6 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
                     .lineLimit(1...3)
             }
 
-            TextField("Block instructions", text: blockGuidanceBinding(block), axis: .vertical)
-                .font(.subheadline)
-                .foregroundStyle(BaselineColor.textMid)
-                .lineLimit(2...10)
         }
     }
 
@@ -125,7 +124,6 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
 
     private func shouldShowHeader(for block: WorkoutBlock, blockCount: Int) -> Bool {
         blockCount > 1 || !block.isDefault || !block.name.isEmpty || !(block.intent?.isEmpty ?? true)
-            || block.guidance != nil
     }
 
     private func addRowButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -159,10 +157,10 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
 
     private var workoutGuidanceBinding: Binding<String> {
         Binding(
-            get: { store.current?.guidance?.formCues.joined(separator: "\n\n") ?? "" },
+            get: { store.current?.guidance?.notesText ?? "" },
             set: { value in
                 store.edit(.plan) { workout in
-                    workout.updateGuidance(updatedGuidance(workout.guidance, notesText: value))
+                    workout.updateGuidance(CoachGuidance.notes(from: value))
                 }
             }
         )
@@ -180,30 +178,6 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
             get: { store.current?.blocks.first(where: { $0.id == block.id })?.intent ?? "" },
             set: { value in store.edit(.plan) { $0.setBlockIntent(block.id, value.isEmpty ? nil : value) } }
         )
-    }
-
-    private func blockGuidanceBinding(_ block: WorkoutBlock) -> Binding<String> {
-        Binding(
-            get: {
-                store.current?.blocks.first(where: { $0.id == block.id })?.guidance?.formCues
-                    .joined(separator: "\n\n") ?? ""
-            },
-            set: { value in
-                store.edit(.plan) { workout in
-                    let current = workout.blocks.first(where: { $0.id == block.id })?.guidance
-                    workout.setBlockGuidance(block.id, updatedGuidance(current, notesText: value))
-                }
-            }
-        )
-    }
-
-    private func updatedGuidance(_ current: CoachGuidance?, notesText: String) -> CoachGuidance? {
-        var guidance = current ?? CoachGuidance()
-        let value = notesText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guidance.formCues = value.isEmpty ? [] : [value]
-        let isEmpty = guidance.goal == nil && guidance.tempo == nil && guidance.formCues.isEmpty
-            && guidance.commonMistakes.isEmpty && guidance.progressionNotes == nil
-        return isEmpty ? nil : guidance
     }
 
     private struct AddExerciseRequest: Identifiable {

@@ -228,6 +228,72 @@ struct PlanRepositoryTests {
         #expect(repo.mostRecentPerformance(exerciseDefinitionID: "nonexistent", before: cal.date(byAdding: .day, value: 1, to: monday)!) == nil)
     }
 
+    /// A session where the athlete only wrote a note still produces a performed record, and that record
+    /// must not become the "previous" hint — it would hide the last session that actually had numbers.
+    @Test func previousPerformanceSkipsASessionThatLoggedOnlyANote() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let withSets = seed(repo, date: monday, program: prog.id)
+        let setExercise = withSets.workout.allExercises.first!
+        repo.startSession(forScheduled: withSets.id, now: monday)
+        repo.updateSessionLog(forScheduled: withSets.id) { log in
+            log.upsertSetLog(forPlanned: setExercise.id, name: setExercise.exerciseName,
+                             plannedSetID: setExercise.prescription.sets[0].id) { s in
+                s.values[.load] = 100; s.values.setInt(.reps, 5); s.completed = true
+            }
+        }
+        _ = repo.completeSession(forScheduled: withSets.id, acknowledgingOpenWork: true, now: monday)
+
+        let tuesday = cal.date(byAdding: .day, value: 1, to: monday)!
+        let notesOnly = seed(repo, date: tuesday, program: prog.id)
+        let notedExercise = notesOnly.workout.allExercises.first!
+        repo.startSession(forScheduled: notesOnly.id, now: tuesday)
+        repo.updateSessionLog(forScheduled: notesOnly.id) { log in
+            log.setNotes("Shoulder felt off, skipped the working sets",
+                         forPlanned: notedExercise.id, name: notedExercise.exerciseName)
+        }
+        _ = repo.completeSession(forScheduled: notesOnly.id, acknowledgingOpenWork: true, now: tuesday)
+
+        let prev = repo.mostRecentPerformance(
+            exerciseDefinitionID: "deadlift",
+            before: cal.date(byAdding: .day, value: 2, to: monday)!
+        )
+        #expect(prev?.date == monday)
+        #expect(prev?.sets.first?[.load] == 100)
+
+        // History has to agree with the previous hint: an empty card would take the "most recent"
+        // position from the session that actually has numbers to compare against.
+        let history = repo.history(exerciseDefinitionID: "deadlift", limit: 10)
+        #expect(history.map(\.date) == [monday])
+    }
+
+    /// An imported workout can prescribe coach text ("6-8 reps") with no typed metrics, so ticking its
+    /// sets complete logs rows that carry no numbers. That is still training the athlete did, and both
+    /// history surfaces must keep it — otherwise their only session for a movement vanishes.
+    @Test func historyKeepsASessionCompletedWithoutTypedNumbers() {
+        let repo = makeRepo()
+        let prog = repo.addProgram(Program(name: "P", createdAt: monday))
+        let sw = seed(repo, date: monday, program: prog.id)
+        let ex = sw.workout.allExercises.first!
+
+        repo.startSession(forScheduled: sw.id, now: monday)
+        repo.updateSessionLog(forScheduled: sw.id) { log in
+            for set in ex.prescription.sets {
+                log.upsertSetLog(forPlanned: ex.id, name: ex.exerciseName, plannedSetID: set.id) { s in
+                    s.completed = true
+                }
+            }
+        }
+        _ = repo.completeSession(forScheduled: sw.id, acknowledgingOpenWork: true, now: monday)
+
+        let tuesday = cal.date(byAdding: .day, value: 1, to: monday)!
+        #expect(repo.history(exerciseDefinitionID: "deadlift", limit: 10).map(\.date) == [monday])
+        let prev = repo.mostRecentPerformance(exerciseDefinitionID: "deadlift", before: tuesday)
+        #expect(prev?.date == monday)
+        #expect(prev?.sets.count == ex.prescription.sets.count)
+        #expect(prev?.sets.allSatisfy(\.isEmpty) == true)
+    }
+
     /// Drives the two-step delete (propose → confirm) the UI uses, returning nothing but asserting the
     /// erase applied. Keeps the cascade tests below focused on *what* the delete removes.
     @discardableResult

@@ -378,14 +378,40 @@ struct WorkoutView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let goal = workout.goal, !goal.isEmpty {
-                Text(goal)
-                    .font(.body)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .fixedSize(horizontal: false, vertical: true)
+                if mode.usesPerformedData {
+                    WorkoutPlanNote(
+                        text: goal,
+                        caption: "GOAL",
+                        font: .body,
+                        accessibilityLabel: "Workout goal"
+                    )
+                } else {
+                    Text(goal)
+                        .font(.body)
+                        .foregroundStyle(BaselineColor.textMid)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            if let guidance = workout.guidance {
-                WorkoutInstructionText(lines: [guidance.goal].compactMap { $0 } + guidance.formCues)
+            if let notes = workout.guidance?.notesText, !notes.isEmpty {
+                if mode.usesPerformedData {
+                    WorkoutPlanNote(text: notes, font: .body, accessibilityLabel: "Plan note")
+                } else {
+                    Text(notes)
+                        .font(.body)
+                        .foregroundStyle(BaselineColor.textMid)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if mode.usesPerformedData {
+                WorkoutNotesField(
+                    prompt: "Add notes here...",
+                    text: sessionNotesBinding,
+                    font: .body,
+                    lineLimit: 2...,
+                    accessibilityLabel: "Workout notes"
+                )
             }
 
             HStack(spacing: 8) {
@@ -468,15 +494,11 @@ struct WorkoutView: View {
                     .font(.subheadline)
                     .foregroundStyle(BaselineColor.textMid)
             }
-            if let guidance = block.guidance {
-                WorkoutInstructionText(lines: [guidance.goal].compactMap { $0 } + guidance.formCues)
-            }
         }
     }
 
     private func shouldShowHeader(for block: WorkoutBlock, blockCount: Int) -> Bool {
         blockCount > 1 || !block.isDefault || !block.name.isEmpty || !(block.intent?.isEmpty ?? true)
-            || block.guidance != nil
     }
 
     // MARK: - Editing
@@ -494,6 +516,17 @@ struct WorkoutView: View {
         }
         editSnapshot = nil
         isEditingTemplate = false
+    }
+
+    /// Workout-level notes typed while logging or reviewing a session. They belong to the log, so
+    /// promoting the session's shape to the plan can never carry them into a saved plan revision.
+    private var sessionNotesBinding: Binding<String> {
+        Binding(
+            get: { store.currentLog?.notesText ?? "" },
+            set: { value in
+                store.editLog { $0.setNotes(value) }
+            }
+        )
     }
 
     private func finishEditing() {

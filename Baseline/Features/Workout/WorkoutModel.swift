@@ -173,6 +173,36 @@ struct CoachGuidance: Codable, Equatable, Sendable {
     var progressionNotes: String?
 }
 
+extension CoachGuidance {
+    /// Every note this guidance carries, in display order, as one block of text. Blank components are
+    /// dropped; the rest is returned exactly as stored, so a field bound to this value round-trips
+    /// whatever the athlete typed instead of normalizing it away between keystrokes.
+    var notesText: String {
+        var notes: [String] = []
+        Self.append(goal, to: &notes)
+        Self.append(tempo, to: &notes)
+        notes.append(contentsOf: formCues.filter(Self.isMeaningful))
+        notes.append(contentsOf: commonMistakes.filter(Self.isMeaningful))
+        Self.append(progressionNotes, to: &notes)
+        return notes.joined(separator: "\n\n")
+    }
+
+    /// The guidance one edited notes field represents. The raw text is stored; only the emptiness test
+    /// trims, so trailing spaces and newlines survive.
+    static func notes(from text: String) -> CoachGuidance? {
+        isMeaningful(text) ? CoachGuidance(formCues: [text]) : nil
+    }
+
+    private static func append(_ note: String?, to notes: inout [String]) {
+        guard let note, isMeaningful(note) else { return }
+        notes.append(note)
+    }
+
+    private static func isMeaningful(_ note: String) -> Bool {
+        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var exerciseName: String
@@ -620,6 +650,9 @@ struct PerformedExercise: Identifiable, Codable, Equatable, Sendable {
     var reason: String?
     var setLogs: [SetLog] = []
     var athleteNotes: [String] = []
+
+    /// The session notes for this exercise as one block of editable text.
+    var notesText: String { WorkoutLog.notesText(athleteNotes) }
 }
 
 /// One logged actual removed by a structural session edit, with enough context to re-insert exactly
@@ -864,6 +897,29 @@ extension WorkoutLog {
         exercises[index(forPlanned: plannedID, name: name)].athleteNotes.append(note)
     }
 
+    /// Replace one exercise's session notes with the athlete's edited text. Session notes are facts
+    /// about the performance, so they live here and never on the planned `CoachGuidance` — that split
+    /// is what keeps an in-session note from riding along when a session is promoted to the plan.
+    /// Clearing the field never conjures a performed record for an exercise that has none.
+    mutating func setNotes(_ text: String, forPlanned plannedID: UUID, name: String) {
+        let isBlank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !isBlank || performed(forPlanned: plannedID) != nil else { return }
+        exercises[index(forPlanned: plannedID, name: name)].athleteNotes = isBlank ? [] : [text]
+    }
+
+    /// Replace the workout-level session notes with the athlete's edited text.
+    mutating func setNotes(_ text: String) {
+        athleteNotes = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [text]
+    }
+
+    /// The workout-level session notes as one block of editable text.
+    var notesText: String { Self.notesText(athleteNotes) }
+
+    static func notesText(_ notes: [String]) -> String {
+        notes.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
+    }
+
     mutating func updateSetLog(_ id: UUID, _ transform: (inout SetLog) -> Void) {
         for e in exercises.indices {
             if let s = exercises[e].setLogs.firstIndex(where: { $0.id == id }) { transform(&exercises[e].setLogs[s]); return }
@@ -941,10 +997,22 @@ extension WorkoutLog {
         }
     }
 
-    /// Whether the log holds any actually-logged set for a planned exercise — the signal for confirming
-    /// before a destructive true-remove would discard real logged work.
+    /// Whether the log holds anything the athlete recorded for a planned exercise — logged sets or a
+    /// session note. This is the signal for confirming before a destructive true-remove would discard
+    /// real logged work, and a note they typed is real logged work.
     func hasLoggedWork(forPlanned plannedID: UUID) -> Bool {
+        hasLoggedSets(forPlanned: plannedID) || hasSessionNote(forPlanned: plannedID)
+    }
+
+    /// Whether any logged *set* exists for a planned exercise. Split from `hasLoggedWork` so a discard
+    /// warning can name exactly what it is about to throw away.
+    func hasLoggedSets(forPlanned plannedID: UUID) -> Bool {
         performed(forPlanned: plannedID)?.setLogs.contains { !$0.values.isEmpty || $0.completed } ?? false
+    }
+
+    /// Whether the athlete wrote a session note for a planned exercise.
+    func hasSessionNote(forPlanned plannedID: UUID) -> Bool {
+        !(performed(forPlanned: plannedID)?.notesText.isEmpty ?? true)
     }
 
     /// The set-log rows present in `before` but gone from `after` — the exact actuals a structural

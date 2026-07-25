@@ -34,15 +34,15 @@ struct WorkoutPresentationFormatterTests {
         #expect(WorkoutPresentationFormatter.groupExecutionSummary(group.execution) == nil)
     }
 
-    @Test func numericImportArtifactsAreNotShownAsInstructions() {
+    @Test func numericImportArtifactsAreNotShownAsTargets() {
         var exercise = PlannedExercise(exerciseName: "Treadmill Run")
         exercise.prescription.intensityTargets = [
             .descriptive("1"),
+            .descriptive("  "),
             .descriptive("Very easy pace"),
         ]
-        exercise.guidance = CoachGuidance(formCues: ["Very easy pace"])
 
-        #expect(WorkoutPresentationFormatter.exerciseInstructions(exercise) == ["Very easy pace"])
+        #expect(WorkoutPresentationFormatter.structuredIntensityTargets(exercise) == ["Very easy pace"])
     }
 
     @Test func editReviewSeparatesStructuredIntensityFromQualitativeLoadTargets() {

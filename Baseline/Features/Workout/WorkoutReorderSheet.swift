@@ -65,7 +65,7 @@ struct WorkoutReorderSheet: View {
             Button("Cancel", role: .cancel) { blockPendingDeletion = nil }
         } message: { block in
             Text(store.hasLoggedWork(inBlock: block.id)
-                 ? "This removes the block and the sets you have already logged in it."
+                 ? "This removes the block and the work you have already logged in it."
                  : "This removes the block and its exercises from this workout.")
         }
     }

@@ -184,4 +184,10 @@ struct ExercisePerformance: Identifiable, Codable, Equatable, Sendable {
     var exerciseDefinitionID: String?     // stable catalog identity
     var exerciseName: String
     var sets: [MetricValues]              // per-set actuals
+
+    /// Whether the athlete logged any set here at all. A performed record can exist purely to hold a
+    /// session note or a status, and such a row has no sets — showing it as history says only that
+    /// they typed something. A set ticked complete with no numbers in it (an imported workout whose
+    /// prescription is coach text such as "6-8 reps") is training that happened, so it stays.
+    var hasLoggedSets: Bool { !sets.isEmpty }
 }

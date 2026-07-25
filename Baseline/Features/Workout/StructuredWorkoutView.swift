@@ -235,15 +235,6 @@ private struct WorkoutGroupHeader: View {
 
             if mode.isEditing {
                 groupExecutionEditor
-                TextField("Add group notes", text: groupGuidanceBinding, axis: .vertical)
-                    .font(.subheadline)
-                    .foregroundStyle(BaselineColor.textMid)
-                    .lineLimit(2...10)
-                    .accessibilityLabel("Notes for \(group.label)")
-            } else if let guidance = group.guidance {
-                WorkoutInstructionText(
-                    lines: [guidance.goal].compactMap { $0 } + guidance.formCues
-                )
             }
 
             if showsLogger {
@@ -309,31 +300,6 @@ private struct WorkoutGroupHeader: View {
             get: { store.current?.allGroups.first(where: { $0.id == group.id })?.label ?? group.label },
             set: { value in store.edit(mode.editScope) { $0.updateGroup(group.id) { $0.label = value } } }
         )
-    }
-
-    private var groupGuidanceBinding: Binding<String> {
-        Binding(
-            get: {
-                store.current?.allGroups.first(where: { $0.id == group.id })?.guidance?.formCues
-                    .joined(separator: "\n\n") ?? ""
-            },
-            set: { value in
-                store.edit(mode.editScope) { workout in
-                    workout.updateGroup(group.id) { updated in
-                        updated.guidance = updatedGuidance(updated.guidance, notesText: value)
-                    }
-                }
-            }
-        )
-    }
-
-    private func updatedGuidance(_ current: CoachGuidance?, notesText: String) -> CoachGuidance? {
-        var guidance = current ?? CoachGuidance()
-        let notes = notesText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guidance.formCues = notes.isEmpty ? [] : [notes]
-        let isEmpty = guidance.goal == nil && guidance.tempo == nil && guidance.formCues.isEmpty
-            && guidance.commonMistakes.isEmpty && guidance.progressionNotes == nil
-        return isEmpty ? nil : guidance
     }
 
     private func updateRepetition(_ repetition: RepetitionRule) {
@@ -842,19 +808,23 @@ private struct WorkoutExerciseSection: View {
                 skippedState
             } else {
                 if mode.isEditing {
-                    TextField("Add exercise notes", text: exerciseGuidanceBinding, axis: .vertical)
-                        .font(.subheadline)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .lineLimit(2...10)
-                        .accessibilityLabel("Notes for \(presentedExercise.exerciseName)")
-                    structuredTargets
-                } else {
-                    WorkoutInstructionText(
-                        lines: WorkoutPresentationFormatter.exerciseInstructions(presentedExercise),
-                        placeholder: "Add notes here..."
+                    WorkoutNotesField(
+                        prompt: "Add notes here...",
+                        text: plannedNotesBinding,
+                        accessibilityLabel: "Notes for \(presentedExercise.exerciseName)"
                     )
+                } else {
+                    plannedNotesText
+                    if mode.usesPerformedData {
+                        WorkoutNotesField(
+                            prompt: "Add notes here...",
+                            text: sessionNotesBinding,
+                            accessibilityLabel: "Notes for \(presentedExercise.exerciseName)"
+                        )
+                    }
                 }
 
+                structuredTargets
                 qualitativeTargets
 
                 setTable
@@ -865,9 +835,6 @@ private struct WorkoutExerciseSection: View {
                     addPerformedSetButton
                 }
 
-                if mode.usesPerformedData {
-                    performedNotes
-                }
             }
         }
         .padding(.vertical, 14)
@@ -889,12 +856,12 @@ private struct WorkoutExerciseSection: View {
             isPresented: $showRemoveConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Remove and Discard Sets", role: .destructive) {
+            Button(removeConfirmationTitle, role: .destructive) {
                 store.removeExerciseFromWorkout(exercise.id, scope: mode.editScope)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You have already logged sets for this exercise. Removing it from this workout discards them.")
+            Text(removeConfirmationMessage)
         }
     }
 
@@ -908,7 +875,6 @@ private struct WorkoutExerciseSection: View {
                         .font(.headline)
                         .foregroundStyle(BaselineColor.accent)
                         .fixedSize(horizontal: false, vertical: true)
-                    statusChip
                 }
 
                 if workoutDisplayLabel != nil {
@@ -929,18 +895,6 @@ private struct WorkoutExerciseSection: View {
         }
     }
 
-    @ViewBuilder private var statusChip: some View {
-        if adjustment?.outcome == .skipped {
-            Text("Removed").workoutChip(color: BaselineColor.zoneAmber)
-        } else if adjustment?.outcome == .substituted {
-            Text("Substituted").workoutChip(color: BaselineColor.accent)
-        } else if groupID == nil, let status = performed?.status, status != .pending {
-            let presentation = status.presentation
-            Text(presentation.label)
-                .workoutChip(color: presentation.color)
-        }
-    }
-
     private var skippedState: some View {
         HStack(spacing: 10) {
             Text(skippedStateLabel)
@@ -956,27 +910,28 @@ private struct WorkoutExerciseSection: View {
         }
     }
 
+    private var removeConfirmationTitle: String {
+        switch (store.hasLoggedSets(forExercise: exercise.id), store.hasSessionNote(forExercise: exercise.id)) {
+        case (true, true): "Remove and Discard Sets and Note"
+        case (false, true): "Remove and Discard Note"
+        default: "Remove and Discard Sets"
+        }
+    }
+
+    private var removeConfirmationMessage: String {
+        switch (store.hasLoggedSets(forExercise: exercise.id), store.hasSessionNote(forExercise: exercise.id)) {
+        case (true, true):
+            "You have already logged sets and written a note for this exercise. Removing it from this workout discards both."
+        case (false, true):
+            "You have written a note for this exercise. Removing it from this workout discards it."
+        default:
+            "You have already logged sets for this exercise. Removing it from this workout discards them."
+        }
+    }
+
     private var skippedStateLabel: String {
         guard groupID != nil else { return "Removed from this workout" }
         return adjustment?.iteration == nil ? "Removed from every round" : "Removed from this round"
-    }
-
-    private var performedNotes: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(performed?.athleteNotes ?? [], id: \.self) { note in
-                Text(note)
-                    .font(.subheadline)
-                    .italic()
-                    .foregroundStyle(BaselineColor.textMid)
-            }
-            if mode.isLogging {
-                WorkoutNoteEntry(prompt: "Add session note…") { note in
-                    store.editLog {
-                        $0.addNote(note, forPlanned: exercise.id, name: presentedExercise.exerciseName)
-                    }
-                }
-            }
-        }
     }
 
     @ViewBuilder private var qualitativeTargets: some View {
@@ -1001,6 +956,24 @@ private struct WorkoutExerciseSection: View {
             .font(.subheadline)
             .foregroundStyle(BaselineColor.textMid)
             .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder private var plannedNotesText: some View {
+        let notes = plannedNotesValue
+        if !notes.isEmpty {
+            if mode.usesPerformedData {
+                WorkoutPlanNote(
+                    text: notes,
+                    accessibilityLabel: "Plan note for \(presentedExercise.exerciseName)"
+                )
+            } else {
+                Text(notes)
+                    .font(.subheadline)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Notes for \(presentedExercise.exerciseName). \(notes)")
+            }
         }
     }
 
@@ -1605,29 +1578,40 @@ private struct WorkoutExerciseSection: View {
         }
     }
 
-    private var exerciseGuidanceBinding: Binding<String> {
+    /// The planned coach notes, edited only where the plan itself is being edited.
+    private var plannedNotesBinding: Binding<String> {
         Binding(
-            get: {
-                store.current?.exercise(exercise.id)?.guidance?.formCues
-                    .joined(separator: "\n\n") ?? ""
-            },
+            get: { plannedNotesValue },
             set: { value in
                 store.edit(mode.editScope) { workout in
                     workout.updateExercise(exercise.id) { updated in
-                        updated.guidance = updatedGuidance(updated.guidance, notesText: value)
+                        updated.guidance = CoachGuidance.notes(from: value)
                     }
                 }
             }
         )
     }
 
-    private func updatedGuidance(_ current: CoachGuidance?, notesText: String) -> CoachGuidance? {
-        var guidance = current ?? CoachGuidance()
-        let notes = notesText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guidance.formCues = notes.isEmpty ? [] : [notes]
-        let isEmpty = guidance.goal == nil && guidance.tempo == nil && guidance.formCues.isEmpty
-            && guidance.commonMistakes.isEmpty && guidance.progressionNotes == nil
-        return isEmpty ? nil : guidance
+    /// What the athlete writes while logging or reviewing a session. It is a performed fact, so it is
+    /// written to the log's own record and never to the planned guidance — a session note is
+    /// structurally unable to reach the plan, including through the completion "Update Plan" opt-in.
+    private var sessionNotesBinding: Binding<String> {
+        Binding(
+            get: { performed?.notesText ?? "" },
+            set: { value in
+                store.editLog { log in
+                    log.setNotes(
+                        value,
+                        forPlanned: exercise.id,
+                        name: presentedExercise.exerciseName
+                    )
+                }
+            }
+        )
+    }
+
+    private var plannedNotesValue: String {
+        store.current?.exercise(exercise.id)?.guidance?.notesText ?? ""
     }
 
     @ViewBuilder private func exerciseSheet(_ destination: ExerciseSheet) -> some View {
@@ -2004,33 +1988,6 @@ private enum ExerciseSheet: Identifiable {
     }
 }
 
-private struct WorkoutNoteEntry: View {
-    let prompt: String
-    let onSubmit: (String) -> Void
-    @State private var text = ""
-
-    var body: some View {
-        HStack(spacing: 8) {
-            TextField(prompt, text: $text)
-                .font(.body)
-                .foregroundStyle(BaselineColor.textHi)
-                .onSubmit(submit)
-            if !text.isEmpty {
-                Button("Add", action: submit)
-                    .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44)
-            }
-        }
-    }
-
-    private func submit() {
-        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !note.isEmpty else { return }
-        onSubmit(note)
-        text = ""
-    }
-}
-
 // MARK: - Presentation helpers
 
 private extension WorkoutNode {
@@ -2128,18 +2085,6 @@ private extension SetRole {
         case .top: "T"
         case .backoff: "B"
         case .drop: "D"
-        }
-    }
-}
-
-private extension PerformedStatus {
-    var presentation: (label: String, color: Color) {
-        switch self {
-        case .pending: ("", BaselineColor.textFaint)
-        case .completed: ("Done", BaselineColor.zoneGreen)
-        case .skipped: ("Skipped", BaselineColor.zoneAmber)
-        case .substituted: ("Subbed", BaselineColor.accent)
-        case .modified: ("Modified", BaselineColor.accent)
         }
     }
 }
