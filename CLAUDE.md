@@ -80,6 +80,7 @@ Once a session is live, structural and prescription edits (add, true-remove, rep
 They reach the plan only when the user opts in at completion, where Baseline diffs performed-vs-planned and offers to update this scheduled workout's plan revision.
 A source saved template is a separate immutable object and is deliberately left untouched; propagating promoted edits back to it is a follow-up.
 Logging different actuals is not a plan change and must never trigger that prompt, and neither is skipping an exercise.
+A note typed while logging or reviewing a session is a performed fact too: those fields write to the log through `WorkoutLog.setNotes`, never to the planned `CoachGuidance`, so a session note is structurally unable to reach a plan revision.
 A true removal must also purge the exercise's performed record so completion cannot resurrect sets the user deleted.
 See `WorkoutSessionReconciliation` and the reconciliation section of `WorkoutStore`.
 
