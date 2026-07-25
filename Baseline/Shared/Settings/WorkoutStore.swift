@@ -64,6 +64,26 @@ final class WorkoutStore {
     private(set) var currentLogStartedAt: Date? {
         didSet { persist(currentLogStartedAt, Self.logStartedAtKey) }
     }
+    /// The finish instant and the log it describes, persisted together.
+    ///
+    /// A standalone log has no plan record to read a finish time back from, so without this a completed
+    /// workout reopened tomorrow would have to guess — and "now" is the one answer that is always wrong.
+    /// Carrying the log's identity is what makes the value safe to keep and cheap to reuse: a reload can
+    /// tell "already resolved" from "belongs to another session" without re-reading the plan's completed
+    /// record, and a value left behind by an earlier session can never be read as this one's.
+    private struct LogFinish: Codable, Equatable {
+        var logID: UUID
+        var finishedAt: Date
+    }
+    private var logFinish: LogFinish? {
+        didSet { persist(logFinish, Self.logFinishKey) }
+    }
+
+    /// The instant the current log was finished, or nil when this log is not a completed one.
+    var currentLogFinishedAt: Date? {
+        guard let logFinish, let log = currentLog, log.isComplete, logFinish.logID == log.id else { return nil }
+        return logFinish.finishedAt
+    }
 
     // MARK: - Plan binding (this store is the shared editing surface; a sink write-throughs to the repo)
 
@@ -91,6 +111,7 @@ final class WorkoutStore {
         let resolveSessionDecision: () -> Void
         let resolveAbandonedSessionDecision: () -> Void
         let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
+        let completed: () -> CompletedWorkoutLog?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
 
         init(
@@ -111,6 +132,7 @@ final class WorkoutStore {
             resolveSessionDecision: @escaping () -> Void,
             resolveAbandonedSessionDecision: @escaping () -> Void,
             reload: @escaping () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?,
+            completed: (() -> CompletedWorkoutLog?)? = nil,
             planWorkout: @escaping () -> Workout?
         ) {
             self.pushWorkout = pushWorkout
@@ -175,6 +197,7 @@ final class WorkoutStore {
             self.resolveSessionDecision = resolveSessionDecision
             self.resolveAbandonedSessionDecision = resolveAbandonedSessionDecision
             self.reload = reload
+            self.completed = completed ?? { nil }
             self.planWorkout = planWorkout
         }
     }
@@ -217,7 +240,24 @@ final class WorkoutStore {
         current = s.workout
         currentLog = s.log
         currentLogStartedAt = s.startedAt
+        resolveFinishInstantFromPlan()
         isSyncing = false
+    }
+
+    /// Read the plan's finish instant for a completed session, at most once per completion.
+    ///
+    /// `reloadFromPlan` runs on ~20 paths; re-reading the frozen completed record on each of them to
+    /// recover a `Date` that cannot change would be a SwiftData fetch and a full log decode for nothing.
+    /// A session that is live again (resumed) drops its instant here, so completing it a second time
+    /// resolves the new one rather than keeping the first.
+    private func resolveFinishInstantFromPlan() {
+        guard let log = currentLog, log.isComplete else {
+            logFinish = nil
+            return
+        }
+        guard logFinish?.logID != log.id else { return }
+        guard let finishedAt = sink?.completed()?.finishedAt else { return }
+        logFinish = LogFinish(logID: log.id, finishedAt: finishedAt)
     }
 
     /// Push the buffered plan edit (the manual editor calls this on dismiss), then clear the buffer.
@@ -354,6 +394,7 @@ final class WorkoutStore {
     private static let key = "workout.current"
     private static let logKey = "workout.currentLog"
     private static let logStartedAtKey = "workout.currentLogStartedAt"
+    private static let logFinishKey = "workout.currentLogFinish"
     private static let prefKey = "workout.preferences"
     private static let customKey = "workout.customDefinitions"
     private static let recentKey = "workout.recentExercises"
@@ -368,6 +409,9 @@ final class WorkoutStore {
         currentLog = defaults.data(forKey: Self.logKey).flatMap { try? JSONDecoder().decode(WorkoutLog.self, from: $0) }
         currentLogStartedAt = defaults.data(forKey: Self.logStartedAtKey).flatMap {
             try? JSONDecoder().decode(Date.self, from: $0)
+        }
+        logFinish = defaults.data(forKey: Self.logFinishKey).flatMap {
+            try? JSONDecoder().decode(LogFinish.self, from: $0)
         }
         preferences = defaults.data(forKey: Self.prefKey).flatMap { try? JSONDecoder().decode(ExercisePreferences.self, from: $0) } ?? ExercisePreferences()
         customDefinitions = defaults.data(forKey: Self.customKey).flatMap { try? JSONDecoder().decode([ExerciseDefinition].self, from: $0) } ?? []
@@ -384,6 +428,7 @@ final class WorkoutStore {
         current = transientWorkout
         currentLog = nil
         currentLogStartedAt = nil
+        logFinish = nil
         preferences = source.preferences
         customDefinitions = source.customDefinitions
         recentExerciseIds = source.recentExerciseIds
@@ -500,8 +545,17 @@ final class WorkoutStore {
     /// endurance unit. Any floor movement in the mix — or no distance-bearing movement at all, which
     /// is absence of evidence rather than evidence of endurance — puts the whole total back in meters.
     func displayUnit(_ metric: MetricType, forTotalsIn group: WorkoutGroup) -> MetricUnit {
+        displayUnit(metric, forTotalsAcross: group.children.flatMap(\.exercises))
+    }
+
+    /// The same composition rule for a whole workout's total — what a share card's DISTANCE stat is.
+    func displayUnit(_ metric: MetricType, forTotalsIn workout: Workout) -> MetricUnit {
+        displayUnit(metric, forTotalsAcross: workout.allExercises)
+    }
+
+    private func displayUnit(_ metric: MetricType, forTotalsAcross exercises: [PlannedExercise]) -> MetricUnit {
         guard metric == .distance else { return displayUnit(metric) }
-        let distanceMovements = group.children.flatMap(\.exercises)
+        let distanceMovements = exercises
             .map(resolvedDefinition(for:))
             .filter { $0.supported.contains(.distance) }
         guard !distanceMovements.isEmpty,
@@ -585,6 +639,7 @@ final class WorkoutStore {
         } else {
             guard let w = current, currentLog == nil else { return }
             currentLogStartedAt = Date()
+            logFinish = nil
             currentLog = w.startLog()
         }
     }
@@ -601,8 +656,16 @@ final class WorkoutStore {
     /// plan resolves it here, because no prompt will ever appear to resolve it later. Required, not
     /// defaulted: a caller that omitted it would silently close a prompt that had not been shown yet.
     func completeWorkout(awaitingReconciliationDecision: Bool) {
+        let finishedAt = Date()
+        if let log = currentLog, !log.isComplete, logFinish?.logID == log.id { logFinish = nil }
         if let sink { sink.complete(); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
+        // Completing can be refused — no live session to complete, or no log to mark — so the instant is
+        // recorded only for a log that actually came out complete. The plan path has already taken the
+        // plan's own instant through `reloadFromPlan`; this is the standalone fallback.
+        if let log = currentLog, log.isComplete, logFinish == nil {
+            logFinish = LogFinish(logID: log.id, finishedAt: finishedAt)
+        }
         if !awaitingReconciliationDecision { sink?.resolveSessionDecision() }
     }
 
@@ -723,6 +786,7 @@ final class WorkoutStore {
             isSyncing = true
             currentLog = nil
             currentLogStartedAt = nil
+            logFinish = nil
             isSyncing = false
             return
         }
@@ -1086,15 +1150,19 @@ final class WorkoutStore {
                 isSyncing = true
                 currentLog = nil
                 currentLogStartedAt = nil
+                logFinish = nil
                 isSyncing = false
             }
             return outcome
         } else if let make = makeTodayScheduled, let newSink = make(w) {
             // Nothing scheduled today yet → the factory already put `w` in the plan; bind without re-pushing.
             sink = newSink; coalesceContent = false; pendingPlanEdit = nil
-            isSyncing = true; current = w; currentLog = nil; currentLogStartedAt = nil; isSyncing = false
+            isSyncing = true
+            current = w; currentLog = nil; currentLogStartedAt = nil; logFinish = nil
+            isSyncing = false
         } else {
-            current = w; currentLog = nil; currentLogStartedAt = nil   // standalone (no plan)
+            // standalone (no plan)
+            current = w; currentLog = nil; currentLogStartedAt = nil; logFinish = nil
         }
         return .done
     }

@@ -290,7 +290,7 @@ jobs:
       # a plain UILabel - reports zero accessibility elements, so all seven
       # render suites see a blank screen and fail. The preference is read at app
       # launch, so it has to be written before xcodebuild starts the host app.
-      - name: Enable simulator accessibility
+      - name: Prepare simulator privacy state
         env:
           SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
         shell: bash
@@ -301,6 +301,15 @@ jobs:
           xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool true
           xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.Accessibility AccessibilityEnabled -bool true
           xcrun simctl spawn "$SIMULATOR_ID" defaults read com.apple.Accessibility
+
+          # The share composer's save-to-Photos leg needs add-only authorization,
+          # which a developer's long-lived simulator was granted once and a
+          # runner's fresh device reports as notDetermined. There is no in-test
+          # way to get it: requesting it raises a system alert no test can
+          # answer. TCC is keyed by bundle id and survives the install, so the
+          # grant is applied here rather than after xcodebuild puts the app on
+          # the device.
+          xcrun simctl privacy "$SIMULATOR_ID" grant photos-add com.tylerpavay.Baseline
 
       - name: Build and test
         run: |

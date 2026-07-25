@@ -110,8 +110,11 @@
 		     and overlapping screenshots that must be stitched rather than concatenated.
 		     Linked = false: the photos are relayed in memory and never written to Firestore, Cloud
 		     Storage, or logs, so Baseline never associates the images with the athlete's identity.
-		     This is a data type, not a permission - Baseline picks photos through PhotosPicker and
-		     holds no photo-library access. `AppStoreValidationTests` pins this entry. -->
+		     This is a data type, not a read permission - Baseline picks photos through PhotosPicker
+		     and never reads the library. The one library permission Baseline holds is add-only,
+		     requested when the athlete saves a share card (`NSPhotoLibraryAddUsageDescription`); that
+		     image stays on the device and reaches no one, so it adds nothing to this list.
+		     `AppStoreValidationTests` pins this entry. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypePhotosorVideos</string>

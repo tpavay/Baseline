@@ -258,6 +258,7 @@ final class PlanStore {
                 // its own destination.
                 return (session.workout ?? sw.workout, session.log, session.startedAt)
             },
+            completed: { [weak self] in self?.completed(for: id) },
             planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
     }
 

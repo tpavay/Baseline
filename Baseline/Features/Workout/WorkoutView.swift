@@ -25,6 +25,10 @@ struct WorkoutView: View {
     @State private var isEditingTemplate = false
     @State private var editSnapshot: Workout?
     @State private var showChat = false
+    /// Captured when the athlete taps Share, never derived in `body`: building it reads the plan's
+    /// completed record and re-aggregates every set, and holding it also means the composer cannot be
+    /// left on screen with nothing in it if the store's session state changes underneath.
+    @State private var shareRequest: ShareComposerRequest?
     @State private var showFinishConfirmation = false
     @State private var showDiscardConfirmation = false
     @State private var showSaveTemplate = false
@@ -66,6 +70,9 @@ struct WorkoutView: View {
         }
         .tint(BaselineColor.accent)
         .sheet(isPresented: $showChat) { AskBaselineSheet(surface: .workout) }
+        .fullScreenCover(item: $shareRequest) { request in
+            ShareComposerView(summary: request.summary, units: request.units)
+        }
         .alert("Save as template", isPresented: $showSaveTemplate) {
             TextField("Template name", text: $templateName)
             Button("Save") { saveTemplate() }
@@ -216,6 +223,32 @@ struct WorkoutView: View {
         return "Workout"
     }
 
+    /// Cheap enough for `body`: it only reads stored store state. The summary itself is built once, on
+    /// tap, in `presentShareComposer`.
+    private var canShareWorkout: Bool {
+        mode == .completed && store.currentLogStartedAt != nil && store.currentLogFinishedAt != nil
+    }
+
+    private func presentShareComposer() {
+        guard let workout = store.current,
+              let log = store.currentLog,
+              log.isComplete,
+              let startedAt = store.currentLogStartedAt,
+              let finishedAt = store.currentLogFinishedAt
+        else { return }
+        let units = ShareUnitResolver(workout: workout, store: store)
+        shareRequest = ShareComposerRequest(
+            summary: WorkoutLogSummary(
+                title: workout.title,
+                log: log,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                units: units
+            ),
+            units: units
+        )
+    }
+
     @ViewBuilder private var navigationTitleView: some View {
         if mode == .log, let startedAt = store.currentLogStartedAt {
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -280,6 +313,12 @@ struct WorkoutView: View {
                             if mode == .view {
                                 startButton
                                     .padding(.bottom, 22)
+                            }
+
+                            if canShareWorkout {
+                                Button("Share workout", systemImage: "square.and.arrow.up", action: presentShareComposer)
+                                    .buttonStyle(InstrumentOutlineButtonStyle(color: BaselineColor.textHi))
+                                    .padding(.bottom, 18)
                             }
 
                             ForEach(workout.blocks) { block in
