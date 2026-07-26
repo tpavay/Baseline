@@ -92,6 +92,9 @@ struct PlanWeekPresentation: Equatable, Sendable {
             let date = calendar.startOfDay(for: day.date)
             let isToday = calendar.isDate(date, inSameDayAs: startOfToday)
             let isPast = date < startOfToday
+            let dayHasCompletedSession = day.sessions.contains {
+                statuses[$0.id] == .completed
+            }
             let entries = day.sessions.map { session in
                 let status = statuses[session.id] ?? .planned
                 return PlanSessionEntry(
@@ -99,7 +102,7 @@ struct PlanWeekPresentation: Equatable, Sendable {
                     title: session.workout.title,
                     detail: detail(for: session, isCompleted: status == .completed),
                     status: status,
-                    showsReorderHandle: status != .completed && !isPast
+                    showsReorderHandle: dayHasCompletedSession == false && !isPast
                 )
             }
             return PlanDayRow(

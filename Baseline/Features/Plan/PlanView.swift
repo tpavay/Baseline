@@ -17,14 +17,20 @@ struct PlanView: View {
     /// on each access, and the day-derived cache is rebuilt whenever the calendar day turns over -
     /// on foreground and on `NSCalendarDayChanged` - so the tab never leaves yesterday marked today.
     var now: () -> Date = { Date() }
+    /// Render-only seam used by app-hosted tests to capture the otherwise transient lift and
+    /// mid-drag states. Production always leaves this nil; schedule mutation tests drive real writes.
+    var dragEvidence: DragEvidence? = nil
 
     @Environment(PlanStore.self) private var plan
     @Environment(AppSettings.self) private var settings
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var execContext: ExecContext?
     @State private var showChat = false
-    @State private var dropTargetDate: Date?
-    @State private var pendingDrop: PendingDrop?
+    @State private var dragState: DragState?
+    @State private var sessionFrames: [UUID: CGRect] = [:]
+    @State private var dayFrames: [Date: CGRect] = [:]
+    @State private var evidenceDragInstalled = false
     @State private var deleteTarget: DeleteTarget?
     @State private var undoMessage: String?
     @State private var importContext: ImportContext?
@@ -63,8 +69,27 @@ struct PlanView: View {
         /// log purges the placeholder instead of keeping a blank scheduled workout on the day.
         var isProvisionalEmpty = false
     }
-    /// A drag dropped onto a day that already has session(s) — resolved via an action sheet.
-    struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
+    struct DragState {
+        let sourceID: UUID
+        let sourceRow: PlanDayRow
+        let sourceIndex: Int
+        let sourceShowsDate: Bool
+        let entry: PlanSessionEntry
+        let sourceFrame: CGRect
+        var translation: CGSize = .zero
+        var target: PlanDragReorderModel.Target = .noChange
+    }
+    struct DragEvidence {
+        let sourceID: UUID
+        let destinationDate: Date?
+        let destinationIndex: Int
+
+        init(sourceID: UUID, destinationDate: Date? = nil, destinationIndex: Int = 0) {
+            self.sourceID = sourceID
+            self.destinationDate = destinationDate
+            self.destinationIndex = destinationIndex
+        }
+    }
     struct DeleteTarget: Identifiable { let id = UUID(); let sw: ScheduledWorkout; let proposalID: UUID }
     struct ImportContext: Identifiable { let id = UUID(); let date: Date; var source: WorkoutImportImageSource? }
     struct AddContext: Identifiable { let id = UUID(); let date: Date }
@@ -90,7 +115,9 @@ struct PlanView: View {
                 }
 
                 if let msg = undoMessage { undoBar(msg) }
+                if let dragState { liftedSession(dragState) }
             }
+            .coordinateSpace(name: "planDrag")
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { calendarToolbar }
@@ -123,13 +150,6 @@ struct PlanView: View {
             Button("Delete", role: .destructive) { apply(plan.delete(t.sw.id, proposalID: t.proposalID), "Deleted"); deleteTarget = nil }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: { t in Text("This removes \(t.sw.workout.title) from the plan. You can undo it.") }
-        .confirmationDialog("Drop onto this day", isPresented: Binding(get: { pendingDrop != nil }, set: { if !$0 { pendingDrop = nil } }), presenting: pendingDrop) { pd in
-            Button("Move here") { apply(plan.move(pd.dragged, toDate: pd.day), "Moved"); pendingDrop = nil }
-            if pd.existing.count == 1 {
-                Button("Swap with \(pd.existing[0].workout.title)") { apply(plan.swap(pd.dragged, pd.existing[0].id), "Swapped"); pendingDrop = nil }
-            }
-            Button("Cancel", role: .cancel) { pendingDrop = nil }
-        }
         .task(id: undoMessage) {
             guard undoMessage != nil else { return }
             try? await Task.sleep(for: .seconds(4))
@@ -354,13 +374,26 @@ struct PlanView: View {
             .padding(.bottom, BaselineSpacing.screenBottom)
         }
         .scrollIndicators(.hidden)
+        .onPreferenceChange(PlanDragGeometryPreferences.SessionFrames.self) { frames in
+            if dragState == nil {
+                sessionFrames = frames
+                installEvidenceDragIfReady()
+            }
+        }
+        .onPreferenceChange(PlanDragGeometryPreferences.DayFrames.self) { frames in
+            if dragState == nil {
+                dayFrames = frames
+                installEvidenceDragIfReady()
+            }
+        }
     }
 
     /// A day is a stack of full-width cells sharing one top rule: its sessions (plus an "add a second"
     /// cell on today and future days), or its rest marker, or the single "+" of an undecided day.
     private func dayGroup(_ row: PlanDayRow) -> some View {
         let pendingReview = reviewableImport(for: row.date)
-        let isDropTarget = dropTargetDate.map { cal.isDate($0, inSameDayAs: row.date) } ?? false
+        let insertion = insertionDestination(for: row)
+        let lockText = dragLockText(for: row)
         return VStack(spacing: 0) {
             Hairline(color: BaselineColor.line.opacity(0.7))
             if let pendingReview {
@@ -369,30 +402,54 @@ struct PlanView: View {
             switch row.content {
             case .sessions(let entries):
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    if insertion?.displayIndex == index {
+                        insertionIndicator
+                    }
                     if let scheduled = sessionByID[entry.id] {
                         sessionCell(row, entry,
                                     scheduled: scheduled,
                                     showsDate: pendingReview == nil && index == 0,
-                                    isDropTarget: isDropTarget)
+                                    index: index)
                     }
+                }
+                if insertion?.displayIndex == entries.count {
+                    insertionIndicator
                 }
                 if row.showsAddAnother {
                     addAnotherCell(row)
                 }
             case .rest:
+                if insertion != nil { insertionIndicator }
                 restCell(row, showsDate: pendingReview == nil)
             case .empty:
+                if insertion != nil { insertionIndicator }
                 if pendingReview == nil { emptyCell(row) }
             }
         }
-        .background(isDropTarget ? BaselineColor.accent.opacity(0.12) : .clear)
-        .opacity(row.isToday ? 1 : mutedDayOpacity)
-        .dropDestination(for: String.self) { items, _ in
-            guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
-            return drop(dragged, on: row.date)
-        } isTargeted: { targeted in
-            dropTargetDate = targeted ? row.date : nil
+        .frame(maxWidth: .infinity)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: PlanDragGeometryPreferences.DayFrames.self,
+                    value: [cal.startOfDay(for: row.date): proxy.frame(in: .named("planDrag"))]
+                )
+            }
         }
+        .overlay(alignment: .trailing) {
+            if let lockText {
+                Label(lockText, systemImage: "lock.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(BaselineColor.textMid)
+                    .padding(.horizontal, BaselineSpacing.xSmall)
+                    .padding(.vertical, BaselineSpacing.xxxSmall)
+                    .background(Capsule().fill(BaselineColor.surface))
+                    .overlay(Capsule().strokeBorder(BaselineColor.line, lineWidth: BaselineSize.hairline))
+                    .padding(.trailing, BaselineSpacing.large)
+                    .accessibilityLabel(lockText)
+            }
+        }
+        .opacity(lockText == nil ? (row.isToday || insertion != nil ? 1 : mutedDayOpacity) : 0.48)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: insertion)
     }
 
     /// The shared cell scaffold: a leading date column (blank but reserved on a day's later cells so
@@ -447,70 +504,391 @@ struct PlanView: View {
         _ entry: PlanSessionEntry,
         scheduled: ScheduledWorkout,
         showsDate: Bool,
-        isDropTarget: Bool
+        index: Int
     ) -> some View {
-        WorkoutSwipeActionRow(
-            actionTitle: "Delete",
-            systemImage: "trash",
-            contentBackground: isDropTarget ? .clear : BaselineColor.base,
-            action: { handle(.delete, scheduled) }
-        ) {
-            cell(row,
-                 showsDate: showsDate,
-                 dateTint: dateTint(row),
-                 fill: entry.isCompleted ? BaselineColor.zoneGreen.opacity(0.13) : .clear) {
-                Button {
-                    detailWorkout = scheduled
-                } label: {
-                    HStack(spacing: BaselineSpacing.xSmall) {
-                        if entry.showsReorderHandle { reorderHandle }
-                        VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
-                            Text(entry.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(BaselineColor.textHi)
-                                .lineLimit(1)
-                            HStack(spacing: BaselineSpacing.xxSmall) {
-                                if entry.isCompleted == false, let (label, color) = PlanStatusStyle.chip(entry.status) {
-                                    Text(label)
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(color)
-                                }
-                                Text(entry.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(entry.isCompleted ? BaselineColor.zoneGreen : BaselineColor.textMid)
-                                    .lineLimit(1)
-                            }
-                        }
-                        Spacer(minLength: BaselineSpacing.xSmall)
-                        if entry.isCompleted {
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(BaselineColor.zoneGreen)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
-                    .contentShape(Rectangle())
+        dragEnabled(
+            WorkoutSwipeActionRow(
+                actionTitle: "Delete",
+                systemImage: "trash",
+                contentBackground: BaselineColor.base,
+                action: { handle(.delete, scheduled) }
+            ) {
+                cell(row,
+                     showsDate: showsDate,
+                     dateTint: dateTint(row),
+                     fill: entry.isCompleted ? BaselineColor.zoneGreen.opacity(0.13) : .clear) {
+                    sessionButton(entry, scheduled: scheduled)
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint(entry.isCompleted ? "Opens the logged session" : "Opens workout details")
-                .contextMenu { sessionMenu(scheduled, status: entry.status) }
-                // The context menu is invisible to assistive tech, so its primary start/resume/review
-                // action must also be a custom action or the session cannot be started from the
-                // calendar at all.
-                .accessibilityAction(named: Text(openLabel(entry.status))) { handle(.open, scheduled) }
             }
-        }
-        .draggable(entry.id.uuidString)
+            .opacity(dragState?.sourceID == entry.id ? 0.08 : 1)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PlanDragGeometryPreferences.SessionFrames.self,
+                        value: [entry.id: proxy.frame(in: .named("planDrag"))]
+                    )
+                }
+            },
+            row: row,
+            entry: entry,
+            scheduled: scheduled,
+            index: index,
+            showsDate: showsDate
+        )
     }
 
-    /// Rendered, not yet wired: drag-to-reorder is its own change. It stays decorative to assistive
-    /// tech until the gesture lands, so VoiceOver is never offered a control that does nothing.
+    private func sessionButton(_ entry: PlanSessionEntry, scheduled: ScheduledWorkout) -> some View {
+        Button {
+            detailWorkout = scheduled
+        } label: {
+            HStack(spacing: BaselineSpacing.xSmall) {
+                if entry.showsReorderHandle { reorderHandle }
+                VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                    Text(entry.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BaselineColor.textHi)
+                        .lineLimit(1)
+                    HStack(spacing: BaselineSpacing.xxSmall) {
+                        if entry.isCompleted == false, let (label, color) = PlanStatusStyle.chip(entry.status) {
+                            Text(label)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(color)
+                        }
+                        Text(entry.detail)
+                            .font(.caption)
+                            .foregroundStyle(entry.isCompleted ? BaselineColor.zoneGreen : BaselineColor.textMid)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: BaselineSpacing.xSmall)
+                if entry.isCompleted {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BaselineColor.zoneGreen)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(entry.isCompleted ? "Opens the logged session" : "Opens workout details")
+        // Context menus do not expose their primary action to assistive tech.
+        .accessibilityAction(named: Text(openLabel(entry.status))) { handle(.open, scheduled) }
+    }
+
     private var reorderHandle: some View {
         Image(systemName: "line.3.horizontal")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(BaselineColor.textFaint)
+            .foregroundStyle(BaselineColor.accent)
+            .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
+            .contentShape(Rectangle())
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func dragEnabled<Content: View>(
+        _ content: Content,
+        row: PlanDayRow,
+        entry: PlanSessionEntry,
+        scheduled: ScheduledWorkout,
+        index: Int,
+        showsDate: Bool
+    ) -> some View {
+        if entry.showsReorderHandle {
+            content
+                .contextMenu { sessionMenu(scheduled, status: entry.status) }
+                .simultaneousGesture(
+                    planDragGesture(
+                        row: row,
+                        entry: entry,
+                        index: index,
+                        showsDate: showsDate
+                    )
+                )
+                .accessibilityAction(named: Text("Move earlier")) {
+                    moveAccessibly(entry.id, direction: -1)
+                }
+                .accessibilityAction(named: Text("Move later")) {
+                    moveAccessibly(entry.id, direction: 1)
+                }
+                .accessibilityHint("Opens workout details. Press and hold, then drag to reorder")
+        } else {
+            content.contextMenu { sessionMenu(scheduled, status: entry.status) }
+        }
+    }
+
+    private func planDragGesture(
+        row: PlanDayRow,
+        entry: PlanSessionEntry,
+        index: Int,
+        showsDate: Bool
+    ) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.22, maximumDistance: 16)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("planDrag")))
+            .onChanged { value in
+                switch value {
+                case .first(true):
+                    beginDrag(row: row, entry: entry, index: index, showsDate: showsDate)
+                case .second(true, let drag?):
+                    beginDrag(row: row, entry: entry, index: index, showsDate: showsDate)
+                    updateDrag(drag)
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in finishDrag() }
+    }
+
+    private func beginDrag(
+        row: PlanDayRow,
+        entry: PlanSessionEntry,
+        index: Int,
+        showsDate: Bool
+    ) {
+        guard dragState == nil, let measuredFrame = sessionFrames[entry.id] else { return }
+        let frame = liftFrame(measuredFrame, on: row.date)
+        let state = DragState(
+            sourceID: entry.id,
+            sourceRow: row,
+            sourceIndex: index,
+            sourceShowsDate: showsDate,
+            entry: entry,
+            sourceFrame: frame
+        )
+        Haptics.select()
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) {
+            dragState = state
+        }
+    }
+
+    private func updateDrag(_ drag: DragGesture.Value) {
+        guard var state = dragState else { return }
+        let newTarget = PlanDragReorderModel.target(
+            at: drag.location,
+            sourceID: state.sourceID,
+            sourceDate: state.sourceRow.date,
+            days: dragDayGeometry()
+        )
+        if newTarget != state.target {
+            Haptics.select()
+        }
+        state.translation = drag.translation
+        state.target = newTarget
+        dragState = state
+    }
+
+    private func finishDrag() {
+        guard let state = dragState else { return }
+        let destination: PlanDragReorderModel.Destination?
+        if case .destination(let value) = state.target {
+            destination = value
+        } else {
+            destination = nil
+        }
+
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) {
+            dragState = nil
+        }
+        guard let destination else { return }
+        apply(
+            plan.reposition(
+                state.sourceID,
+                toDate: destination.date,
+                at: destination.index,
+                notBefore: today
+            ),
+            "Moved"
+        )
+    }
+
+    private func dragDayGeometry() -> [PlanDragReorderModel.DayGeometry] {
+        (presentation?.days ?? []).compactMap { row in
+            let date = cal.startOfDay(for: row.date)
+            guard let frame = dayFrames[date] else { return nil }
+            let sessions = row.sessions.compactMap { entry -> PlanDragReorderModel.SessionGeometry? in
+                guard let frame = sessionFrames[entry.id] else { return nil }
+                return PlanDragReorderModel.SessionGeometry(id: entry.id, frame: frame)
+            }
+            return PlanDragReorderModel.DayGeometry(
+                date: date,
+                frame: frame,
+                sessions: sessions,
+                isPast: row.isPast,
+                isCompleted: row.sessions.contains(where: \.isCompleted)
+            )
+        }
+    }
+
+    private func installEvidenceDragIfReady() {
+        guard evidenceDragInstalled == false,
+              let evidence = dragEvidence,
+              let rows = presentation?.days,
+              let sourceRow = rows.first(where: { $0.sessions.contains { $0.id == evidence.sourceID } }),
+              let sourceIndex = sourceRow.sessions.firstIndex(where: { $0.id == evidence.sourceID }),
+              let entry = sourceRow.sessions.first(where: { $0.id == evidence.sourceID }),
+              let measuredFrame = sessionFrames[evidence.sourceID],
+              dayFrames[cal.startOfDay(for: sourceRow.date)] != nil else {
+            return
+        }
+        let sourceFrame = liftFrame(measuredFrame, on: sourceRow.date)
+
+        var state = DragState(
+            sourceID: evidence.sourceID,
+            sourceRow: sourceRow,
+            sourceIndex: sourceIndex,
+            sourceShowsDate: sourceIndex == 0,
+            entry: entry,
+            sourceFrame: sourceFrame
+        )
+        if let destinationDate = evidence.destinationDate,
+           let destinationRow = rows.first(where: {
+               cal.isDate($0.date, inSameDayAs: destinationDate)
+           }),
+           let destinationFrame = dayFrames[cal.startOfDay(for: destinationDate)] {
+            let finalIndex = min(max(evidence.destinationIndex, 0), destinationRow.sessions.count)
+            let sameDay = cal.isDate(sourceRow.date, inSameDayAs: destinationDate)
+            let displayIndex = sameDay && finalIndex > sourceIndex ? finalIndex + 1 : finalIndex
+            state.target = .destination(
+                .init(date: destinationDate, index: finalIndex, displayIndex: displayIndex)
+            )
+            state.translation = CGSize(
+                width: destinationFrame.midX - sourceFrame.midX,
+                height: destinationFrame.midY - sourceFrame.midY - sourceFrame.height * 0.65
+            )
+        }
+        evidenceDragInstalled = true
+        dragState = state
+    }
+
+    private func liftFrame(_ measuredFrame: CGRect, on date: Date) -> CGRect {
+        guard let dayFrame = dayFrames[cal.startOfDay(for: date)] else { return measuredFrame }
+        return CGRect(
+            x: dayFrame.minX,
+            y: measuredFrame.minY,
+            width: dayFrame.width,
+            height: measuredFrame.height
+        )
+    }
+
+    private func insertionDestination(for row: PlanDayRow) -> PlanDragReorderModel.Destination? {
+        guard let target = dragState?.target,
+              case .destination(let destination) = target,
+              cal.isDate(destination.date, inSameDayAs: row.date) else {
+            return nil
+        }
+        return destination
+    }
+
+    private func dragLockText(for row: PlanDayRow) -> String? {
+        guard dragState != nil else { return nil }
+        if row.isPast { return "Past day - can't drop here" }
+        if row.sessions.contains(where: \.isCompleted) { return "Completed day - can't drop here" }
+        return nil
+    }
+
+    private var insertionIndicator: some View {
+        HStack(spacing: 0) {
+            Circle().frame(width: 7, height: 7)
+            Rectangle().frame(height: 3)
+            Circle().frame(width: 7, height: 7)
+        }
+        .foregroundStyle(BaselineColor.accent)
+        .shadow(color: BaselineColor.accent.opacity(0.45), radius: 5)
+        .padding(.leading, BaselineSpacing.large + dateColumnWidth + BaselineSpacing.medium)
+        .padding(.trailing, BaselineSpacing.large)
+        .frame(height: 22)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Drop position")
+    }
+
+    private func liftedSession(_ state: DragState) -> some View {
+        GeometryReader { proxy in
+            cell(
+                state.sourceRow,
+                showsDate: state.sourceShowsDate,
+                dateTint: dateTint(state.sourceRow)
+            ) {
+                HStack(spacing: BaselineSpacing.xSmall) {
+                    reorderHandle
+                    VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                        Text(state.entry.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BaselineColor.textHi)
+                            .lineLimit(1)
+                        Text(state.entry.detail)
+                            .font(.caption)
+                            .foregroundStyle(BaselineColor.textMid)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: BaselineSpacing.xSmall)
+                }
+            }
+            .frame(
+                width: max(0, proxy.size.width - BaselineSpacing.medium),
+                height: state.sourceFrame.height
+            )
+            .background(BaselineColor.base)
+            .clipShape(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
+                    .strokeBorder(BaselineColor.accent, lineWidth: 1.5)
+            }
+            .shadow(color: BaselineColor.accent.opacity(0.22), radius: 18, y: 8)
+            .scaleEffect(reduceMotion ? 1 : 1.025)
+            .position(
+                x: proxy.size.width / 2 + state.translation.width,
+                y: state.sourceFrame.midY + state.translation.height
+            )
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Dragging \(state.entry.title)")
+        .zIndex(10)
+    }
+
+    private func moveAccessibly(_ id: UUID, direction: Int) {
+        guard direction == -1 || direction == 1,
+              let days = presentation?.days,
+              let sourceDayIndex = days.firstIndex(where: { $0.sessions.contains { $0.id == id } }),
+              let sourceIndex = days[sourceDayIndex].sessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let sourceDay = days[sourceDayIndex]
+        let withinDayIndex = sourceIndex + direction
+        if sourceDay.sessions.indices.contains(withinDayIndex) {
+            apply(
+                plan.reposition(
+                    id,
+                    toDate: sourceDay.date,
+                    at: withinDayIndex,
+                    notBefore: today
+                ),
+                "Moved"
+            )
+            return
+        }
+
+        var dayIndex = sourceDayIndex + direction
+        while days.indices.contains(dayIndex) {
+            let candidate = days[dayIndex]
+            let locked = candidate.isPast || candidate.sessions.contains(where: \.isCompleted)
+            if locked == false {
+                let destinationIndex = direction < 0 ? candidate.sessions.count : 0
+                apply(
+                    plan.reposition(
+                        id,
+                        toDate: candidate.date,
+                        at: destinationIndex,
+                        notBefore: today
+                    ),
+                    "Moved"
+                )
+                return
+            }
+            dayIndex += direction
+        }
     }
 
     /// An undecided day is a decision waiting to be made, and the whole row is the invitation: one
@@ -717,18 +1095,6 @@ struct PlanView: View {
         case .delete:
             if case .confirmationRequired(_, _, let pid) = plan.delete(sw.id) { deleteTarget = DeleteTarget(sw: sw, proposalID: pid) }
         }
-    }
-
-    /// A drag dropped on `day`. Empty day → move directly; occupied → offer Move/Swap. The occupancy
-    /// check queries the repository for that exact day so it stays correct for a day the cached week
-    /// projection has since had mutated underneath it.
-    private func drop(_ dragged: UUID, on day: Date) -> Bool {
-        dropTargetDate = nil
-        guard let sw = plan.scheduledWorkout(dragged), !cal.isDate(sw.date, inSameDayAs: day) else { return false }
-        let existing = (plan.days(from: day, through: day).first?.sessions ?? []).filter { $0.id != dragged }
-        if existing.isEmpty { apply(plan.move(dragged, toDate: day), "Moved") }
-        else { pendingDrop = PendingDrop(dragged: dragged, day: day, existing: existing) }
-        return true
     }
 
     /// Surface an Undo affordance after an applied mutation.

@@ -30,6 +30,7 @@ struct ScheduledIntent: Codable, Equatable, Sendable {
     var sectionID: UUID?
     var date: Date
     var timeOfDay: TimeOfDay?
+    var dayOrder: Int?
     var origin: WorkoutOrigin
     var workoutID: UUID
     var workoutRevisionID: UUID

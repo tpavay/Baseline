@@ -110,6 +110,12 @@ struct ScheduledWorkout: Identifiable, Codable, Equatable, Sendable {
     var supportsGoalIDs: [UUID] = []
     var recurrence: RecurrenceRule?       // fwd-compat, unused in v1
     var skipped = false
+    /// Stable display order among sessions sharing a calendar day.
+    ///
+    /// This is deliberately separate from `timeOfDay`: morning/midday/evening describes intent,
+    /// while drag order is an arbitrary user-owned sequence that can contain more than three sessions.
+    /// Nil is the backward-compatible value for schedules written before drag ordering shipped.
+    var dayOrder: Int? = nil
 }
 
 // MARK: - Derived calendar projections (NOT stored)

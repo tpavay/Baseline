@@ -70,6 +70,19 @@ struct PlanWeekPresentationTests {
         #expect(entry.showsReorderHandle == false, "A day already trained is history, not something to reorder")
     }
 
+    @Test func aCompletedDayLocksEverySessionFromReordering() throws {
+        let done = scheduled(strengthWorkout("Completed"), on: today)
+        let planned = scheduled(strengthWorkout("Planned sibling"), on: today)
+        let presentation = build(
+            week(sessions: [0: [done, planned]]),
+            statuses: [done.id: .completed, planned.id: .today(.asPlanned)]
+        )
+
+        let entries = try row(presentation, offset: 0).sessions
+        #expect(entries.count == 2)
+        #expect(entries.allSatisfy { $0.showsReorderHandle == false })
+    }
+
     /// The core "not green until you actually did it" rule: a scheduled session on a past day with no
     /// completed log is missed, never completed, and never offers a log to view.
     @Test func aPastSessionWithoutACompletedLogIsNotCompleted() throws {

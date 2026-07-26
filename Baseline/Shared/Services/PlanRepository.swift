@@ -93,6 +93,18 @@ protocol PlanRepository {
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult
     func swap(_ a: UUID, _ b: UUID, actor: PlanActor, reason: String?) -> MutationResult
     func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor, reason: String?) -> MutationResult
+    /// Atomically move one schedule intent to a final index on today or a future day.
+    ///
+    /// The repository rejects past sources/targets and any source/target day containing performed
+    /// facts. The mutation touches only `SDScheduledWorkout` rows and one plan version snapshot.
+    func reposition(
+        _ id: UUID,
+        toDate: Date,
+        at index: Int,
+        notBefore today: Date,
+        actor: PlanActor,
+        reason: String?
+    ) -> MutationResult
     func addWorkout(_ sw: ScheduledWorkout, actor: PlanActor, reason: String?) -> MutationResult
     func duplicate(_ id: UUID, toDate: Date?, actor: PlanActor, reason: String?) -> MutationResult
     func replaceContent(_ id: UUID, with workout: Workout, actor: PlanActor, reason: String?) -> MutationResult
@@ -182,7 +194,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         let days = (0..<7).map { offset -> TrainingDay in
             let d = calendar.date(byAdding: .day, value: offset, to: start)!
             let sessions = scheduled.filter { calendar.isDate($0.date, inSameDayAs: d) }
-                .sorted { ($0.timeOfDay?.rawValue ?? "") < ($1.timeOfDay?.rawValue ?? "") }
+                .sorted(by: scheduledBefore)
             return TrainingDay(date: d, sessions: sessions, isRestDay: restMarks.contains(d))
         }
         return TrainingWeek(startDate: start, days: days)
@@ -543,10 +555,23 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult {
         guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { return .rejected(.notFound) }
-        let diff = ScheduleDiff(changes: [.init(kind: .move, summary: "Move \(title(id)) → \(fmtDate(toDate))", scheduledID: id)])
+        let sourceDay = calendar.startOfDay(for: sd.date)
+        let targetDay = calendar.startOfDay(for: toDate)
+        let sourceRows = orderedRows(on: sourceDay).filter { $0.id != id }
+        let targetRows = calendar.isDate(sourceDay, inSameDayAs: targetDay)
+            ? sourceRows
+            : orderedRows(on: targetDay).filter { $0.id != id }
+        let diff = ScheduleDiff(changes: [.init(kind: .move, summary: "Move \(title(id)) → \(fmtDate(targetDay))", scheduledID: id)])
         return apply(.move, actor, reason, diff) {
-            sd.date = toDate; sd.timeOfDayRaw = timeOfDay?.rawValue
-            clearRestMarker(on: toDate)
+            sd.date = targetDay
+            sd.timeOfDayRaw = timeOfDay?.rawValue
+            if calendar.isDate(sourceDay, inSameDayAs: targetDay) {
+                assignDayOrder(to: sourceRows + [sd])
+            } else {
+                assignDayOrder(to: sourceRows)
+                assignDayOrder(to: targetRows + [sd])
+            }
+            clearRestMarker(on: targetDay)
         }
     }
 
@@ -557,21 +582,76 @@ final class SwiftDataPlanRepository: PlanRepository {
             .init(kind: .move, summary: "Swap \(title(a)) ↔ \(title(b))", scheduledID: a),
             .init(kind: .move, summary: "", scheduledID: b)])
         return apply(.swap, actor, reason, diff) {
-            let (ad, at) = (A.date, A.timeOfDayRaw)
-            A.date = B.date; A.timeOfDayRaw = B.timeOfDayRaw
-            B.date = ad; B.timeOfDayRaw = at
+            let (ad, at, ao) = (A.date, A.timeOfDayRaw, A.dayOrder)
+            A.date = B.date; A.timeOfDayRaw = B.timeOfDayRaw; A.dayOrder = B.dayOrder
+            B.date = ad; B.timeOfDayRaw = at; B.dayOrder = ao
             clearRestMarker(on: A.date); clearRestMarker(on: B.date)
         }
     }
 
     func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor, reason: String?) -> MutationResult {
-        let slots: [TimeOfDay] = [.morning, .midday, .evening]
+        let rows = orderedRows(on: day)
+        guard Set(rows.map(\.id)) == Set(orderedIDs), rows.count == orderedIDs.count else {
+            return .rejected(.invalidTarget)
+        }
+        let rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        let orderedRows = orderedIDs.compactMap { rowsByID[$0] }
         let diff = ScheduleDiff(changes: [.init(kind: .edit, summary: "Reorder \(fmtDate(day))", scheduledID: nil)])
         return apply(.reorder, actor, reason, diff) {
-            for (i, id) in orderedIDs.enumerated() {
-                guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { continue }
-                sd.timeOfDayRaw = (i < slots.count ? slots[i] : .evening).rawValue
-            }
+            assignDayOrder(to: orderedRows)
+        }
+    }
+
+    func reposition(
+        _ id: UUID,
+        toDate: Date,
+        at index: Int,
+        notBefore today: Date,
+        actor: PlanActor,
+        reason: String?
+    ) -> MutationResult {
+        let earliestDay = calendar.startOfDay(for: today)
+        let targetDay = calendar.startOfDay(for: toDate)
+        guard targetDay >= earliestDay else {
+            return .rejected(.invalidTarget)
+        }
+        guard let moved = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else {
+            return .rejected(.notFound)
+        }
+
+        let sourceDay = calendar.startOfDay(for: moved.date)
+        guard sourceDay >= earliestDay,
+              dayContainsCompletedSession(sourceDay) == false,
+              dayContainsCompletedSession(targetDay) == false else {
+            return .rejected(.invalidTarget)
+        }
+
+        let sourceRows = orderedRows(on: sourceDay)
+        let sourceIDs = sourceRows.map(\.id)
+        guard sourceIDs.contains(id) else { return .rejected(.notFound) }
+
+        let sameDay = calendar.isDate(sourceDay, inSameDayAs: targetDay)
+        let targetRows = sameDay ? sourceRows : orderedRows(on: targetDay)
+        var finalTargetRows = targetRows.filter { $0.id != id }
+        let finalIndex = min(max(index, 0), finalTargetRows.count)
+        finalTargetRows.insert(moved, at: finalIndex)
+
+        if sameDay, finalTargetRows.map(\.id) == sourceIDs {
+            return .rejected(.invalidTarget)
+        }
+
+        let sourceRowsAfterMove = sameDay ? [] : sourceRows.filter { $0.id != id }
+        let kind: ScheduleDiff.Change.Kind = sameDay ? .edit : .move
+        let summary = sameDay
+            ? "Reorder \(title(id)) on \(fmtDate(targetDay))"
+            : "Move \(title(id)) → \(fmtDate(targetDay)), position \(finalIndex + 1)"
+        let diff = ScheduleDiff(changes: [.init(kind: kind, summary: summary, scheduledID: id)])
+
+        return apply(.reorder, actor, reason, diff) {
+            moved.date = targetDay
+            assignDayOrder(to: sourceRowsAfterMove)
+            assignDayOrder(to: finalTargetRows)
+            clearRestMarker(on: targetDay)
         }
     }
 
@@ -1388,6 +1468,7 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func intent(_ sd: SDScheduledWorkout) -> ScheduledIntent {
         ScheduledIntent(id: sd.id, programID: sd.programID, sectionID: sd.sectionID, date: sd.date,
                         timeOfDay: sd.timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)),
+                        dayOrder: sd.dayOrder,
                         origin: WorkoutOrigin(rawValue: sd.originRaw) ?? .userCreated,
                         workoutID: sd.workoutID, workoutRevisionID: sd.workoutRevisionID,
                         templateID: sd.templateID, templateRevisionID: sd.templateRevisionID,
@@ -1411,7 +1492,7 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     private func write(_ it: ScheduledIntent, to sd: SDScheduledWorkout) {
         sd.id = it.id; sd.programID = it.programID; sd.sectionID = it.sectionID; sd.date = it.date
-        sd.timeOfDayRaw = it.timeOfDay?.rawValue; sd.originRaw = it.origin.rawValue
+        sd.timeOfDayRaw = it.timeOfDay?.rawValue; sd.dayOrder = it.dayOrder; sd.originRaw = it.origin.rawValue
         sd.workoutID = it.workoutID; sd.workoutRevisionID = it.workoutRevisionID
         sd.templateID = it.templateID; sd.templateRevisionID = it.templateRevisionID
         sd.tagsJSON = it.tags.isEmpty ? nil : PlanCoding.data(it.tags)
@@ -1433,13 +1514,17 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     private func insertScheduled(_ sw: ScheduledWorkout) {
         clearRestMarker(on: sw.date)
+        let existingRows = orderedRows(on: sw.date)
+        assignDayOrder(to: existingRows)
+        let nextDayOrder = sw.dayOrder ?? existingRows.count
         let rid = sw.workoutRevisionID
         if firstSD(SDWorkoutRevision.self, where: #Predicate { $0.id == rid }) == nil {
             context.insert(SDWorkoutRevision(id: rid, workoutID: sw.workoutID, createdAt: sw.date, workoutJSON: PlanCoding.data(sw.workout)))
         }
         context.insert(SDScheduledWorkout(
             id: sw.id, programID: sw.programID, sectionID: sw.sectionID, originRaw: sw.origin.rawValue,
-            date: sw.date, timeOfDayRaw: sw.timeOfDay?.rawValue, skipped: sw.skipped, workoutID: sw.workoutID,
+            date: sw.date, timeOfDayRaw: sw.timeOfDay?.rawValue, dayOrder: nextDayOrder,
+            skipped: sw.skipped, workoutID: sw.workoutID,
             workoutRevisionID: sw.workoutRevisionID, templateID: sw.templateID, templateRevisionID: sw.templateRevisionID,
             tagsJSON: sw.tags.isEmpty ? nil : PlanCoding.data(sw.tags),
             supportsGoalIDsJSON: sw.supportsGoalIDs.isEmpty ? nil : PlanCoding.data(sw.supportsGoalIDs),
@@ -1495,7 +1580,9 @@ final class SwiftDataPlanRepository: PlanRepository {
             sectionID: sd.sectionID, templateID: sd.templateID, templateRevisionID: sd.templateRevisionID,
             tags: PlanCoding.value([WorkoutTag].self, sd.tagsJSON) ?? [],
             supportsGoalIDs: PlanCoding.value([UUID].self, sd.supportsGoalIDsJSON) ?? [],
-            recurrence: PlanCoding.value(RecurrenceRule.self, sd.recurrenceJSON), skipped: sd.skipped)
+            recurrence: PlanCoding.value(RecurrenceRule.self, sd.recurrenceJSON),
+            skipped: sd.skipped,
+            dayOrder: sd.dayOrder)
     }
 
     private func map(_ sd: SDWorkoutSession) -> WorkoutSession? {
@@ -1529,7 +1616,72 @@ final class SwiftDataPlanRepository: PlanRepository {
             case .collection(.completed): return completedLog(forScheduled: sw.id) != nil
             case .collection(.adHoc): return [.userCreated, .legacyMigrated, .baselineGenerated].contains(sw.origin)
             }
-        }.sorted { $0.date < $1.date }
+        }.sorted { lhs, rhs in
+            if calendar.isDate(lhs.date, inSameDayAs: rhs.date) {
+                return scheduledBefore(lhs, rhs)
+            }
+            return lhs.date < rhs.date
+        }
+    }
+
+    /// Stored day order wins. Legacy nil rows fall back to semantic time-of-day and then stable UUID,
+    /// so reads remain deterministic until the first mutation normalizes that day to integer positions.
+    private func scheduledBefore(_ lhs: ScheduledWorkout, _ rhs: ScheduledWorkout) -> Bool {
+        switch (lhs.dayOrder, rhs.dayOrder) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            let leftTime = timeOfDayRank(lhs.timeOfDay)
+            let rightTime = timeOfDayRank(rhs.timeOfDay)
+            if leftTime != rightTime { return leftTime < rightTime }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private func timeOfDayRank(_ timeOfDay: TimeOfDay?) -> Int {
+        switch timeOfDay {
+        case .morning: 0
+        case .midday: 1
+        case .evening: 2
+        case nil: 3
+        }
+    }
+
+    private func orderedRows(on date: Date) -> [SDScheduledWorkout] {
+        let start = calendar.startOfDay(for: date)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
+        return fetch(SDScheduledWorkout.self, where: #Predicate { $0.date >= start && $0.date < end })
+            .sorted { lhs, rhs in
+                switch (lhs.dayOrder, rhs.dayOrder) {
+                case let (left?, right?) where left != right:
+                    return left < right
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    let leftTime = timeOfDayRank(lhs.timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)))
+                    let rightTime = timeOfDayRank(rhs.timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)))
+                    if leftTime != rightTime { return leftTime < rightTime }
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+            }
+    }
+
+    private func assignDayOrder(to rows: [SDScheduledWorkout]) {
+        for (index, row) in rows.enumerated() {
+            row.dayOrder = index
+        }
+    }
+
+    private func dayContainsCompletedSession(_ date: Date) -> Bool {
+        let scheduledIDs = Set(orderedRows(on: date).map(\.id))
+        guard scheduledIDs.isEmpty == false else { return false }
+        return (fetchAll() as [SDCompletedLog]).contains { scheduledIDs.contains($0.scheduledWorkoutID) }
     }
 
     private func latestSession(_ scheduledID: UUID) -> SDWorkoutSession? {
