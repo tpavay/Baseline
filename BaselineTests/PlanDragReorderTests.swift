@@ -20,6 +20,7 @@ struct PlanDragReorderTests {
             toDate: day,
             at: .index(2),
             notBefore: day,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -41,6 +42,7 @@ struct PlanDragReorderTests {
             toDate: day,
             at: .index(0),
             notBefore: day,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -61,6 +63,7 @@ struct PlanDragReorderTests {
             toDate: future,
             at: .index(1),
             notBefore: bed.today,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -86,6 +89,7 @@ struct PlanDragReorderTests {
             toDate: future,
             at: .index(0),
             notBefore: bed.today,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -111,6 +115,7 @@ struct PlanDragReorderTests {
             toDate: past,
             at: .index(0),
             notBefore: bed.today,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -142,6 +147,7 @@ struct PlanDragReorderTests {
             toDate: future,
             at: .index(1),
             notBefore: bed.today,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -173,6 +179,7 @@ struct PlanDragReorderTests {
             toDate: future,
             at: .index(0),
             notBefore: bed.today,
+            scope: .allTraining,
             actor: .user,
             reason: nil
         )
@@ -262,11 +269,11 @@ struct PlanDragReorderTests {
         _ = bed.seed("Already there", on: future)
 
         #expect(bed.repository.reposition(
-            moved.id, toDate: past, at: .endOfDay, notBefore: bed.today, actor: .user, reason: nil
+            moved.id, toDate: past, at: .endOfDay, notBefore: bed.today, scope: .allTraining, actor: .user, reason: nil
         ) == .rejected(.invalidTarget))
 
         #expect(bed.repository.reposition(
-            moved.id, toDate: future, at: .endOfDay, notBefore: bed.today, actor: .user, reason: nil
+            moved.id, toDate: future, at: .endOfDay, notBefore: bed.today, scope: .allTraining, actor: .user, reason: nil
         ).isApplied)
         #expect(bed.titles(on: future) == ["Already there", "Move me"])
     }
@@ -281,7 +288,7 @@ struct PlanDragReorderTests {
         _ = bed.seed("Already there", on: future)
 
         #expect(bed.repository.reposition(
-            moved.id, toDate: future, at: .index(99), notBefore: bed.today, actor: .user, reason: nil
+            moved.id, toDate: future, at: .index(99), notBefore: bed.today, scope: .allTraining, actor: .user, reason: nil
         ).isApplied)
         #expect(bed.titles(on: future) == ["Already there", "Move me"])
     }
@@ -301,12 +308,12 @@ struct PlanDragReorderTests {
         _ = try #require(bed.repository.startSession(forScheduled: live.id, now: day))
 
         #expect(bed.repository.reposition(
-            leaving.id, toDate: other, at: .endOfDay, notBefore: day, actor: .user, reason: nil
+            leaving.id, toDate: other, at: .endOfDay, notBefore: day, scope: .allTraining, actor: .user, reason: nil
         ).isApplied)
         let liveOrderAfterGap = bed.storedDayOrder(of: live.id)
 
         #expect(bed.repository.reposition(
-            arriving.id, toDate: day, at: .endOfDay, notBefore: day, actor: .user, reason: nil
+            arriving.id, toDate: day, at: .endOfDay, notBefore: day, scope: .allTraining, actor: .user, reason: nil
         ).isApplied)
 
         #expect(bed.titles(on: day) == ["First", "Live", "Arriving"])
@@ -331,7 +338,7 @@ struct PlanDragReorderTests {
         let liveOrder = bed.storedDayOrder(of: live.id)
 
         #expect(bed.repository.reposition(
-            moved.id, toDate: day, at: .index(1), notBefore: day, actor: .user, reason: nil
+            moved.id, toDate: day, at: .index(1), notBefore: day, scope: .allTraining, actor: .user, reason: nil
         ).isApplied)
 
         #expect(bed.titles(on: day) == ["First", "Moved", "Live"])
@@ -353,7 +360,7 @@ struct PlanDragReorderTests {
         bed.clearStoredDayOrder(for: legacy.id)
 
         #expect(bed.repository.reposition(
-            arriving.id, toDate: day, at: .endOfDay, notBefore: day, actor: .user, reason: nil
+            arriving.id, toDate: day, at: .endOfDay, notBefore: day, scope: .allTraining, actor: .user, reason: nil
         ).isApplied)
 
         #expect(bed.titles(on: day) == ["Legacy", "Arriving"])
@@ -378,7 +385,7 @@ struct PlanDragReorderTests {
 
         for position in [PlanDayPosition.index(0), .endOfDay] {
             #expect(bed.repository.reposition(
-                missed.id, toDate: future, at: position, notBefore: bed.today, actor: .user, reason: nil
+                missed.id, toDate: future, at: position, notBefore: bed.today, scope: .allTraining, actor: .user, reason: nil
             ) == .rejected(.invalidTarget))
         }
 

@@ -108,15 +108,18 @@ protocol PlanRepository {
     /// spelling every caller that just wants to append uses; an `.index` beyond the day's last slot
     /// means the same thing. `scope` is the `ProgramFilter` the caller's surface was showing: an index
     /// only means something against the rows the athlete could actually see, so the repository resolves
-    /// it against that same visible set and splices the moved row in among the day's hidden sessions
-    /// without reordering any of them. `scope` also bounds the performed-training lock, so a day the
-    /// grid rendered as open is never silently refused.
+    /// it against that same visible set and splices the moved row in beside its visible neighbours. The
+    /// relative order of the day's hidden sessions is preserved. `scope` also bounds the
+    /// performed-training lock, so a day the grid rendered as open is never silently refused.
     ///
     /// Past sources and targets, and source/target days holding performed facts, are rejected: a day
     /// that has been and gone is history and a day already trained is a record, not a slot to shuffle
-    /// (`PlanDayLock`). Only the moved row's `dayOrder` is rewritten unless the day has no room left
-    /// for it, so a sibling carrying a live session keeps the intent an undo compares. The mutation
-    /// touches only `SDScheduledWorkout` rows and one plan version snapshot.
+    /// (`PlanDayLock`). Ordering is sparse, so normally only the moved row's `dayOrder` value is
+    /// written and a sibling carrying a live session keeps the intent an undo compares; when the gap
+    /// the row lands in is exhausted, `writeDayOrder` widens the run and re-spaces its neighbours,
+    /// which preserves their order but does change their values - and a re-spaced row whose session is
+    /// live will make the next `undo()` refuse (`conflictsWithActiveSession`). The mutation touches
+    /// only `SDScheduledWorkout` rows and one plan version snapshot.
     func reposition(
         _ id: UUID,
         toDate: Date,
@@ -630,7 +633,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         toDate: Date,
         at position: PlanDayPosition,
         notBefore today: Date,
-        scope: ProgramFilter = .allTraining,
+        scope: ProgramFilter,
         actor: PlanActor,
         reason: String?
     ) -> MutationResult {

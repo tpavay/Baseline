@@ -517,9 +517,11 @@ dragging a historical day. Pinned by `PlanDragReorderTests`.
 
 **Filters.** A drop index counts the rows the athlete could actually see, so `reposition` takes the
 `ProgramFilter` the surface was showing (`PlanStore` passes its live `filter`) and resolves both the
-index and the performed-training lock against that same visible set. The moved row is spliced in beside
-its visible neighbours; sessions the filter hides keep their relative order and their stored `dayOrder`
-untouched.
+index and the performed-training lock against that same visible set.
+There is no default scope on the call: a caller states what its surface rendered, or it does not compile.
+The moved row is spliced in beside its visible neighbours, and the relative order of the sessions the filter hides is preserved.
+Their stored `dayOrder` *values* are a weaker guarantee: sparse ordering normally rewrites only the moved row, but when the gap it lands in is exhausted `writeDayOrder` widens the run and re-spaces neighbours - hidden or visible - to make room.
+That re-spacing changes those rows' `ScheduledIntent` between snapshots, so a re-spaced row carrying a live session will make the next undo refuse (`conflictsWithActiveSession`); the sparse scheme exists to keep that rare, not to promise it never happens.
 
 ---
 
