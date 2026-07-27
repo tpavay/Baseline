@@ -349,6 +349,8 @@ struct PlanWeeklyViewRenderTests {
 final class PlanWeekScreen: HostedScreen {
     let window: UIWindow
     let plan: PlanStore
+    /// The live layout's own drop geometry, so a test can aim at a point on the rendered week.
+    let geometry = PlanDragGeometryRecorder()
     private let container: ModelContainer
     private let clock: PlanTestClock
 
@@ -386,7 +388,14 @@ final class PlanWeekScreen: HostedScreen {
             )
         }
 
+        let recorder = geometry
         let root = PlanView(now: { clock.now }, dragEvidence: dragEvidence)
+            .onPreferenceChange(PlanDragGeometryPreferences.SessionFrames.self) {
+                recorder.record(sessions: $0)
+            }
+            .onPreferenceChange(PlanDragGeometryPreferences.DayFrames.self) {
+                recorder.record(days: $0)
+            }
             .environment(plan)
             .environment(AppSettings())
             .environment(BluetoothManager())
