@@ -178,6 +178,25 @@ enum ProgramFilter: Equatable, Sendable {
     enum Collection: String, Sendable { case adHoc, completed, archived }
 }
 
+/// Why a calendar day refuses to take a session.
+///
+/// A day that has been and gone is history, and a day already holding performed training is a record
+/// of what happened rather than a slot to shuffle - so neither accepts scheduling, and neither lets a
+/// session leave it either. That single rule has to be resolved in exactly one place: the Plan grid's
+/// reorder handles, its drag geometry, its "Move to" destinations and the repository's own
+/// `reposition` guard all go through `resolve`, so the UI can never offer a move the repository will
+/// refuse and the repository can never refuse one the UI presented as legal.
+enum PlanDayLock: Equatable, Sendable {
+    case past
+    case completed
+
+    static func resolve(isPast: Bool, hasPerformedTraining: Bool) -> PlanDayLock? {
+        if isPast { return .past }
+        if hasPerformedTraining { return .completed }
+        return nil
+    }
+}
+
 /// One exercise's actuals from a past completed session — the normalized history row behind the Hevy
 /// "previous" column, per-exercise history, and PRs. Matched by stable identity.
 struct ExercisePerformance: Identifiable, Codable, Equatable, Sendable {

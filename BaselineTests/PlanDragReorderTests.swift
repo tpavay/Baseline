@@ -360,6 +360,224 @@ struct PlanDragReorderTests {
         #expect(bed.storedDayOrder(of: legacy.id) == nil)
     }
 
+    // MARK: The locked-source policy
+    //
+    // A past day is history and a day holding performed training is a record of what happened, so
+    // neither is a legal source *or* target - a missed session cannot be dragged forward out of
+    // yesterday, and a planned sibling cannot leave a day whose other session was performed. This is
+    // the approved product rule (`PlanDayLock`, `docs/implementation/plan-tab.md` §10), not an
+    // oversight: both routes into `reposition` are pinned to it here so a future change is deliberate.
+
+    @Test("A missed session on a past day cannot be dragged forward")
+    func pastSourceDayRejectsDrop() throws {
+        let bed = try TestBed()
+        let past = try #require(calendar.date(byAdding: .day, value: -1, to: bed.today))
+        let future = try #require(calendar.date(byAdding: .day, value: 1, to: bed.today))
+        let missed = bed.seed("Missed Monday", on: past)
+        let versionsBefore = bed.repository.versions(limit: 100).count
+
+        for position in [PlanDayPosition.index(0), .endOfDay] {
+            #expect(bed.repository.reposition(
+                missed.id, toDate: future, at: position, notBefore: bed.today, actor: .user, reason: nil
+            ) == .rejected(.invalidTarget))
+        }
+
+        #expect(bed.titles(on: past) == ["Missed Monday"])
+        #expect(bed.titles(on: future).isEmpty)
+        #expect(bed.repository.versions(limit: 100).count == versionsBefore)
+    }
+
+    @Test("The presentation offers no move destinations out of a locked day")
+    func lockedDaysOfferNoMoveDestinations() throws {
+        let bed = try TestBed()
+        let past = try #require(calendar.date(byAdding: .day, value: -1, to: bed.today))
+        _ = bed.seed("Missed", on: past)
+        let performed = bed.seed("Performed", on: bed.today)
+        _ = bed.seed("Planned sibling", on: bed.today)
+        try bed.complete(performed.id)
+
+        let week = bed.repository.week(containing: bed.today, filter: .allTraining)
+        let sessions = week.days.flatMap(\.sessions)
+        let completedIDs = bed.repository.completedScheduledWorkoutIDs(among: sessions.map(\.id))
+        let presentation = PlanWeekPresentation.build(
+            week: week,
+            statuses: Dictionary(uniqueKeysWithValues: sessions.map {
+                ($0.id, completedIDs.contains($0.id) ? ScheduleStatus.completed : .planned)
+            }),
+            today: bed.today,
+            calendar: calendar
+        )
+        let pastMatch = presentation.days.first { calendar.isDate($0.date, inSameDayAs: past) }
+        let todayMatch = presentation.days.first(where: \.isToday)
+        let pastRow = try #require(pastMatch)
+        let todayRow = try #require(todayMatch)
+
+        #expect(pastRow.lock == .past)
+        #expect(todayRow.lock == .completed)
+        #expect(presentation.moveDestinations(from: pastRow, calendar: calendar).isEmpty)
+        #expect(presentation.moveDestinations(from: todayRow, calendar: calendar).isEmpty,
+                "The planned sibling of a performed session stays put, by policy")
+        #expect(todayRow.sessions.allSatisfy { $0.showsReorderHandle == false })
+    }
+
+    // MARK: Filtered scope
+
+    /// The drop index the grid produces counts only the rows the athlete could see. Interpreting it
+    /// against the day's full persistence order would land the session on the wrong side of a row.
+    @Test("A filtered drop lands where the athlete saw it, among the visible rows only")
+    func repositionResolvesTheIndexAgainstTheVisibleRows() throws {
+        let bed = try TestBed()
+        let programB = bed.addProgram("B")
+        let day = bed.today
+        let other = try #require(calendar.date(byAdding: .day, value: 1, to: day))
+        _ = bed.seed("A hidden", on: day)
+        _ = bed.seed("B visible", on: day, program: programB)
+        let moved = bed.seed("B moving", on: other, program: programB)
+
+        // Program B's grid shows one row on `day`; dropping below it is `.index(1)`.
+        #expect(bed.repository.reposition(
+            moved.id,
+            toDate: day,
+            at: .index(1),
+            notBefore: day,
+            scope: .program(programB),
+            actor: .user,
+            reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day, filter: .program(programB)) == ["B visible", "B moving"],
+                "The drop landed below the row it was dropped below")
+        #expect(bed.titles(on: day) == ["A hidden", "B visible", "B moving"],
+                "The hidden program's session kept its place")
+    }
+
+    @Test("A filtered drop at the first visible slot stays ahead of the visible rows only")
+    func repositionAtTheFirstVisibleSlotLeavesHiddenRowsAlone() throws {
+        let bed = try TestBed()
+        let programB = bed.addProgram("B")
+        let day = bed.today
+        let other = try #require(calendar.date(byAdding: .day, value: 1, to: day))
+        let hidden = bed.seed("A hidden", on: day)
+        _ = bed.seed("B visible", on: day, program: programB)
+        let moved = bed.seed("B moving", on: other, program: programB)
+        let hiddenOrder = bed.storedDayOrder(of: hidden.id)
+
+        #expect(bed.repository.reposition(
+            moved.id,
+            toDate: day,
+            at: .index(0),
+            notBefore: day,
+            scope: .program(programB),
+            actor: .user,
+            reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day, filter: .program(programB)) == ["B moving", "B visible"])
+        #expect(bed.titles(on: day) == ["A hidden", "B moving", "B visible"])
+        #expect(bed.storedDayOrder(of: hidden.id) == hiddenOrder,
+                "A filtered reorder never rewrites the intent of a session it did not show")
+    }
+
+    /// Within one filtered day, the index the grid produced still counts visible rows only - here the
+    /// hidden session sits between two visible ones, so slot 1 and persistence slot 1 differ.
+    @Test("A within-day filtered reorder counts visible rows across a hidden one")
+    func repositionWithinDayIgnoresHiddenRowsWhenCountingSlots() throws {
+        let bed = try TestBed()
+        let programB = bed.addProgram("B")
+        let day = bed.today
+        _ = bed.seed("B first", on: day, program: programB)
+        _ = bed.seed("A hidden", on: day)
+        let moved = bed.seed("B third", on: day, program: programB)
+        _ = bed.seed("B fourth", on: day, program: programB)
+
+        // Visible: [B first, B third, B fourth]. Drop "B third" last.
+        #expect(bed.repository.reposition(
+            moved.id,
+            toDate: day,
+            at: .index(2),
+            notBefore: day,
+            scope: .program(programB),
+            actor: .user,
+            reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day, filter: .program(programB)) == ["B first", "B fourth", "B third"])
+        #expect(bed.titles(on: day) == ["B first", "A hidden", "B fourth", "B third"],
+                "The hidden row still sits between the two rows it was between")
+    }
+
+    /// The grid renders a day as open when nothing it shows was performed, so the repository has to
+    /// agree - otherwise every drop onto that day is silently refused with an insertion indicator
+    /// still drawn under the athlete's finger.
+    @Test("A performed session the filter hides does not lock the day it hides it on")
+    func aHiddenPerformedSessionDoesNotLockAVisiblyOpenDay() throws {
+        let bed = try TestBed()
+        let programB = bed.addProgram("B")
+        let day = bed.today
+        let other = try #require(calendar.date(byAdding: .day, value: 1, to: day))
+        let hiddenPerformed = bed.seed("A performed", on: day)
+        try bed.complete(hiddenPerformed.id)
+        let moved = bed.seed("B moving", on: other, program: programB)
+
+        #expect(bed.repository.reposition(
+            moved.id,
+            toDate: day,
+            at: .endOfDay,
+            notBefore: day,
+            scope: .program(programB),
+            actor: .user,
+            reason: nil
+        ).isApplied)
+        #expect(bed.titles(on: day, filter: .program(programB)) == ["B moving"])
+
+        #expect(bed.repository.reposition(
+            moved.id,
+            toDate: other,
+            at: .endOfDay,
+            notBefore: day,
+            scope: .allTraining,
+            actor: .user,
+            reason: nil
+        ) == .rejected(.invalidTarget),
+        "Unfiltered, the same day is a completed day and refuses the move")
+    }
+
+    // MARK: The standalone reorder API
+
+    @Test("Reordering a day of rows written before drag ordering actually reorders it")
+    func reorderPersistsOnLegacyRowsWithNoStoredOrder() throws {
+        let bed = try TestBed()
+        let day = bed.today
+        let first = bed.seed("First", on: day)
+        let second = bed.seed("Second", on: day)
+        bed.clearStoredDayOrder(for: first.id)
+        bed.clearStoredDayOrder(for: second.id)
+        // Rows with no stored order fall back to a stable identity tie-break, so reverse whatever the
+        // day currently reads as rather than assuming it.
+        let before = Array(bed.repository.day(day, filter: .allTraining).sessions.reversed())
+
+        #expect(bed.repository.reorder(
+            day: day, orderedIDs: before.map(\.id), actor: .user, reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day) == before.map(\.workout.title))
+    }
+
+    @Test("A reorder that changes nothing is refused instead of appending a version")
+    func reorderRejectsANoOp() throws {
+        let bed = try TestBed()
+        let day = bed.today
+        let first = bed.seed("First", on: day)
+        let second = bed.seed("Second", on: day)
+        let versionsBefore = bed.repository.versions(limit: 100).count
+
+        #expect(bed.repository.reorder(
+            day: day, orderedIDs: [first.id, second.id], actor: .user, reason: nil
+        ) == .rejected(.invalidTarget))
+        #expect(bed.repository.versions(limit: 100).count == versionsBefore)
+        #expect(bed.titles(on: day) == ["First", "Second"])
+    }
+
     @Test("Geometry resolves before and after slots, past locks, and completed locks")
     func dragTargetResolution() {
         let today = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_774_000_000))
@@ -372,8 +590,7 @@ struct PlanDragReorderTests {
                 date: past,
                 frame: CGRect(x: 0, y: 0, width: 320, height: 80),
                 sessions: [],
-                isPast: true,
-                isCompleted: false
+                lock: .past
             ),
             PlanDragReorderModel.DayGeometry(
                 date: today,
@@ -382,15 +599,13 @@ struct PlanDragReorderTests {
                     .init(id: first, frame: CGRect(x: 0, y: 80, width: 320, height: 60)),
                     .init(id: second, frame: CGRect(x: 0, y: 140, width: 320, height: 60))
                 ],
-                isPast: false,
-                isCompleted: false
+                lock: nil
             ),
             PlanDragReorderModel.DayGeometry(
                 date: tomorrow,
                 frame: CGRect(x: 0, y: 200, width: 320, height: 80),
                 sessions: [],
-                isPast: false,
-                isCompleted: true
+                lock: .completed
             )
         ]
 
@@ -439,7 +654,7 @@ private final class TestBed {
         programID = repository.addProgram(Program(name: "Test", createdAt: today)).id
     }
 
-    func workout(_ title: String, on date: Date) -> ScheduledWorkout {
+    func workout(_ title: String, on date: Date, program: UUID? = nil) -> ScheduledWorkout {
         var exercise = PlannedExercise(exerciseName: "Squat", definitionId: "back-squat")
         exercise.prescription.sets = [PlannedSet(reps: 5, load: 100)]
         let workout = Workout(
@@ -447,7 +662,7 @@ private final class TestBed {
             blocks: [WorkoutBlock(name: "", exercises: [exercise], isDefault: true)]
         )
         return ScheduledWorkout(
-            programID: programID,
+            programID: program ?? programID,
             date: date,
             origin: .userCreated,
             workoutID: workout.id,
@@ -457,13 +672,32 @@ private final class TestBed {
     }
 
     @discardableResult
-    func seed(_ title: String, on date: Date) -> ScheduledWorkout {
-        repository.addScheduled(workout(title, on: date))
+    func seed(_ title: String, on date: Date, program: UUID? = nil) -> ScheduledWorkout {
+        repository.addScheduled(workout(title, on: date, program: program))
     }
 
-    func titles(on date: Date) -> [String] {
-        repository.day(date, filter: .allTraining).sessions.map(\.workout.title)
+    /// A second active program, so a `.program(id)` filter hides real sessions rather than none.
+    func addProgram(_ name: String) -> UUID {
+        repository.addProgram(Program(name: name, createdAt: today)).id
     }
+
+    func titles(on date: Date, filter: ProgramFilter = .allTraining) -> [String] {
+        repository.day(date, filter: filter).sessions.map(\.workout.title)
+    }
+
+    /// Drive one scheduled workout all the way to a frozen performed log.
+    func complete(_ id: UUID) throws {
+        _ = try #require(repository.startSession(forScheduled: id, now: today))
+        guard case .completed = repository.completeSession(
+            forScheduled: id,
+            acknowledgingOpenWork: true,
+            now: today
+        ) else {
+            throw CompletionFailure()
+        }
+    }
+
+    struct CompletionFailure: Error {}
 
     func storedDayOrders(on date: Date) -> [Int?] {
         repository.day(date, filter: .allTraining).sessions.map(\.dayOrder)

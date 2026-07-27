@@ -499,11 +499,27 @@ occupied day → action sheet (**Swap / Add as second session / Move only**). Be
 change, show the `ScheduleDiff` ("You moved Threshold → Thursday; Recovery Ride → Tuesday. Accept?").
 Undo available after every mutation.
 
-**Shipped as of 2026-07-24:** cross-day drag (`.draggable` + `.dropDestination` on each day, occupied
-drop → Move/Swap dialog, undo bar). **Within-day reorder is not wired yet** - the session cell renders a
-reorder handle that is deliberately decorative and `accessibilityHidden` until its gesture lands, so
-assistive tech is never offered a control that does nothing. `Move to` in the cell's long-press menu is
-the non-gesture path meanwhile.
+**Shipped as of 2026-07-27:** long-press drag on the session cell's reorder handle, cross-day move and
+within-day reorder, both landing on one guarded mutation - `PlanRepository.reposition`.
+Order is persisted in `ScheduledWorkout.dayOrder`, sparse so a drop re-spaces only the row that moved
+(renumbering a sibling would rewrite its intent and make the next undo collide with a live session).
+`Move to` in the cell's long-press menu and the `Move earlier` / `Move later` accessibility actions are
+the non-gesture routes into the same call.
+
+**Locked days (approved policy, not a gap).** A day that has been and gone is history, and a day that
+already holds performed training is a record of what happened rather than a slot to shuffle. Neither is
+a legal drop *target* and neither is a legal *source*: a missed Monday session cannot be dragged into
+Thursday, and a planned evening session stops being movable once the morning session on its day is
+performed. The rule is resolved in exactly one place, `PlanDayLock.resolve`, which the reorder handles,
+the drag geometry, the `Move to` destinations and the repository's own guard all read - so the grid can
+never offer a move the repository refuses. Rescheduling a missed session means editing the plan, not
+dragging a historical day. Pinned by `PlanDragReorderTests`.
+
+**Filters.** A drop index counts the rows the athlete could actually see, so `reposition` takes the
+`ProgramFilter` the surface was showing (`PlanStore` passes its live `filter`) and resolves both the
+index and the performed-training lock against that same visible set. The moved row is spliced in beside
+its visible neighbours; sessions the filter hides keep their relative order and their stored `dayOrder`
+untouched.
 
 ---
 

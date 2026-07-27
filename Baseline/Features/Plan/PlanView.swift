@@ -30,6 +30,9 @@ struct PlanView: View {
     @State private var execContext: ExecContext?
     @State private var showChat = false
     @State private var dragState: DragState?
+    /// The finger's live offset, deliberately outside `dragState`: only the floating lift reads it, so
+    /// a drag frame that moves nothing else never rebuilds the grid. See `PlanDragMotion`.
+    @State private var dragMotion = PlanDragMotion()
     /// True only while the lift gesture is live. SwiftUI resets a `@GestureState` on cancellation as
     /// well as on completion, which is the one signal that distinguishes an interrupted drag - a
     /// system alert, an incoming call, a competing gesture - from a finished one.
@@ -77,14 +80,14 @@ struct PlanView: View {
         /// log purges the placeholder instead of keeping a blank scheduled workout on the day.
         var isProvisionalEmpty = false
     }
+    /// Everything about a live drag that the *grid* has to re-render for. It changes only when the
+    /// drop target changes, never per touch frame - the moment-to-moment offset lives in `dragMotion`.
     struct DragState {
         let sourceID: UUID
         let sourceRow: PlanDayRow
-        let sourceIndex: Int
         let sourceShowsDate: Bool
         let entry: PlanSessionEntry
         let sourceFrame: CGRect
-        var translation: CGSize = .zero
         var target: PlanDragReorderModel.Target = .noChange
     }
     #if DEBUG
@@ -434,8 +437,7 @@ struct PlanView: View {
                     if let scheduled = sessionByID[entry.id] {
                         sessionCell(row, entry,
                                     scheduled: scheduled,
-                                    showsDate: pendingReview == nil && index == 0,
-                                    index: index)
+                                    showsDate: pendingReview == nil && index == 0)
                     }
                 }
                 if insertion?.displayIndex == entries.count {
@@ -529,8 +531,7 @@ struct PlanView: View {
         _ row: PlanDayRow,
         _ entry: PlanSessionEntry,
         scheduled: ScheduledWorkout,
-        showsDate: Bool,
-        index: Int
+        showsDate: Bool
     ) -> some View {
         reorderable(
             WorkoutSwipeActionRow(
@@ -546,14 +547,7 @@ struct PlanView: View {
                     HStack(spacing: BaselineSpacing.xSmall) {
                         if entry.showsReorderHandle {
                             reorderHandle
-                                .gesture(
-                                    planDragGesture(
-                                        row: row,
-                                        entry: entry,
-                                        index: index,
-                                        showsDate: showsDate
-                                    )
-                                )
+                                .gesture(planDragGesture(row: row, entry: entry, showsDate: showsDate))
                         }
                         sessionButton(entry, scheduled: scheduled)
                             .contextMenu { sessionMenu(scheduled, status: entry.status, row: row) }
@@ -643,7 +637,6 @@ struct PlanView: View {
     private func planDragGesture(
         row: PlanDayRow,
         entry: PlanSessionEntry,
-        index: Int,
         showsDate: Bool
     ) -> some Gesture {
         LongPressGesture(minimumDuration: 0.22, maximumDistance: 16)
@@ -652,9 +645,9 @@ struct PlanView: View {
             .onChanged { value in
                 switch value {
                 case .first(true):
-                    beginDrag(row: row, entry: entry, index: index, showsDate: showsDate)
+                    beginDrag(row: row, entry: entry, showsDate: showsDate)
                 case .second(true, let drag?):
-                    beginDrag(row: row, entry: entry, index: index, showsDate: showsDate)
+                    beginDrag(row: row, entry: entry, showsDate: showsDate)
                     updateDrag(drag)
                 default:
                     break
@@ -666,7 +659,6 @@ struct PlanView: View {
     private func beginDrag(
         row: PlanDayRow,
         entry: PlanSessionEntry,
-        index: Int,
         showsDate: Bool
     ) {
         guard dragState == nil, let measuredFrame = sessionFrames[entry.id] else { return }
@@ -674,29 +666,32 @@ struct PlanView: View {
         let state = DragState(
             sourceID: entry.id,
             sourceRow: row,
-            sourceIndex: index,
             sourceShowsDate: showsDate,
             entry: entry,
             sourceFrame: frame
         )
+        dragMotion.translation = .zero
         Haptics.select()
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) {
             dragState = state
         }
     }
 
+    /// The offset goes to `dragMotion`, which only the floating lift reads. `dragState` - the grid's
+    /// input for the insertion indicator and the day locks - is rewritten only when the resolved target
+    /// actually changes, so a drag that stays over the same slot costs one repositioned overlay a frame
+    /// rather than a full rebuild of the week.
     private func updateDrag(_ drag: DragGesture.Value) {
         guard var state = dragState else { return }
+        dragMotion.translation = drag.translation
         let newTarget = PlanDragReorderModel.target(
             at: drag.location,
             sourceID: state.sourceID,
             sourceDate: state.sourceRow.date,
             days: dragDayGeometry()
         )
-        if newTarget != state.target {
-            Haptics.select()
-        }
-        state.translation = drag.translation
+        guard newTarget != state.target else { return }
+        Haptics.select()
         state.target = newTarget
         dragState = state
     }
@@ -757,8 +752,7 @@ struct PlanView: View {
                 date: date,
                 frame: frame,
                 sessions: sessions,
-                isPast: row.isPast,
-                isCompleted: row.sessions.contains(where: \.isCompleted)
+                lock: row.lock
             )
         }
     }
@@ -780,7 +774,6 @@ struct PlanView: View {
         var state = DragState(
             sourceID: evidence.sourceID,
             sourceRow: sourceRow,
-            sourceIndex: sourceIndex,
             sourceShowsDate: sourceIndex == 0,
             entry: entry,
             sourceFrame: sourceFrame
@@ -796,7 +789,7 @@ struct PlanView: View {
             state.target = .destination(
                 .init(date: destinationDate, index: finalIndex, displayIndex: displayIndex)
             )
-            state.translation = CGSize(
+            dragMotion.translation = CGSize(
                 width: destinationFrame.midX - sourceFrame.midX,
                 height: destinationFrame.midY - sourceFrame.midY - sourceFrame.height * 0.65
             )
@@ -850,7 +843,12 @@ struct PlanView: View {
     }
 
     private func liftedSession(_ state: DragState) -> some View {
-        GeometryReader { proxy in
+        LiftedSessionOverlay(
+            motion: dragMotion,
+            baseMidY: state.sourceFrame.midY,
+            height: state.sourceFrame.height,
+            reduceMotion: reduceMotion
+        ) {
             cell(
                 state.sourceRow,
                 showsDate: state.sourceShowsDate,
@@ -871,27 +869,43 @@ struct PlanView: View {
                     Spacer(minLength: BaselineSpacing.xSmall)
                 }
             }
-            .frame(
-                width: max(0, proxy.size.width - BaselineSpacing.medium),
-                height: state.sourceFrame.height
-            )
-            .background(BaselineColor.base)
-            .clipShape(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
-                    .strokeBorder(BaselineColor.accent, lineWidth: 1.5)
-            }
-            .shadow(color: BaselineColor.accent.opacity(0.22), radius: 18, y: 8)
-            .scaleEffect(reduceMotion ? 1 : 1.025)
-            .position(
-                x: proxy.size.width / 2 + state.translation.width,
-                y: state.sourceFrame.midY + state.translation.height
-            )
         }
         .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Dragging \(state.entry.title)")
         .zIndex(10)
+    }
+
+    /// The floating lift, and the *only* view that reads the drag's live offset.
+    ///
+    /// Its content is built once by `PlanView.body` and handed over as a value; when the finger moves,
+    /// Observation invalidates this small view alone to re-run `position`, leaving the seven-day grid
+    /// behind it untouched.
+    private struct LiftedSessionOverlay<Content: View>: View {
+        let motion: PlanDragMotion
+        let baseMidY: CGFloat
+        let height: CGFloat
+        let reduceMotion: Bool
+        @ViewBuilder let content: Content
+
+        var body: some View {
+            GeometryReader { proxy in
+                content
+                    .frame(width: max(0, proxy.size.width - BaselineSpacing.medium), height: height)
+                    .background(BaselineColor.base)
+                    .clipShape(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
+                            .strokeBorder(BaselineColor.accent, lineWidth: 1.5)
+                    }
+                    .shadow(color: BaselineColor.accent.opacity(0.22), radius: 18, y: 8)
+                    .scaleEffect(reduceMotion ? 1 : 1.025)
+                    .position(
+                        x: proxy.size.width / 2 + motion.translation.width,
+                        y: baseMidY + motion.translation.height
+                    )
+            }
+        }
     }
 
     private func moveAccessibly(_ id: UUID, direction: Int) {

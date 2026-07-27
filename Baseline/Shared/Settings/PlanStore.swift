@@ -135,12 +135,15 @@ final class PlanStore {
     @discardableResult func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay? = nil, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.move(id, toDate: toDate, timeOfDay: timeOfDay, actor: actor, reason: reason) }
     @discardableResult func swap(_ a: UUID, _ b: UUID, actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.swap(a, b, actor: actor, reason: reason) }
     @discardableResult func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor = .user, reason: String? = nil) -> MutationResult { defer { reload() }; return repo.reorder(day: day, orderedIDs: orderedIDs, actor: actor, reason: reason) }
+    /// `scope` defaults to the store's live `filter` because that is what every Plan surface rendered:
+    /// a drop index is only meaningful against the rows the athlete could see when they produced it.
     @discardableResult
     func reposition(
         _ id: UUID,
         toDate: Date,
         at position: PlanDayPosition,
         notBefore today: Date = Date(),
+        scope: ProgramFilter? = nil,
         actor: PlanActor = .user,
         reason: String? = nil
     ) -> MutationResult {
@@ -150,6 +153,7 @@ final class PlanStore {
             toDate: toDate,
             at: position,
             notBefore: today,
+            scope: scope ?? filter,
             actor: actor,
             reason: reason
         )

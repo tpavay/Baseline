@@ -16,8 +16,9 @@ struct PlanDragReorderModel: Sendable {
         let date: Date
         let frame: CGRect
         let sessions: [SessionGeometry]
-        let isPast: Bool
-        let isCompleted: Bool
+        /// Resolved by `PlanDayLock.resolve` upstream. The geometry model never re-derives whether a
+        /// day accepts scheduling, so drag can never disagree with the handle or the "Move to" menu.
+        let lock: PlanDayLock?
     }
 
     struct Destination: Equatable, Sendable {
@@ -28,14 +29,9 @@ struct PlanDragReorderModel: Sendable {
         let displayIndex: Int
     }
 
-    enum LockReason: Equatable, Sendable {
-        case past
-        case completed
-    }
-
     enum Target: Equatable, Sendable {
         case destination(Destination)
-        case locked(date: Date, reason: LockReason)
+        case locked(date: Date, reason: PlanDayLock)
         case noChange
         case outside
     }
@@ -48,8 +44,7 @@ struct PlanDragReorderModel: Sendable {
         calendar: Calendar = .planWeek
     ) -> Target {
         guard let day = nearestDay(to: location, in: days) else { return .outside }
-        if day.isPast { return .locked(date: day.date, reason: .past) }
-        if day.isCompleted { return .locked(date: day.date, reason: .completed) }
+        if let lock = day.lock { return .locked(date: day.date, reason: lock) }
 
         let rawIndex = day.sessions.firstIndex { location.y < $0.frame.midY } ?? day.sessions.count
         let isSourceDay = calendar.isDate(day.date, inSameDayAs: sourceDate)

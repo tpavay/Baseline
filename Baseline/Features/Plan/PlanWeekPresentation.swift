@@ -41,13 +41,6 @@ struct PlanSessionEntry: Identifiable, Equatable, Sendable {
     var isCompleted: Bool { status == .completed }
 }
 
-/// Why a day refuses to take a session, whether the athlete is dragging one onto it or picking it out
-/// of the long-press menu. Both routes read this, so neither can offer what the repository will refuse.
-enum PlanDayLock: Equatable, Sendable {
-    case past
-    case completed
-}
-
 /// What fills a day's cell stack.
 enum PlanDayContent: Equatable, Sendable {
     case sessions([PlanSessionEntry])
@@ -65,19 +58,14 @@ struct PlanDayRow: Identifiable, Equatable, Sendable {
     /// A trailing "+" cell under the day's sessions, for adding a second session. Today and future
     /// only - a past day that already happened gets no invitation to add more to it.
     let showsAddAnother: Bool
+    /// Resolved once by `build` through `PlanDayLock.resolve`; `nil` means the day accepts a session.
+    /// Every drag, handle and menu decision on this screen reads this rather than re-deriving it.
+    let lock: PlanDayLock?
     var id: Date { date }
 
     var sessions: [PlanSessionEntry] {
         if case .sessions(let entries) = content { return entries }
         return []
-    }
-
-    /// A day that has been and gone, or one that already holds performed training, takes no more
-    /// scheduling. `nil` means the day accepts a session.
-    var lock: PlanDayLock? {
-        if isPast { return .past }
-        if sessions.contains(where: \.isCompleted) { return .completed }
-        return nil
     }
 }
 
@@ -118,9 +106,10 @@ struct PlanWeekPresentation: Equatable, Sendable {
             let date = calendar.startOfDay(for: day.date)
             let isToday = calendar.isDate(date, inSameDayAs: startOfToday)
             let isPast = date < startOfToday
-            let dayHasCompletedSession = day.sessions.contains {
-                statuses[$0.id] == .completed
-            }
+            let lock = PlanDayLock.resolve(
+                isPast: isPast,
+                hasPerformedTraining: day.sessions.contains { statuses[$0.id] == .completed }
+            )
             let entries = day.sessions.map { session in
                 let status = statuses[session.id] ?? .planned
                 return PlanSessionEntry(
@@ -128,7 +117,7 @@ struct PlanWeekPresentation: Equatable, Sendable {
                     title: session.workout.title,
                     detail: detail(for: session, isCompleted: status == .completed),
                     status: status,
-                    showsReorderHandle: dayHasCompletedSession == false && !isPast
+                    showsReorderHandle: lock == nil
                 )
             }
             return PlanDayRow(
@@ -138,7 +127,8 @@ struct PlanWeekPresentation: Equatable, Sendable {
                 isToday: isToday,
                 isPast: isPast,
                 content: entries.isEmpty ? (day.isRestDay ? .rest : .empty) : .sessions(entries),
-                showsAddAnother: !entries.isEmpty && !isPast
+                showsAddAnother: !entries.isEmpty && !isPast,
+                lock: lock
             )
         }
         return PlanWeekPresentation(
