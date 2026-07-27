@@ -111,9 +111,9 @@ departures from what this document specifies:
   survives as the planned-contribution resolver; `WeeklyAggregatesRow`/`AggregateCard`/`PlanFormat` are
   gone.
 - **Days are filled cells in one grid, not floating cards.** A performed day is filled green and offers
-  its log; today's and future sessions are neutral with a reorder handle (the gesture itself is a
-  follow-up); rest and undecided days state themselves; today is marked by its accent date alone, with
-  every other day slightly muted. No status chip on a performed or planned row, and no trailing modality
+  its log; sessions on an unlocked day are neutral and carry the reorder handle that drives the drag
+  (§10 owns which days are locked); rest and undecided days state themselves; today is marked by its
+  accent date alone, with every other day slightly muted. No status chip on a performed or planned row, and no trailing modality
   glyph (the unexplained ◆/clock).
 - **The visible week is owned state**, moved by the `‹ ›` pager, by Today, and by a calendar rollover
   that finds the athlete still on what was then the current week - never inferred from scroll geometry,
@@ -200,6 +200,8 @@ struct Program            { id; name; isActive; isArchived; createdAt;
                             goals: [ProgramGoal] }             // point 4 — programs own goals (may be empty)
 struct ProgramGoal        { id; programID; text; kind? }       // e.g. "Sub-60 HYROX", "Improve threshold"
 struct ScheduledWorkout   { id; programID; date: Date; timeOfDay: TimeOfDay?
+                            dayOrder: Int?;                    // §10 — user-owned sequence within a day;
+                                                               // nil on rows written before drag ordering
                             origin: WorkoutOrigin;             // immutable — where it came from
                             workoutID: UUID;                   // stable identity of the workout across edits
                             workoutRevisionID: UUID;           // CURRENT immutable revision (→ WorkoutRevision)
@@ -250,8 +252,8 @@ enum PlanOpKind           { move, swap, reorder, add, duplicate, replace, skip, 
 struct PlanOperation      { id; kind: PlanOpKind; actor: PlanActor; reason?; timestamp; diff: ScheduleDiff }
 struct ScheduleDiff       { changes: [DayChange] }             // human-renderable + carries the inverse
 struct ScheduleSnapshot   { serialized PLAN INTENT — see §6/§7: programs (+goals), optional sections, and
-                            every ScheduledWorkout's {id, programID, sectionID?, date, timeOfDay, origin,
-                            skipped, workoutID, workoutRevisionID, templateID?, tags, supportsGoalIDs}.
+                            every ScheduledWorkout's {id, programID, sectionID?, date, timeOfDay, dayOrder?,
+                            origin, skipped, workoutID, workoutRevisionID, templateID?, tags, supportsGoalIDs}.
                             References revisions by id (immutable, §5) — never copies workout blobs.
                             DELIBERATELY EXCLUDES performed state (sessions/completed logs): those are
                             immutable facts, not versioned intent (point 2). }
@@ -303,7 +305,7 @@ default or is optional; all relationships optional). **No `SDTrainingWeek`/`SDTr
 ```
 @Model SDProgram { id; name; isActive; isArchived; createdAt; goalsJSON: Data? }   // goals embedded
 @Model SDProgramSection   { id; programID; name; roleRaw?; startDate?; endDate? }   // OPTIONAL (point 1)
-@Model SDScheduledWorkout { id; programID; sectionID?; originRaw; date; timeOfDayRaw?; skipped;
+@Model SDScheduledWorkout { id; programID; sectionID?; originRaw; date; timeOfDayRaw?; dayOrder?; skipped;
                             workoutID; workoutRevisionID;         // → current SDWorkoutRevision; NO lifecycle refs
                             templateID?; tagsJSON: Data?; supportsGoalIDsJSON: Data?; recurrenceJSON: Data? }
 @Model SDWorkoutRevision  { id; workoutID; createdAt; workoutJSON: Data }   // immutable Workout blob per edit
@@ -440,8 +442,8 @@ func restore(version: UUID) -> MutationResult   // appends a restore version == 
   revisions and workout blobs referenced by id, never duplicated, so snapshots stay small). If snapshots
   ever prove costly, switch to forward+inverse ops + periodic snapshots — `PlanVersion` already carries
   both an operation and a snapshot, so it's a storage swap, not an API change.
-- Drop-on-occupied resolution (`swap` / `add second session` / `move only`) is passed explicitly by the
-  caller — the repo never guesses.
+- The caller names the operation it wants (`move` / `swap` / `reposition`) — the repo never infers one
+  from where a session landed.
 
 ---
 
@@ -494,22 +496,45 @@ per-session planned figures on Today, Profile, Workout detail, and the Plan cell
 ## 10. Drag-and-drop behavior (Slice 3)
 
 Long-press → lift → drag → everything shifts → drop, on the week grid (Things/Reminders-style), driven
-**only** by the Slice-2 mutation API. Drop targets: another day (move), within a day (reorder), onto an
-occupied day → action sheet (**Swap / Add as second session / Move only**). Before applying a structural
-change, show the `ScheduleDiff` ("You moved Threshold → Thursday; Recovery Ride → Tuesday. Accept?").
-Undo available after every mutation.
+**only** by the Slice-2 mutation API. Drop targets: another day, and a slot within a day - a day that
+already holds sessions takes the drop at the slot it was released into, so there is no occupied-day
+resolution sheet (`swap` remains a repository op the agent tools and menus can name; a drag never
+picks it).
+A direct drag is the athlete's own decision, so it applies on release with no preview step, and the undo bar is what makes it reversible.
+The `ScheduleDiff` preview-and-accept step ("You moved Threshold → Thursday; Recovery Ride → Tuesday. Accept?") belongs to the flows that propose a change rather than perform one - agent/conversational edits and the destructive gates of §7-§8, which return `confirmationRequired` and write nothing until the athlete says yes.
+Undo is available after every mutation either way.
 
-**Shipped as of 2026-07-24:** cross-day drag (`.draggable` + `.dropDestination` on each day, occupied
-drop → Move/Swap dialog, undo bar). **Within-day reorder is not wired yet** - the session cell renders a
-reorder handle that is deliberately decorative and `accessibilityHidden` until its gesture lands, so
-assistive tech is never offered a control that does nothing. `Move to` in the cell's long-press menu is
-the non-gesture path meanwhile.
+**Shipped as of 2026-07-27:** long-press drag on the session cell's reorder handle, cross-day move and
+within-day reorder, both landing on one guarded mutation - `PlanRepository.reposition`.
+Order is persisted in `ScheduledWorkout.dayOrder`, sparse so a drop re-spaces only the row that moved
+(renumbering a sibling would rewrite its intent and make the next undo collide with a live session).
+`Move to` in the cell's long-press menu and the `Move earlier` / `Move later` accessibility actions are
+the non-gesture routes into the same call.
+
+**Locked days (approved policy, not a gap).** A day that has been and gone is history, and a day that
+already holds performed training is a record of what happened rather than a slot to shuffle. Neither is
+a legal drop *target* and neither is a legal *source*: a missed Monday session cannot be dragged into
+Thursday, and a planned evening session stops being movable once the morning session on its day is
+performed. The rule is resolved in exactly one place, `PlanDayLock.resolve`, which the reorder handles,
+the drag geometry, the `Move to` destinations and the repository's own guard all read - so the grid can
+never offer a move the repository refuses. Rescheduling a missed session means editing the plan, not
+dragging a historical day. Pinned by `PlanDragReorderTests`.
+
+**Filters.** A drop index counts the rows the athlete could actually see, so `reposition` takes the
+`ProgramFilter` the surface was showing (`PlanStore` passes its live `filter`) and resolves both the
+index and the performed-training lock against that same visible set.
+The repository call has no default scope: a caller states what its surface rendered, or it does not compile.
+`PlanStore.reposition` is the one place that may leave it out, and only because omitting it means "the filter this store is showing".
+The moved row is spliced in beside its visible neighbours, and the relative order of the sessions the filter hides is preserved.
+Their stored `dayOrder` *values* are a weaker guarantee: sparse ordering normally rewrites only the moved row, but when the gap it lands in is exhausted `writeDayOrder` widens the run and re-spaces neighbours - hidden or visible - to make room.
+That re-spacing changes those rows' `ScheduledIntent` between snapshots, so a re-spaced row carrying a live session will make the next undo refuse (`conflictsWithActiveSession`); the sparse scheme exists to keep that rare, not to promise it never happens.
 
 ---
 
 ## 11. Multiple-program behavior
 
-Model supports many active programs, many sessions/day (AM/PM via `timeOfDay`), standalone ad-hoc
+Model supports many active programs, many sessions/day (`timeOfDay` states AM/PM intent; their order on
+the day is `dayOrder`, §10), standalone ad-hoc
 workouts, and per-workout immutable `origin` + `programID`. Filter (`ProgramFilter`: `.allTraining`,
 `.program(id)`, `.collection(adHoc/completed/archived)`) runs against `Program` from day one; the strip
 and the day grid both respect it. All Training merges every active program chronologically.
@@ -546,7 +571,7 @@ Empty week ("No sessions this week — ask Baseline or add one"); undecided day 
 recovery mode** (read-only: old JSON preserved, schedule mutations blocked, diagnostic + retry/export — one
 writable store, never two, point 5); mutation validation errors (surfaced as `rejected(PlanError)`, no
 silent no-op); `confirmationRequired` diff shown before any structural change; agent ambiguity ("which
-Tuesday session?"); occupied-drop conflict (action sheet); offline (local-first, fine).
+Tuesday session?"); a drag over a locked day (badge + refused drop, §10); offline (local-first, fine).
 
 ---
 
@@ -554,10 +579,12 @@ Tuesday session?"); occupied-drop conflict (action sheet); offline (local-first,
 
 44pt+ tap targets on every control; VoiceOver labels describe **state + action** ("Threshold run,
 Tuesday, modified today, double-tap to start"); Dynamic Type must not break the grid (cells reflow);
-status conveyed by glyph + text, never color alone (your day-strip point); drag-drop has a non-gesture
-fallback in the long-press menu (Move to) so it isn't gesture-only, and the session cell's primary
-start/resume/review is a custom accessibility action because that menu is invisible to assistive tech;
-a rendered-but-unwired control stays `accessibilityHidden` (§10); reduced-motion honored.
+status conveyed by glyph + text, never color alone (your day-strip point); drag-drop is never
+gesture-only - the long-press menu's `Move to` and the row's `Move earlier` / `Move later` custom
+actions reach the same mutation (§10) - and the session cell's primary start/resume/review is a custom
+accessibility action because that menu is invisible to assistive tech; the reorder handle itself stays
+`accessibilityHidden` because those custom actions already expose everything its gesture does;
+reduced-motion honored.
 
 ---
 
@@ -566,9 +593,9 @@ a rendered-but-unwired control stays `accessibilityHidden` (§10); reduced-motio
 - **Migration:** JSON-store → SwiftData produces the expected today ScheduledWorkout + linked
   session/log (+ `SDCompletedExercise` rows if completed); idempotent; no data loss; **failure enters
   read-only recovery** (no second writable store).
-- **Repository/mutations (Slice 2, headless):** move/swap/reorder/add/duplicate/replace/skip/delete each
-  produce correct diff + version; **undo/restore append inverse/restore versions (history never shrinks)**;
-  occupied-drop resolutions; cross-program guards; a stored proposal applies only when
+- **Repository/mutations (Slice 2, headless):** move/swap/reorder/reposition/add/duplicate/replace/skip/delete
+  each produce correct diff + version; **undo/restore append inverse/restore versions (history never shrinks)**;
+  `reposition`'s day locks and filter-scoped ordering (§10, `PlanDragReorderTests`); cross-program guards; a stored proposal applies only when
   `expectedHeadVersionID` still matches (a mutation in between → the "yes" regenerates, never applies
   stale).
 - **Immutable revisions (point 1):** editing a workout creates a new `WorkoutRevision`; restoring an
@@ -617,7 +644,7 @@ a rendered-but-unwired control stays `accessibilityHidden` (§10); reduced-motio
 
 **Slice 3 — drag-drop + manual editing** — ✅ DONE (commit 3c234e6; 198 tests). Action-based ⋯ menu → mutations, draggable cards + day drop targets, occupied-drop Move/Swap dialog, delete confirmation gate, undo snackbar.
 13. Overflow ⋯ actions wired to mutations (with diffs/confirm/undo).
-14. Long-press drag-reorder + cross-day move + occupied-drop action sheet + diff preview.
+14. Long-press drag-reorder + cross-day move + occupied-drop action sheet + diff preview (both the sheet and the preview were dropped in the 2026-07-27 rework; §10 owns the shipped behavior).
 
 **Slice 4 — multi-program + agent tools** — ✅ DONE (commits 1d4f811, ee753b9; 203 tests; functions deployed to dev). Collections filter + week-plan agent tools (move/swap/skip/duplicate/delete/explain) on the same versioned repository, ambiguity-aware, delete confirmation-gated.
 15. Program filter against real multiple programs; collections (Ad Hoc/Completed/Archived).
@@ -652,7 +679,7 @@ space).
 | Status chip via pure resolver (today physiological / attribution / execution; never stored) | §12; Slice 1 (7) + Slice 2 (attribution) |
 | Modification "why" from deterministic state + stored diff, never invented | §12, §8; Slice 1/2/4 |
 | Overflow actions (Move/Swap/Duplicate/Edit/Replace/Skip/Delete/Talk) | §9, §10; Slice 3 (13) |
-| Drag-drop (move/reorder/occupied-drop → swap/add/move) + diff preview | §10; Slice 3 (14) |
+| Drag-drop (cross-day move + within-day reorder) + undo | §10; Slice 3 (14), reworked 2026-07-27 (§10) - drop-on-occupied inserts at the slot instead of raising a Swap/Add/Move sheet |
 | Undo + versioning — **append-only** (actor/reason/timestamp/snapshot/restore) | §4, §6; Slice 2 (10–12) |
 | **Immutable workout revisions** — undo covers plan edits, not just calendar | §4, §5, §6; Slice 2 (10) |
 | **Restore never rewinds performed history** — logs immutable, queried by scheduledWorkoutID | §4, §5, §6, §12; Slice 2 (12) |

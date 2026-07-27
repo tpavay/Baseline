@@ -13,6 +13,15 @@ enum SessionCompletion: Equatable, Sendable {
     case noActiveSession
 }
 
+/// Where a repositioned session lands among the other sessions already on its day.
+///
+/// `.endOfDay` is the supported spelling for "append", so a caller that only knows it wants the last
+/// slot never has to encode that as an out-of-range index and depend on the clamp holding.
+enum PlanDayPosition: Equatable, Sendable {
+    case index(Int)
+    case endOfDay
+}
+
 @MainActor
 protocol PlanRepository {
     func programs() -> [Program]
@@ -93,6 +102,33 @@ protocol PlanRepository {
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult
     func swap(_ a: UUID, _ b: UUID, actor: PlanActor, reason: String?) -> MutationResult
     func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor, reason: String?) -> MutationResult
+    /// Atomically move one schedule intent to a position on today or a future day.
+    ///
+    /// `position` is either a final index among the target day's other sessions or `.endOfDay`, the
+    /// spelling every caller that just wants to append uses; an `.index` beyond the day's last slot
+    /// means the same thing. `scope` is the `ProgramFilter` the caller's surface was showing: an index
+    /// only means something against the rows the athlete could actually see, so the repository resolves
+    /// it against that same visible set and splices the moved row in beside its visible neighbours. The
+    /// relative order of the day's hidden sessions is preserved. `scope` also bounds the
+    /// performed-training lock, so a day the grid rendered as open is never silently refused.
+    ///
+    /// Past sources and targets, and source/target days holding performed facts, are rejected: a day
+    /// that has been and gone is history and a day already trained is a record, not a slot to shuffle
+    /// (`PlanDayLock`). Ordering is sparse, so normally only the moved row's `dayOrder` value is
+    /// written and a sibling carrying a live session keeps the intent an undo compares; when the gap
+    /// the row lands in is exhausted, `writeDayOrder` widens the run and re-spaces its neighbours,
+    /// which preserves their order but does change their values - and a re-spaced row whose session is
+    /// live will make the next `undo()` refuse (`conflictsWithActiveSession`). The mutation touches
+    /// only `SDScheduledWorkout` rows and one plan version snapshot.
+    func reposition(
+        _ id: UUID,
+        toDate: Date,
+        at position: PlanDayPosition,
+        notBefore today: Date,
+        scope: ProgramFilter,
+        actor: PlanActor,
+        reason: String?
+    ) -> MutationResult
     func addWorkout(_ sw: ScheduledWorkout, actor: PlanActor, reason: String?) -> MutationResult
     func duplicate(_ id: UUID, toDate: Date?, actor: PlanActor, reason: String?) -> MutationResult
     func replaceContent(_ id: UUID, with workout: Workout, actor: PlanActor, reason: String?) -> MutationResult
@@ -182,7 +218,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         let days = (0..<7).map { offset -> TrainingDay in
             let d = calendar.date(byAdding: .day, value: offset, to: start)!
             let sessions = scheduled.filter { calendar.isDate($0.date, inSameDayAs: d) }
-                .sorted { ($0.timeOfDay?.rawValue ?? "") < ($1.timeOfDay?.rawValue ?? "") }
+                .sorted(by: scheduledBefore)
             return TrainingDay(date: d, sessions: sessions, isRestDay: restMarks.contains(d))
         }
         return TrainingWeek(startDate: start, days: days)
@@ -543,10 +579,18 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult {
         guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { return .rejected(.notFound) }
-        let diff = ScheduleDiff(changes: [.init(kind: .move, summary: "Move \(title(id)) → \(fmtDate(toDate))", scheduledID: id)])
+        let sourceDay = calendar.startOfDay(for: sd.date)
+        let targetDay = calendar.startOfDay(for: toDate)
+        let sameDay = calendar.isDate(sourceDay, inSameDayAs: targetDay)
+        // Landing on a new day appends; the siblings on neither day are renumbered, so a move never
+        // rewrites an intent the caller did not ask to change.
+        let landedOrder = sameDay ? sd.dayOrder : nextDayOrder(on: targetDay)
+        let diff = ScheduleDiff(changes: [.init(kind: .move, summary: "Move \(title(id)) → \(fmtDate(targetDay))", scheduledID: id)])
         return apply(.move, actor, reason, diff) {
-            sd.date = toDate; sd.timeOfDayRaw = timeOfDay?.rawValue
-            clearRestMarker(on: toDate)
+            sd.date = targetDay
+            sd.timeOfDayRaw = timeOfDay?.rawValue
+            sd.dayOrder = landedOrder
+            clearRestMarker(on: targetDay)
         }
     }
 
@@ -557,21 +601,85 @@ final class SwiftDataPlanRepository: PlanRepository {
             .init(kind: .move, summary: "Swap \(title(a)) ↔ \(title(b))", scheduledID: a),
             .init(kind: .move, summary: "", scheduledID: b)])
         return apply(.swap, actor, reason, diff) {
-            let (ad, at) = (A.date, A.timeOfDayRaw)
-            A.date = B.date; A.timeOfDayRaw = B.timeOfDayRaw
-            B.date = ad; B.timeOfDayRaw = at
+            let (ad, at, ao) = (A.date, A.timeOfDayRaw, A.dayOrder)
+            A.date = B.date; A.timeOfDayRaw = B.timeOfDayRaw; A.dayOrder = B.dayOrder
+            B.date = ad; B.timeOfDayRaw = at; B.dayOrder = ao
             clearRestMarker(on: A.date); clearRestMarker(on: B.date)
         }
     }
 
     func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor, reason: String?) -> MutationResult {
-        let slots: [TimeOfDay] = [.morning, .midday, .evening]
+        let rows = orderedRows(on: day)
+        guard Set(rows.map(\.id)) == Set(orderedIDs), rows.count == orderedIDs.count else {
+            return .rejected(.invalidTarget)
+        }
+        let rowsByID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        let orderedRows = orderedIDs.compactMap { rowsByID[$0] }
+        // Naming every row the request actually moves is what makes the sparse writer write. A day of
+        // rows that predate drag ordering carries no stored order at all, so without this each of them
+        // reads as already in place, nothing is written, and the caller is told the reorder applied.
+        let reassigning = Set(zip(rows, orderedRows).compactMap { current, requested in
+            current.id == requested.id ? nil : requested.id
+        })
+        guard reassigning.isEmpty == false else { return .rejected(.invalidTarget) }
         let diff = ScheduleDiff(changes: [.init(kind: .edit, summary: "Reorder \(fmtDate(day))", scheduledID: nil)])
         return apply(.reorder, actor, reason, diff) {
-            for (i, id) in orderedIDs.enumerated() {
-                guard let sd = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else { continue }
-                sd.timeOfDayRaw = (i < slots.count ? slots[i] : .evening).rawValue
-            }
+            writeDayOrder(orderedRows, reassigning: reassigning)
+        }
+    }
+
+    func reposition(
+        _ id: UUID,
+        toDate: Date,
+        at position: PlanDayPosition,
+        notBefore today: Date,
+        scope: ProgramFilter,
+        actor: PlanActor,
+        reason: String?
+    ) -> MutationResult {
+        let earliestDay = calendar.startOfDay(for: today)
+        let targetDay = calendar.startOfDay(for: toDate)
+        guard let moved = firstSD(SDScheduledWorkout.self, where: #Predicate { $0.id == id }) else {
+            return .rejected(.notFound)
+        }
+
+        let sourceDay = calendar.startOfDay(for: moved.date)
+        let sourceRows = orderedRows(on: sourceDay)
+        let sourceIDs = sourceRows.map(\.id)
+        guard sourceIDs.contains(id) else { return .rejected(.notFound) }
+
+        let sameDay = calendar.isDate(sourceDay, inSameDayAs: targetDay)
+        let targetRows = sameDay ? sourceRows : orderedRows(on: targetDay)
+        guard dayLock(on: sourceDay, rows: sourceRows, scope: scope, earliestDay: earliestDay) == nil,
+              dayLock(on: targetDay, rows: targetRows, scope: scope, earliestDay: earliestDay) == nil else {
+            return .rejected(.invalidTarget)
+        }
+
+        var finalTargetRows = targetRows.filter { $0.id != id }
+        let finalIndex = insertionIndex(
+            for: position,
+            among: finalTargetRows,
+            scope: scope
+        )
+        finalTargetRows.insert(moved, at: finalIndex)
+
+        if sameDay, finalTargetRows.map(\.id) == sourceIDs {
+            return .rejected(.invalidTarget)
+        }
+
+        let kind: ScheduleDiff.Change.Kind = sameDay ? .edit : .move
+        let summary = sameDay
+            ? "Reorder \(title(id)) on \(fmtDate(targetDay))"
+            : "Move \(title(id)) → \(fmtDate(targetDay)), position \(finalIndex + 1)"
+        let diff = ScheduleDiff(changes: [.init(kind: kind, summary: summary, scheduledID: id)])
+
+        // The gap the move leaves behind on the source day is still strictly increasing, and the
+        // destination is re-spaced around the moved row rather than renumbered, so no sibling on
+        // either day has its intent rewritten by a move it was not part of.
+        return apply(.reorder, actor, reason, diff) {
+            moved.date = targetDay
+            writeDayOrder(finalTargetRows, reassigning: [id])
+            clearRestMarker(on: targetDay)
         }
     }
 
@@ -582,7 +690,8 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     func duplicate(_ id: UUID, toDate: Date?, actor: PlanActor, reason: String?) -> MutationResult {
         guard let src = scheduledWorkout(id) else { return .rejected(.notFound) }
-        var copy = src; copy.id = UUID(); copy.date = toDate ?? src.date; copy.skipped = false   // shares the revision
+        // A copy is a new row on its day, never a second claimant to the source's slot.
+        var copy = src; copy.id = UUID(); copy.date = toDate ?? src.date; copy.skipped = false; copy.dayOrder = nil   // shares the revision
         let diff = ScheduleDiff(changes: [.init(kind: .add, summary: "Duplicate \(src.workout.title)", scheduledID: copy.id)])
         return apply(.duplicate, actor, reason, diff) { insertScheduled(copy) }
     }
@@ -1388,6 +1497,7 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func intent(_ sd: SDScheduledWorkout) -> ScheduledIntent {
         ScheduledIntent(id: sd.id, programID: sd.programID, sectionID: sd.sectionID, date: sd.date,
                         timeOfDay: sd.timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)),
+                        dayOrder: sd.dayOrder,
                         origin: WorkoutOrigin(rawValue: sd.originRaw) ?? .userCreated,
                         workoutID: sd.workoutID, workoutRevisionID: sd.workoutRevisionID,
                         templateID: sd.templateID, templateRevisionID: sd.templateRevisionID,
@@ -1411,7 +1521,7 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     private func write(_ it: ScheduledIntent, to sd: SDScheduledWorkout) {
         sd.id = it.id; sd.programID = it.programID; sd.sectionID = it.sectionID; sd.date = it.date
-        sd.timeOfDayRaw = it.timeOfDay?.rawValue; sd.originRaw = it.origin.rawValue
+        sd.timeOfDayRaw = it.timeOfDay?.rawValue; sd.dayOrder = it.dayOrder; sd.originRaw = it.origin.rawValue
         sd.workoutID = it.workoutID; sd.workoutRevisionID = it.workoutRevisionID
         sd.templateID = it.templateID; sd.templateRevisionID = it.templateRevisionID
         sd.tagsJSON = it.tags.isEmpty ? nil : PlanCoding.data(it.tags)
@@ -1431,15 +1541,20 @@ final class SwiftDataPlanRepository: PlanRepository {
         return false
     }
 
+    /// A new row always lands at the end of its day, and it gets there without touching a single
+    /// sibling: renumbering the day would rewrite intents the add never meant to change, which is
+    /// what would make the next `undo()` collide with any live session on that day.
     private func insertScheduled(_ sw: ScheduledWorkout) {
         clearRestMarker(on: sw.date)
+        let appendedDayOrder = nextDayOrder(on: sw.date)
         let rid = sw.workoutRevisionID
         if firstSD(SDWorkoutRevision.self, where: #Predicate { $0.id == rid }) == nil {
             context.insert(SDWorkoutRevision(id: rid, workoutID: sw.workoutID, createdAt: sw.date, workoutJSON: PlanCoding.data(sw.workout)))
         }
         context.insert(SDScheduledWorkout(
             id: sw.id, programID: sw.programID, sectionID: sw.sectionID, originRaw: sw.origin.rawValue,
-            date: sw.date, timeOfDayRaw: sw.timeOfDay?.rawValue, skipped: sw.skipped, workoutID: sw.workoutID,
+            date: sw.date, timeOfDayRaw: sw.timeOfDay?.rawValue, dayOrder: appendedDayOrder,
+            skipped: sw.skipped, workoutID: sw.workoutID,
             workoutRevisionID: sw.workoutRevisionID, templateID: sw.templateID, templateRevisionID: sw.templateRevisionID,
             tagsJSON: sw.tags.isEmpty ? nil : PlanCoding.data(sw.tags),
             supportsGoalIDsJSON: sw.supportsGoalIDs.isEmpty ? nil : PlanCoding.data(sw.supportsGoalIDs),
@@ -1495,7 +1610,9 @@ final class SwiftDataPlanRepository: PlanRepository {
             sectionID: sd.sectionID, templateID: sd.templateID, templateRevisionID: sd.templateRevisionID,
             tags: PlanCoding.value([WorkoutTag].self, sd.tagsJSON) ?? [],
             supportsGoalIDs: PlanCoding.value([UUID].self, sd.supportsGoalIDsJSON) ?? [],
-            recurrence: PlanCoding.value(RecurrenceRule.self, sd.recurrenceJSON), skipped: sd.skipped)
+            recurrence: PlanCoding.value(RecurrenceRule.self, sd.recurrenceJSON),
+            skipped: sd.skipped,
+            dayOrder: sd.dayOrder)
     }
 
     private func map(_ sd: SDWorkoutSession) -> WorkoutSession? {
@@ -1518,18 +1635,158 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func scheduled(in range: Range<Date>, filter: ProgramFilter) -> [ScheduledWorkout] {
         let lo = range.lowerBound, hi = range.upperBound
         let rows = fetch(SDScheduledWorkout.self, where: #Predicate { $0.date >= lo && $0.date < hi })
-        let programs = fetchAll() as [SDProgram]
-        let activeIDs = Set(programs.filter { $0.isActive && !$0.isArchived }.map(\.id))
-        let archivedIDs = Set(programs.filter(\.isArchived).map(\.id))
-        return rows.compactMap(hydrate).filter { sw in
-            switch filter {
-            case .allTraining: return activeIDs.contains(sw.programID)
-            case .program(let id): return sw.programID == id
-            case .collection(.archived): return archivedIDs.contains(sw.programID)
-            case .collection(.completed): return completedLog(forScheduled: sw.id) != nil
-            case .collection(.adHoc): return [.userCreated, .legacyMigrated, .baselineGenerated].contains(sw.origin)
+        return visibleRows(rows, scope: filter).compactMap(hydrate).sorted { lhs, rhs in
+            if calendar.isDate(lhs.date, inSameDayAs: rhs.date) {
+                return scheduledBefore(lhs, rhs)
             }
-        }.sorted { $0.date < $1.date }
+            return lhs.date < rhs.date
+        }
+    }
+
+    /// The one rule for which schedule rows a `ProgramFilter` shows, in the order they were handed in.
+    ///
+    /// Every Plan surface renders this set, so `reposition` has to resolve a drop index against it too:
+    /// an index the athlete produced by dropping below the one visible row on a day means nothing
+    /// against a persistence-order list that also holds the sessions the filter hid from them.
+    private func visibleRows(_ rows: [SDScheduledWorkout], scope: ProgramFilter) -> [SDScheduledWorkout] {
+        guard rows.isEmpty == false else { return [] }
+        switch scope {
+        case .allTraining, .collection(.archived):
+            let programs = fetchAll() as [SDProgram]
+            let programIDs = scope == .allTraining
+                ? Set(programs.filter { $0.isActive && !$0.isArchived }.map(\.id))
+                : Set(programs.filter(\.isArchived).map(\.id))
+            return rows.filter { programIDs.contains($0.programID) }
+        case .program(let id):
+            return rows.filter { $0.programID == id }
+        case .collection(.completed):
+            let completed = completedScheduledWorkoutIDs(among: rows.map(\.id))
+            return rows.filter { completed.contains($0.id) }
+        case .collection(.adHoc):
+            let adHoc = Set([WorkoutOrigin.userCreated, .legacyMigrated, .baselineGenerated].map(\.rawValue))
+            return rows.filter { adHoc.contains($0.originRaw) }
+        }
+    }
+
+    /// Translate a slot among the day's *visible* rows into a slot among all of them.
+    ///
+    /// The moved row lands immediately after the visible row the athlete dropped it below (or ahead of
+    /// the first visible row for slot zero), which keeps every session the filter hid exactly where it
+    /// was relative to its neighbours: a filtered drag reorders what the athlete could see and nothing
+    /// else. An out-of-range index means the same as `.endOfDay`, as the protocol documents.
+    private func insertionIndex(
+        for position: PlanDayPosition,
+        among rows: [SDScheduledWorkout],
+        scope: ProgramFilter
+    ) -> Int {
+        let visible = visibleRows(rows, scope: scope)
+        guard visible.isEmpty == false else { return rows.count }
+        let visibleIndex = switch position {
+        case .index(let requested): min(max(requested, 0), visible.count)
+        case .endOfDay: visible.count
+        }
+        guard visibleIndex > 0 else {
+            return rows.firstIndex { $0.id == visible[0].id } ?? 0
+        }
+        let anchor = visible[visibleIndex - 1].id
+        guard let anchorIndex = rows.firstIndex(where: { $0.id == anchor }) else { return rows.count }
+        return anchorIndex + 1
+    }
+
+    /// The day-level scheduling lock, resolved against the same visible set the caller's surface
+    /// rendered so the grid and the repository can never disagree about which days are open.
+    private func dayLock(
+        on date: Date,
+        rows: [SDScheduledWorkout],
+        scope: ProgramFilter,
+        earliestDay: Date
+    ) -> PlanDayLock? {
+        PlanDayLock.resolve(
+            isPast: calendar.startOfDay(for: date) < earliestDay,
+            hasPerformedTraining: dayContainsCompletedSession(rows, scope: scope)
+        )
+    }
+
+    private func scheduledBefore(_ lhs: ScheduledWorkout, _ rhs: ScheduledWorkout) -> Bool {
+        lhs.planDayOrderKey < rhs.planDayOrderKey
+    }
+
+    private func orderedRows(on date: Date) -> [SDScheduledWorkout] {
+        let start = calendar.startOfDay(for: date)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
+        return fetch(SDScheduledWorkout.self, where: #Predicate { $0.date >= start && $0.date < end })
+            .sorted { $0.planDayOrderKey < $1.planDayOrderKey }
+    }
+
+    /// Make `rows` the day's order while writing as few of them as possible.
+    ///
+    /// `dayOrder` is part of `ScheduledIntent`, so every row this touches is a row whose intent differs
+    /// between two version snapshots - and `conflictsWithActiveSession` then refuses the next undo if
+    /// that row happens to carry a live session. Ordering is therefore sparse rather than dense: a row
+    /// already sitting above everything kept before it stays exactly where it is, and only the rows
+    /// that genuinely have to move are given fresh values spread through the gap they land in. Rows
+    /// named in `reassigning` always take a new value, which is what stops the greedy scan from
+    /// re-spacing a settled sibling instead of the one the caller actually moved.
+    private func writeDayOrder(_ rows: [SDScheduledWorkout], reassigning: Set<UUID> = []) {
+        var index = 0
+        var highestKept: Int?
+        while index < rows.count {
+            let stored = rows[index].dayOrder
+            // A row with no stored order predates drag ordering and sorts ahead of every ordered row,
+            // so it only stays put while nothing ordered has been kept before it.
+            let staysPut = reassigning.contains(rows[index].id) == false
+                && (highestKept.map { kept in stored.map { $0 > kept } ?? false } ?? true)
+            if staysPut {
+                highestKept = stored ?? highestKept
+                index += 1
+                continue
+            }
+            var end = index + 1
+            while true {
+                let ceiling: Int? = end < rows.count ? rows[end].dayOrder : nil
+                let isOpenEnded = end == rows.count
+                if isOpenEnded || ceiling != nil,
+                   let values = spacedDayOrders(count: end - index, above: highestKept, below: ceiling) {
+                    for (offset, value) in values.enumerated() { rows[index + offset].dayOrder = value }
+                    highestKept = values.last
+                    index = end
+                    break
+                }
+                end += 1
+            }
+        }
+    }
+
+    /// `count` strictly increasing orders inside the open interval `(above, below)`, or nil when the
+    /// interval is too tight to hold them and the caller has to widen the run it rewrites.
+    private func spacedDayOrders(count: Int, above: Int?, below: Int?) -> [Int]? {
+        guard count > 0 else { return [] }
+        guard let below else {
+            let base = above ?? -Self.dayOrderStride
+            return (1 ... count).map { base + $0 * Self.dayOrderStride }
+        }
+        let base = above ?? (below - (count + 1) * Self.dayOrderStride)
+        guard below - base > count else { return nil }
+        let step = (below - base) / (count + 1)
+        return (1 ... count).map { base + $0 * step }
+    }
+
+    /// Appended rows leave room between themselves so a later insertion can take a midpoint instead of
+    /// pushing every row after it along.
+    private static let dayOrderStride = 1 << 10
+
+    /// The order that puts a row after everything already on its day, without renumbering any of it.
+    /// Legacy rows carry no order and sort ahead of ordered ones, so appending past the day's highest
+    /// stored order is enough to land last on a mixed day as well as a fully ordered one.
+    private func nextDayOrder(on date: Date) -> Int {
+        let highest = orderedRows(on: date).compactMap(\.dayOrder).max()
+        return spacedDayOrders(count: 1, above: highest, below: nil)?.first ?? 0
+    }
+
+    private func dayContainsCompletedSession(_ rows: [SDScheduledWorkout], scope: ProgramFilter) -> Bool {
+        let scheduledIDs = visibleRows(rows, scope: scope).map(\.id)
+        guard scheduledIDs.isEmpty == false else { return false }
+        return completedScheduledWorkoutIDs(among: scheduledIDs).isEmpty == false
     }
 
     private func latestSession(_ scheduledID: UUID) -> SDWorkoutSession? {
@@ -1546,4 +1803,59 @@ final class SwiftDataPlanRepository: PlanRepository {
         return (try? context.fetch(d))?.first
     }
     private func save() { try? context.save() }
+}
+
+// MARK: - Day ordering
+
+/// The one rule for how two sessions on the same calendar day are ordered, written once so the domain
+/// projection and the persistence-side renumbering can never disagree about it.
+///
+/// A stored `dayOrder` is the athlete's own sequence and wins. Rows that predate drag ordering carry
+/// none, and they sort *ahead* of ordered rows on semantic time-of-day and then stable identity - which
+/// is what lets a new row append to a mixed day by taking the next integer, with no sibling rewritten.
+private struct PlanDayOrderKey: Comparable {
+    let dayOrder: Int?
+    let timeOfDayRank: Int
+    let identity: String
+
+    init(dayOrder: Int?, timeOfDay: TimeOfDay?, id: UUID) {
+        self.dayOrder = dayOrder
+        self.timeOfDayRank = switch timeOfDay {
+        case .morning: 0
+        case .midday: 1
+        case .evening: 2
+        case nil: 3
+        }
+        self.identity = id.uuidString
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs.dayOrder, rhs.dayOrder) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (nil, _?):
+            return true
+        case (_?, nil):
+            return false
+        default:
+            if lhs.timeOfDayRank != rhs.timeOfDayRank { return lhs.timeOfDayRank < rhs.timeOfDayRank }
+            return lhs.identity < rhs.identity
+        }
+    }
+}
+
+private extension ScheduledWorkout {
+    var planDayOrderKey: PlanDayOrderKey {
+        PlanDayOrderKey(dayOrder: dayOrder, timeOfDay: timeOfDay, id: id)
+    }
+}
+
+private extension SDScheduledWorkout {
+    var planDayOrderKey: PlanDayOrderKey {
+        PlanDayOrderKey(
+            dayOrder: dayOrder,
+            timeOfDay: timeOfDayRaw.flatMap(TimeOfDay.init(rawValue:)),
+            id: id
+        )
+    }
 }

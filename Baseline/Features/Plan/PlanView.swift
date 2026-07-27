@@ -17,14 +17,31 @@ struct PlanView: View {
     /// on each access, and the day-derived cache is rebuilt whenever the calendar day turns over -
     /// on foreground and on `NSCalendarDayChanged` - so the tab never leaves yesterday marked today.
     var now: () -> Date = { Date() }
+    #if DEBUG
+    /// Render-only seam used by app-hosted tests to capture the otherwise transient lift and
+    /// mid-drag states. Compiled out of release builds; schedule mutation tests drive real writes.
+    var dragEvidence: DragEvidence? = nil
+    #endif
 
     @Environment(PlanStore.self) private var plan
     @Environment(AppSettings.self) private var settings
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var execContext: ExecContext?
     @State private var showChat = false
-    @State private var dropTargetDate: Date?
-    @State private var pendingDrop: PendingDrop?
+    @State private var dragState: DragState?
+    /// The finger's live offset, deliberately outside `dragState`: only the floating lift reads it, so
+    /// a drag frame that moves nothing else never rebuilds the grid. See `PlanDragMotion`.
+    @State private var dragMotion = PlanDragMotion()
+    /// True only while the lift gesture is live. SwiftUI resets a `@GestureState` on cancellation as
+    /// well as on completion, which is the one signal that distinguishes an interrupted drag - a
+    /// system alert, an incoming call, a competing gesture - from a finished one.
+    @GestureState private var dragGestureActive = false
+    @State private var sessionFrames: [UUID: CGRect] = [:]
+    @State private var dayFrames: [Date: CGRect] = [:]
+    #if DEBUG
+    @State private var evidenceDragInstalled = false
+    #endif
     @State private var deleteTarget: DeleteTarget?
     @State private var undoMessage: String?
     @State private var importContext: ImportContext?
@@ -63,8 +80,29 @@ struct PlanView: View {
         /// log purges the placeholder instead of keeping a blank scheduled workout on the day.
         var isProvisionalEmpty = false
     }
-    /// A drag dropped onto a day that already has session(s) — resolved via an action sheet.
-    struct PendingDrop: Identifiable { let id = UUID(); let dragged: UUID; let day: Date; let existing: [ScheduledWorkout] }
+    /// Everything about a live drag that the *grid* has to re-render for. It changes only when the
+    /// drop target changes, never per touch frame - the moment-to-moment offset lives in `dragMotion`.
+    struct DragState {
+        let sourceID: UUID
+        let sourceRow: PlanDayRow
+        let sourceShowsDate: Bool
+        let entry: PlanSessionEntry
+        let sourceFrame: CGRect
+        var target: PlanDragReorderModel.Target = .noChange
+    }
+    #if DEBUG
+    struct DragEvidence {
+        let sourceID: UUID
+        let destinationDate: Date?
+        let destinationIndex: Int
+
+        init(sourceID: UUID, destinationDate: Date? = nil, destinationIndex: Int = 0) {
+            self.sourceID = sourceID
+            self.destinationDate = destinationDate
+            self.destinationIndex = destinationIndex
+        }
+    }
+    #endif
     struct DeleteTarget: Identifiable { let id = UUID(); let sw: ScheduledWorkout; let proposalID: UUID }
     struct ImportContext: Identifiable { let id = UUID(); let date: Date; var source: WorkoutImportImageSource? }
     struct AddContext: Identifiable { let id = UUID(); let date: Date }
@@ -90,7 +128,9 @@ struct PlanView: View {
                 }
 
                 if let msg = undoMessage { undoBar(msg) }
+                if let dragState { liftedSession(dragState) }
             }
+            .coordinateSpace(name: "planDrag")
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { calendarToolbar }
@@ -123,13 +163,6 @@ struct PlanView: View {
             Button("Delete", role: .destructive) { apply(plan.delete(t.sw.id, proposalID: t.proposalID), "Deleted"); deleteTarget = nil }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: { t in Text("This removes \(t.sw.workout.title) from the plan. You can undo it.") }
-        .confirmationDialog("Drop onto this day", isPresented: Binding(get: { pendingDrop != nil }, set: { if !$0 { pendingDrop = nil } }), presenting: pendingDrop) { pd in
-            Button("Move here") { apply(plan.move(pd.dragged, toDate: pd.day), "Moved"); pendingDrop = nil }
-            if pd.existing.count == 1 {
-                Button("Swap with \(pd.existing[0].workout.title)") { apply(plan.swap(pd.dragged, pd.existing[0].id), "Swapped"); pendingDrop = nil }
-            }
-            Button("Cancel", role: .cancel) { pendingDrop = nil }
-        }
         .task(id: undoMessage) {
             guard undoMessage != nil else { return }
             try? await Task.sleep(for: .seconds(4))
@@ -137,8 +170,12 @@ struct PlanView: View {
         }
         .onAppear(perform: syncToCurrentDay)
         .onChange(of: plan.revision) { refreshWeek() }
+        .onChange(of: dragGestureActive) { _, active in
+            guard active == false else { return }
+            cancelInterruptedDrag()
+        }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
+            guard phase == .active else { cancelDrag(); return }
             syncToCurrentDay()
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
@@ -195,11 +232,13 @@ struct PlanView: View {
 
     private func showWeek(offsetBy weeks: Int) {
         guard let moved = cal.date(byAdding: .day, value: 7 * weeks, to: focusedWeekStart) else { return }
+        cancelDrag()
         weekStart = cal.weekStart(for: moved)
         refreshWeek()
     }
 
     private func showCurrentWeek() {
+        cancelDrag()
         weekStart = cal.weekStart(for: today)
         reanchorFocusedWeek()
         refreshWeek()
@@ -354,13 +393,36 @@ struct PlanView: View {
             .padding(.bottom, BaselineSpacing.screenBottom)
         }
         .scrollIndicators(.hidden)
+        // The lift freezes the frame snapshot the drop resolves against, so the content underneath it
+        // has to hold still too: a scroll mid-drag would slide rows out from under the frozen geometry
+        // and silently land the session on a neighbouring day.
+        .scrollDisabled(dragState != nil)
+        .onPreferenceChange(PlanDragGeometryPreferences.SessionFrames.self) { frames in
+            if dragState == nil {
+                sessionFrames = frames
+                installEvidenceDragIfReadyInDebug()
+            }
+        }
+        .onPreferenceChange(PlanDragGeometryPreferences.DayFrames.self) { frames in
+            if dragState == nil {
+                dayFrames = frames
+                installEvidenceDragIfReadyInDebug()
+            }
+        }
+    }
+
+    private func installEvidenceDragIfReadyInDebug() {
+        #if DEBUG
+        installEvidenceDragIfReady()
+        #endif
     }
 
     /// A day is a stack of full-width cells sharing one top rule: its sessions (plus an "add a second"
     /// cell on today and future days), or its rest marker, or the single "+" of an undecided day.
     private func dayGroup(_ row: PlanDayRow) -> some View {
         let pendingReview = reviewableImport(for: row.date)
-        let isDropTarget = dropTargetDate.map { cal.isDate($0, inSameDayAs: row.date) } ?? false
+        let insertion = insertionDestination(for: row)
+        let lockText = dragLockText(for: row)
         return VStack(spacing: 0) {
             Hairline(color: BaselineColor.line.opacity(0.7))
             if let pendingReview {
@@ -369,30 +431,53 @@ struct PlanView: View {
             switch row.content {
             case .sessions(let entries):
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    if insertion?.displayIndex == index {
+                        insertionIndicator
+                    }
                     if let scheduled = sessionByID[entry.id] {
                         sessionCell(row, entry,
                                     scheduled: scheduled,
-                                    showsDate: pendingReview == nil && index == 0,
-                                    isDropTarget: isDropTarget)
+                                    showsDate: pendingReview == nil && index == 0)
                     }
+                }
+                if insertion?.displayIndex == entries.count {
+                    insertionIndicator
                 }
                 if row.showsAddAnother {
                     addAnotherCell(row)
                 }
             case .rest:
+                if insertion != nil { insertionIndicator }
                 restCell(row, showsDate: pendingReview == nil)
             case .empty:
+                if insertion != nil { insertionIndicator }
                 if pendingReview == nil { emptyCell(row) }
             }
         }
-        .background(isDropTarget ? BaselineColor.accent.opacity(0.12) : .clear)
-        .opacity(row.isToday ? 1 : mutedDayOpacity)
-        .dropDestination(for: String.self) { items, _ in
-            guard let first = items.first, let dragged = UUID(uuidString: first) else { return false }
-            return drop(dragged, on: row.date)
-        } isTargeted: { targeted in
-            dropTargetDate = targeted ? row.date : nil
+        .frame(maxWidth: .infinity)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: PlanDragGeometryPreferences.DayFrames.self,
+                    value: [cal.startOfDay(for: row.date): proxy.frame(in: .named("planDrag"))]
+                )
+            }
         }
+        .overlay(alignment: .trailing) {
+            if let lockText {
+                Label(lockText, systemImage: "lock.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(BaselineColor.textMid)
+                    .padding(.horizontal, BaselineSpacing.xSmall)
+                    .padding(.vertical, BaselineSpacing.xxxSmall)
+                    .background(Capsule().fill(BaselineColor.surface))
+                    .overlay(Capsule().strokeBorder(BaselineColor.line, lineWidth: BaselineSize.hairline))
+                    .padding(.trailing, BaselineSpacing.large)
+                    .accessibilityLabel(lockText)
+            }
+        }
+        .opacity(lockText == nil ? (row.isToday || insertion != nil ? 1 : mutedDayOpacity) : 0.48)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: insertion)
     }
 
     /// The shared cell scaffold: a leading date column (blank but reserved on a day's later cells so
@@ -446,71 +531,435 @@ struct PlanView: View {
         _ row: PlanDayRow,
         _ entry: PlanSessionEntry,
         scheduled: ScheduledWorkout,
-        showsDate: Bool,
-        isDropTarget: Bool
+        showsDate: Bool
     ) -> some View {
-        WorkoutSwipeActionRow(
-            actionTitle: "Delete",
-            systemImage: "trash",
-            contentBackground: isDropTarget ? .clear : BaselineColor.base,
-            action: { handle(.delete, scheduled) }
-        ) {
-            cell(row,
-                 showsDate: showsDate,
-                 dateTint: dateTint(row),
-                 fill: entry.isCompleted ? BaselineColor.zoneGreen.opacity(0.13) : .clear) {
-                Button {
-                    detailWorkout = scheduled
-                } label: {
+        reorderable(
+            WorkoutSwipeActionRow(
+                actionTitle: "Delete",
+                systemImage: "trash",
+                contentBackground: BaselineColor.base,
+                action: { handle(.delete, scheduled) }
+            ) {
+                cell(row,
+                     showsDate: showsDate,
+                     dateTint: dateTint(row),
+                     fill: entry.isCompleted ? BaselineColor.zoneGreen.opacity(0.13) : .clear) {
                     HStack(spacing: BaselineSpacing.xSmall) {
-                        if entry.showsReorderHandle { reorderHandle }
-                        VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
-                            Text(entry.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(BaselineColor.textHi)
-                                .lineLimit(1)
-                            HStack(spacing: BaselineSpacing.xxSmall) {
-                                if entry.isCompleted == false, let (label, color) = PlanStatusStyle.chip(entry.status) {
-                                    Text(label)
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(color)
-                                }
-                                Text(entry.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(entry.isCompleted ? BaselineColor.zoneGreen : BaselineColor.textMid)
-                                    .lineLimit(1)
-                            }
+                        if entry.showsReorderHandle {
+                            reorderHandle
+                                .gesture(planDragGesture(row: row, entry: entry, showsDate: showsDate))
                         }
-                        Spacer(minLength: BaselineSpacing.xSmall)
-                        if entry.isCompleted {
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(BaselineColor.zoneGreen)
-                                .accessibilityHidden(true)
-                        }
+                        sessionButton(entry, scheduled: scheduled)
+                            .contextMenu { sessionMenu(scheduled, status: entry.status, row: row) }
                     }
-                    .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint(entry.isCompleted ? "Opens the logged session" : "Opens workout details")
-                .contextMenu { sessionMenu(scheduled, status: entry.status) }
-                // The context menu is invisible to assistive tech, so its primary start/resume/review
-                // action must also be a custom action or the session cannot be started from the
-                // calendar at all.
-                .accessibilityAction(named: Text(openLabel(entry.status))) { handle(.open, scheduled) }
             }
-        }
-        .draggable(entry.id.uuidString)
+            .opacity(dragState?.sourceID == entry.id ? 0.08 : 1)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PlanDragGeometryPreferences.SessionFrames.self,
+                        value: [entry.id: proxy.frame(in: .named("planDrag"))]
+                    )
+                }
+            },
+            entry: entry
+        )
     }
 
-    /// Rendered, not yet wired: drag-to-reorder is its own change. It stays decorative to assistive
-    /// tech until the gesture lands, so VoiceOver is never offered a control that does nothing.
+    private func sessionButton(_ entry: PlanSessionEntry, scheduled: ScheduledWorkout) -> some View {
+        Button {
+            detailWorkout = scheduled
+        } label: {
+            HStack(spacing: BaselineSpacing.xSmall) {
+                VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                    Text(entry.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(BaselineColor.textHi)
+                        .lineLimit(1)
+                    HStack(spacing: BaselineSpacing.xxSmall) {
+                        if entry.isCompleted == false, let (label, color) = PlanStatusStyle.chip(entry.status) {
+                            Text(label)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(color)
+                        }
+                        Text(entry.detail)
+                            .font(.caption)
+                            .foregroundStyle(entry.isCompleted ? BaselineColor.zoneGreen : BaselineColor.textMid)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: BaselineSpacing.xSmall)
+                if entry.isCompleted {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BaselineColor.zoneGreen)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: BaselineSize.minimumTapTarget, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(entry.isCompleted ? "Opens the logged session" : "Opens workout details")
+        // Context menus do not expose their primary action to assistive tech.
+        .accessibilityAction(named: Text(openLabel(entry.status))) { handle(.open, scheduled) }
+    }
+
     private var reorderHandle: some View {
         Image(systemName: "line.3.horizontal")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(BaselineColor.textFaint)
+            .foregroundStyle(BaselineColor.accent)
+            .frame(width: BaselineSize.minimumTapTarget, height: BaselineSize.minimumTapTarget)
+            .contentShape(Rectangle())
             .accessibilityHidden(true)
+    }
+
+    /// The assistive-tech route to the same reorder the handle offers by touch. The gesture itself
+    /// belongs to the handle, not to the row: the row body carries the long-press menu, so the two
+    /// long presses own disjoint areas and can never race for the same touch.
+    @ViewBuilder
+    private func reorderable<Content: View>(_ content: Content, entry: PlanSessionEntry) -> some View {
+        if entry.showsReorderHandle {
+            content
+                .accessibilityAction(named: Text("Move earlier")) {
+                    moveAccessibly(entry.id, direction: -1)
+                }
+                .accessibilityAction(named: Text("Move later")) {
+                    moveAccessibly(entry.id, direction: 1)
+                }
+                .accessibilityHint("Opens workout details. Press and hold the reorder handle, then drag")
+        } else {
+            content
+        }
+    }
+
+    private func planDragGesture(
+        row: PlanDayRow,
+        entry: PlanSessionEntry,
+        showsDate: Bool
+    ) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.22, maximumDistance: 16)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("planDrag")))
+            .updating($dragGestureActive) { _, active, _ in active = true }
+            .onChanged { value in
+                switch value {
+                case .first(true):
+                    beginDrag(row: row, entry: entry, showsDate: showsDate)
+                case .second(true, let drag?):
+                    beginDrag(row: row, entry: entry, showsDate: showsDate)
+                    updateDrag(drag)
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in finishDrag() }
+    }
+
+    private func beginDrag(
+        row: PlanDayRow,
+        entry: PlanSessionEntry,
+        showsDate: Bool
+    ) {
+        guard dragState == nil, let measuredFrame = sessionFrames[entry.id] else { return }
+        let frame = liftFrame(measuredFrame, on: row.date)
+        let state = DragState(
+            sourceID: entry.id,
+            sourceRow: row,
+            sourceShowsDate: showsDate,
+            entry: entry,
+            sourceFrame: frame
+        )
+        dragMotion.translation = .zero
+        Haptics.select()
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) {
+            dragState = state
+        }
+    }
+
+    /// The offset goes to `dragMotion`, which only the floating lift reads. `dragState` - the grid's
+    /// input for the insertion indicator and the day locks - is rewritten only when the resolved target
+    /// actually changes, so a drag that stays over the same slot costs one repositioned overlay a frame
+    /// rather than a full rebuild of the week.
+    private func updateDrag(_ drag: DragGesture.Value) {
+        guard var state = dragState else { return }
+        dragMotion.translation = drag.translation
+        let newTarget = PlanDragReorderModel.target(
+            at: drag.location,
+            sourceID: state.sourceID,
+            sourceDate: state.sourceRow.date,
+            days: dragDayGeometry()
+        )
+        guard newTarget != state.target else { return }
+        Haptics.select()
+        state.target = newTarget
+        dragState = state
+    }
+
+    private func finishDrag() {
+        guard let state = dragState else { return }
+        let destination: PlanDragReorderModel.Destination?
+        if case .destination(let value) = state.target {
+            destination = value
+        } else {
+            destination = nil
+        }
+
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) {
+            dragState = nil
+        }
+        guard let destination else { return }
+        apply(
+            plan.reposition(
+                state.sourceID,
+                toDate: destination.date,
+                at: .index(destination.index),
+                notBefore: today
+            ),
+            "Moved"
+        )
+    }
+
+    /// Put the grid back the way an uninterrupted drag would have left it, without moving anything.
+    private func cancelDrag() {
+        guard dragState != nil else { return }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) {
+            dragState = nil
+        }
+    }
+
+    /// A cancelled gesture never delivers `onEnded`, so the lift would otherwise stay pinned over the
+    /// grid forever - source row faded out, days locked, and `beginDrag` refusing to start another.
+    /// The reset of the gesture-backed flag is the signal; the hop to the next main-actor turn lets a
+    /// gesture that merely *finished* commit its drop first, whichever order SwiftUI delivers them in.
+    private func cancelInterruptedDrag() {
+        guard let liftedID = dragState?.sourceID else { return }
+        Task { @MainActor in
+            guard dragState?.sourceID == liftedID else { return }
+            cancelDrag()
+        }
+    }
+
+    private func dragDayGeometry() -> [PlanDragReorderModel.DayGeometry] {
+        (presentation?.days ?? []).compactMap { row in
+            let date = cal.startOfDay(for: row.date)
+            guard let frame = dayFrames[date] else { return nil }
+            let sessions = row.sessions.compactMap { entry -> PlanDragReorderModel.SessionGeometry? in
+                guard let frame = sessionFrames[entry.id] else { return nil }
+                return PlanDragReorderModel.SessionGeometry(id: entry.id, frame: frame)
+            }
+            return PlanDragReorderModel.DayGeometry(
+                date: date,
+                frame: frame,
+                sessions: sessions,
+                lock: row.lock
+            )
+        }
+    }
+
+    #if DEBUG
+    private func installEvidenceDragIfReady() {
+        guard evidenceDragInstalled == false,
+              let evidence = dragEvidence,
+              let rows = presentation?.days,
+              let sourceRow = rows.first(where: { $0.sessions.contains { $0.id == evidence.sourceID } }),
+              let sourceIndex = sourceRow.sessions.firstIndex(where: { $0.id == evidence.sourceID }),
+              let entry = sourceRow.sessions.first(where: { $0.id == evidence.sourceID }),
+              let measuredFrame = sessionFrames[evidence.sourceID],
+              dayFrames[cal.startOfDay(for: sourceRow.date)] != nil else {
+            return
+        }
+        let sourceFrame = liftFrame(measuredFrame, on: sourceRow.date)
+
+        var state = DragState(
+            sourceID: evidence.sourceID,
+            sourceRow: sourceRow,
+            sourceShowsDate: sourceIndex == 0,
+            entry: entry,
+            sourceFrame: sourceFrame
+        )
+        if let destinationDate = evidence.destinationDate,
+           let destinationRow = rows.first(where: {
+               cal.isDate($0.date, inSameDayAs: destinationDate)
+           }),
+           let destinationFrame = dayFrames[cal.startOfDay(for: destinationDate)] {
+            let finalIndex = min(max(evidence.destinationIndex, 0), destinationRow.sessions.count)
+            let sameDay = cal.isDate(sourceRow.date, inSameDayAs: destinationDate)
+            let displayIndex = sameDay && finalIndex > sourceIndex ? finalIndex + 1 : finalIndex
+            state.target = .destination(
+                .init(date: destinationDate, index: finalIndex, displayIndex: displayIndex)
+            )
+            dragMotion.translation = CGSize(
+                width: destinationFrame.midX - sourceFrame.midX,
+                height: destinationFrame.midY - sourceFrame.midY - sourceFrame.height * 0.65
+            )
+        }
+        evidenceDragInstalled = true
+        dragState = state
+    }
+    #endif
+
+    private func liftFrame(_ measuredFrame: CGRect, on date: Date) -> CGRect {
+        guard let dayFrame = dayFrames[cal.startOfDay(for: date)] else { return measuredFrame }
+        return CGRect(
+            x: dayFrame.minX,
+            y: measuredFrame.minY,
+            width: dayFrame.width,
+            height: measuredFrame.height
+        )
+    }
+
+    private func insertionDestination(for row: PlanDayRow) -> PlanDragReorderModel.Destination? {
+        guard let target = dragState?.target,
+              case .destination(let destination) = target,
+              cal.isDate(destination.date, inSameDayAs: row.date) else {
+            return nil
+        }
+        return destination
+    }
+
+    private func dragLockText(for row: PlanDayRow) -> String? {
+        guard dragState != nil else { return nil }
+        switch row.lock {
+        case .past: return "Past day - can't drop here"
+        case .completed: return "Completed day - can't drop here"
+        case nil: return nil
+        }
+    }
+
+    private var insertionIndicator: some View {
+        HStack(spacing: 0) {
+            Circle().frame(width: 7, height: 7)
+            Rectangle().frame(height: 3)
+            Circle().frame(width: 7, height: 7)
+        }
+        .foregroundStyle(BaselineColor.accent)
+        .shadow(color: BaselineColor.accent.opacity(0.45), radius: 5)
+        .padding(.leading, BaselineSpacing.large + dateColumnWidth + BaselineSpacing.medium)
+        .padding(.trailing, BaselineSpacing.large)
+        .frame(height: 22)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Drop position")
+    }
+
+    private func liftedSession(_ state: DragState) -> some View {
+        LiftedSessionOverlay(
+            motion: dragMotion,
+            baseMidY: state.sourceFrame.midY,
+            height: state.sourceFrame.height,
+            reduceMotion: reduceMotion
+        ) {
+            cell(
+                state.sourceRow,
+                showsDate: state.sourceShowsDate,
+                dateTint: dateTint(state.sourceRow)
+            ) {
+                HStack(spacing: BaselineSpacing.xSmall) {
+                    reorderHandle
+                    VStack(alignment: .leading, spacing: BaselineSpacing.xxxSmall) {
+                        Text(state.entry.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(BaselineColor.textHi)
+                            .lineLimit(1)
+                        Text(state.entry.detail)
+                            .font(.caption)
+                            .foregroundStyle(BaselineColor.textMid)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: BaselineSpacing.xSmall)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Dragging \(state.entry.title)")
+        .zIndex(10)
+    }
+
+    /// The floating lift, and the *only* view that reads the drag's live offset.
+    ///
+    /// Its content is built once by `PlanView.body` and handed over as a value; when the finger moves,
+    /// Observation invalidates this small view alone to re-run `position`, leaving the seven-day grid
+    /// behind it untouched.
+    private struct LiftedSessionOverlay<Content: View>: View {
+        let motion: PlanDragMotion
+        let baseMidY: CGFloat
+        let height: CGFloat
+        let reduceMotion: Bool
+        @ViewBuilder let content: Content
+
+        var body: some View {
+            GeometryReader { proxy in
+                content
+                    .frame(width: max(0, proxy.size.width - BaselineSpacing.medium), height: height)
+                    .background(BaselineColor.base)
+                    .clipShape(RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: BaselineRadius.card, style: .continuous)
+                            .strokeBorder(BaselineColor.accent, lineWidth: 1.5)
+                    }
+                    .shadow(color: BaselineColor.accent.opacity(0.22), radius: 18, y: 8)
+                    .scaleEffect(reduceMotion ? 1 : 1.025)
+                    .position(
+                        x: proxy.size.width / 2 + motion.translation.width,
+                        y: baseMidY + motion.translation.height
+                    )
+            }
+        }
+    }
+
+    private func moveAccessibly(_ id: UUID, direction: Int) {
+        guard direction == -1 || direction == 1,
+              let days = presentation?.days,
+              let sourceDayIndex = days.firstIndex(where: { $0.sessions.contains { $0.id == id } }),
+              let sourceIndex = days[sourceDayIndex].sessions.firstIndex(where: { $0.id == id }) else {
+            announceNoMove(direction: direction)
+            return
+        }
+
+        let sourceDay = days[sourceDayIndex]
+        let withinDayIndex = sourceIndex + direction
+        if sourceDay.sessions.indices.contains(withinDayIndex) {
+            apply(
+                plan.reposition(
+                    id,
+                    toDate: sourceDay.date,
+                    at: .index(withinDayIndex),
+                    notBefore: today
+                ),
+                "Moved"
+            )
+            return
+        }
+
+        var dayIndex = sourceDayIndex + direction
+        while days.indices.contains(dayIndex) {
+            let candidate = days[dayIndex]
+            if candidate.lock == nil {
+                apply(
+                    plan.reposition(
+                        id,
+                        toDate: candidate.date,
+                        at: direction < 0 ? .endOfDay : .index(0),
+                        notBefore: today
+                    ),
+                    "Moved"
+                )
+                return
+            }
+            dayIndex += direction
+        }
+        announceNoMove(direction: direction)
+    }
+
+    /// A reorder action that finds nowhere legal to go has to say so: silence reads as a move that
+    /// happened somewhere off-screen. The week on screen bounds the search, so the reason is always
+    /// either the edge of that week or a locked day between here and it.
+    private func announceNoMove(direction: Int) {
+        let phrase = direction < 0
+            ? "Can't move earlier. This is the first open slot in the week"
+            : "Can't move later. This is the last open slot in the week"
+        AccessibilityNotification.Announcement(phrase).post()
     }
 
     /// An undecided day is a decision waiting to be made, and the whole row is the invitation: one
@@ -620,12 +1069,14 @@ struct PlanView: View {
     /// Plan-level organization for a session, one press away from its row: start/resume, move within
     /// its week, duplicate, skip/unskip, delete. Mirrors what the old timeline card's menu offered.
     @ViewBuilder
-    private func sessionMenu(_ scheduled: ScheduledWorkout, status: ScheduleStatus) -> some View {
+    private func sessionMenu(_ scheduled: ScheduledWorkout, status: ScheduleStatus, row: PlanDayRow) -> some View {
         Button(openLabel(status), systemImage: "play") { handle(.open, scheduled) }
-        Menu("Move to") {
-            ForEach(weekDates(around: scheduled.date), id: \.self) { date in
-                Button(date.formatted(.dateTime.weekday(.wide))) { handle(.move(date), scheduled) }
-                    .disabled(cal.isDate(date, inSameDayAs: scheduled.date))
+        let destinations = presentation?.moveDestinations(from: row, calendar: cal) ?? []
+        if destinations.isEmpty == false {
+            Menu("Move to") {
+                ForEach(destinations, id: \.self) { date in
+                    Button(date.formatted(.dateTime.weekday(.wide))) { handle(.move(date), scheduled) }
+                }
             }
         }
         Button("Duplicate") { handle(.duplicate, scheduled) }
@@ -643,11 +1094,6 @@ struct PlanView: View {
         case .completed: "View session"
         default: "Start workout"
         }
-    }
-
-    private func weekDates(around date: Date) -> [Date] {
-        let start = cal.weekStart(for: date)
-        return (0 ..< 7).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
     }
 
     /// Refresh the unfinished-import snapshots that drive the per-day resume affordance. Delegates to the
@@ -713,22 +1159,12 @@ struct PlanView: View {
         case .duplicate: apply(plan.duplicate(sw.id, toDate: nil), "Duplicated")
         case .skip: apply(plan.setSkipped(sw.id, true), "Skipped")
         case .unskip: apply(plan.setSkipped(sw.id, false), "Unskipped")
-        case .move(let d): apply(plan.move(sw.id, toDate: d), "Moved")
+        // The menu is the drag's secondary route, so it lands on the same guarded mutation: appended to
+        // the end of the target day, and rejected outright for a past or performed day.
+        case .move(let d): apply(plan.reposition(sw.id, toDate: d, at: .endOfDay, notBefore: today), "Moved")
         case .delete:
             if case .confirmationRequired(_, _, let pid) = plan.delete(sw.id) { deleteTarget = DeleteTarget(sw: sw, proposalID: pid) }
         }
-    }
-
-    /// A drag dropped on `day`. Empty day → move directly; occupied → offer Move/Swap. The occupancy
-    /// check queries the repository for that exact day so it stays correct for a day the cached week
-    /// projection has since had mutated underneath it.
-    private func drop(_ dragged: UUID, on day: Date) -> Bool {
-        dropTargetDate = nil
-        guard let sw = plan.scheduledWorkout(dragged), !cal.isDate(sw.date, inSameDayAs: day) else { return false }
-        let existing = (plan.days(from: day, through: day).first?.sessions ?? []).filter { $0.id != dragged }
-        if existing.isEmpty { apply(plan.move(dragged, toDate: day), "Moved") }
-        else { pendingDrop = PendingDrop(dragged: dragged, day: day, existing: existing) }
-        return true
     }
 
     /// Surface an Undo affordance after an applied mutation.

@@ -70,6 +70,79 @@ struct PlanWeekPresentationTests {
         #expect(entry.showsReorderHandle == false, "A day already trained is history, not something to reorder")
     }
 
+    @Test func aCompletedDayLocksEverySessionFromReordering() throws {
+        let done = scheduled(strengthWorkout("Completed"), on: today)
+        let planned = scheduled(strengthWorkout("Planned sibling"), on: today)
+        let presentation = build(
+            week(sessions: [0: [done, planned]]),
+            statuses: [done.id: .completed, planned.id: .today(.asPlanned)]
+        )
+
+        let entries = try row(presentation, offset: 0).sessions
+        #expect(entries.count == 2)
+        #expect(entries.allSatisfy { $0.showsReorderHandle == false })
+    }
+
+    // MARK: The locked days, and the move targets they rule out
+
+    @Test func aPastDayIsLockedAndACompletedDayIsLockedForADifferentReason() throws {
+        let done = scheduled(strengthWorkout("Completed"), on: date(1))
+        let missed = scheduled(strengthWorkout("Push Day"), on: date(-1))
+        let presentation = build(
+            week(sessions: [-1: [missed], 1: [done]]),
+            statuses: [done.id: .completed, missed.id: .missed]
+        )
+
+        let past = try row(presentation, offset: -1)
+        let completed = try row(presentation, offset: 1)
+        let todayRow = try row(presentation, offset: 0)
+        let openFuture = try row(presentation, offset: 2)
+
+        #expect(past.lock == .past)
+        #expect(completed.lock == .completed)
+        #expect(todayRow.lock == nil, "Today accepts training")
+        #expect(openFuture.lock == nil, "So does an untouched future day")
+    }
+
+    /// The long-press menu is the drag's secondary route, so it offers exactly the days the drag would
+    /// accept: nothing before today, nothing already trained on, and never the day it is already on.
+    @Test func theMoveMenuOffersOnlyUnlockedDaysAndNeverTheSessionsOwnDay() throws {
+        let done = scheduled(strengthWorkout("Completed"), on: date(2))
+        let planned = scheduled(strengthWorkout("Planned"), on: today)
+        let presentation = build(
+            week(sessions: [0: [planned], 2: [done]]),
+            statuses: [done.id: .completed, planned.id: .today(.asPlanned)]
+        )
+
+        let destinations = presentation.moveDestinations(from: try row(presentation, offset: 0), calendar: cal)
+
+        #expect(destinations.contains { cal.isDate($0, inSameDayAs: date(0)) } == false,
+                "The session is already on today")
+        #expect(destinations.contains { cal.isDate($0, inSameDayAs: date(-1)) } == false,
+                "A past day is locked")
+        #expect(destinations.contains { cal.isDate($0, inSameDayAs: date(2)) } == false,
+                "A day carrying performed training is locked")
+        #expect(destinations.contains { cal.isDate($0, inSameDayAs: date(1)) },
+                "An untouched future day is offered")
+        #expect(destinations.allSatisfy { $0 >= self.today }, "Nothing before today survives the filter")
+    }
+
+    /// A session sitting on a locked day is not going anywhere, so the view drops the submenu entirely
+    /// rather than listing days the repository would refuse.
+    @Test func aSessionOnALockedDayIsOfferedNoMoveDestinationsAtAll() throws {
+        let done = scheduled(strengthWorkout("Completed"), on: today)
+        let planned = scheduled(strengthWorkout("Planned sibling"), on: today)
+        let missed = scheduled(strengthWorkout("Push Day"), on: date(-1))
+        let presentation = build(
+            week(sessions: [-1: [missed], 0: [done, planned]]),
+            statuses: [done.id: .completed, planned.id: .today(.asPlanned), missed.id: .missed]
+        )
+
+        #expect(presentation.moveDestinations(from: try row(presentation, offset: 0), calendar: cal).isEmpty,
+                "Today already holds performed training, so neither of its sessions can move")
+        #expect(presentation.moveDestinations(from: try row(presentation, offset: -1), calendar: cal).isEmpty)
+    }
+
     /// The core "not green until you actually did it" rule: a scheduled session on a past day with no
     /// completed log is missed, never completed, and never offers a log to view.
     @Test func aPastSessionWithoutACompletedLogIsNotCompleted() throws {

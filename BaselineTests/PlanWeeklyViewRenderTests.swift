@@ -77,6 +77,86 @@ struct PlanWeeklyViewRenderTests {
         #expect(screen.element(labelled: "Saturday") != nil)
     }
 
+    // MARK: Drag reorder evidence
+
+    @Test func aLongPressLiftRaisesTheSessionWithAnAccentOutline() async throws {
+        let screen = try PlanWeekScreen(dragSourceTitle: "Zone 2 Recovery")
+        defer { screen.tearDown() }
+
+        try await screen.settleUntil { screen.element(labelled: "Dragging Zone 2 Recovery") != nil }
+        try screen.capture("plan-drag-lift")
+    }
+
+    @Test func draggingToAnOccupiedFutureDayOpensTheExactInsertionGap() async throws {
+        let screen = try PlanWeekScreen(
+            dragSourceTitle: "Zone 2 Recovery",
+            dragDestinationDayOffset: 4,
+            dragDestinationIndex: 1
+        )
+        defer { screen.tearDown() }
+
+        try await screen.settleUntil {
+            screen.element(labelled: "Dragging Zone 2 Recovery") != nil
+                && screen.element(labelled: "Drop position") != nil
+                && screen.element(labelled: "Past day - can't drop here") != nil
+        }
+        try screen.capture("plan-drag-mid")
+    }
+
+    @Test func aCompletedDropPersistsAsTheSecondSessionOnTheFutureDay() async throws {
+        let screen = try PlanWeekScreen()
+        defer { screen.tearDown() }
+        try await screen.settleUntil { screen.element(labelled: "Zone 2 Recovery") != nil }
+
+        let monday = Calendar.planWeek.weekStart(for: Self.fixedNow)
+        let friday = try #require(Calendar.planWeek.date(byAdding: .day, value: 4, to: monday))
+        let moved = try #require(
+            screen.plan.week(containing: Self.fixedNow).days
+                .flatMap(\.sessions)
+                .first { $0.workout.title == "Zone 2 Recovery" }
+        )
+        #expect(screen.plan.reposition(
+            moved.id,
+            toDate: friday,
+            at: .index(1),
+            notBefore: Self.fixedNow
+        ).isApplied)
+
+        try await screen.settleUntil {
+            guard let legDay = screen.element(labelled: "Leg Day"),
+                  let movedRow = screen.element(labelled: "Zone 2 Recovery") else {
+                return false
+            }
+            return movedRow.accessibilityFrame.minY > legDay.accessibilityFrame.minY
+        }
+        try screen.capture("plan-drag-drop-complete")
+    }
+
+    @Test func assistiveReorderActionsMoveAWorkoutWithinItsDay() async throws {
+        let screen = try PlanWeekScreen()
+        defer { screen.tearDown() }
+        try await screen.settleUntil { screen.element(labelled: "Zone 2 Recovery") != nil }
+
+        let recovery = try #require(screen.element(labelled: "Zone 2 Recovery"))
+        #expect(screen.customActionNames(of: recovery).contains("Move earlier"))
+        #expect(screen.customActionNames(of: recovery).contains("Move later"))
+        #expect(screen.performCustomAction("Move later", on: recovery))
+
+        try await screen.settleUntil {
+            guard let moved = screen.element(labelled: "Zone 2 Recovery"),
+                  let accessories = screen.element(labelled: "Evening Accessories") else {
+                return false
+            }
+            return moved.accessibilityFrame.minY > accessories.accessibilityFrame.minY
+        }
+        let calendar = Calendar.planWeek
+        let ordered = screen.plan.week(containing: Self.fixedNow).days
+            .first(where: { calendar.isDate($0.date, inSameDayAs: Self.fixedNow) })?
+            .sessions
+            .map(\.workout.title)
+        #expect(ordered == ["Evening Accessories", "Zone 2 Recovery"])
+    }
+
     // MARK: Week navigation
 
     @Test func theWeekPagerFlipsWeeksAndTodayComesBack() async throws {
@@ -269,21 +349,53 @@ struct PlanWeeklyViewRenderTests {
 final class PlanWeekScreen: HostedScreen {
     let window: UIWindow
     let plan: PlanStore
+    /// The live layout's own drop geometry, so a test can aim at a point on the rendered week.
+    let geometry = PlanDragGeometryRecorder()
     private let container: ModelContainer
     private let clock: PlanTestClock
 
     private static let cal = Calendar.planWeek
 
-    init(now: Date = Calendar.planWeek.date(from: DateComponents(year: 2026, month: 7, day: 22, hour: 12))!) throws {
+    init(
+        now: Date = Calendar.planWeek.date(
+            from: DateComponents(year: 2026, month: 7, day: 22, hour: 12)
+        )!,
+        dragSourceTitle: String? = nil,
+        dragDestinationDayOffset: Int? = nil,
+        dragDestinationIndex: Int = 0
+    ) throws {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
         container = try ModelContainer(for: Schema(models),
                                        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        plan = PlanStore(context: container.mainContext, today: now)
-        Self.seed(plan, now: now)
+        let planStore = PlanStore(context: container.mainContext, today: now)
+        plan = planStore
+        Self.seed(planStore, now: now)
         let clock = PlanTestClock(now)
         self.clock = clock
+        let dragEvidence: PlanView.DragEvidence? = dragSourceTitle.flatMap { title in
+            guard let source = planStore.week(containing: now).days
+                .flatMap(\.sessions)
+                .first(where: { $0.workout.title == title }) else {
+                return nil
+            }
+            let destinationDate = dragDestinationDayOffset.flatMap {
+                Self.cal.date(byAdding: .day, value: $0, to: Self.cal.weekStart(for: now))
+            }
+            return PlanView.DragEvidence(
+                sourceID: source.id,
+                destinationDate: destinationDate,
+                destinationIndex: dragDestinationIndex
+            )
+        }
 
-        let root = PlanView(now: { clock.now })
+        let recorder = geometry
+        let root = PlanView(now: { clock.now }, dragEvidence: dragEvidence)
+            .onPreferenceChange(PlanDragGeometryPreferences.SessionFrames.self) {
+                recorder.record(sessions: $0)
+            }
+            .onPreferenceChange(PlanDragGeometryPreferences.DayFrames.self) {
+                recorder.record(days: $0)
+            }
             .environment(plan)
             .environment(AppSettings())
             .environment(BluetoothManager())
