@@ -1397,6 +1397,11 @@ final class AgentTools {
             // Never finalize a workout that was never started, or one with open sets, without a
             // deliberate confirm — completion is one-way for the session's status.
             guard workouts.activeSessionID != nil else {
+                // No live session covers two different situations, and telling a workout the athlete
+                // just finished that it was never started is simply wrong.
+                if workouts.currentLog?.isComplete == true {
+                    return Response(text: "That workout is already complete. Want me to start it again?", decision: nil, plan: nil)
+                }
                 return Response(text: "That workout hasn't been started, so there's nothing to complete yet. Want me to start it?", decision: nil, plan: nil)
             }
             let open = workouts.incompleteWork()
