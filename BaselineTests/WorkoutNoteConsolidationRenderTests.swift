@@ -26,45 +26,49 @@ extension IdleTimerRenderTests {
             #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
         }
 
-        @Test func loggingShowsThePlanNoteReadOnlyBesideAnEmptyEditableNote() async throws {
+        @Test func loggingShowsThePlanTextInTheOneFieldAndAdoptsItOnTheFirstEdit() async throws {
             let screen = try await WorkoutNoteScreen(stage: .logging, includesLegacyNotes: true)
             defer { screen.tearDown() }
 
-            #expect(screen.hasLabel(containing: "Workout goal") == false)
-
-            // The plan's own text is read-only context, not a prefill: exactly one field is editable and
-            // it starts empty, so the first keystroke can only commit what the athlete typed.
-            #expect(screen.hasLabel(containing: """
-            Plan note. Preserve this goal.
+            let planText = """
+            Preserve this goal.
 
             Preserve this imported note.
-            """))
+            """
+
+            // One workout-level surface, before and after the first edit: the plan's text is the field's
+            // own content rather than a second block that would vanish out from under the cursor.
+            #expect(screen.hasLabel(containing: "Workout goal") == false)
+            #expect(screen.hasLabel(containing: "Plan note") == false)
             #expect(screen.inputCount(labelled: "Workout note") == 1)
-            #expect(screen.inputText(labelled: "Workout note") == "")
-            #expect(screen.hasRenderedText("Add a note here…"))
+            #expect(screen.inputText(labelled: "Workout note") == planText)
+            #expect(screen.hasRenderedText("Add a note here…") == false)
+
+            // Nothing is written until the athlete acts: `startLog` seeded no performed note.
             #expect(screen.log?.athleteNotes == [])
             #expect(screen.log?.hasAuthoredNotes == false)
             try screen.capture("workout-note-plan-fallback")
 
-            try screen.replaceInput(labelled: "Workout note", with: "Legs heavy today.")
+            try screen.replaceInput(labelled: "Workout note", with: "\(planText)\n\nLegs heavy today.")
             try await screen.settle()
 
-            // Typing writes the performed note only; the plan keeps its goal and its guidance, and the
-            // read-only block steps aside now that the session has a note of its own.
-            #expect(screen.log?.athleteNotes == ["Legs heavy today."])
-            #expect(screen.inputText(labelled: "Workout note") == "Legs heavy today.")
-            #expect(screen.hasLabel(containing: "Plan note. Preserve this goal.") == false)
+            // The first edit adopts what was on screen plus the athlete's own words into the log, and
+            // leaves the plan's goal and structured guidance exactly as they were.
+            #expect(screen.log?.athleteNotes == ["\(planText)\n\nLegs heavy today."])
+            #expect(screen.log?.hasAuthoredNotes == true)
+            #expect(screen.inputCount(labelled: "Workout note") == 1)
+            #expect(screen.inputText(labelled: "Workout note") == "\(planText)\n\nLegs heavy today.")
+            #expect(screen.hasLabel(containing: "Plan note") == false)
             #expect(screen.workout?.goal == "Preserve this goal.")
             #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
 
-            // Clearing it leaves it cleared: the plan's note can no longer reappear under the cursor.
+            // Clearing it leaves it cleared: the plan's text can no longer reappear under the cursor.
             try screen.replaceInput(labelled: "Workout note", with: "")
             try await screen.settle()
 
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.inputText(labelled: "Workout note") == "")
             #expect(screen.hasRenderedText("Add a note here…"))
-            #expect(screen.hasLabel(containing: "Plan note. Preserve this goal.") == false)
             #expect(screen.log?.athleteNotes == [])
             #expect(screen.log?.hasAuthoredNotes == true)
         }
@@ -156,7 +160,13 @@ private final class WorkoutNoteScreen: HostedScreen {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    /// UIKit keeps a text field's placeholder label in the hierarchy after the field gains text, so a
+    /// plain lookup would report a placeholder the athlete cannot see. Only labels that actually render
+    /// count.
     func hasRenderedText(_ text: String) -> Bool {
-        views().contains { ($0 as? UILabel)?.text == text }
+        views().contains { view in
+            guard let label = view as? UILabel, label.text == text else { return false }
+            return sequence(first: label, next: \.superview).allSatisfy { !$0.isHidden && $0.alpha > 0.01 }
+        }
     }
 }

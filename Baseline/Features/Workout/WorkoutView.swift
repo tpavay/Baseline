@@ -451,9 +451,6 @@ struct WorkoutView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if mode.usesPerformedData {
-                if store.currentLog?.hasAuthoredNotes != true, !workout.notesText.isEmpty {
-                    WorkoutPlanNote(text: workout.notesText, font: .body, accessibilityLabel: "Plan note")
-                }
                 WorkoutNotesField(
                     prompt: "Add a note here…",
                     text: sessionNotesBinding,
@@ -572,13 +569,17 @@ struct WorkoutView: View {
         isEditingTemplate = false
     }
 
-    /// The one workout-level note typed while logging or reviewing a session. It is exactly the
-    /// performed note — never prefilled from the plan — so the first keystroke commits only what the
-    /// athlete typed, and backspacing to empty leaves it empty. The plan's own text is a separate
-    /// read-only block above, shown until this field has been committed once.
+    /// The one workout-level note during and after a session — the only workout-level text surface here,
+    /// so nothing appears or disappears around it as the athlete types. Until the field has been edited
+    /// it shows the plan's own text; the first edit adopts whatever is on screen into the log, which is
+    /// the athlete's action rather than a seed `startLog` wrote. From then on it is exactly the performed
+    /// note, independent of later plan changes, and clearing it leaves it cleared.
     private var sessionNotesBinding: Binding<String> {
         Binding(
-            get: { store.currentLog?.notesText ?? "" },
+            get: {
+                guard store.currentLog?.hasAuthoredNotes == true else { return store.current?.notesText ?? "" }
+                return store.currentLog?.notesText ?? ""
+            },
             set: { value in
                 store.editLog { $0.setNotes(value) }
             }
