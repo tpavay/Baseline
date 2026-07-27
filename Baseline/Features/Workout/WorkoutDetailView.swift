@@ -48,6 +48,10 @@ struct WorkoutDetailView: View {
         let session: WorkoutSession?
         let completed: CompletedWorkoutLog?
         let workout: Workout
+        /// The persisted live heart-rate trace + summary, resolved in the same single pass as
+        /// everything else on this screen. Nil for a workout performed without a strap, and for every
+        /// workout completed before Baseline recorded traces.
+        let heartRate: WorkoutHeartRateCapture?
         var log: WorkoutLog? { completed?.log ?? session?.log }
     }
 
@@ -63,7 +67,7 @@ struct WorkoutDetailView: View {
                             detailHeader(scheduled: snapshot.scheduled, workout: workout)
                             muscleMapCard(workout: workout)
 
-                            if heartRateSamples.isEmpty == false {
+                            if hasHeartRateEvidence {
                                 heartRateCard
                             }
 
@@ -166,12 +170,24 @@ struct WorkoutDetailView: View {
         let session = plan.session(for: scheduledWorkoutID)
         let completed = plan.completed(for: scheduledWorkoutID)
         let workout = session?.workout ?? scheduled.workout
-        let resolved = DetailSnapshot(scheduled: scheduled, session: session, completed: completed, workout: workout)
+        // The sidecar is decoded only when this screen is (re)loaded, never from `body`.
+        let series = plan.heartRateSeries(for: scheduledWorkoutID)
+        let resolved = DetailSnapshot(
+            scheduled: scheduled,
+            session: session,
+            completed: completed,
+            workout: workout,
+            heartRate: series.map { WorkoutHeartRateCapture(trace: $0.trace, summary: $0.summary) }
+        )
         snapshot = resolved
         // Measured heart rate only - planned prescription targets are intent, not data, and must never
         // render as AVG/MAX measurements. No performed samples ⇒ no heart-rate card.
         heartRateSamples = resolved.log?.exercises.flatMap(\.setLogs).compactMap { $0.values[.heartRate] } ?? []
-        zoneSummaries = computeZoneSummaries(workout: workout, log: resolved.log)
+        zoneSummaries = computeZoneSummaries(
+            workout: workout,
+            log: resolved.log,
+            heartRate: resolved.heartRate?.summary ?? resolved.log?.heartRateSummary
+        )
     }
 
     private func detailHeader(scheduled: ScheduledWorkout, workout: Workout) -> some View {
@@ -234,17 +250,39 @@ struct WorkoutDetailView: View {
         }
     }
 
-    private var heartRateCard: some View {
+    /// Any measured heart rate at all: a recorded live trace, or per-set readings the athlete logged
+    /// by hand. Planned target zones are intent and never count.
+    private var hasHeartRateEvidence: Bool {
+        heartRateTrace != nil || heartRateSamples.isEmpty == false
+    }
+
+    private var heartRateTrace: WorkoutHeartRateCapture? {
+        guard let heartRate = snapshot?.heartRate, heartRate.trace.hasSamples else { return nil }
+        return heartRate
+    }
+
+    @ViewBuilder private var heartRateCard: some View {
         BaselineCard {
-            VStack(alignment: .leading, spacing: BaselineSpacing.xSmall) {
-                HStack {
-                    InstrumentLabel("HEART RATE", tracking: 1)
-                    Spacer()
-                    Text(heartRateSummary)
-                        .font(.caption2.monospaced().weight(.semibold))
-                        .foregroundStyle(BaselineColor.textFaint)
+            // A recorded trace is a real time series and wins; the per-set sparkline stays the honest
+            // fallback for older logs and manually entered readings, where the x axis is an index and
+            // nothing else would be true.
+            if let trace = heartRateTrace {
+                WorkoutHeartRateTraceChart(
+                    capture: trace,
+                    startedAt: snapshot?.session?.startedAt,
+                    finishedAt: snapshot?.completed?.finishedAt
+                )
+            } else {
+                VStack(alignment: .leading, spacing: BaselineSpacing.xSmall) {
+                    HStack {
+                        InstrumentLabel("HEART RATE", tracking: 1)
+                        Spacer()
+                        Text(heartRateSummary)
+                            .font(.caption2.monospaced().weight(.semibold))
+                            .foregroundStyle(BaselineColor.textFaint)
+                    }
+                    WorkoutHeartRateChart(samples: heartRateSamples)
                 }
-                WorkoutHeartRateChart(samples: heartRateSamples)
             }
         }
     }
@@ -287,22 +325,30 @@ struct WorkoutDetailView: View {
         return "AVG \(Int(average.rounded())) · MAX \(Int(maximum.rounded())) BPM"
     }
 
-    private func computeZoneSummaries(workout: Workout, log: WorkoutLog?) -> [ZoneSummary] {
-        (1...5).map { zone in
-            let exercises = workout.allExercises.filter { $0.prescription.targetZone == zone }
+    /// Seconds per zone, measured only.
+    ///
+    /// A recorded session hands over real seconds-in-zone, credited sample by sample against the zone
+    /// model in force at the time. Otherwise the fallback is what the athlete logged against
+    /// zone-targeted exercises. There is deliberately no *planned* fallback: this card sits directly
+    /// under one that refuses to render prescription targets as measurements, and rendering intent as
+    /// time-in-zone here would be the same lie in a different shape.
+    private func computeZoneSummaries(
+        workout: Workout,
+        log: WorkoutLog?,
+        heartRate: WorkoutHeartRateSummary?
+    ) -> [ZoneSummary] {
+        if let heartRate, heartRate.totalZoneSeconds > 0 {
+            return heartRate.secondsByZoneOrdered.map { ZoneSummary(zone: $0.zone.rawValue, seconds: $0.seconds) }
+        }
+        return HeartRateZone.allCases.map { zone in
+            let exercises = workout.allExercises.filter { $0.prescription.targetZone == zone.rawValue }
             let seconds = exercises.reduce(0.0) { total, exercise in
-                if let performed = performedExercise(for: exercise, in: log) {
-                    let logged = performed.setLogs.reduce(0.0) { partial, set in
-                        partial + (set.values[.heartRateZoneTime] ?? set.values[.duration] ?? 0)
-                    }
-                    if logged > 0 { return total + logged }
-                }
-                let planned = exercise.prescription.sets.reduce(0.0) { partial, set in
+                guard let performed = performedExercise(for: exercise, in: log) else { return total }
+                return total + performed.setLogs.reduce(0.0) { partial, set in
                     partial + (set.values[.heartRateZoneTime] ?? set.values[.duration] ?? 0)
                 }
-                return total + planned
             }
-            return ZoneSummary(zone: zone, seconds: seconds)
+            return ZoneSummary(zone: zone.rawValue, seconds: seconds)
         }
     }
 
@@ -311,14 +357,11 @@ struct WorkoutDetailView: View {
         return CGFloat(seconds / maximum)
     }
 
+    /// The one five-colour zone ramp, shared with the live spectrum and the settings preview. This
+    /// screen used to carry its own (Z3 accent, Z4 amber), so the same zone changed colour as the
+    /// athlete moved between screens.
     private func zoneColor(_ zone: Int) -> Color {
-        switch zone {
-        case 1: BaselineColor.zoneBlue
-        case 2: BaselineColor.zoneGreen
-        case 3: BaselineColor.accent
-        case 4: BaselineColor.zoneAmber
-        default: BaselineColor.zoneRed
-        }
+        HeartRateZone(rawValue: zone)?.color ?? BaselineColor.textFaint
     }
 
     /// Fold any live-log substitution into the exercise so history renders the movement the athlete

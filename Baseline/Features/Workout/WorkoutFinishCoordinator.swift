@@ -18,9 +18,16 @@ final class WorkoutFinishCoordinator {
 
     /// Capture, complete, and schedule the prompt. Returns the deferral task so callers (tests) can
     /// await the presentation without polling; the view ignores it.
+    ///
+    /// `heartRate` is captured by the caller from the live monitor and handed in here for the same
+    /// timing reason as the reconciliation: completing the workout flips the presentation to
+    /// `.completed`, which tears the monitor down, so anything read from it afterwards is already
+    /// gone. Nil when no strap was streaming — that persists nothing rather than an empty record, and
+    /// is still handed to the store so this run's "no heart rate" replaces any earlier run's answer.
     @discardableResult
-    func finish(_ store: WorkoutStore) -> Task<Void, Never>? {
+    func finish(_ store: WorkoutStore, heartRate: WorkoutHeartRateCapture? = nil) -> Task<Void, Never>? {
         let reconciliation = store.captureSessionReconciliation()
+        store.attachHeartRate(heartRate)
         // Most workouts are performed as planned, so no prompt appears — completion itself has to settle
         // the decision, or the session would stay the editing surface for the rest of the app's life.
         store.completeWorkout(awaitingReconciliationDecision: reconciliation != nil)

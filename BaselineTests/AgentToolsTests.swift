@@ -177,6 +177,26 @@ struct AgentToolsTests {
 
     // MARK: - Workout editing tools
 
+    /// "No live session" is two different situations, and the reply has to tell them apart: a workout
+    /// the athlete just finished was emphatically started.
+    @Test func completingAnAlreadyFinishedWorkoutSaysSoRatherThanClaimingItNeverStarted() {
+        let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
+        let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
+        _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
+
+        let neverStarted = t.dispatch(.completeWorkout(confirm: false)).text
+        #expect(neverStarted.localizedCaseInsensitiveContains("hasn't been started"))
+
+        wk.startWorkout()
+        wk.completeWorkout(awaitingReconciliationDecision: false)
+
+        let alreadyFinished = t.dispatch(.completeWorkout(confirm: false)).text
+        #expect(alreadyFinished.localizedCaseInsensitiveContains("already complete"))
+        #expect(!alreadyFinished.localizedCaseInsensitiveContains("hasn't been started"))
+        #expect(alreadyFinished.localizedCaseInsensitiveContains("start it again"))
+    }
+
     @Test func workoutToolsEditThroughTheStore() throws {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)

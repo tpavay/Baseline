@@ -15,7 +15,8 @@ import Foundation
 struct HeartRateZoneModel: Hashable, Sendable {
 
     /// How the boundaries were derived, preserved so a historical zone can be explained/reproduced.
-    enum Method: Hashable, Sendable {
+    /// String-backed so `HeartRateZoneModelSnapshot` can persist it as a stable, readable token.
+    enum Method: String, Hashable, Sendable, Codable {
         /// Karvonen / Heart Rate Reserve — used whenever `restingHR` is present.
         case heartRateReserve
         /// Percent of max HR — the fallback when no resting HR is known.

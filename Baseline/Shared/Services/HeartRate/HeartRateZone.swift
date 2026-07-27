@@ -6,10 +6,10 @@ import Foundation
 /// live *actual* zone can later be shown against a planned *target* zone — richer than a single
 /// effort band. The zones are ordered `z1 < … < z5`; the raw value is the familiar 1…5 label.
 ///
-/// Each zone carries a design-system color *token name* rather than a `Color`. This slice is
-/// headless: no view consumes the color yet, so we avoid adding a fifth `BaselineColor` hue here
-/// and instead pin the intended mapping. Z4 references `zoneOrange`, a token to be added alongside
-/// the live-HR UI in Slice 3 (the existing palette has only blue/green/amber/red).
+/// Each zone carries a design-system color *token name* rather than a `Color`, so this type stays
+/// Foundation-only. The resolved `Color` lives in `HeartRateZone+Color.swift`, and it is the one
+/// ramp every heart-rate surface reads: the live gauge, the zone-settings preview, the completed
+/// workout's zone card, and the trace chart's zone bands.
 enum HeartRateZone: Int, CaseIterable, Comparable, Sendable {
     case z1 = 1
     case z2
@@ -31,8 +31,8 @@ enum HeartRateZone: Int, CaseIterable, Comparable, Sendable {
         }
     }
 
-    /// The `BaselineColor` token name for this zone, low (blue) → high (red). `zoneOrange` (Z4) is
-    /// the one token not yet in the palette; it lands with the Slice 3 spectrum view.
+    /// The `BaselineColor` token name for this zone, low (blue) → high (red). Documentation only;
+    /// `HeartRateZone.color` is the compile-checked mapping views resolve.
     var colorToken: String {
         switch self {
         case .z1: "zoneBlue"

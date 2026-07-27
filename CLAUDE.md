@@ -135,6 +135,7 @@ Detailed tokens, typography, components, and visual patterns belong in the desig
 ## Technical Baseline
 - **Platform:** iOS 17+, Swift 6 with complete strict concurrency, SwiftUI, and Observation.
 - **Persistence:** SwiftData for on-device persistence. Keep domain models and decision logic independent of SwiftUI and SwiftData, and access persistence through repository boundaries.
+  `WorkoutLog` is stored as a single JSON blob (`SDCompletedLog.logJSON`), is `Equatable`, and is re-encoded on every logged set, so bulk per-session series belong in their own entity keyed by `scheduledWorkoutID` - see `SDWorkoutHeartRateSeries`, which carries the heart-rate trace while only a small summary rides on the log.
 - **Backend:** Firebase Auth, Firestore, Cloud Functions, Storage, and App Check. Keep privileged operations and provider credentials on the server.
 - **AI architecture:** AI requests cross a provider boundary and act through validated domain tools. Structured application state remains the source of truth. Anthropic is the current server-side provider, not a permanent architectural dependency.
 - **Apple frameworks:** HealthKit, CoreBluetooth, Vision, and other system frameworks are optional feature integrations. Load the relevant skills and technical documentation when working in those domains.

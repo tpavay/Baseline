@@ -169,6 +169,53 @@ import SwiftData
     }
 }
 
+/// One workout's full-resolution heart-rate trace, keyed by `scheduledWorkoutID`.
+///
+/// It is a **sidecar, not a column on the log**. `WorkoutLog` is stored as a single JSON blob in
+/// `SDCompletedLog.logJSON`, is `Equatable`, and is re-encoded on every log edit and decoded by
+/// history indexing, the share composer, and the agent tools. A 60-minute 1 Hz series is ~3600 points
+/// (~160 KB of JSON): inlining it would put that re-encode on the main actor behind every logged set
+/// and make every `==` walk 3600 elements. Here, the series is read only when something actually
+/// wants to draw it, and the cheap columns answer "does this workout have heart rate?" without
+/// decoding `seriesJSON` at all.
+///
+/// Keyed on `scheduledWorkoutID` because that is the identity every Baseline read path already uses
+/// (`completedLog(forScheduled:)`, `PlanStore.sink(forScheduled:)`, `WorkoutDetailView`), and it is
+/// stable across a re-completion. `completedLogID` is stamped at completion, once the frozen log has
+/// an id, and is what tells a later read *which run* the trace came from: a row still carrying an
+/// earlier log after the workout was completed again is the previous run's measurement, and the reads
+/// refuse it (see `SwiftDataPlanRepository.currentHeartRateSeriesSD`). Stored uncompressed:
+/// compression is a transport concern (`WorkoutHeartRateStorageBlob`), and a local read should be a
+/// plain decode with no CPU cost.
+///
+/// CloudKit-safe like its neighbours: no unique attribute, every property defaulted or optional, and
+/// the link to the completed log is a loose `UUID`.
+@Model final class SDWorkoutHeartRateSeries {
+    var id: UUID = UUID()
+    var scheduledWorkoutID: UUID = UUID()
+    var completedLogID: UUID?
+    var recordedAt: Date = Date.distantPast
+    var sampleCount: Int = 0
+    var seriesStartAt: Date = Date.distantPast
+    var seriesEndAt: Date = Date.distantPast
+    var seriesJSON: Data = Data()          // [HeartRateTracePoint]
+    var summaryJSON: Data = Data()         // WorkoutHeartRateSummary
+    /// The last sidecar path this series was successfully uploaded to (Ascend's
+    /// `lastRemoteHeartRateSeriesStoragePath`). Nil until workout sync lands and wires the cloud leg.
+    var remoteStoragePath: String?
+
+    init(id: UUID = UUID(), scheduledWorkoutID: UUID = UUID(), completedLogID: UUID? = nil,
+         recordedAt: Date = Date.distantPast, sampleCount: Int = 0,
+         seriesStartAt: Date = Date.distantPast, seriesEndAt: Date = Date.distantPast,
+         seriesJSON: Data = Data(), summaryJSON: Data = Data(), remoteStoragePath: String? = nil) {
+        self.id = id; self.scheduledWorkoutID = scheduledWorkoutID; self.completedLogID = completedLogID
+        self.recordedAt = recordedAt; self.sampleCount = sampleCount
+        self.seriesStartAt = seriesStartAt; self.seriesEndAt = seriesEndAt
+        self.seriesJSON = seriesJSON; self.summaryJSON = summaryJSON
+        self.remoteStoragePath = remoteStoragePath
+    }
+}
+
 @Model final class SDCompletedExercise {   // normalized index for history/PRs/previous
     var id: UUID = UUID()
     var completedLogID: UUID = UUID()
@@ -235,5 +282,6 @@ enum PlanSchema {
         SDProgram.self, SDProgramSection.self, SDScheduledWorkout.self, SDWorkoutRevision.self,
         SDWorkoutTemplate.self, SDWorkoutSession.self, SDCompletedLog.self, SDCompletedExercise.self,
         SDPlanVersion.self, SDPendingProposal.self, SDSessionMutationVersion.self, SDRestDay.self,
+        SDWorkoutHeartRateSeries.self,
     ]
 }

@@ -28,7 +28,15 @@ Current zone implementation notes:
 - Current default method: Heart Rate Reserve / Karvonen.
 - Fallback max-HR estimate: Tanaka.
 - Supported overrides should include tested max HR and LTHR-based zones for run training.
-- Zone history should be stored per relevant workout segment for later trends and learning.
+- A completed session persists its measured heart rate in two pieces: a small summary (average, max, sample count, seconds per zone, and a snapshot of the zone boundaries in force at completion) on `WorkoutLog`, and the full-resolution sample trace in its own local entity, `SDWorkoutHeartRateSeries`, keyed by `scheduledWorkoutID`.
+  The trace never rides on the log blob - `WorkoutLog` is re-encoded on every logged set.
+  The snapshot is why editing max HR later cannot silently re-band a past workout's chart.
+- Time in zone on a completed workout is measured only.
+  A planned prescription is intent and is never rendered as time in zone.
+- Capture happens at completion, not mid-session; re-entering a live workout restarts the trace alongside zone time and session stats.
+- Series stay on device.
+  A Firebase Storage sidecar (gzipped, versioned) is built behind `WorkoutHeartRateStorageRepositoryProtocol` but has no call site until durable workout sync exists to hang it off; `storage.rules` denies those writes today.
+- Per-segment zone history is still unbuilt - the stored record is per session.
 
 ## Exercise Catalog
 Current catalog direction:

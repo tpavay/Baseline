@@ -118,6 +118,17 @@ final class PlanStore {
     /// Store the session's own copy of the planned workout (a session-scoped mid-workout edit; no revision).
     func setSessionWorkout(_ id: UUID, _ workout: Workout) { repo.setSessionWorkout(forScheduled: id, workout) }
 
+    // MARK: Heart-rate sidecar
+
+    /// Persist the live trace captured during a session. Called at completion, before the session is
+    /// frozen, so `completeSession` can stamp the resulting completed-log id onto it.
+    func upsertHeartRateSeries(_ id: UUID, trace: WorkoutHeartRateTrace, summary: WorkoutHeartRateSummary) {
+        repo.upsertHeartRateSeries(forScheduled: id, trace: trace, summary: summary, now: Date())
+    }
+    func heartRateSeries(for id: UUID) -> WorkoutHeartRateSeries? { repo.heartRateSeries(forScheduled: id) }
+    func hasHeartRateSeries(_ id: UUID) -> Bool { repo.hasHeartRateSeries(forScheduled: id) }
+    func heartRateSummary(for id: UUID) -> WorkoutHeartRateSummary? { repo.heartRateSummary(forScheduled: id) }
+
     // MARK: Mutations & versioning (Slice 2) — every schedule change is versioned
 
     func versions(limit: Int = 100) -> [PlanVersion] { repo.versions(limit: limit) }
@@ -259,7 +270,11 @@ final class PlanStore {
                 return (session.workout ?? sw.workout, session.log, session.startedAt)
             },
             completed: { [weak self] in self?.completed(for: id) },
-            planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout })
+            planWorkout: { [weak self] in self?.scheduledWorkout(id)?.workout },
+            pushHeartRateSeries: { [weak self] trace, summary in
+                self?.upsertHeartRateSeries(id, trace: trace, summary: summary)
+            },
+            heartRateSeries: { [weak self] in self?.heartRateSeries(for: id) })
     }
 
     private func mutationTarget(

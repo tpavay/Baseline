@@ -1,0 +1,532 @@
+import Foundation
+import SwiftData
+import Testing
+@testable import Baseline
+
+/// Durable heart rate: the sidecar entity through the repository, the summary riding on the log, and
+/// the end-to-end path from a live monitor to a reloaded completed workout.
+@Suite(.serialized) @MainActor
+struct WorkoutHeartRatePersistenceTests {
+
+    private let start = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func makeContainer() throws -> ModelContainer {
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        return try ModelContainer(
+            for: Schema(models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+    }
+
+    private func makeRepo() throws -> SwiftDataPlanRepository {
+        let container = try makeContainer()
+        return SwiftDataPlanRepository(context: container.mainContext)
+    }
+
+    private func workout(_ title: String = "Zone 2 Run") -> Workout {
+        var exercise = PlannedExercise(exerciseName: "Run", definitionId: "run")
+        exercise.prescription.sets = [PlannedSet(duration: 1_800)]
+        return Workout(title: title, blocks: [WorkoutBlock(name: "", exercises: [exercise], isDefault: true)])
+    }
+
+    @discardableResult
+    private func seed(_ repo: SwiftDataPlanRepository) -> ScheduledWorkout {
+        let program = repo.addProgram(Program(name: "P", createdAt: start))
+        return repo.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+    }
+
+    private func trace(count: Int, from origin: Date? = nil) -> WorkoutHeartRateTrace {
+        let base = origin ?? start
+        return WorkoutHeartRateTrace(points: (0..<count).map {
+            HeartRateTracePoint(timestamp: base.addingTimeInterval(Double($0)), bpm: 130 + $0 % 40)
+        })
+    }
+
+    private func summary(sampleCount: Int) -> WorkoutHeartRateSummary {
+        WorkoutHeartRateSummary(
+            averageBPM: 148,
+            maxBPM: 169,
+            sampleCount: sampleCount,
+            zoneSeconds: [30, 240, 900, 120, 10],
+            zoneModel: HeartRateZoneModelSnapshot(HeartRateZoneModel(maxHR: 190, restingHR: 50))
+        )
+    }
+
+    // MARK: - Repository
+
+    @Test func upsertingAndReadingBackRoundTripsTheWholeSeries() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        let recorded = trace(count: 600)
+
+        repo.upsertHeartRateSeries(
+            forScheduled: scheduled.id,
+            trace: recorded,
+            summary: summary(sampleCount: recorded.count),
+            now: start
+        )
+
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.trace == recorded)
+        #expect(stored.scheduledWorkoutID == scheduled.id)
+        #expect(stored.recordedAt == start)
+        #expect(stored.summary.averageBPM == 148)
+        #expect(stored.summary.zoneModel?.maxHR == 190)
+        #expect(stored.remoteStoragePath == nil)   // the cloud leg is built but unwired
+    }
+
+    /// The cheap gate: "does this workout have heart rate?" must not pay for the sample array.
+    @Test func theCheapChecksNeverDecodeTheSeries() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+        #expect(repo.heartRateSummary(forScheduled: scheduled.id) == nil)
+
+        let recorded = trace(count: 3_600)
+        repo.upsertHeartRateSeries(
+            forScheduled: scheduled.id,
+            trace: recorded,
+            summary: summary(sampleCount: recorded.count),
+            now: start
+        )
+
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+        let cheapSummary = try #require(repo.heartRateSummary(forScheduled: scheduled.id))
+        #expect(cheapSummary.sampleCount == 3_600)
+        #expect(cheapSummary.maxBPM == 169)
+    }
+
+    @Test func reRecordingReplacesTheSeriesRatherThanAccumulating() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 10), summary: summary(sampleCount: 10), now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 25), summary: summary(sampleCount: 25), now: start.addingTimeInterval(60))
+
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.trace.count == 25)
+        #expect(stored.recordedAt == start.addingTimeInterval(60))
+    }
+
+    /// An empty trace is not evidence, so it erases rather than storing a hollow row that would make
+    /// `hasHeartRateSeries` lie.
+    @Test func upsertingAnEmptyTraceErasesTheSeries() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 10), summary: summary(sampleCount: 10), now: start)
+
+        repo.upsertHeartRateSeries(
+            forScheduled: scheduled.id,
+            trace: WorkoutHeartRateTrace(),
+            summary: summary(sampleCount: 0),
+            now: start
+        )
+
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
+    }
+
+    /// The series is written while the session is still live; completion is what tells it which frozen
+    /// log it belongs to.
+    @Test func completingTheSessionStampsTheCompletedLogOntoTheSeries() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+
+        let completion = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(1_800))
+        let completed = try #require({ if case .completed(let log) = completion { return log } else { return nil } }())
+
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.completedLogID == completed.id)
+    }
+
+    /// Discarding a session throws away the run, and the trace that run recorded goes with it — the
+    /// same way deleting the workout takes the sidecar with the rest of the performed footprint.
+    @Test func discardingASessionRemovesItsSeries() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+
+        repo.discardSession(forScheduled: scheduled.id)
+
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
+    }
+
+    /// The trace belongs to the run that recorded it. Running the workout a second time without a strap
+    /// must report no heart rate rather than presenting the first run's trace, avg/max and zone seconds
+    /// as this session's measurement.
+    @Test func aSecondRunWithoutAStrapDoesNotInheritTheEarlierRunsTrace() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+
+        // A genuine second run: a fresh session, finished with nothing streaming.
+        _ = repo.startSession(forScheduled: scheduled.id, now: start.addingTimeInterval(900))
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(1_200))
+
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
+        #expect(repo.heartRateSummary(forScheduled: scheduled.id) == nil)
+        // And the copy that rides on the log: this run started from a fresh log, so there is no summary
+        // on it either and the zone card has nothing of the earlier run's to render.
+        #expect(repo.completedLog(forScheduled: scheduled.id)?.log.heartRateSummary == nil)
+    }
+
+    /// Completion is one-way. Finishing an already-finished workout — reachable from the coach's
+    /// "mark it complete" while the athlete is looking at the completed summary — must be refused
+    /// outright, writing nothing: no second frozen log, and above all no destruction of the heart rate
+    /// the first run recorded.
+    @Test func reCompletingAFinishedSessionIsRefusedAndKeepsItsHeartRate() throws {
+        let container = try makeContainer()
+        let repo = SwiftDataPlanRepository(context: container.mainContext)
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        let first = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+        let firstLog = try #require({ if case .completed(let log) = first { return log } else { return nil } }())
+
+        let again = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(1_200))
+        #expect(again == .noActiveSession)
+
+        #expect(try container.mainContext.fetch(FetchDescriptor<SDCompletedLog>()).count == 1)
+        #expect(repo.completedLog(forScheduled: scheduled.id)?.id == firstLog.id)
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.trace.count == 20)
+        #expect(stored.completedLogID == firstLog.id)
+        #expect(stored.summary == summary(sampleCount: 20))
+        #expect(repo.completedLog(forScheduled: scheduled.id)?.log.heartRateSummary == summary(sampleCount: 20))
+    }
+
+    /// The reads resolve which run a series belongs to from stored columns alone. Pinned by making the
+    /// log blob undecodable: if any of them needed `logJSON`, they would answer wrongly here — and the
+    /// cheap gate in particular is documented as costing no decode at all.
+    @Test func theReadsResolveTheCurrentLogWithoutDecodingItsBlob() throws {
+        let container = try makeContainer()
+        let repo = SwiftDataPlanRepository(context: container.mainContext)
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 40), summary: summary(sampleCount: 40), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+
+        let stored = try container.mainContext.fetch(FetchDescriptor<SDCompletedLog>())
+        try #require(stored.count == 1)
+        stored[0].logJSON = Data("{ not json at all".utf8)
+
+        #expect(repo.completedLog(forScheduled: scheduled.id) == nil)   // the blob really is unreadable
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+        #expect(repo.heartRateSummary(forScheduled: scheduled.id)?.sampleCount == 40)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id)?.trace.count == 40)
+    }
+
+    /// The other half of that rule: a second run that *did* record heart rate shows its own trace.
+    @Test func aSecondRunWithAStrapShowsItsOwnTrace() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+
+        _ = repo.startSession(forScheduled: scheduled.id, now: start.addingTimeInterval(3_000))
+        repo.upsertHeartRateSeries(
+            forScheduled: scheduled.id,
+            trace: trace(count: 44, from: start.addingTimeInterval(3_600)),
+            summary: summary(sampleCount: 44),
+            now: start.addingTimeInterval(3_600)
+        )
+        let completion = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(4_200))
+        let completed = try #require({ if case .completed(let log) = completion { return log } else { return nil } }())
+
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.trace.count == 44)
+        #expect(stored.completedLogID == completed.id)
+    }
+
+    @Test func deletingTheWorkoutRemovesItsSeriesWithTheRestOfThePerformedFootprint() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+
+        _ = repo.purgeProvisionalWorkout(scheduled.id, actor: .user, reason: nil)
+
+        // The entities link by loose UUIDs, so a stranded series would keep answering "this workout
+        // has heart rate" for a workout that no longer exists.
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+    }
+
+    @Test func deleteHeartRateSeriesIsIdempotent() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        repo.deleteHeartRateSeries(forScheduled: scheduled.id)   // nothing stored yet
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 5), summary: summary(sampleCount: 5), now: start)
+        repo.deleteHeartRateSeries(forScheduled: scheduled.id)
+        repo.deleteHeartRateSeries(forScheduled: scheduled.id)
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+    }
+
+    // MARK: - The summary on the log
+
+    @Test func theSummaryRidesOnTheLogAndSurvivesEncodingRoundTrips() throws {
+        var log = WorkoutLog()
+        log.heartRateSummary = summary(sampleCount: 900)
+
+        let decoded = try JSONDecoder().decode(WorkoutLog.self, from: try JSONEncoder().encode(log))
+        #expect(decoded.heartRateSummary == log.heartRateSummary)
+        #expect(decoded.heartRateSummary?.seconds(in: .z3) == 900)
+    }
+
+    /// The field is additive: a log written before it existed still decodes.
+    @Test func aLogWithoutTheFieldStillDecodes() throws {
+        let legacy = Data(#"{"id":"\#(UUID().uuidString)","isComplete":true}"#.utf8)
+        let decoded = try JSONDecoder().decode(WorkoutLog.self, from: legacy)
+        #expect(decoded.heartRateSummary == nil)
+        #expect(decoded.isComplete)
+    }
+
+    /// The whole reason the samples live in their own entity: adding heart rate must not fatten the
+    /// log blob that is re-encoded on every logged set.
+    @Test func theSeriesNeverTravelsInsideTheLogBlob() throws {
+        var log = WorkoutLog()
+        let recorded = trace(count: 3_600)
+        log.heartRateSummary = summary(sampleCount: recorded.count)
+
+        let logBytes = try JSONEncoder().encode(log).count
+        let seriesBytes = try JSONEncoder().encode(recorded.points).count
+        #expect(seriesBytes > 100_000)      // ~160 KB for an hour at 1 Hz
+        #expect(logBytes < 1_000)           // the log carries tens of bytes of heart rate, not that
+    }
+
+    // MARK: - End to end
+
+    /// Live samples → finish → reload: the trace and every summary number survive, and the zone
+    /// seconds match what the monitor accumulated.
+    @Test func aLiveSessionPersistsItsTraceAndSummaryThroughCompletion() throws {
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        let container = try ModelContainer(
+            for: Schema(models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+
+        // Drive a real monitor with a hand-advanced clock, as the workout screen does.
+        let clock = PersistenceClock()
+        let source = PersistenceLiveSource()
+        let monitor = HeartRateMonitor(source: source, zoneModel: HeartRateZoneModel(maxHR: 200), now: clock.now)
+        let recorder = WorkoutHeartRateRecorder()
+        monitor.recorder = recorder
+        monitor.startMonitoring()
+        for tick in 0..<30 {
+            source.emit(bpm: 130 + tick)     // 130…159: Z2 then Z3
+            clock.advance(by: 1)
+        }
+
+        let capture = try #require(WorkoutHeartRateCapture(recorder: recorder, monitor: monitor))
+        let coordinator = WorkoutFinishCoordinator()
+        coordinator.finish(store, heartRate: capture)
+        monitor.stopMonitoring()
+
+        // What a later reader sees, straight from the repository.
+        let stored = try #require(plan.heartRateSeries(for: scheduled.id))
+        #expect(stored.trace.count == 30)
+        #expect(stored.trace == capture.trace)
+        #expect(stored.summary.averageBPM == monitor.averageBPM)
+        #expect(stored.summary.maxBPM == 159)
+        #expect(stored.summary.seconds(in: .z2) == capture.summary.seconds(in: .z2))
+        #expect(stored.summary.seconds(in: .z3) == capture.summary.seconds(in: .z3))
+        #expect(stored.summary.totalZoneSeconds == 29)   // 29 credited intervals across 30 samples
+
+        // And what the completed log carries: the summary, never the samples.
+        let completed = try #require(plan.completed(for: scheduled.id))
+        #expect(completed.log.isComplete)
+        #expect(completed.log.heartRateSummary == capture.summary)
+
+        // A fresh store bound to the same workout resolves the same heart rate.
+        let reopened = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        reopened.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        let reloaded = try #require(reopened.loadHeartRate())
+        #expect(reloaded.trace == capture.trace)
+        #expect(reloaded.summary == capture.summary)
+    }
+
+    /// A workout finished without a strap persists nothing at all — no empty row, no zero summary.
+    @Test func finishingWithoutHeartRatePersistsNothing() throws {
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        let container = try ModelContainer(
+            for: Schema(models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+        WorkoutFinishCoordinator().finish(store, heartRate: nil)
+
+        #expect(plan.hasHeartRateSeries(scheduled.id) == false)
+        #expect(plan.completed(for: scheduled.id)?.log.heartRateSummary == nil)
+        #expect(store.loadHeartRate() == nil)
+    }
+
+    /// The store caches the resolved capture against the log id, and a resume does not change that id.
+    /// Handing it "this run measured nothing" therefore has to clear both copies it holds — the cache
+    /// and the summary on the log — or a re-completion keeps serving the earlier run's numbers.
+    @Test func attachingNoHeartRateClearsWhatTheEarlierRunLeftOnTheStore() throws {
+        let container = try makeContainer()
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+
+        let captured = WorkoutHeartRateCapture(trace: trace(count: 12), summary: summary(sampleCount: 12))
+        store.attachHeartRate(captured)
+        #expect(store.currentHeartRate == captured)
+        #expect(store.currentLog?.heartRateSummary == captured.summary)
+
+        store.attachHeartRate(nil)
+        #expect(store.currentHeartRate == nil)
+        #expect(store.currentLog?.heartRateSummary == nil)
+    }
+
+    /// The reported data-loss path, end to end: finish a strap-recorded workout, stay on the completed
+    /// summary, and ask for completion again the way the coach's `complete_workout` would. The gate it
+    /// checks must no longer see an active session, and even when completion is called anyway both
+    /// copies of the heart rate have to survive untouched.
+    @Test func askingToCompleteAnAlreadyFinishedWorkoutCannotDestroyItsHeartRate() throws {
+        let container = try makeContainer()
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+        #expect(store.activeSessionID != nil)
+
+        let captured = WorkoutHeartRateCapture(trace: trace(count: 30), summary: summary(sampleCount: 30))
+        WorkoutFinishCoordinator().finish(store, heartRate: captured)
+
+        // The gate the agent tool checks: a finished workout is not a running session.
+        #expect(store.activeSessionID == nil)
+
+        // And the layer beneath it refuses too, so no caller can drive a second completion.
+        store.completeWorkout(awaitingReconciliationDecision: false)
+
+        #expect(try container.mainContext.fetch(FetchDescriptor<SDCompletedLog>()).count == 1)
+        let stored = try #require(plan.heartRateSeries(for: scheduled.id))
+        #expect(stored.trace == captured.trace)
+        #expect(stored.summary == captured.summary)
+        #expect(plan.completed(for: scheduled.id)?.log.heartRateSummary == captured.summary)
+        #expect(store.loadHeartRate()?.trace == captured.trace)
+    }
+
+    /// The other half, which the non-destructive write must not break: a genuine second run with no
+    /// strap starts a fresh session and renders none of the first run's heart rate.
+    @Test func aSecondRunWithoutAStrapRendersNoHeartRate() throws {
+        let container = try makeContainer()
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+        WorkoutFinishCoordinator().finish(
+            store,
+            heartRate: WorkoutHeartRateCapture(trace: trace(count: 30), summary: summary(sampleCount: 30))
+        )
+        #expect(plan.hasHeartRateSeries(scheduled.id))
+
+        store.startWorkout()                                   // a new run of the same workout
+        WorkoutFinishCoordinator().finish(store, heartRate: nil)
+
+        #expect(plan.hasHeartRateSeries(scheduled.id) == false)
+        #expect(plan.heartRateSummary(for: scheduled.id) == nil)
+        #expect(plan.completed(for: scheduled.id)?.log.heartRateSummary == nil)
+        #expect(store.loadHeartRate() == nil)
+        // Nothing was destroyed to achieve that — the first run's row is still on disk, scoped to the
+        // log it was frozen onto.
+        #expect(try container.mainContext.fetch(FetchDescriptor<SDWorkoutHeartRateSeries>()).count == 1)
+    }
+}
+
+// MARK: - Fixtures
+
+private final class PersistenceLiveSource: LiveHeartRateSource {
+    var liveSample: HeartRateSample?
+    var connectionStatus: BluetoothManager.Status = .connected
+    var onLiveSample: ((HeartRateSample) -> Void)?
+
+    func startLiveMonitoring() {}
+    func stopLiveMonitoring() {}
+    func resubscribeLive() {}
+    func reconnectLive() {}
+
+    func emit(bpm: Int) {
+        let sample = HeartRateSample(bpm: bpm, sensorContact: .detected, receivedAt: .distantPast)
+        liveSample = sample
+        onLiveSample?(sample)
+    }
+}
+
+@MainActor
+private final class PersistenceClock {
+    private(set) var current = Date(timeIntervalSince1970: 1_700_000_000)
+    func advance(by seconds: TimeInterval) { current += seconds }
+    var now: @MainActor () -> Date { { [self] in current } }
+}

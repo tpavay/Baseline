@@ -62,4 +62,5 @@
 ## Current Implementation Status
 
 The repository contains a BLE heart-signal service and workout models with target or actual zone concepts.
-Do not assume complete live workout streaming, zone calculation, or per-segment persistence exists without inspecting current code.
+Live streaming, zone calculation, and per-session persistence of the measured trace and zone seconds exist; per-segment persistence does not.
+`docs/technical-reference.md` § HR Zones owns the current persistence contract - read it rather than assuming, and still inspect current code before assuming anything beyond it.
