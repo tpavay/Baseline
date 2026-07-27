@@ -569,11 +569,17 @@ struct WorkoutView: View {
         isEditingTemplate = false
     }
 
-    /// Workout-level notes typed while logging or reviewing a session. They belong to the log, so
-    /// promoting the session's shape to the plan can never carry them into a saved plan revision.
+    /// The one workout-level note typed while logging or reviewing a session. It belongs to the log, so
+    /// promoting the session's shape to the plan can never carry it into a saved plan revision. A session
+    /// carrying no performed note falls back to the plan's folded note at read time — a fallback only,
+    /// never seeded into the log, so planned text is never recorded as something the athlete performed.
     private var sessionNotesBinding: Binding<String> {
         Binding(
-            get: { store.currentLog?.notesText ?? "" },
+            get: {
+                let logged = store.currentLog?.notesText ?? ""
+                guard !CoachGuidance.isMeaningful(logged) else { return logged }
+                return store.current?.notesText ?? ""
+            },
             set: { value in
                 store.editLog { $0.setNotes(value) }
             }

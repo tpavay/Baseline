@@ -223,20 +223,43 @@ struct WorkoutModelTests {
         #expect(CoachGuidance.notes(from: "   \n ") == nil)
     }
 
-    @Test func workoutNotesFoldLegacyGoalAndGuidanceIntoThePerformedLog() {
+    @Test func workoutNotesFoldGoalAndGuidanceForDisplayWithoutRewritingEither() {
         var workout = Workout(
             title: "Legacy workout",
             goal: "Preserve the coach goal",
-            guidance: CoachGuidance(formCues: ["Preserve the imported note"])
+            guidance: CoachGuidance(tempo: "3-1-1", formCues: ["Preserve the imported note"])
         )
 
-        #expect(workout.notesText == "Preserve the coach goal\n\nPreserve the imported note")
-        #expect(workout.startLog().notesText == workout.notesText)
+        #expect(workout.notesText == "Preserve the coach goal\n\n3-1-1\n\nPreserve the imported note")
 
+        // Starting a session only reads the plan: planned text is never recorded as a performed fact.
+        #expect(workout.startLog().athleteNotes == [])
+
+        // Editing the one note stores it on the goal and leaves the guidance the athlete kept structured.
+        workout.updateNotes("Preserve the coach goal\n\n3-1-1\n\nPreserve the imported note. And mine.")
+        #expect(workout.guidance?.tempo == "3-1-1")
+        #expect(workout.guidance?.formCues == ["Preserve the imported note"])
+        #expect(workout.notesText == "Preserve the coach goal\n\n3-1-1\n\nPreserve the imported note. And mine.")
+
+        // Text the athlete deleted stays deleted instead of folding back in on the next read.
         workout.updateNotes("One athlete-facing note")
         #expect(workout.notesText == "One athlete-facing note")
         #expect(workout.goal == "One athlete-facing note")
         #expect(workout.guidance == nil)
+
+        workout.updateNotes("   ")
+        #expect(workout.goal == nil)
+        #expect(workout.notesText == "")
+    }
+
+    @Test func workoutNotesRenderEachSentenceOnceAcrossGoalAndGuidance() {
+        let workout = Workout(
+            title: "Duplicated sources",
+            goal: "A",
+            guidance: CoachGuidance(formCues: ["A "], progressionNotes: "Add 2.5kg next week")
+        )
+
+        #expect(workout.notesText == "A\n\nAdd 2.5kg next week")
     }
 
     @Test func sessionNotesStayOnTheLogAndNeverTouchPlannedGuidance() {

@@ -19,26 +19,48 @@ extension IdleTimerRenderTests {
             Preserve this imported note.
             """)
 
-            try screen.replaceInput(labelled: "Workout note", with: "One consolidated note")
+            let edited = """
+            Preserve this goal.
+
+            Preserve this imported note. Plus mine.
+            """
+            try screen.replaceInput(labelled: "Workout note", with: edited)
             try await screen.settle()
 
-            #expect(screen.workout?.notesText == "One consolidated note")
-            #expect(screen.workout?.goal == "One consolidated note")
-            #expect(screen.workout?.guidance == nil)
+            // The field reads back exactly what was typed instead of refolding the guidance behind it.
+            #expect(screen.inputCount(labelled: "Workout note") == 1)
+            #expect(screen.inputText(labelled: "Workout note") == edited)
+            #expect(screen.workout?.notesText == edited)
+            #expect(screen.workout?.goal == edited)
+            // Structured guidance stays plan metadata; the athlete's edit never flattens it away.
+            #expect(screen.workout?.guidance?.formCues == ["Preserve this imported note."])
         }
 
-        @Test func loggingStartsWithOneNoteContainingPriorGoalAndGuidance() async throws {
+        @Test func loggingShowsThePlanNoteWithoutWritingItIntoTheLog() async throws {
             let screen = try await WorkoutNoteScreen(stage: .logging, includesLegacyNotes: true)
             defer { screen.tearDown() }
 
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.hasLabel(containing: "Plan note. Preserve this imported note.") == false)
-            #expect(screen.log?.notesText == """
+
+            // A session carrying no performed note shows the plan's folded note as a read-time fallback,
+            // so nothing that used to render is lost — and the log records no note it did not perform.
+            #expect(screen.inputText(labelled: "Workout note") == """
             Preserve this goal.
 
             Preserve this imported note.
             """)
+            #expect(screen.log?.athleteNotes == [])
+
+            try screen.replaceInput(labelled: "Workout note", with: "Legs heavy today.")
+            try await screen.settle()
+
+            // Typing writes the performed note only; the plan keeps its goal and its guidance.
+            #expect(screen.log?.athleteNotes == ["Legs heavy today."])
+            #expect(screen.inputText(labelled: "Workout note") == "Legs heavy today.")
+            #expect(screen.workout?.goal == "Preserve this goal.")
+            #expect(screen.workout?.guidance?.formCues == ["Preserve this imported note."])
         }
 
         @Test func emptyCompletedWorkoutShowsOneNotePlaceholder() async throws {
@@ -128,45 +150,7 @@ private final class WorkoutNoteScreen: HostedScreen {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
-    func hasLabel(containing text: String) -> Bool {
-        AccessibilityElementWalker.elements(in: window).contains {
-            $0.accessibilityLabel?.contains(text) ?? false
-        }
-    }
-
     func hasRenderedText(_ text: String) -> Bool {
-        Self.allViews(in: window).contains {
-            ($0 as? UILabel)?.text == text
-        }
-    }
-
-    func inputCount(labelled label: String) -> Int {
-        textInputs(labelled: label).count
-    }
-
-    func inputText(labelled label: String) -> String? {
-        guard let input = textInputs(labelled: label).first,
-              let range = input.textRange(from: input.beginningOfDocument, to: input.endOfDocument)
-        else { return nil }
-        return input.text(in: range)
-    }
-
-    func replaceInput(labelled label: String, with text: String) throws {
-        let input = try #require(textInputs(labelled: label).first)
-        input.becomeFirstResponder()
-        let range = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
-        input.replace(range, withText: text)
-        input.resignFirstResponder()
-        window.layoutIfNeeded()
-    }
-
-    private func textInputs(labelled label: String) -> [UIView & UITextInput] {
-        Self.allViews(in: window)
-            .compactMap { $0 as? (UIView & UITextInput) }
-            .filter { $0.accessibilityLabel?.contains(label) ?? false }
-    }
-
-    private static func allViews(in root: UIView) -> [UIView] {
-        [root] + root.subviews.flatMap { allViews(in: $0) }
+        views().contains { ($0 as? UILabel)?.text == text }
     }
 }

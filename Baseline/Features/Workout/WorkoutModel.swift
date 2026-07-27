@@ -174,18 +174,21 @@ struct CoachGuidance: Codable, Equatable, Sendable {
 }
 
 extension CoachGuidance {
-    /// Every note this guidance carries, in display order, as one block of text. Blank components are
-    /// dropped; the rest is returned exactly as stored, so a field bound to this value round-trips
-    /// whatever the athlete typed instead of normalizing it away between keystrokes.
-    var notesText: String {
+    /// Every note this guidance carries, in display order. Blank and restated components are dropped;
+    /// the rest is returned exactly as stored, so a field bound to these round-trips whatever the athlete
+    /// typed instead of normalizing it away between keystrokes. Exposed component-wise so a wider fold
+    /// can dedupe against each note rather than against the whole joined block.
+    var notes: [String] {
         var notes: [String] = []
         Self.append(goal, to: &notes)
         Self.append(tempo, to: &notes)
-        notes.append(contentsOf: formCues.filter(Self.isMeaningful))
-        notes.append(contentsOf: commonMistakes.filter(Self.isMeaningful))
+        for cue in formCues { Self.append(cue, to: &notes) }
+        for mistake in commonMistakes { Self.append(mistake, to: &notes) }
         Self.append(progressionNotes, to: &notes)
-        return notes.joined(separator: "\n\n")
+        return notes
     }
+
+    var notesText: String { notes.joined(separator: "\n\n") }
 
     /// The guidance one edited notes field represents. The raw text is stored; only the emptiness test
     /// trims, so trailing spaces and newlines survive.
@@ -193,12 +196,38 @@ extension CoachGuidance {
         isMeaningful(text) ? CoachGuidance(formCues: [text]) : nil
     }
 
-    private static func append(_ note: String?, to notes: inout [String]) {
+    /// The guidance that survives an edit of a notes text this guidance was folded into. Components the
+    /// athlete left in the text keep their structure, so tempo stays tempo and mistakes stay mistakes;
+    /// ones they deleted are dropped, so removing a line through the note field actually removes it.
+    /// Returns nil once nothing is left, rather than an empty shell.
+    func retainingNotes(in text: String) -> CoachGuidance? {
+        var kept = CoachGuidance(
+            goal: Self.retain(goal, in: text),
+            tempo: Self.retain(tempo, in: text),
+            progressionNotes: Self.retain(progressionNotes, in: text)
+        )
+        kept.formCues = formCues.filter { Self.retain($0, in: text) != nil }
+        kept.commonMistakes = commonMistakes.filter { Self.retain($0, in: text) != nil }
+        return kept == CoachGuidance() ? nil : kept
+    }
+
+    private static func retain(_ note: String?, in text: String) -> String? {
+        guard let note, isMeaningful(note),
+              text.contains(note.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return note
+    }
+
+    /// Collect `note` unless it is blank or its trimmed text already reads inside what has been
+    /// collected. Folding overlapping sources is the whole point of a notes text, so the same sentence
+    /// must never render twice because one source restates another or differs only in surrounding space.
+    static func append(_ note: String?, to notes: inout [String]) {
         guard let note, isMeaningful(note) else { return }
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !notes.contains(where: { $0.contains(trimmed) }) else { return }
         notes.append(note)
     }
 
-    private static func isMeaningful(_ note: String) -> Bool {
+    static func isMeaningful(_ note: String) -> Bool {
         !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
@@ -256,25 +285,23 @@ extension Workout {
     mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
 
-    /// The one workout-level note shown to the athlete. Older workouts may carry text in both the
-    /// coach-facing goal and guidance fields, so fold both into the editable note without losing
-    /// imported or generated content.
+    /// The one workout-level note shown to the athlete, read at display time. Workouts may carry text
+    /// in both the coach-facing goal and the structured guidance, so both are folded here rather than
+    /// rewritten into one field — neither source loses content and neither is restated twice.
     var notesText: String {
         var notes: [String] = []
-        for note in [goal, guidance?.notesText].compactMap({ $0 }) {
-            guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !notes.contains(note) else { continue }
-            notes.append(note)
-        }
+        CoachGuidance.append(goal, to: &notes)
+        for note in guidance?.notes ?? [] { CoachGuidance.append(note, to: &notes) }
         return notes.joined(separator: "\n\n")
     }
 
-    /// Normalize the athlete's single edited note back into the existing goal path. The goal remains
-    /// available to coach and planning tools, while legacy guidance text has already been folded into
-    /// `notesText` before this edit and can be removed without dropping content.
+    /// Store the athlete's single edited note in `goal`, the field plan, profile, and agent surfaces
+    /// already read as the workout's coach text. Structured guidance stays separate plan metadata and
+    /// keeps its shape: only the components the athlete deleted from the folded text are dropped, so the
+    /// field reads back exactly what was typed without an edit flattening the guidance behind it.
     mutating func updateNotes(_ text: String) {
-        goal = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
-        guidance = nil
+        goal = CoachGuidance.isMeaningful(text) ? text : nil
+        guidance = guidance?.retainingNotes(in: text)
     }
 
     // Block level
@@ -1340,13 +1367,6 @@ extension Workout {
         let choiceLogs = allChoices.map {
             ChoiceLog(plannedChoiceID: $0.id, selectedOptionIDs: Array($0.options.prefix($0.selectionCount).map(\.id)))
         }
-        let workoutNotes = notesText
-        return WorkoutLog(
-            plannedWorkoutID: id,
-            exercises: performed,
-            groups: groupLogs,
-            choices: choiceLogs,
-            athleteNotes: workoutNotes.isEmpty ? [] : [workoutNotes]
-        )
+        return WorkoutLog(plannedWorkoutID: id, exercises: performed, groups: groupLogs, choices: choiceLogs)
     }
 }

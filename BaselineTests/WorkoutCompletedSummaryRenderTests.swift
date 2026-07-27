@@ -30,9 +30,11 @@ extension IdleTimerRenderTests {
             // The plan's own note is read-only context, announced as such rather than as a second Notes field.
             #expect(screen.hasLabel(containing: "Plan note for Back Squat. Existing note for Back Squat."))
             #expect(screen.hasLabel(containing: "Notes for Back Squat. Existing note") == false)
-            // At the workout level, prior goal and guidance text are folded into the one editable note.
-            #expect(screen.hasAccessibleText(containing: "Keep the completed log readable."))
-            #expect(screen.hasAccessibleText(containing: "Hold the paces we agreed on."))
+            // The workout-level note the athlete performed wins over the plan's text, and the plan keeps
+            // its goal and structured guidance rather than being rewritten by the completed log.
+            #expect(screen.inputText(labelled: "Workout note") == "Kept the session short.")
+            #expect(screen.workout?.goal == "Keep the completed log readable.")
+            #expect(screen.workout?.guidance?.formCues == ["Hold the paces we agreed on."])
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.hasLabel(containing: "Plan note. Hold the paces we agreed on.") == false)
             #expect(screen.hasLabel(containing: "Set completed"))
@@ -56,6 +58,8 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
     private let suiteName: String
     private let container: ModelContainer
     private let store: WorkoutStore
+
+    var workout: Workout? { store.current }
 
     init() async throws {
         suiteName = "WorkoutCompletedSummaryRenderTests.\(UUID().uuidString)"
@@ -95,12 +99,6 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         try await settleUntil { self.hasLabel(containing: "Logged Cleanup Session") }
     }
 
-    func hasLabel(containing text: String) -> Bool {
-        AccessibilityElementWalker.elements(in: window).contains {
-            $0.accessibilityLabel?.contains(text) ?? false
-        }
-    }
-
     func hasAccessibleText(containing text: String) -> Bool {
         AccessibilityElementWalker.elements(in: window).contains {
             ($0.accessibilityLabel?.contains(text) ?? false)
@@ -122,39 +120,13 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         return index < exercises.count ? exercises[index] : nil
     }
 
-    func canFocusInput(labelled label: String) -> Bool {
-        guard let input = textInputs(labelled: label).first else { return false }
-        input.becomeFirstResponder()
-        let isFocused = input.isFirstResponder
-        input.resignFirstResponder()
-        return isFocused
-    }
-
-    func inputCount(labelled label: String) -> Int {
-        textInputs(labelled: label).count
-    }
-
-    private func textInputs(labelled label: String) -> [UIView & UITextInput] {
-        Self.allViews(in: window)
-            .compactMap({ $0 as? (UIView & UITextInput) })
-            .filter { $0.accessibilityLabel?.contains(label) ?? false }
-    }
-
-    private static func allViews(in root: UIView) -> [UIView] {
-        var views = [root]
-        for subview in root.subviews {
-            views.append(contentsOf: allViews(in: subview))
-        }
-        return views
-    }
-
     private static func seedLog(in store: WorkoutStore) {
         guard let workout = store.current else { return }
         let exercises = workout.allExercises
         guard exercises.count == 4 else { return }
 
         store.editLog { log in
-            log.setNotes([log.notesText, "Kept the session short."].filter { !$0.isEmpty }.joined(separator: "\n\n"))
+            log.setNotes("Kept the session short.")
 
             logSet(for: exercises[0], in: &log, outcome: .completed)
             log.setStatus(.completed, forPlanned: exercises[0].id, name: exercises[0].exerciseName)
