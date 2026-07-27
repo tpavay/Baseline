@@ -27,8 +27,10 @@ final class WorkoutHeartRateRecorder {
 
     var hasSamples: Bool { buffer.isEmpty == false }
 
-    /// The incrementally-built JSON payload, for a durability checkpoint that must not re-encode the
-    /// whole growing series. Nil when nothing was captured.
+    /// The seam a mid-session durability checkpoint will write through: the whole captured series as
+    /// JSON, assembled **on demand** rather than accumulated per sample — see
+    /// `HeartRateTraceBuffer`'s header for why live capture must not pay that cost while nothing
+    /// checkpoints. Nil when nothing was captured.
     var encodedPayload: Data? { buffer.encodedPayload }
 
     /// Record one live sample at the monitor's arrival instant. `sessionStartedAt`/`sessionElapsed`

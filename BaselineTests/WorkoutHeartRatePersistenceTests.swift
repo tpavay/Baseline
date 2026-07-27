@@ -139,6 +139,64 @@ struct WorkoutHeartRatePersistenceTests {
         #expect(stored.completedLogID == completed.id)
     }
 
+    /// Discarding a session throws away the run, and the trace that run recorded goes with it — the
+    /// same way deleting the workout takes the sidecar with the rest of the performed footprint.
+    @Test func discardingASessionRemovesItsSeries() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+
+        repo.discardSession(forScheduled: scheduled.id)
+
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
+    }
+
+    /// The trace belongs to the run that recorded it. Completing the workout a second time without a
+    /// strap must report no heart rate rather than presenting the first run's trace, avg/max and zone
+    /// seconds as this session's measurement.
+    @Test func aReCompletionWithoutAStrapDoesNotInheritTheEarlierRunsTrace() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+
+        // Live again, finished again — this time with nothing streaming, so nothing is written.
+        _ = repo.resumeSession(forScheduled: scheduled.id)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(1_200))
+
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
+        #expect(repo.heartRateSummary(forScheduled: scheduled.id) == nil)
+    }
+
+    /// The other half of that rule: a re-completion that *did* record heart rate shows its own trace.
+    @Test func aReCompletionWithAStrapShowsTheNewRunsTrace() throws {
+        let repo = try makeRepo()
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+
+        _ = repo.resumeSession(forScheduled: scheduled.id)
+        repo.upsertHeartRateSeries(
+            forScheduled: scheduled.id,
+            trace: trace(count: 44, from: start.addingTimeInterval(3_600)),
+            summary: summary(sampleCount: 44),
+            now: start.addingTimeInterval(3_600)
+        )
+        let completion = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(4_200))
+        let completed = try #require({ if case .completed(let log) = completion { return log } else { return nil } }())
+
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.trace.count == 44)
+        #expect(stored.completedLogID == completed.id)
+    }
+
     @Test func deletingTheWorkoutRemovesItsSeriesWithTheRestOfThePerformedFootprint() throws {
         let repo = try makeRepo()
         let scheduled = seed(repo)

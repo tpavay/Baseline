@@ -54,6 +54,49 @@ struct WorkoutHeartRateStorageTests {
         }
     }
 
+    /// The trailer is checked, not just stripped. A flipped byte in the CRC-32 (or anywhere in the
+    /// payload it covers) has to fail loudly: silently returning corrupted bytes is how garbage ends
+    /// up decoded into samples and charted as measured heart rate.
+    @Test func aCorruptedChecksumIsRejectedRatherThanReturned() throws {
+        var corrupted = try GzipCodec.compress(Data("heart rate series".utf8))
+        corrupted[corrupted.count - 8] ^= 0xff        // first byte of the stored CRC-32
+        #expect(throws: GzipCodec.Error.checksumMismatch) { try GzipCodec.decompress(corrupted) }
+    }
+
+    /// The declared length is checked too, so a member claiming to be a different size than what came
+    /// out of it fails instead of being trusted.
+    @Test func aTamperedDeclaredSizeIsRejected() throws {
+        var tampered = try GzipCodec.compress(Data((0..<2_000).map { UInt8($0 % 251) }))
+        tampered[tampered.count - 4] ^= 0x01          // low byte of ISIZE
+        #expect(throws: GzipCodec.Error.sizeMismatch) { try GzipCodec.decompress(tampered) }
+    }
+
+    /// Bounding the compressed object alone leaves a crafted member free to expand without limit, so
+    /// the declared output size is screened before anything is inflated.
+    @Test func anObjectDeclaringMoreOutputThanTheCapIsRejectedBeforeInflating() throws {
+        var oversized = try WorkoutHeartRateStorageCodec.encode(
+            WorkoutHeartRateStorageBlob(scheduledWorkoutID: UUID(), trace: trace(count: 5), summary: nil)
+        )
+        // ISIZE = 0xFFFF_FFF0, ~4 GB — far past the decompressed cap.
+        for offset in 0..<4 { oversized[oversized.count - 4 + offset] = offset == 0 ? 0xf0 : 0xff }
+
+        #expect(throws: GzipCodec.Error.decompressedTooLarge) {
+            try GzipCodec.decompress(oversized, maximumDecompressedBytes: WorkoutHeartRateStorageCodec.maximumDecompressedBytes)
+        }
+        #expect(throws: GzipCodec.Error.decompressedTooLarge) {
+            try WorkoutHeartRateStorageCodec.decode(oversized, expecting: UUID())
+        }
+    }
+
+    /// Verification is on the way *in* only: the bytes `compress` emits are untouched, so the objects
+    /// stay readable by anything that speaks `.gz`.
+    @Test func verificationDidNotChangeTheBytesOnTheWire() throws {
+        let payload = Data((0..<5_000).map { UInt8($0 % 97) })
+        let compressed = try GzipCodec.compress(payload)
+        #expect(Array(compressed.prefix(10)) == [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff])
+        #expect(try GzipCodec.decompress(compressed) == payload)
+    }
+
     // MARK: - Blob
 
     @Test func blobRoundTripsThroughJSONAndGzip() throws {

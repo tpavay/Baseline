@@ -128,6 +128,36 @@ struct HeartRateTraceBufferTests {
         #expect(buffer.points.map(\.bpm) == [140, 145, 150])
     }
 
+    /// `sorted(by:)` is not stable against equal timestamps, so a recovered draft carrying duplicate
+    /// stamps would otherwise yield a merely non-decreasing series — and `WorkoutHeartRateTrace`'s
+    /// bounds assume it strictly increases.
+    @Test func restoringRefusesDuplicateTimestamps() {
+        let duplicated = [
+            HeartRateTracePoint(timestamp: start, bpm: 140),
+            HeartRateTracePoint(timestamp: start, bpm: 141),
+            HeartRateTracePoint(timestamp: start.addingTimeInterval(1), bpm: 150),
+            HeartRateTracePoint(timestamp: start.addingTimeInterval(1), bpm: 151),
+        ]
+        let buffer = HeartRateTraceBuffer(restoring: duplicated)
+        #expect(buffer.points.count == 2)
+        #expect(zip(buffer.points, buffer.points.dropFirst()).allSatisfy { $0.timestamp < $1.timestamp })
+    }
+
+    /// A restored series has already consumed the capture budget up to its last point, so the first
+    /// live sample after recovery is rate-limited like any other rather than admitted for free.
+    @Test func aLiveSampleArrivingImmediatelyAfterARestoreIsStillRateLimited() {
+        let recovered = (0..<3).map {
+            HeartRateTracePoint(timestamp: start.addingTimeInterval(Double($0)), bpm: 130 + $0)
+        }
+        var buffer = HeartRateTraceBuffer(restoring: recovered, minimumCaptureInterval: 0.9)
+
+        buffer.record(bpm: 160, capturedAt: start.addingTimeInterval(2.4))   // 0.4 s after the last
+        #expect(buffer.points.count == 3)
+
+        buffer.record(bpm: 162, capturedAt: start.addingTimeInterval(3.1))   // clears the floor
+        #expect(buffer.points.map(\.bpm).last == 162)
+    }
+
     @Test func traceExposesItsOwnBoundsAndSpan() {
         var buffer = HeartRateTraceBuffer(minimumCaptureInterval: 0)
         buffer.record(bpm: 120, capturedAt: start)

@@ -30,9 +30,14 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
         self.minimumCaptureInterval = minimumCaptureInterval
         self.lastCaptureAt = nil
 
-        for point in points.filter({ $0.bpm > 0 }).sorted(by: { $0.timestamp < $1.timestamp }) {
+        // Sorting alone is not enough: it is not stable against equal timestamps, so duplicates would
+        // yield a merely non-decreasing series. `append` is what rejects them.
+        for point in points.sorted(by: { $0.timestamp < $1.timestamp }) {
             append(point)
         }
+        // A restored series has already consumed the capture budget up to its last point, so the first
+        // live sample after a recovery is rate-limited like any other rather than admitted for free.
+        lastCaptureAt = self.points.last?.timestamp
     }
 
     var isEmpty: Bool { points.isEmpty }
@@ -47,9 +52,10 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
         return try? JSONEncoder().encode(points)
     }
 
-    /// Record one live reading. Drops a non-positive BPM (a malformed sample contributes nothing),
-    /// enforces the capture interval, and refuses any point that does not advance the timeline — so
-    /// the series is strictly increasing in time and can never double back on itself.
+    /// Record one live reading. Enforces the capture interval; `append` then applies the rules that
+    /// hold for every point however it entered — a non-positive BPM is dropped, and a point that does
+    /// not advance the timeline is refused, so the series is strictly increasing in time and can never
+    /// double back on itself.
     ///
     /// `capturedAt` is the clock instant the reading arrived and governs rate limiting;
     /// `sessionStartedAt + sessionElapsed` is where the point lands on the workout's *logical*
@@ -62,22 +68,25 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
         sessionStartedAt: Date? = nil,
         sessionElapsed: TimeInterval = 0
     ) {
-        guard bpm > 0 else { return }
         if let lastCaptureAt,
            capturedAt.timeIntervalSince(lastCaptureAt) < minimumCaptureInterval {
             return
         }
 
         let timestamp = sessionStartedAt.map { $0.addingTimeInterval(max(sessionElapsed, 0)) } ?? capturedAt
-        if let last = points.last, timestamp <= last.timestamp { return }
-
+        guard append(HeartRateTracePoint(timestamp: timestamp, bpm: bpm)) else { return }
         lastCaptureAt = capturedAt
-        append(HeartRateTracePoint(timestamp: timestamp, bpm: bpm))
     }
 
-    /// The single funnel every point enters the series through, whether it came from a restore or
-    /// from a live reading, so the ordering guarantee has one place to hold.
-    private mutating func append(_ point: HeartRateTracePoint) {
+    /// The single funnel every point enters the series through, whether it came from a restore or from
+    /// a live reading, and the one place the invariants hold: a point must carry a positive BPM and
+    /// must strictly advance the timeline, or it does not land. Returns whether it did, so a caller
+    /// tracking capture state only advances that state for a point the series actually took.
+    @discardableResult
+    private mutating func append(_ point: HeartRateTracePoint) -> Bool {
+        guard point.bpm > 0 else { return false }
+        if let last = points.last, point.timestamp <= last.timestamp { return false }
         points.append(point)
+        return true
     }
 }

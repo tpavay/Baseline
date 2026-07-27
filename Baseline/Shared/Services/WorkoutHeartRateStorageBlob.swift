@@ -72,6 +72,12 @@ enum WorkoutHeartRateStorageCodec {
     /// Rejects an object larger than this on the way in *and* out: a heart-rate series that big is a
     /// bug or a hostile object, not a workout. Matches Ascend's rule.
     static let maximumObjectBytes: Int64 = 5 * 1_024 * 1_024
+    /// The cap on what an object is allowed to *expand to*. Capping the compressed bytes alone leaves
+    /// a truncated or crafted member free to inflate without limit, so the gzip trailer's declared
+    /// size is screened against this before anything is allocated. Generous next to the object cap
+    /// because gzip runs well under half on this JSON: 16 MB of samples is on the order of a hundred
+    /// hours at 1 Hz, far past any workout.
+    static let maximumDecompressedBytes: Int64 = 16 * 1_024 * 1_024
     static let contentType = "application/gzip"
 
     enum Error: LocalizedError, Equatable {
@@ -110,7 +116,7 @@ enum WorkoutHeartRateStorageCodec {
         guard Int64(data.count) <= maximumObjectBytes else { throw Error.objectTooLarge }
         let blob = try JSONDecoder().decode(
             WorkoutHeartRateStorageBlob.self,
-            from: try GzipCodec.decompress(data)
+            from: try GzipCodec.decompress(data, maximumDecompressedBytes: maximumDecompressedBytes)
         )
         guard blob.schemaVersion == WorkoutHeartRateStorageBlob.currentSchemaVersion else {
             throw Error.schemaVersionUnsupported(blob.schemaVersion)

@@ -182,8 +182,11 @@ import SwiftData
 /// Keyed on `scheduledWorkoutID` because that is the identity every Baseline read path already uses
 /// (`completedLog(forScheduled:)`, `PlanStore.sink(forScheduled:)`, `WorkoutDetailView`), and it is
 /// stable across a re-completion. `completedLogID` is stamped at completion, once the frozen log has
-/// an id. Stored uncompressed: compression is a transport concern (`WorkoutHeartRateStorageBlob`),
-/// and a local read should be a plain decode with no CPU cost.
+/// an id, and is what tells a later read *which run* the trace came from: a row still carrying an
+/// earlier log after the workout was completed again is the previous run's measurement, and the reads
+/// refuse it (see `SwiftDataPlanRepository.currentHeartRateSeriesSD`). Stored uncompressed:
+/// compression is a transport concern (`WorkoutHeartRateStorageBlob`), and a local read should be a
+/// plain decode with no CPU cost.
 ///
 /// CloudKit-safe like its neighbours: no unique attribute, every property defaulted or optional, and
 /// the link to the completed log is a loose `UUID`.

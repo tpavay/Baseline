@@ -14,12 +14,18 @@ enum GzipCodec {
         case compressionFailed
         case invalidGzipData
         case decompressionFailed
+        case checksumMismatch
+        case sizeMismatch
+        case decompressedTooLarge
 
         var errorDescription: String? {
             switch self {
             case .compressionFailed: "Failed to compress the heart-rate series."
             case .invalidGzipData: "The heart-rate series is not valid gzip data."
             case .decompressionFailed: "Failed to decompress the heart-rate series."
+            case .checksumMismatch: "The heart-rate series failed its integrity check."
+            case .sizeMismatch: "The heart-rate series is not the length it claims to be."
+            case .decompressedTooLarge: "The heart-rate series is larger than the allowed size."
             }
         }
     }
@@ -49,7 +55,18 @@ enum GzipCodec {
         return gzipData
     }
 
-    static func decompress(_ data: Data) throws -> Data {
+    /// Inflate a gzip member and *verify it*.
+    ///
+    /// The trailer `compress` writes is not decoration: silently trusting a corrupted or truncated
+    /// object would decode into plausible-looking garbage and chart it as measured heart rate. So the
+    /// CRC-32 and the length are both checked against what actually came out, and a mismatch throws
+    /// rather than returning data.
+    ///
+    /// `maximumDecompressedBytes` bounds the *output*. Bounding the compressed object alone leaves a
+    /// crafted or truncated member free to expand without limit, so the declared size is screened
+    /// before inflating. ISIZE is only the low 32 bits of the original length, so that screen is a
+    /// cheap pre-filter; the check against the real output length below is the one that decides.
+    static func decompress(_ data: Data, maximumDecompressedBytes: Int64? = nil) throws -> Data {
         // 10-byte header + 8-byte trailer is the floor for a well-formed member; the magic bytes and
         // compression method are checked so a truncated or mislabelled object fails here rather than
         // deep inside zlib.
@@ -61,16 +78,36 @@ enum GzipCodec {
             throw Error.invalidGzipData
         }
 
+        let trailer = data.suffix(8)
+        let storedCRC = Self.littleEndianUInt32(trailer.prefix(4))
+        let declaredSize = Self.littleEndianUInt32(trailer.suffix(4))
+
+        if let maximumDecompressedBytes, Int64(declaredSize) > maximumDecompressedBytes {
+            throw Error.decompressedTooLarge
+        }
+
         let deflated = data.dropFirst(10).dropLast(8)
+        let inflated: Data
         do {
-            return try (Data(deflated) as NSData).decompressed(using: .zlib) as Data
+            inflated = try (Data(deflated) as NSData).decompressed(using: .zlib) as Data
         } catch {
             throw Error.decompressionFailed
         }
+
+        if let maximumDecompressedBytes, Int64(inflated.count) > maximumDecompressedBytes {
+            throw Error.decompressedTooLarge
+        }
+        guard UInt32(truncatingIfNeeded: inflated.count) == declaredSize else { throw Error.sizeMismatch }
+        guard Self.crc32(for: inflated) == storedCRC else { throw Error.checksumMismatch }
+        return inflated
     }
 }
 
 private extension GzipCodec {
+    static func littleEndianUInt32(_ bytes: Data) -> UInt32 {
+        bytes.reversed().reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+    }
+
     static func crc32(for data: Data) -> UInt32 {
         var crc: UInt32 = 0xffff_ffff
         for byte in data {

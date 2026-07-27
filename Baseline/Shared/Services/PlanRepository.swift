@@ -75,9 +75,13 @@ protocol PlanRepository {
         now: Date
     )
     /// The full series, decoding the sample array. Only for something about to draw it.
+    ///
+    /// Every read answers for the workout's *current* completed log: a series recorded by an earlier
+    /// run is not returned once the workout has been completed again, so a re-completion with no strap
+    /// reports no heart rate instead of inheriting the previous run's.
     func heartRateSeries(forScheduled id: UUID) -> WorkoutHeartRateSeries?
     /// "Does this workout have heart rate?" without decoding the series — the gate every list, card,
-    /// and layout decision should use.
+    /// and layout decision should use. Same current-log rule as `heartRateSeries`.
     func hasHeartRateSeries(forScheduled id: UUID) -> Bool
     /// The summary alone (avg / max / zone seconds / zone model). Decodes tens of bytes, never the
     /// sample array.
@@ -380,8 +384,13 @@ final class SwiftDataPlanRepository: PlanRepository {
         ))
         indexCompletedExercises(completed, plan: sw, resolving: effectivePlan)
         // The trace is written before completion (the live monitor is torn down the instant the log
-        // reads complete), so this is where it learns which frozen log it belongs to.
-        heartRateSeriesSD(id)?.completedLogID = completed.id
+        // reads complete), so this is where it learns which frozen log it belongs to. Only an
+        // unstamped series belongs to the run finishing now: one already frozen onto an earlier log is
+        // the previous run's measurement, and re-stamping it would hand this completion a trace it
+        // never recorded.
+        if let series = heartRateSeriesSD(id), series.completedLogID == nil {
+            series.completedLogID = completed.id
+        }
         sd.logJSON = PlanCoding.data(completedLog)
         sd.statusRaw = SessionStatus.completed.rawValue
         save()
@@ -415,12 +424,14 @@ final class SwiftDataPlanRepository: PlanRepository {
         row.summaryJSON = PlanCoding.data(summary)
         // A re-recorded series has never been uploaded, so any previous remote path is stale.
         row.remoteStoragePath = nil
-        row.completedLogID = completedLog(forScheduled: id)?.id
+        // Just-captured, so it belongs to the run in progress and to no frozen log yet — whatever it
+        // was stamped with before is a previous run's answer. `completeSession` stamps it.
+        row.completedLogID = nil
         save()
     }
 
     func heartRateSeries(forScheduled id: UUID) -> WorkoutHeartRateSeries? {
-        guard let row = heartRateSeriesSD(id),
+        guard let row = currentHeartRateSeriesSD(id),
               let points = PlanCoding.value([HeartRateTracePoint].self, row.seriesJSON),
               let summary = PlanCoding.value(WorkoutHeartRateSummary.self, row.summaryJSON)
         else { return nil }
@@ -435,11 +446,11 @@ final class SwiftDataPlanRepository: PlanRepository {
     }
 
     func hasHeartRateSeries(forScheduled id: UUID) -> Bool {
-        (heartRateSeriesSD(id)?.sampleCount ?? 0) > 0
+        (currentHeartRateSeriesSD(id)?.sampleCount ?? 0) > 0
     }
 
     func heartRateSummary(forScheduled id: UUID) -> WorkoutHeartRateSummary? {
-        guard let row = heartRateSeriesSD(id) else { return nil }
+        guard let row = currentHeartRateSeriesSD(id) else { return nil }
         return PlanCoding.value(WorkoutHeartRateSummary.self, row.summaryJSON)
     }
 
@@ -457,10 +468,33 @@ final class SwiftDataPlanRepository: PlanRepository {
             .sorted { $0.recordedAt > $1.recordedAt }.first
     }
 
+    /// The stored series only if it is *this* workout's current measurement.
+    ///
+    /// `completedLogID` is what makes that decidable. An unstamped row was captured by the run in
+    /// progress and has nothing to contradict. A stamped one belongs to the log named on it: once the
+    /// workout has been completed again, a row carrying the earlier log is the previous run's trace,
+    /// and a re-completion that recorded no heart rate must show no heart rate rather than inheriting
+    /// it. Every read goes through here so that answer is the same on all of them.
+    private func currentHeartRateSeriesSD(_ id: UUID) -> SDWorkoutHeartRateSeries? {
+        guard let row = heartRateSeriesSD(id) else { return nil }
+        guard let stampedLogID = row.completedLogID else { return row }
+        return stampedLogID == completedLog(forScheduled: id)?.id ? row : nil
+    }
+
     func discardSession(forScheduled id: UUID) {
         guard let sd = latestSession(id) else { return }
         sd.statusRaw = SessionStatus.discarded.rawValue
         sd.reconciliationPending = false
+        // The discarded run's trace goes with it, the same way workout deletion takes the sidecar with
+        // the rest of the performed footprint. A series frozen onto the workout's surviving completed
+        // log was recorded by a different run and is left alone.
+        let survivingLogID = completedLog(forScheduled: id)?.id
+        fetch(SDWorkoutHeartRateSeries.self, where: #Predicate { $0.scheduledWorkoutID == id })
+            .filter { row in
+                guard let survivingLogID, let stamped = row.completedLogID else { return true }
+                return stamped != survivingLogID
+            }
+            .forEach(context.delete)
         save()
     }
 

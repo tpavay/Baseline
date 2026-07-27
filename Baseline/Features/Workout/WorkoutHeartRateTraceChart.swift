@@ -130,8 +130,11 @@ struct WorkoutHeartRateTraceChart: View {
         .chartXAxis { xAxis(dataSet) }
         .chartYAxis { yAxis(dataSet) }
         .chartOverlay { proxy in zoneLabels(dataSet, proxy: proxy) }
+        // A scrub is continuous value-picking, not a discrete tap: `chartXSelection` moves through
+        // every nearest point the finger crosses, so an impact generator would machine-gun hundreds
+        // of hits across one slow drag. The selection generator is the one built for this.
         .onChange(of: selected?.id) { _, newValue in
-            if newValue != nil { Haptics.tap() }
+            if newValue != nil { Haptics.select() }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(dataSet.accessibilityLabel(summary: capture.summary))
