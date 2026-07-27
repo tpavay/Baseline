@@ -104,6 +104,20 @@ struct WorkoutHeartRateTraceDataSetTests {
         #expect(low.heartRateRange.lowerBound == 30)   // never below 30 bpm
     }
 
+    /// A malformed strap payload can report single-digit BPM, which puts the whole trace under the
+    /// 30 bpm floor. The floor stays, the upper bound is raised to meet it, and the range is still a
+    /// valid non-empty range instead of an inverted one that traps on construction.
+    @Test func aTraceBelowTheAxisFloorStillGetsAValidRange() {
+        let garbage = dataSet([(0, 5), (10, 25), (20, 12)])
+        #expect(garbage.heartRateRange.lowerBound == 30)
+        #expect(garbage.heartRateRange.upperBound > garbage.heartRateRange.lowerBound)
+        #expect(garbage.heartRateTickValues.count == 5)
+
+        let single = dataSet([(0, 1)])
+        #expect(single.heartRateRange.lowerBound == 30)
+        #expect(single.heartRateRange.upperBound > single.heartRateRange.lowerBound)
+    }
+
     @Test func thereAreAlwaysFiveTicksWithPinnedEndpoints() {
         let set = dataSet([(0, 100), (10, 200), (20, 150)])
         #expect(set.heartRateTickValues.count == 5)

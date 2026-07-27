@@ -44,14 +44,14 @@ struct WorkoutHeartRateTraceDataSet: Equatable {
     let heartRateTickValues: [Int]
     let zoneBands: [ZoneBand]
 
-    var isEmpty: Bool { points.isEmpty }
-
     /// Whether there is enough shape to draw a line: at least three points spread over at least two
     /// distinct whole seconds. One point, or three that all landed in the same second, is a dot.
-    var canPlotLine: Bool {
-        let distinctSeconds = Set(points.map { Int($0.elapsed.rounded()) })
-        return points.count >= Self.minimumLineSampleCount && distinctSeconds.count >= 2
-    }
+    ///
+    /// Stored, not computed: the chart reads it inside its per-point mark builder, and deriving it
+    /// there would rebuild a set over the whole series once per drawn point on every render frame.
+    let canPlotLine: Bool
+
+    var isEmpty: Bool { points.isEmpty }
 
     init(
         trace: WorkoutHeartRateTrace,
@@ -84,7 +84,14 @@ struct WorkoutHeartRateTraceDataSet: Equatable {
         heartRateRange = range
         heartRateTickValues = Self.tickValues(for: range)
         zoneBands = Self.zoneBands(model: zoneModel, clippedTo: range)
-        points = Self.decimated(retained, to: maximumPlottedPoints)
+        let plotted = Self.decimated(retained, to: maximumPlottedPoints)
+        points = plotted
+        canPlotLine = Self.canPlotLine(plotted)
+    }
+
+    private static func canPlotLine(_ points: [Point]) -> Bool {
+        guard points.count >= minimumLineSampleCount else { return false }
+        return Set(points.map { Int($0.elapsed.rounded()) }).count >= 2
     }
 
     /// Convenience for a persisted capture.
@@ -134,11 +141,15 @@ struct WorkoutHeartRateTraceDataSet: Equatable {
 
     // MARK: - Axis
 
+    /// Total by construction. The 30 bpm floor can raise the lower bound above an implausibly low
+    /// trace's own maximum (a malformed strap payload can report single-digit BPM), so the upper bound
+    /// is raised to keep the range ordered and non-degenerate rather than dropping the floor and
+    /// drawing an axis nobody could have trained on.
     private static func range(for heartRates: [Int]) -> ClosedRange<Int> {
         guard let lowest = heartRates.min(), let highest = heartRates.max() else { return 60...180 }
-        if lowest == highest { return max(30, lowest - 5)...(highest + 5) }
-        let padding = max(3, Int(ceil(Double(highest - lowest) * 0.1)))
-        return max(30, lowest - padding)...(highest + padding)
+        let padding = lowest == highest ? 5 : max(3, Int(ceil(Double(highest - lowest) * 0.1)))
+        let lower = max(30, lowest - padding)
+        return lower...max(highest + padding, lower + padding * 2)
     }
 
     /// Exactly five ticks with the endpoints pinned, so the axis always states its own bounds.

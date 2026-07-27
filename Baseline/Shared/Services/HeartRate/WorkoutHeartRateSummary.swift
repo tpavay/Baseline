@@ -35,11 +35,30 @@ struct WorkoutHeartRateSummary: Codable, Equatable, Sendable {
         self.maxBPM = maxBPM
         self.sampleCount = sampleCount
         // Normalize to exactly one entry per zone so every reader can index by ordinal without a
-        // bounds check, whatever a decoded older record happened to carry.
+        // bounds check, and so `totalZoneSeconds` can never sum an entry no zone owns.
         var seconds = Array(zoneSeconds.prefix(HeartRateZone.allCases.count))
         seconds.append(contentsOf: Array(repeating: 0, count: HeartRateZone.allCases.count - seconds.count))
         self.zoneSeconds = seconds
         self.zoneModel = zoneModel
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case averageBPM, maxBPM, sampleCount, zoneSeconds, zoneModel
+    }
+
+    /// Written out rather than synthesized so decoding runs the same normalization as construction.
+    /// These records come off disk (`SDWorkoutHeartRateSeries.summaryJSON`, `WorkoutLog`), and a
+    /// synthesized decoder would assign `zoneSeconds` verbatim — leaving the one invariant every
+    /// reader relies on holding only for summaries this process happened to build itself.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            averageBPM: try container.decodeIfPresent(Int.self, forKey: .averageBPM),
+            maxBPM: try container.decodeIfPresent(Int.self, forKey: .maxBPM),
+            sampleCount: try container.decode(Int.self, forKey: .sampleCount),
+            zoneSeconds: try container.decodeIfPresent([TimeInterval].self, forKey: .zoneSeconds) ?? [],
+            zoneModel: try container.decodeIfPresent(HeartRateZoneModelSnapshot.self, forKey: .zoneModel)
+        )
     }
 
     /// Whether this summary describes real measured heart rate. A summary with no samples is not

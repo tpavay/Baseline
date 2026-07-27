@@ -1406,6 +1406,12 @@ final class AgentTools {
                 return Response(text: "You still have \(open.sets) unlogged \(s) across \(open.exercises) \(e). Want me to finish the workout anyway?", decision: nil, plan: nil)
             }
             // Finishing through the agent shows no promotion prompt, so the decision is settled here.
+            //
+            // Known Phase-1 limitation (tracked follow-up): this path bypasses
+            // `WorkoutFinishCoordinator.finish(_:heartRate:)`, so it does not capture the live
+            // heart-rate trace — finishing through the coach while a strap is streaming loses the
+            // trace and its summary. The recorder and monitor are owned by `WorkoutView` today; the
+            // fix is to route this path through the same capture step once that ownership moves.
             workouts.completeWorkout(awaitingReconciliationDecision: false)
             return Response(text: "Marked the workout complete — nice work.", decision: nil, plan: nil)
         case .getWeekPlan:

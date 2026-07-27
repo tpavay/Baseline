@@ -20,10 +20,14 @@ struct WorkoutHeartRateTraceChart: View {
     @State private var selectedElapsed: TimeInterval?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: BaselineSpacing.small) {
-            header
+        // Resolved once per pass and handed down: the nearest-point scan is linear in the drawn
+        // series, and the header, the animation, the selection marks and the change handler all want
+        // the same answer while the athlete scrubs.
+        let selected = selectedPoint
+        return VStack(alignment: .leading, spacing: BaselineSpacing.small) {
+            header(selected)
             if let dataSet {
-                chart(dataSet)
+                chart(dataSet, selected: selected)
             }
         }
         .task(id: identity) { resolve() }
@@ -45,11 +49,11 @@ struct WorkoutHeartRateTraceChart: View {
 
     // MARK: - Header
 
-    private var header: some View {
+    private func header(_ selected: WorkoutHeartRateTraceDataSet.Point?) -> some View {
         HStack(alignment: .firstTextBaseline) {
             InstrumentLabel("HEART RATE", tracking: 1)
             Spacer()
-            if let selected = selectedPoint {
+            if let selected {
                 // The tapped reading replaces the summary rather than crowding in beside it: one
                 // number in that slot at a time keeps the row readable while scrubbing.
                 Text("\(selected.bpm) BPM at \(MetricFormat.durationEditText(selected.elapsed))")
@@ -62,7 +66,7 @@ struct WorkoutHeartRateTraceChart: View {
                     .foregroundStyle(BaselineColor.textFaint)
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: selectedPoint?.id)
+        .animation(.easeInOut(duration: 0.15), value: selected?.id)
     }
 
     private var selectedPoint: WorkoutHeartRateTraceDataSet.Point? {
@@ -72,7 +76,10 @@ struct WorkoutHeartRateTraceChart: View {
 
     // MARK: - Chart
 
-    private func chart(_ dataSet: WorkoutHeartRateTraceDataSet) -> some View {
+    private func chart(
+        _ dataSet: WorkoutHeartRateTraceDataSet,
+        selected: WorkoutHeartRateTraceDataSet.Point?
+    ) -> some View {
         Chart {
             // Bands first so the trace always reads on top of them.
             ForEach(dataSet.zoneBands) { band in
@@ -104,7 +111,7 @@ struct WorkoutHeartRateTraceChart: View {
                 }
             }
 
-            if let selected = selectedPoint {
+            if let selected {
                 RuleMark(x: .value("Time", selected.elapsed))
                     .foregroundStyle(BaselineColor.accent.opacity(0.3))
                     .lineStyle(StrokeStyle(lineWidth: BaselineSize.hairline))
@@ -123,7 +130,7 @@ struct WorkoutHeartRateTraceChart: View {
         .chartXAxis { xAxis(dataSet) }
         .chartYAxis { yAxis(dataSet) }
         .chartOverlay { proxy in zoneLabels(dataSet, proxy: proxy) }
-        .onChange(of: selectedPoint?.id) { _, newValue in
+        .onChange(of: selected?.id) { _, newValue in
             if newValue != nil { Haptics.tap() }
         }
         .accessibilityElement(children: .ignore)

@@ -157,6 +157,23 @@ struct WorkoutHeartRateRecorderTests {
         #expect(short.totalZoneSeconds == 30)
     }
 
+    /// The invariant has to survive the read path, not just construction: these summaries come back
+    /// off disk from `SDWorkoutHeartRateSeries.summaryJSON` and `WorkoutLog`.
+    @Test func decodingNormalizesZoneSecondsToOneEntryPerZone() throws {
+        func decode(_ json: String) throws -> WorkoutHeartRateSummary {
+            try JSONDecoder().decode(WorkoutHeartRateSummary.self, from: Data(json.utf8))
+        }
+
+        let short = try decode(#"{"sampleCount":4,"zoneSeconds":[10,20],"averageBPM":120,"maxBPM":130}"#)
+        #expect(short.zoneSeconds == [10, 20, 0, 0, 0])
+        #expect(short.totalZoneSeconds == 30)
+
+        let long = try decode(#"{"sampleCount":9,"zoneSeconds":[1,2,3,4,5,6,7]}"#)
+        #expect(long.zoneSeconds == [1, 2, 3, 4, 5])
+        #expect(long.totalZoneSeconds == 15)     // the entries no zone owns are not summed
+        #expect(long.seconds(in: .z5) == 5)
+    }
+
     @Test func aSummaryWithoutSamplesIsNotEvidence() {
         let empty = WorkoutHeartRateSummary(
             averageBPM: nil, maxBPM: nil, sampleCount: 0, zoneSeconds: [], zoneModel: nil

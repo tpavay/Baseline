@@ -3,7 +3,7 @@ import Testing
 @testable import Baseline
 
 /// The capture rules of the live trace buffer: rate limiting, monotonicity, junk rejection, and the
-/// invariant that its incrementally-built JSON always decodes back to exactly the points it holds.
+/// invariant that its on-demand JSON payload always decodes back to exactly the points it holds.
 struct HeartRateTraceBufferTests {
 
     private let start = Date(timeIntervalSince1970: 1_700_000_000)
@@ -81,12 +81,12 @@ struct HeartRateTraceBufferTests {
         #expect(try decoded(buffer) == buffer.points)
     }
 
-    /// The point of the incremental encoding: appending N elements yields the same *values* as
-    /// encoding the whole series once, so the cheap path is not a second format.
+    /// The on-demand payload is not a second format: it carries the same *values* as encoding the
+    /// series directly, and stays a plain JSON array of exactly the recorded elements.
     ///
     /// Value equality, not byte equality: `JSONEncoder` does not guarantee a stable key order between
     /// calls, so two encodes of the same struct can legitimately differ byte for byte.
-    @Test func incrementalEncodingCarriesTheSameSeriesAsAWholeEncode() throws {
+    @Test func theOnDemandPayloadCarriesTheSameSeriesAsAWholeEncode() throws {
         var buffer = HeartRateTraceBuffer(minimumCaptureInterval: 0)
         for tick in 0..<25 {
             buffer.record(bpm: 150 + tick, capturedAt: start.addingTimeInterval(Double(tick)))
@@ -98,10 +98,9 @@ struct HeartRateTraceBufferTests {
             try decoder.decode([HeartRateTracePoint].self, from: payload)
                 == (try decoder.decode([HeartRateTracePoint].self, from: whole))
         )
-        // Structurally an array of exactly the recorded elements: one separator between each pair.
+        // Structurally an array of exactly the recorded elements, with nothing wrapping it.
         #expect(payload.first == UInt8(ascii: "["))
         #expect(payload.last == UInt8(ascii: "]"))
-        #expect(payload.filter { $0 == UInt8(ascii: ",") }.count == 25 * 2 - 1)  // 1 per element + 24 joins
     }
 
     @Test func restoringSeedsTheBufferAndAppendingContinuesTheSameSeries() throws {

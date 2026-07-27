@@ -1,12 +1,14 @@
 import Foundation
 
-/// Accumulates a live workout's heart-rate trace and carries its own JSON representation.
+/// Accumulates a live workout's heart-rate trace and can hand out its JSON representation.
 ///
-/// The payload is assembled **incrementally**: each point is encoded once, on append, and
-/// `encodedPayload` only wraps the already-encoded elements in array brackets. That matters because
-/// a durability checkpoint runs repeatedly across a session that can last well over an hour —
-/// re-encoding the whole growing series each time would be quadratic main-actor work *during* a
-/// workout. Ported from Ascend's `HeartRateSessionSampleBuffer`, which exists for the same reason.
+/// `encodedPayload` is the seam a mid-session durability checkpoint will write through — the same
+/// shape Ascend's `HeartRateSessionSampleBuffer` exposes, and seamed here for the same reason the
+/// cloud storage repository was: so the checkpoint has somewhere to land when it arrives. It is
+/// assembled **on demand**, not incrementally, because nothing checkpoints yet and encoding every
+/// sample as it arrives would charge live capture on the main actor for a feature that does not
+/// exist. If checkpointing lands and profiling shows assembling the whole series each time is too
+/// slow across an hour-long session, restore the incremental build then — not before.
 ///
 /// Pure value type driven by explicit timestamps (no wall clock), like `ZoneTimeAccumulator` and
 /// `SessionHeartRateStats`, so every capture rule is deterministic in tests.
@@ -16,14 +18,9 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
     /// is no second downsampling pass, so what is stored is what the strap actually sent.
     static let defaultMinimumCaptureInterval: TimeInterval = 0.9
 
-    private static let elementSeparator = Data(",".utf8)
-    private static let arrayOpen = Data("[".utf8)
-    private static let arrayClose = Data("]".utf8)
-
     private(set) var points: [HeartRateTracePoint]
     private let minimumCaptureInterval: TimeInterval
     private var lastCaptureAt: Date?
-    private var encodedElements: Data
 
     init(
         restoring points: [HeartRateTracePoint] = [],
@@ -32,7 +29,6 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
         self.points = []
         self.minimumCaptureInterval = minimumCaptureInterval
         self.lastCaptureAt = nil
-        self.encodedElements = Data()
 
         for point in points.filter({ $0.bpm > 0 }).sorted(by: { $0.timestamp < $1.timestamp }) {
             append(point)
@@ -47,13 +43,8 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
     /// The full series as a JSON array: decoding it yields exactly `points`. Nil when the session
     /// captured nothing, so "no heart rate" is representable without an empty-array sentinel.
     var encodedPayload: Data? {
-        guard encodedElements.isEmpty == false else { return nil }
-
-        var payload = Data(capacity: encodedElements.count + 2)
-        payload.append(Self.arrayOpen)
-        payload.append(encodedElements)
-        payload.append(Self.arrayClose)
-        return payload
+        guard points.isEmpty == false else { return nil }
+        return try? JSONEncoder().encode(points)
     }
 
     /// Record one live reading. Drops a non-positive BPM (a malformed sample contributes nothing),
@@ -84,15 +75,9 @@ struct HeartRateTraceBuffer: Equatable, Sendable {
         append(HeartRateTracePoint(timestamp: timestamp, bpm: bpm))
     }
 
-    /// The only mutator of both the series and its encoding, so a point that fails to encode never
-    /// lands in `points` and the two can never diverge.
+    /// The single funnel every point enters the series through, whether it came from a restore or
+    /// from a live reading, so the ordering guarantee has one place to hold.
     private mutating func append(_ point: HeartRateTracePoint) {
-        guard let element = try? JSONEncoder().encode(point) else { return }
-
-        if encodedElements.isEmpty == false {
-            encodedElements.append(Self.elementSeparator)
-        }
-        encodedElements.append(element)
         points.append(point)
     }
 }
