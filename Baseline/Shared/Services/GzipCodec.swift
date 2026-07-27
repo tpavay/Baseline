@@ -62,10 +62,16 @@ enum GzipCodec {
     /// CRC-32 and the length are both checked against what actually came out, and a mismatch throws
     /// rather than returning data.
     ///
-    /// `maximumDecompressedBytes` bounds the *output*. Bounding the compressed object alone leaves a
-    /// crafted or truncated member free to expand without limit, so the declared size is screened
-    /// before inflating. ISIZE is only the low 32 bits of the original length, so that screen is a
-    /// cheap pre-filter; the check against the real output length below is the one that decides.
+    /// `maximumDecompressedBytes` bounds the *output*. Bounding the compressed object alone leaves an
+    /// oversized member free to expand without limit, so the declared size is screened before
+    /// inflating — but read that screen for what it is. ISIZE is only the low 32 bits of the original
+    /// length, and it is a field the object itself supplies: a member that understates its output
+    /// still inflates in full through `NSData.decompressed(using:)` before the post-inflate check
+    /// rejects it. So the pre-screen is advisory — effective against an honestly-labelled oversized
+    /// object, not a hard memory bound against a hostile one. A hard bound needs chunked inflation via
+    /// `compression_stream`, which the one-shot `NSData` API cannot express; it is deliberately out of
+    /// scope while this leg has no call site. The CRC and real-length checks below are what make
+    /// correctness hold regardless.
     static func decompress(_ data: Data, maximumDecompressedBytes: Int64? = nil) throws -> Data {
         // 10-byte header + 8-byte trailer is the floor for a well-formed member; the magic bytes and
         // compression method are checked so a truncated or mislabelled object fails here rather than

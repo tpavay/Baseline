@@ -693,14 +693,22 @@ final class WorkoutStore {
         return heartRate.capture
     }
 
-    /// Freeze the live trace and summary onto this session.
+    /// Freeze this run's heart rate onto the session — including the answer "there wasn't any".
     ///
     /// Called from the finish sequence *before* `completeWorkout`, because the live monitor is torn
     /// down the instant the log reads complete — after that there is nothing left to capture. The
     /// summary rides on the log (small); the trace goes to its own sidecar entity through the sink.
-    func attachHeartRate(_ capture: WorkoutHeartRateCapture) {
+    ///
+    /// Nil is a statement, not a no-op: the log's summary and the resolved capture both describe the
+    /// run being finished, and a run that measured nothing must leave neither behind. Skipping the
+    /// call would let a previous run's copies ride along into this completion.
+    func attachHeartRate(_ capture: WorkoutHeartRateCapture?) {
         guard let log = currentLog else { return }
-        editLog { $0.heartRateSummary = capture.summary }
+        editLog { $0.heartRateSummary = capture?.summary }
+        guard let capture else {
+            heartRate = nil
+            return
+        }
         sink?.pushHeartRateSeries(capture.trace, capture.summary)
         heartRate = (log.id, capture)
     }

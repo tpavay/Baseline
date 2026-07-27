@@ -373,8 +373,21 @@ final class SwiftDataPlanRepository: PlanRepository {
         let open = Self.openWork(plan: effectivePlan, log: session.log)
         if open.sets > 0 && !acknowledgingOpenWork { return .unloggedWork(sets: open.sets, exercises: open.exercises) }
 
+        // The trace is written before completion (the live monitor is torn down the instant the log
+        // reads complete), so this is where it learns which frozen log it belongs to. Only an
+        // unstamped series belongs to the run finishing now: one already frozen onto an earlier log is
+        // the previous run's measurement, and re-stamping it would hand this completion a trace it
+        // never recorded.
+        let ownedSeries = heartRateSeriesSD(id).flatMap { $0.completedLogID == nil ? $0 : nil }
+
         var completedLog = session.log
         completedLog.isComplete = true
+        // The summary riding on the log is a copy of the sidecar's, and `session.log` carries whatever
+        // the previous run wrote. Re-deriving it from the series this completion actually owns keeps
+        // the two from disagreeing: a re-completion with nothing streaming freezes no summary, so the
+        // zone card cannot render an earlier run's measured seconds as this session's.
+        completedLog.heartRateSummary = ownedSeries
+            .flatMap { PlanCoding.value(WorkoutHeartRateSummary.self, $0.summaryJSON) }
         let completed = CompletedWorkoutLog(scheduledWorkoutID: id, finishedAt: now, log: completedLog)
         context.insert(SDCompletedLog(
             id: completed.id,
@@ -383,14 +396,7 @@ final class SwiftDataPlanRepository: PlanRepository {
             logJSON: PlanCoding.data(completedLog)
         ))
         indexCompletedExercises(completed, plan: sw, resolving: effectivePlan)
-        // The trace is written before completion (the live monitor is torn down the instant the log
-        // reads complete), so this is where it learns which frozen log it belongs to. Only an
-        // unstamped series belongs to the run finishing now: one already frozen onto an earlier log is
-        // the previous run's measurement, and re-stamping it would hand this completion a trace it
-        // never recorded.
-        if let series = heartRateSeriesSD(id), series.completedLogID == nil {
-            series.completedLogID = completed.id
-        }
+        ownedSeries?.completedLogID = completed.id
         sd.logJSON = PlanCoding.data(completedLog)
         sd.statusRaw = SessionStatus.completed.rawValue
         save()
@@ -478,7 +484,18 @@ final class SwiftDataPlanRepository: PlanRepository {
     private func currentHeartRateSeriesSD(_ id: UUID) -> SDWorkoutHeartRateSeries? {
         guard let row = heartRateSeriesSD(id) else { return nil }
         guard let stampedLogID = row.completedLogID else { return row }
-        return stampedLogID == completedLog(forScheduled: id)?.id ? row : nil
+        return stampedLogID == currentCompletedLogID(id) ? row : nil
+    }
+
+    /// The identity of the workout's newest completed log, read straight off the stored columns.
+    ///
+    /// Deliberately not `completedLog(forScheduled:)`: that maps to the domain type, which decodes the
+    /// whole `logJSON` blob. These callers want an id, and every heart-rate read goes through one of
+    /// them — including `hasHeartRateSeries`, the gate lists and cards use, which must not decode
+    /// anything.
+    private func currentCompletedLogID(_ id: UUID) -> UUID? {
+        fetch(SDCompletedLog.self, where: #Predicate { $0.scheduledWorkoutID == id })
+            .sorted { $0.finishedAt > $1.finishedAt }.first?.id
     }
 
     func discardSession(forScheduled id: UUID) {
@@ -488,7 +505,7 @@ final class SwiftDataPlanRepository: PlanRepository {
         // The discarded run's trace goes with it, the same way workout deletion takes the sidecar with
         // the rest of the performed footprint. A series frozen onto the workout's surviving completed
         // log was recorded by a different run and is left alone.
-        let survivingLogID = completedLog(forScheduled: id)?.id
+        let survivingLogID = currentCompletedLogID(id)
         fetch(SDWorkoutHeartRateSeries.self, where: #Predicate { $0.scheduledWorkoutID == id })
             .filter { row in
                 guard let survivingLogID, let stamped = row.completedLogID else { return true }

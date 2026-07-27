@@ -10,12 +10,16 @@ struct WorkoutHeartRatePersistenceTests {
 
     private let start = Date(timeIntervalSince1970: 1_700_000_000)
 
-    private func makeRepo() throws -> SwiftDataPlanRepository {
+    private func makeContainer() throws -> ModelContainer {
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
-        let container = try ModelContainer(
+        return try ModelContainer(
             for: Schema(models),
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
+    }
+
+    private func makeRepo() throws -> SwiftDataPlanRepository {
+        let container = try makeContainer()
         return SwiftDataPlanRepository(context: container.mainContext)
     }
 
@@ -172,6 +176,30 @@ struct WorkoutHeartRatePersistenceTests {
         #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
         #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
         #expect(repo.heartRateSummary(forScheduled: scheduled.id) == nil)
+        // And the copy that rides on the log: the summary is re-derived from the series this
+        // completion owns, so the earlier run's zone seconds cannot reach the zone card either.
+        #expect(repo.completedLog(forScheduled: scheduled.id)?.log.heartRateSummary == nil)
+    }
+
+    /// The reads resolve which run a series belongs to from stored columns alone. Pinned by making the
+    /// log blob undecodable: if any of them needed `logJSON`, they would answer wrongly here — and the
+    /// cheap gate in particular is documented as costing no decode at all.
+    @Test func theReadsResolveTheCurrentLogWithoutDecodingItsBlob() throws {
+        let container = try makeContainer()
+        let repo = SwiftDataPlanRepository(context: container.mainContext)
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 40), summary: summary(sampleCount: 40), now: start)
+        _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+
+        let stored = try container.mainContext.fetch(FetchDescriptor<SDCompletedLog>())
+        try #require(stored.count == 1)
+        stored[0].logJSON = Data("{ not json at all".utf8)
+
+        #expect(repo.completedLog(forScheduled: scheduled.id) == nil)   // the blob really is unreadable
+        #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
+        #expect(repo.heartRateSummary(forScheduled: scheduled.id)?.sampleCount == 40)
+        #expect(repo.heartRateSeries(forScheduled: scheduled.id)?.trace.count == 40)
     }
 
     /// The other half of that rule: a re-completion that *did* record heart rate shows its own trace.
@@ -344,6 +372,36 @@ struct WorkoutHeartRatePersistenceTests {
         #expect(plan.hasHeartRateSeries(scheduled.id) == false)
         #expect(plan.completed(for: scheduled.id)?.log.heartRateSummary == nil)
         #expect(store.loadHeartRate() == nil)
+    }
+
+    /// The store caches the resolved capture against the log id, and a resume does not change that id.
+    /// Handing it "this run measured nothing" therefore has to clear both copies it holds — the cache
+    /// and the summary on the log — or a re-completion keeps serving the earlier run's numbers.
+    @Test func attachingNoHeartRateClearsWhatTheEarlierRunLeftOnTheStore() throws {
+        let container = try makeContainer()
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+
+        let captured = WorkoutHeartRateCapture(trace: trace(count: 12), summary: summary(sampleCount: 12))
+        store.attachHeartRate(captured)
+        #expect(store.currentHeartRate == captured)
+        #expect(store.currentLog?.heartRateSummary == captured.summary)
+
+        store.attachHeartRate(nil)
+        #expect(store.currentHeartRate == nil)
+        #expect(store.currentLog?.heartRateSummary == nil)
     }
 }
 
