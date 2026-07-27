@@ -610,12 +610,14 @@ struct WorkoutImportTests {
 
         let workout = WorkoutImportDraftBuilder.build(document, catalog: ExerciseCatalog.definitions).draft.workout
         // Only the workout and the exercise render notes, so block and group text folds upward tagged
-        // with the section it described rather than landing where nothing can show or edit it.
-        #expect(workout.guidance?.formCues == [
+        // with the section it described rather than landing where nothing can show or edit it. Imported
+        // prose is the athlete's one editable note, so it lands in the goal, not in coach guidance.
+        #expect(workout.goal == [
             longWorkoutNote,
             "Main: \(longBlockNote)",
             "Three rounds: \(groupNote)",
-        ])
+        ].joined(separator: "\n\n"))
+        #expect(workout.guidance == nil)
         #expect(workout.blocks.first?.guidance == nil)
         #expect(workout.allGroups.first?.guidance == nil)
         #expect(workout.allExercises.first?.guidance?.formCues == [exerciseNote])
@@ -2107,7 +2109,7 @@ struct ResumableWorkoutImportJobTests {
                 + guidance.formCues
                 + guidance.commonMistakes
         }
-        let workoutGuidanceExpected = try [
+        let workoutNoteExpected = try [
             "p0-note-1", "p0-note-2", "p0-long-context",
             "p1-above", "p1-below", "p1-long-context",
         ].map { try #require(exactTextByID[$0]) }
@@ -2117,19 +2119,28 @@ struct ResumableWorkoutImportJobTests {
 
         // Materialization must preserve exact note text. Block and group notes fold up to the workout
         // tagged with the section they came from, because those two levels have no surface of their own
-        // — a note left on one would be preserved into a place the athlete can never read or edit.
-        let workoutGuidanceNotes = guidanceNotes(materialized.guidance)
-        #expect(workoutGuidanceNotes.prefix(workoutGuidanceExpected.count).elementsEqual(workoutGuidanceExpected))
+        // — a note left on one would be preserved into a place the athlete can never read or edit. They
+        // land in the one editable workout note, leaving structured coach guidance to typed cues.
+        #expect(materialized.guidance == nil)
+        let workoutNote = try #require(materialized.goal)
+        var searchStart = workoutNote.startIndex
+        for expected in workoutNoteExpected {
+            let found = try #require(
+                workoutNote.range(of: expected, range: searchStart..<workoutNote.endIndex),
+                "workout note must keep “\(expected)” in document order"
+            )
+            searchStart = found.upperBound
+        }
         for folded in [p2LongNote, p3LongNote, p4LongNote] {
             #expect(
-                workoutGuidanceNotes.contains { $0.hasSuffix(folded) },
+                workoutNote.contains(folded),
                 "folded section note must survive into the workout notes"
             )
         }
-        #expect(workoutGuidanceNotes.contains(
+        #expect(workoutNote.contains(
             "Performance Layer: StairMaster - 70 minutes total - ideally with a weight vest or ruck."
         ))
-        #expect(workoutGuidanceNotes.contains(
+        #expect(workoutNote.contains(
             "70 minute AMRAP: Work through aerobic intervals then alternate A & B after the 6 sets for the duration of the AMRAP."
         ))
 
@@ -2151,8 +2162,8 @@ struct ResumableWorkoutImportJobTests {
             ["Stair Stepper", "Box Step-Over", "Hand-Release Push-Up"],
             ["Stair Stepper", "Dual Dumbbell Push Press", "Wall Balls"],
         ])
-        #expect(workoutGuidanceNotes.contains { $0.hasSuffix("Ideally use a weight vest during this phase.") })
-        #expect(workoutGuidanceNotes.contains { $0.hasSuffix("Complete this phase without the weight vest.") })
+        #expect(workoutNote.contains("Ideally use a weight vest during this phase."))
+        #expect(workoutNote.contains("Complete this phase without the weight vest."))
 
         #expect(materializedMED.nodes.count == 1)
         #expect(materializedMDV.nodes.count == 1)

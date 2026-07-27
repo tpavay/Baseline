@@ -589,6 +589,26 @@ struct WorkoutStoreTests {
         #expect(summary.contains("Keep the rope tight"))
     }
 
+    @Test func summaryKeepsAMultiParagraphWorkoutNoteIntactBesideStructuredGuidance() {
+        let s = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let note = "Keep it easy.\n\nStop if the knee talks."
+        s.create(title: "Aerobic day", goal: note)
+        s.edit(.plan) { $0.guidance = CoachGuidance(tempo: "3-1-1") }
+
+        let summary = s.summary(.plan)
+
+        // The model echoes back what it reads, so the note's paragraph breaks must survive the
+        // line-oriented summary rather than being flattened into one line.
+        #expect(summary.contains("""
+          Goal: Keep it easy.
+
+            Stop if the knee talks.
+        """))
+        // Guidance stays its own labelled facts; the note is never restated inside them.
+        #expect(summary.contains("  Tempo note: 3-1-1"))
+        #expect(summary.components(separatedBy: "Keep it easy.").count == 2)
+    }
+
     @Test func transientReviewStoreKeepsDraftEditsIsolatedButSharesDeliberateDefaults() {
         let defaults = UserDefaults(suiteName: "wk-\(UUID().uuidString)")!
         let source = WorkoutStore(units: StubUnitSystem(), defaults: defaults)

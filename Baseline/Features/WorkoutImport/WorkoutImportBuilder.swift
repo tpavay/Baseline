@@ -23,8 +23,7 @@ enum WorkoutImportDraftBuilder {
                                         message: "No exercises were found. Try again with clearer workout photos."))
         }
         let workout = Workout(title: document.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Imported workout" : document.title,
-                              goal: document.goal,
-                              guidance: guidance(from: document.notes + context.foldedNotes),
+                              goal: workoutNote(from: [document.goal] + document.notes + context.foldedNotes),
                               blocks: blocks)
         return WorkoutImportBuildResult(draft: WorkoutTemplateDraft(workout: workout, tags: classify(document)),
                                         issues: context.issues, evidence: context.evidence)
@@ -561,12 +560,15 @@ enum WorkoutImportDraftBuilder {
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    private static func guidance(from notes: [String]) -> CoachGuidance? {
+    /// The document's goal and every free-form note it carries, as the one workout note the athlete
+    /// reads and edits. Imported prose is the athlete's note, not typed coach metadata, so it lands in
+    /// `Workout.goal` rather than in `CoachGuidance`, whose components stay reserved for structured cues.
+    private static func workoutNote(from notes: [String?]) -> String? {
         let notes = notes.compactMap { note -> String? in
-            let value = note.trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
+            let value = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (value?.isEmpty ?? true) ? nil : value
         }
-        return notes.isEmpty ? nil : CoachGuidance(formCues: notes)
+        return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
     }
 
     private static func similarity(_ lhs: String, _ rhs: String) -> Double {

@@ -451,6 +451,9 @@ struct WorkoutView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if mode.usesPerformedData {
+                if store.currentLog?.hasAuthoredNotes != true, !workout.notesText.isEmpty {
+                    WorkoutPlanNote(text: workout.notesText, font: .body, accessibilityLabel: "Plan note")
+                }
                 WorkoutNotesField(
                     prompt: "Add a note here…",
                     text: sessionNotesBinding,
@@ -569,19 +572,13 @@ struct WorkoutView: View {
         isEditingTemplate = false
     }
 
-    /// The one workout-level note typed while logging or reviewing a session. It belongs to the log, so
-    /// promoting the session's shape to the plan can never carry it into a saved plan revision. Until the
-    /// athlete has ever committed the field, a session shows the plan's note so a log started before the
-    /// field was consolidated still reads as it did — a display fallback only, never written to the log.
-    /// From the first commit on, including a deliberate clear, the field is exactly the performed note,
-    /// so backspacing to empty leaves it empty instead of resurrecting plan text under the cursor.
+    /// The one workout-level note typed while logging or reviewing a session. It is exactly the
+    /// performed note — never prefilled from the plan — so the first keystroke commits only what the
+    /// athlete typed, and backspacing to empty leaves it empty. The plan's own text is a separate
+    /// read-only block above, shown until this field has been committed once.
     private var sessionNotesBinding: Binding<String> {
         Binding(
-            get: {
-                guard let log = store.currentLog else { return store.current?.notesText ?? "" }
-                guard log.hasAuthoredNotes else { return store.current?.notesText ?? "" }
-                return log.notesText
-            },
+            get: { store.currentLog?.notesText ?? "" },
             set: { value in
                 store.editLog { $0.setNotes(value) }
             }

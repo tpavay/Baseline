@@ -26,30 +26,34 @@ extension IdleTimerRenderTests {
             #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
         }
 
-        @Test func loggingShowsThePlanNoteUntilTheAthleteCommitsTheField() async throws {
+        @Test func loggingShowsThePlanNoteReadOnlyBesideAnEmptyEditableNote() async throws {
             let screen = try await WorkoutNoteScreen(stage: .logging, includesLegacyNotes: true)
             defer { screen.tearDown() }
 
-            #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.hasLabel(containing: "Workout goal") == false)
-            #expect(screen.hasLabel(containing: "Plan note. Preserve this imported note.") == false)
 
-            // A session that has never had the field committed shows the plan's folded note, so nothing
-            // that used to render is lost — and the log still records no note it did not perform.
-            #expect(screen.inputText(labelled: "Workout note") == """
-            Preserve this goal.
+            // The plan's own text is read-only context, not a prefill: exactly one field is editable and
+            // it starts empty, so the first keystroke can only commit what the athlete typed.
+            #expect(screen.hasLabel(containing: """
+            Plan note. Preserve this goal.
 
             Preserve this imported note.
-            """)
+            """))
+            #expect(screen.inputCount(labelled: "Workout note") == 1)
+            #expect(screen.inputText(labelled: "Workout note") == "")
+            #expect(screen.hasRenderedText("Add a note here…"))
             #expect(screen.log?.athleteNotes == [])
             #expect(screen.log?.hasAuthoredNotes == false)
+            try screen.capture("workout-note-plan-fallback")
 
             try screen.replaceInput(labelled: "Workout note", with: "Legs heavy today.")
             try await screen.settle()
 
-            // Typing writes the performed note only; the plan keeps its goal and its guidance.
+            // Typing writes the performed note only; the plan keeps its goal and its guidance, and the
+            // read-only block steps aside now that the session has a note of its own.
             #expect(screen.log?.athleteNotes == ["Legs heavy today."])
             #expect(screen.inputText(labelled: "Workout note") == "Legs heavy today.")
+            #expect(screen.hasLabel(containing: "Plan note. Preserve this goal.") == false)
             #expect(screen.workout?.goal == "Preserve this goal.")
             #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
 
@@ -57,8 +61,10 @@ extension IdleTimerRenderTests {
             try screen.replaceInput(labelled: "Workout note", with: "")
             try await screen.settle()
 
+            #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.inputText(labelled: "Workout note") == "")
             #expect(screen.hasRenderedText("Add a note here…"))
+            #expect(screen.hasLabel(containing: "Plan note. Preserve this goal.") == false)
             #expect(screen.log?.athleteNotes == [])
             #expect(screen.log?.hasAuthoredNotes == true)
         }
