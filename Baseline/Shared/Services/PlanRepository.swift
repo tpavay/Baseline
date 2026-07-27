@@ -13,6 +13,15 @@ enum SessionCompletion: Equatable, Sendable {
     case noActiveSession
 }
 
+/// Where a repositioned session lands among the other sessions already on its day.
+///
+/// `.endOfDay` is the supported spelling for "append", so a caller that only knows it wants the last
+/// slot never has to encode that as an out-of-range index and depend on the clamp holding.
+enum PlanDayPosition: Equatable, Sendable {
+    case index(Int)
+    case endOfDay
+}
+
 @MainActor
 protocol PlanRepository {
     func programs() -> [Program]
@@ -93,14 +102,18 @@ protocol PlanRepository {
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult
     func swap(_ a: UUID, _ b: UUID, actor: PlanActor, reason: String?) -> MutationResult
     func reorder(day: Date, orderedIDs: [UUID], actor: PlanActor, reason: String?) -> MutationResult
-    /// Atomically move one schedule intent to a final index on today or a future day.
+    /// Atomically move one schedule intent to a position on today or a future day.
     ///
-    /// The repository rejects past sources/targets and any source/target day containing performed
-    /// facts. The mutation touches only `SDScheduledWorkout` rows and one plan version snapshot.
+    /// `position` is either a final index among the target day's other sessions or `.endOfDay`, the
+    /// spelling every caller that just wants to append uses; an `.index` beyond the day's last slot
+    /// means the same thing. The repository rejects past sources/targets and any source/target day
+    /// containing performed facts. Only the moved row's `dayOrder` is rewritten unless the day has no
+    /// room left for it, so a sibling carrying a live session keeps the intent an undo compares.
+    /// The mutation touches only `SDScheduledWorkout` rows and one plan version snapshot.
     func reposition(
         _ id: UUID,
         toDate: Date,
-        at index: Int,
+        at position: PlanDayPosition,
         notBefore today: Date,
         actor: PlanActor,
         reason: String?
@@ -593,14 +606,14 @@ final class SwiftDataPlanRepository: PlanRepository {
         let orderedRows = orderedIDs.compactMap { rowsByID[$0] }
         let diff = ScheduleDiff(changes: [.init(kind: .edit, summary: "Reorder \(fmtDate(day))", scheduledID: nil)])
         return apply(.reorder, actor, reason, diff) {
-            assignDayOrder(to: orderedRows)
+            writeDayOrder(orderedRows)
         }
     }
 
     func reposition(
         _ id: UUID,
         toDate: Date,
-        at index: Int,
+        at position: PlanDayPosition,
         notBefore today: Date,
         actor: PlanActor,
         reason: String?
@@ -628,7 +641,10 @@ final class SwiftDataPlanRepository: PlanRepository {
         let sameDay = calendar.isDate(sourceDay, inSameDayAs: targetDay)
         let targetRows = sameDay ? sourceRows : orderedRows(on: targetDay)
         var finalTargetRows = targetRows.filter { $0.id != id }
-        let finalIndex = min(max(index, 0), finalTargetRows.count)
+        let finalIndex = switch position {
+        case .index(let requested): min(max(requested, 0), finalTargetRows.count)
+        case .endOfDay: finalTargetRows.count
+        }
         finalTargetRows.insert(moved, at: finalIndex)
 
         if sameDay, finalTargetRows.map(\.id) == sourceIDs {
@@ -641,11 +657,12 @@ final class SwiftDataPlanRepository: PlanRepository {
             : "Move \(title(id)) → \(fmtDate(targetDay)), position \(finalIndex + 1)"
         let diff = ScheduleDiff(changes: [.init(kind: kind, summary: summary, scheduledID: id)])
 
-        // Only the destination day is renumbered: the gap the move leaves behind on the source day is
-        // still a strictly increasing sequence, so re-writing those siblings' intents would be churn.
+        // The gap the move leaves behind on the source day is still strictly increasing, and the
+        // destination is re-spaced around the moved row rather than renumbered, so no sibling on
+        // either day has its intent rewritten by a move it was not part of.
         return apply(.reorder, actor, reason, diff) {
             moved.date = targetDay
-            assignDayOrder(to: finalTargetRows)
+            writeDayOrder(finalTargetRows, reassigning: [id])
             clearRestMarker(on: targetDay)
         }
     }
@@ -1632,17 +1649,69 @@ final class SwiftDataPlanRepository: PlanRepository {
             .sorted { $0.planDayOrderKey < $1.planDayOrderKey }
     }
 
-    private func assignDayOrder(to rows: [SDScheduledWorkout]) {
-        for (index, row) in rows.enumerated() {
-            row.dayOrder = index
+    /// Make `rows` the day's order while writing as few of them as possible.
+    ///
+    /// `dayOrder` is part of `ScheduledIntent`, so every row this touches is a row whose intent differs
+    /// between two version snapshots - and `conflictsWithActiveSession` then refuses the next undo if
+    /// that row happens to carry a live session. Ordering is therefore sparse rather than dense: a row
+    /// already sitting above everything kept before it stays exactly where it is, and only the rows
+    /// that genuinely have to move are given fresh values spread through the gap they land in. Rows
+    /// named in `reassigning` always take a new value, which is what stops the greedy scan from
+    /// re-spacing a settled sibling instead of the one the caller actually moved.
+    private func writeDayOrder(_ rows: [SDScheduledWorkout], reassigning: Set<UUID> = []) {
+        var index = 0
+        var highestKept: Int?
+        while index < rows.count {
+            let stored = rows[index].dayOrder
+            // A row with no stored order predates drag ordering and sorts ahead of every ordered row,
+            // so it only stays put while nothing ordered has been kept before it.
+            let staysPut = reassigning.contains(rows[index].id) == false
+                && (highestKept.map { kept in stored.map { $0 > kept } ?? false } ?? true)
+            if staysPut {
+                highestKept = stored ?? highestKept
+                index += 1
+                continue
+            }
+            var end = index + 1
+            while true {
+                let ceiling: Int? = end < rows.count ? rows[end].dayOrder : nil
+                let isOpenEnded = end == rows.count
+                if isOpenEnded || ceiling != nil,
+                   let values = spacedDayOrders(count: end - index, above: highestKept, below: ceiling) {
+                    for (offset, value) in values.enumerated() { rows[index + offset].dayOrder = value }
+                    highestKept = values.last
+                    index = end
+                    break
+                }
+                end += 1
+            }
         }
     }
+
+    /// `count` strictly increasing orders inside the open interval `(above, below)`, or nil when the
+    /// interval is too tight to hold them and the caller has to widen the run it rewrites.
+    private func spacedDayOrders(count: Int, above: Int?, below: Int?) -> [Int]? {
+        guard count > 0 else { return [] }
+        guard let below else {
+            let base = above ?? -Self.dayOrderStride
+            return (1 ... count).map { base + $0 * Self.dayOrderStride }
+        }
+        let base = above ?? (below - (count + 1) * Self.dayOrderStride)
+        guard below - base > count else { return nil }
+        let step = (below - base) / (count + 1)
+        return (1 ... count).map { base + $0 * step }
+    }
+
+    /// Appended rows leave room between themselves so a later insertion can take a midpoint instead of
+    /// pushing every row after it along.
+    private static let dayOrderStride = 1 << 10
 
     /// The order that puts a row after everything already on its day, without renumbering any of it.
     /// Legacy rows carry no order and sort ahead of ordered ones, so appending past the day's highest
     /// stored order is enough to land last on a mixed day as well as a fully ordered one.
     private func nextDayOrder(on date: Date) -> Int {
-        (orderedRows(on: date).compactMap(\.dayOrder).max() ?? -1) + 1
+        let highest = orderedRows(on: date).compactMap(\.dayOrder).max()
+        return spacedDayOrders(count: 1, above: highest, below: nil)?.first ?? 0
     }
 
     private func dayContainsCompletedSession(_ date: Date) -> Bool {

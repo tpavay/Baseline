@@ -18,7 +18,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             first.id,
             toDate: day,
-            at: 2,
+            at: .index(2),
             notBefore: day,
             actor: .user,
             reason: nil
@@ -39,7 +39,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             third.id,
             toDate: day,
-            at: 0,
+            at: .index(0),
             notBefore: day,
             actor: .user,
             reason: nil
@@ -59,7 +59,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             moved.id,
             toDate: future,
-            at: 1,
+            at: .index(1),
             notBefore: bed.today,
             actor: .user,
             reason: nil
@@ -84,7 +84,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             moved.id,
             toDate: future,
-            at: 0,
+            at: .index(0),
             notBefore: bed.today,
             actor: .user,
             reason: nil
@@ -109,7 +109,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             moved.id,
             toDate: past,
-            at: 0,
+            at: .index(0),
             notBefore: bed.today,
             actor: .user,
             reason: nil
@@ -140,7 +140,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             moved.id,
             toDate: future,
-            at: 1,
+            at: .index(1),
             notBefore: bed.today,
             actor: .user,
             reason: nil
@@ -171,7 +171,7 @@ struct PlanDragReorderTests {
         let result = bed.repository.reposition(
             plannedSibling.id,
             toDate: future,
-            at: 0,
+            at: .index(0),
             notBefore: bed.today,
             actor: .user,
             reason: nil
@@ -252,9 +252,9 @@ struct PlanDragReorderTests {
     }
 
     /// The long-press menu's "Move to" is the drag's secondary route, so it lands on `reposition` with
-    /// an out-of-range index: appended to the end of the target day, refused on a locked one.
+    /// `.endOfDay`: appended to the end of the target day, refused on a locked one.
     @Test("The menu's move route appends to its target and obeys the same locks as the drag")
-    func repositionPastTheEndAppendsAndStillRejectsLockedDays() throws {
+    func repositionToEndOfDayAppendsAndStillRejectsLockedDays() throws {
         let bed = try TestBed()
         let past = try #require(calendar.date(byAdding: .day, value: -1, to: bed.today))
         let future = try #require(calendar.date(byAdding: .day, value: 1, to: bed.today))
@@ -262,13 +262,102 @@ struct PlanDragReorderTests {
         _ = bed.seed("Already there", on: future)
 
         #expect(bed.repository.reposition(
-            moved.id, toDate: past, at: .max, notBefore: bed.today, actor: .user, reason: nil
+            moved.id, toDate: past, at: .endOfDay, notBefore: bed.today, actor: .user, reason: nil
         ) == .rejected(.invalidTarget))
 
         #expect(bed.repository.reposition(
-            moved.id, toDate: future, at: .max, notBefore: bed.today, actor: .user, reason: nil
+            moved.id, toDate: future, at: .endOfDay, notBefore: bed.today, actor: .user, reason: nil
         ).isApplied)
         #expect(bed.titles(on: future) == ["Already there", "Move me"])
+    }
+
+    /// An index past the day's last slot means the same thing as `.endOfDay`, which is the contract
+    /// the protocol documents rather than an accident of an internal clamp.
+    @Test("An index beyond the day's last slot appends instead of failing")
+    func repositionClampsAnOutOfRangeIndexToTheEnd() throws {
+        let bed = try TestBed()
+        let future = try #require(calendar.date(byAdding: .day, value: 1, to: bed.today))
+        let moved = bed.seed("Move me", on: bed.today)
+        _ = bed.seed("Already there", on: future)
+
+        #expect(bed.repository.reposition(
+            moved.id, toDate: future, at: .index(99), notBefore: bed.today, actor: .user, reason: nil
+        ).isApplied)
+        #expect(bed.titles(on: future) == ["Already there", "Move me"])
+    }
+
+    /// The renumbering trap the sparse ordering exists to avoid: a day left with a gap by an earlier
+    /// move gets something dropped onto it, and a *sibling* holding a live session is renumbered as
+    /// collateral - which makes its intent differ between snapshots and silently refuses the next undo.
+    @Test("Dropping onto a day never renumbers a sibling holding a live session")
+    func repositionLeavesLiveSiblingsUntouched() throws {
+        let bed = try TestBed()
+        let other = try #require(calendar.date(byAdding: .day, value: 1, to: bed.today))
+        let day = bed.today
+        _ = bed.seed("First", on: day)
+        let leaving = bed.seed("Leaving", on: day)
+        let live = bed.seed("Live", on: day)
+        let arriving = bed.seed("Arriving", on: other)
+        _ = try #require(bed.repository.startSession(forScheduled: live.id, now: day))
+
+        #expect(bed.repository.reposition(
+            leaving.id, toDate: other, at: .endOfDay, notBefore: day, actor: .user, reason: nil
+        ).isApplied)
+        let liveOrderAfterGap = bed.storedDayOrder(of: live.id)
+
+        #expect(bed.repository.reposition(
+            arriving.id, toDate: day, at: .endOfDay, notBefore: day, actor: .user, reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day) == ["First", "Live", "Arriving"])
+        #expect(bed.storedDayOrder(of: live.id) == liveOrderAfterGap,
+                "The dropped session took a fresh slot; the live sibling kept its own")
+        #expect(bed.repository.undo(actor: .user).isApplied,
+                "No live intent changed, so the athlete's Undo is not refused")
+        #expect(bed.titles(on: day) == ["First", "Live"])
+    }
+
+    /// The same guarantee for a mid-day insert, which is what a real drag between two rows produces:
+    /// the moved row takes a value inside the gap rather than pushing the rows after it along.
+    @Test("Dropping between two sessions re-spaces only the moved row")
+    func repositionBetweenSessionsWritesOnlyTheMovedRow() throws {
+        let bed = try TestBed()
+        let day = bed.today
+        let first = bed.seed("First", on: day)
+        let live = bed.seed("Live", on: day)
+        let moved = bed.seed("Moved", on: day)
+        _ = try #require(bed.repository.startSession(forScheduled: live.id, now: day))
+        let firstOrder = bed.storedDayOrder(of: first.id)
+        let liveOrder = bed.storedDayOrder(of: live.id)
+
+        #expect(bed.repository.reposition(
+            moved.id, toDate: day, at: .index(1), notBefore: day, actor: .user, reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day) == ["First", "Moved", "Live"])
+        #expect(bed.storedDayOrder(of: first.id) == firstOrder)
+        #expect(bed.storedDayOrder(of: live.id) == liveOrder)
+        #expect(bed.repository.undo(actor: .user).isApplied)
+        #expect(bed.titles(on: day) == ["First", "Live", "Moved"])
+    }
+
+    /// A legacy day whose rows predate drag ordering: dropping onto the end of it must not give those
+    /// rows the numbers they never had, because that is a rewrite of intents the drop never touched.
+    @Test("Appending to a day of unordered legacy rows leaves them unordered")
+    func repositionOntoLegacyDayLeavesItAlone() throws {
+        let bed = try TestBed()
+        let day = bed.today
+        let other = try #require(calendar.date(byAdding: .day, value: 1, to: bed.today))
+        let legacy = bed.seed("Legacy", on: day)
+        let arriving = bed.seed("Arriving", on: other)
+        bed.clearStoredDayOrder(for: legacy.id)
+
+        #expect(bed.repository.reposition(
+            arriving.id, toDate: day, at: .endOfDay, notBefore: day, actor: .user, reason: nil
+        ).isApplied)
+
+        #expect(bed.titles(on: day) == ["Legacy", "Arriving"])
+        #expect(bed.storedDayOrder(of: legacy.id) == nil)
     }
 
     @Test("Geometry resolves before and after slots, past locks, and completed locks")
@@ -378,6 +467,10 @@ private final class TestBed {
 
     func storedDayOrders(on date: Date) -> [Int?] {
         repository.day(date, filter: .allTraining).sessions.map(\.dayOrder)
+    }
+
+    func storedDayOrder(of id: UUID) -> Int? {
+        repository.scheduledWorkout(id)?.dayOrder
     }
 
     /// Null out one row's stored order, the way a schedule written before drag ordering shipped looks

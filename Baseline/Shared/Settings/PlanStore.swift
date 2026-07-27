@@ -139,7 +139,7 @@ final class PlanStore {
     func reposition(
         _ id: UUID,
         toDate: Date,
-        at index: Int,
+        at position: PlanDayPosition,
         notBefore today: Date = Date(),
         actor: PlanActor = .user,
         reason: String? = nil
@@ -148,7 +148,7 @@ final class PlanStore {
         return repo.reposition(
             id,
             toDate: toDate,
-            at: index,
+            at: position,
             notBefore: today,
             actor: actor,
             reason: reason

@@ -718,7 +718,7 @@ struct PlanView: View {
             plan.reposition(
                 state.sourceID,
                 toDate: destination.date,
-                at: destination.index,
+                at: .index(destination.index),
                 notBefore: today
             ),
             "Moved"
@@ -827,9 +827,11 @@ struct PlanView: View {
 
     private func dragLockText(for row: PlanDayRow) -> String? {
         guard dragState != nil else { return nil }
-        if row.isPast { return "Past day - can't drop here" }
-        if row.sessions.contains(where: \.isCompleted) { return "Completed day - can't drop here" }
-        return nil
+        switch row.lock {
+        case .past: return "Past day - can't drop here"
+        case .completed: return "Completed day - can't drop here"
+        case nil: return nil
+        }
     }
 
     private var insertionIndicator: some View {
@@ -908,7 +910,7 @@ struct PlanView: View {
                 plan.reposition(
                     id,
                     toDate: sourceDay.date,
-                    at: withinDayIndex,
+                    at: .index(withinDayIndex),
                     notBefore: today
                 ),
                 "Moved"
@@ -919,14 +921,12 @@ struct PlanView: View {
         var dayIndex = sourceDayIndex + direction
         while days.indices.contains(dayIndex) {
             let candidate = days[dayIndex]
-            let locked = candidate.isPast || candidate.sessions.contains(where: \.isCompleted)
-            if locked == false {
-                let destinationIndex = direction < 0 ? candidate.sessions.count : 0
+            if candidate.lock == nil {
                 apply(
                     plan.reposition(
                         id,
                         toDate: candidate.date,
-                        at: destinationIndex,
+                        at: direction < 0 ? .endOfDay : .index(0),
                         notBefore: today
                     ),
                     "Moved"
@@ -1057,7 +1057,7 @@ struct PlanView: View {
     @ViewBuilder
     private func sessionMenu(_ scheduled: ScheduledWorkout, status: ScheduleStatus, row: PlanDayRow) -> some View {
         Button(openLabel(status), systemImage: "play") { handle(.open, scheduled) }
-        let destinations = moveDestinations(from: row)
+        let destinations = presentation?.moveDestinations(from: row, calendar: cal) ?? []
         if destinations.isEmpty == false {
             Menu("Move to") {
                 ForEach(destinations, id: \.self) { date in
@@ -1080,22 +1080,6 @@ struct PlanView: View {
         case .completed: "View session"
         default: "Start workout"
         }
-    }
-
-    /// The days the menu is allowed to offer - the same today-or-later, nothing-performed-here rule the
-    /// drag path enforces, so the two reorder routes cannot disagree about which days are locked. A
-    /// session sitting on a locked day is not going anywhere either, and gets no submenu at all.
-    private func moveDestinations(from row: PlanDayRow) -> [Date] {
-        guard isLocked(row) == false else { return [] }
-        return (presentation?.days ?? [])
-            .filter { candidate in
-                isLocked(candidate) == false && cal.isDate(candidate.date, inSameDayAs: row.date) == false
-            }
-            .map(\.date)
-    }
-
-    private func isLocked(_ row: PlanDayRow) -> Bool {
-        row.isPast || row.sessions.contains(where: \.isCompleted)
     }
 
     /// Refresh the unfinished-import snapshots that drive the per-day resume affordance. Delegates to the
@@ -1163,7 +1147,7 @@ struct PlanView: View {
         case .unskip: apply(plan.setSkipped(sw.id, false), "Unskipped")
         // The menu is the drag's secondary route, so it lands on the same guarded mutation: appended to
         // the end of the target day, and rejected outright for a past or performed day.
-        case .move(let d): apply(plan.reposition(sw.id, toDate: d, at: .max, notBefore: today), "Moved")
+        case .move(let d): apply(plan.reposition(sw.id, toDate: d, at: .endOfDay, notBefore: today), "Moved")
         case .delete:
             if case .confirmationRequired(_, _, let pid) = plan.delete(sw.id) { deleteTarget = DeleteTarget(sw: sw, proposalID: pid) }
         }

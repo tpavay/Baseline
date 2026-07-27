@@ -118,7 +118,7 @@ struct PlanWeeklyViewRenderTests {
         #expect(screen.plan.reposition(
             moved.id,
             toDate: friday,
-            at: 1,
+            at: .index(1),
             notBefore: Self.fixedNow
         ).isApplied)
 

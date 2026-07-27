@@ -41,6 +41,13 @@ struct PlanSessionEntry: Identifiable, Equatable, Sendable {
     var isCompleted: Bool { status == .completed }
 }
 
+/// Why a day refuses to take a session, whether the athlete is dragging one onto it or picking it out
+/// of the long-press menu. Both routes read this, so neither can offer what the repository will refuse.
+enum PlanDayLock: Equatable, Sendable {
+    case past
+    case completed
+}
+
 /// What fills a day's cell stack.
 enum PlanDayContent: Equatable, Sendable {
     case sessions([PlanSessionEntry])
@@ -64,6 +71,14 @@ struct PlanDayRow: Identifiable, Equatable, Sendable {
         if case .sessions(let entries) = content { return entries }
         return []
     }
+
+    /// A day that has been and gone, or one that already holds performed training, takes no more
+    /// scheduling. `nil` means the day accepts a session.
+    var lock: PlanDayLock? {
+        if isPast { return .past }
+        if sessions.contains(where: \.isCompleted) { return .completed }
+        return nil
+    }
 }
 
 struct PlanWeekPresentation: Equatable, Sendable {
@@ -80,6 +95,17 @@ struct PlanWeekPresentation: Equatable, Sendable {
     let days: [PlanDayRow]
 
     var containsToday: Bool { days.contains { $0.isToday } }
+
+    /// The days the long-press menu may offer as a move target for a session sitting on `row`: today
+    /// or later, nothing performed on them, and never the day the session is already on. A session on
+    /// a locked day is not going anywhere either, so it gets no destinations at all and the view drops
+    /// the submenu rather than listing choices the repository would reject.
+    func moveDestinations(from row: PlanDayRow, calendar: Calendar = .planWeek) -> [Date] {
+        guard row.lock == nil else { return [] }
+        return days
+            .filter { $0.lock == nil && calendar.isDate($0.date, inSameDayAs: row.date) == false }
+            .map(\.date)
+    }
 
     static func build(
         week: TrainingWeek,
