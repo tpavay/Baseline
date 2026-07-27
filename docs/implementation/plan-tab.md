@@ -499,8 +499,10 @@ Long-press → lift → drag → everything shifts → drop, on the week grid (T
 **only** by the Slice-2 mutation API. Drop targets: another day, and a slot within a day - a day that
 already holds sessions takes the drop at the slot it was released into, so there is no occupied-day
 resolution sheet (`swap` remains a repository op the agent tools and menus can name; a drag never
-picks it). Before applying a structural change, show the `ScheduleDiff` ("You moved Threshold →
-Thursday; Recovery Ride → Tuesday. Accept?"). Undo available after every mutation.
+picks it).
+A direct drag is the athlete's own decision, so it applies on release with no preview step, and the undo bar is what makes it reversible.
+The `ScheduleDiff` preview-and-accept step ("You moved Threshold → Thursday; Recovery Ride → Tuesday. Accept?") belongs to the flows that propose a change rather than perform one - agent/conversational edits and the destructive gates of §7-§8, which return `confirmationRequired` and write nothing until the athlete says yes.
+Undo is available after every mutation either way.
 
 **Shipped as of 2026-07-27:** long-press drag on the session cell's reorder handle, cross-day move and
 within-day reorder, both landing on one guarded mutation - `PlanRepository.reposition`.
@@ -642,7 +644,7 @@ reduced-motion honored.
 
 **Slice 3 — drag-drop + manual editing** — ✅ DONE (commit 3c234e6; 198 tests). Action-based ⋯ menu → mutations, draggable cards + day drop targets, occupied-drop Move/Swap dialog, delete confirmation gate, undo snackbar.
 13. Overflow ⋯ actions wired to mutations (with diffs/confirm/undo).
-14. Long-press drag-reorder + cross-day move + occupied-drop action sheet + diff preview.
+14. Long-press drag-reorder + cross-day move + occupied-drop action sheet + diff preview (both the sheet and the preview were dropped in the 2026-07-27 rework; §10 owns the shipped behavior).
 
 **Slice 4 — multi-program + agent tools** — ✅ DONE (commits 1d4f811, ee753b9; 203 tests; functions deployed to dev). Collections filter + week-plan agent tools (move/swap/skip/duplicate/delete/explain) on the same versioned repository, ambiguity-aware, delete confirmation-gated.
 15. Program filter against real multiple programs; collections (Ad Hoc/Completed/Archived).
