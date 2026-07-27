@@ -107,5 +107,7 @@ existing workout behavior are byte-identical.
 
 ## Status
 
-Planned 2026-07-14. Reference: AscendApp `develop` (PR #196). Built via ios-feature-factory, headless
-until an owner-performed go-live wires it into the (WIP) workout-execution surface.
+Planned 2026-07-14. Reference: AscendApp `develop` (PR #196). Built via ios-feature-factory.
+The dormancy guarantee above described slices 1-3 only: the go-live wiring has since been performed
+and the capability is live in the workout surface - see `live-heart-rate-go-live.md`, and
+`docs/technical-reference.md` § HR Zones for what a completed session now persists.

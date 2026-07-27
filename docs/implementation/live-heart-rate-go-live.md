@@ -1,17 +1,16 @@
 # Live Heart Rate — Go-Live Wiring
 
-Slice 3 shipped the live HUD (`LiveHeartRateView` + `HeartRateZoneGauge`) as a standalone,
-fully-previewed component with **no live call site**: nothing in the running app constructs a
-`HeartRateMonitor`, starts monitoring, or opens a BLE connection.
-This document is the ordered, owner-performed checklist to drop the HUD into the active-workout
-surface and turn it on.
+**Status: executed.** Slice 3 shipped the live HUD (`LiveHeartRateView` + `HeartRateZoneGauge`) as a
+standalone, fully-previewed component with no live call site; the steps below have since been
+performed. `WorkoutView` now owns the monitor's lifecycle (`syncLiveMonitor` / `stopLiveMonitor`) and
+the completed session's heart rate is persisted. This document is kept as the record of the wiring
+and of the HUD design decisions it settled, not as outstanding work.
 
 It is deliberately separate from the feature slices because the workout-execution views
-(`StructuredWorkoutView`, `WorkoutView`, `WorkoutModel`) are uncommitted owner WIP; wiring here would
-have collided with that work.
-Do these steps once that surface is stable.
+(`StructuredWorkoutView`, `WorkoutView`, `WorkoutModel`) were uncommitted owner WIP at the time;
+wiring there would have collided with that work.
 
-## What already exists (built, tested, dormant)
+## What this wiring builds on
 
 - `HeartRateZoneModel` — pure zone boundaries (Karvonen / %max, Tanaka default). Slice 1.
 - `BluetoothManager` `.live` intent + `LiveHeartRateSource` conformance — the single-strap BLE
@@ -74,11 +73,15 @@ Do these steps once that surface is stable.
    **This is the first place the CoreBluetooth connect/subscribe lifecycle runs on a device** — verify
    permissions, background modes, and the connect timeout here, on real hardware.
 
-4. **Persist zone-time with the session log.**
-   On session completion, read `monitor.zoneTime` (seconds-in-zone) and write it into the session's
-   completed record alongside the rest of the log, so it can feed history and future adaptation.
-   Follow the Firestore schema-change rule if this adds a persisted field: update `firestore.rules`
-   (strict `hasOnly` + `hasAll`) before/with the app.
+4. **Persist the measured heart rate with the session log.** *(Done - see
+   `docs/technical-reference.md` § HR Zones for the current contract.)*
+   The finish sequence reads the monitor while it is still alive and hands the capture to
+   `WorkoutFinishCoordinator.finish(_:heartRate:)`; completion tears the monitor down, so nothing can
+   be read from it afterwards.
+   Seconds-in-zone landed as part of a summary on `WorkoutLog`, with the full sample trace in the
+   local `SDWorkoutHeartRateSeries` sidecar.
+   This stayed on-device, so no `firestore.rules` change was needed; the Firestore schema-change rule
+   still applies to whatever sync design later carries this off the phone.
 
 5. **Respect the live/reading mutual exclusion.**
    The resting-HRV reading path and the live path both drive the one strap and are mutually exclusive

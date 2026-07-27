@@ -41,11 +41,13 @@ Use status colors only when they communicate an actual semantic state.
 | Hairline | `BaselineColor.line` | `#272231` | Rules, outlines, tracks, and separators |
 | Zone blue | `BaselineColor.zoneBlue` | `#4C8DFF` | Zone 1 and approved blue emphasis |
 | Zone green | `BaselineColor.zoneGreen` | `#34D27B` | Zone 2 and positive semantic state |
-| Zone amber | `BaselineColor.zoneAmber` | `#F5A623` | Zone 4 and caution semantic state |
+| Zone amber | `BaselineColor.zoneAmber` | `#F5A623` | Heart-rate zone ramp and caution semantic state |
+| Zone orange | `BaselineColor.zoneOrange` | `#FF7A33` | Heart-rate zone ramp only; not part of the approved taxonomy-surface palette |
 | Zone red | `BaselineColor.zoneRed` | `#FF5247` | Zone 5 and high-risk semantic state |
 
-The approved five-zone donut uses blue, green, violet, amber, and red in order.
-`zoneOrange` remains available only for existing live heart-rate zone-gauge compatibility and is not part of the approved taxonomy-surface palette.
+Heart-rate zone surfaces read one shared ramp - `HeartRateZone.color` in `HeartRateZone+Color.swift`: blue, green, amber, orange, red for Z1 through Z5.
+The live HUD gauge, the zone-settings preview, and the completed workout's zone card and heart-rate trace chart all resolve their colors through it, so a zone keeps its color as the athlete moves between screens.
+The weekly zone donut on Today is the one remaining surface with its own order (blue, green, violet, amber, red).
 Do not introduce screen-local color values when one of these semantic tokens applies.
 
 ## Typography
@@ -139,6 +141,7 @@ Use `.baselineTypography(...)` for new shared and feature UI.
 | Compact muscle map | `BaselineSize.miniMuscleMapHeight` | 30 pt |
 | Full muscle map | `BaselineSize.muscleMapHeight` | 180 pt |
 | Heart-rate chart | `BaselineSize.chartHeight` | 108 pt |
+| Heart-rate trace chart | `BaselineSize.traceChartHeight` | 180 pt |
 | Workout action sheet | `BaselineSize.actionSheetHeight` | 274 pt |
 
 The reference canvas is 393 by 852 points.
@@ -171,7 +174,7 @@ The sleep score ring and heart-rate donut must use these shared renderers.
 | Sleep score ring | `RadialFillSegmentedRing` | 92 pt | 11 pt | 28 degrees | Score component maxima 50/30/20 | Radial fill per component |
 | Zone donut | `SegmentedRing` | 118 pt | 11 pt | 1.2 degrees | Five proportional zone totals | Fully completed |
 
-The approved zone order is blue, green, violet, amber, and red.
+The zone donut's approved order is blue, green, violet, amber, and red; every other heart-rate zone surface uses the shared `HeartRateZone` ramp described under Colors.
 Domain calculations remain outside the component.
 
 ### `BaselineFloatingTabBar`
