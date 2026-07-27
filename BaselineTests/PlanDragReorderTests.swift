@@ -183,6 +183,94 @@ struct PlanDragReorderTests {
         #expect(bed.repository.completedLog(forScheduled: completed.id) == frozen)
     }
 
+    /// Adding a second workout to a day is not a reorder of that day. If it renumbers its siblings it
+    /// rewrites their intents, and the very next undo collides with any session live on that day.
+    @Test("Adding a workout appends to its day without rewriting a sibling's intent")
+    func addingAWorkoutLeavesSiblingOrderAlone() throws {
+        let bed = try TestBed()
+        let day = bed.today
+        let live = bed.seed("Live", on: day)
+        _ = bed.seed("Second", on: day)
+        bed.clearStoredDayOrder(for: live.id)
+        let ordersBefore = bed.storedDayOrders(on: day)
+        _ = try #require(bed.repository.startSession(forScheduled: live.id, now: day))
+
+        #expect(bed.repository.addWorkout(bed.workout("Third", on: day), actor: .user, reason: nil).isApplied)
+
+        #expect(bed.titles(on: day) == ["Live", "Second", "Third"],
+                "A day written before drag ordering keeps its order and the new row lands last")
+        #expect(Array(bed.storedDayOrders(on: day).dropLast()) == ordersBefore,
+                "The add appended; it did not renumber the day")
+        #expect(bed.repository.undo(actor: .user).isApplied,
+                "The live session's intent never moved, so undoing the add is not a conflict")
+        #expect(bed.titles(on: day) == ["Live", "Second"])
+    }
+
+    @Test("A duplicate lands after the session it was copied from")
+    func duplicateAppendsToItsDay() throws {
+        let bed = try TestBed()
+        let day = bed.today
+        let source = bed.seed("Source", on: day)
+        _ = bed.seed("Second", on: day)
+
+        #expect(bed.repository.duplicate(source.id, toDate: nil, actor: .user, reason: nil).isApplied)
+
+        #expect(bed.titles(on: day) == ["Source", "Second", "Source"])
+    }
+
+    @Test("A duplicate onto another day appends there rather than inheriting the source's slot")
+    func duplicateOntoAnotherDayAppends() throws {
+        let bed = try TestBed()
+        let future = try #require(calendar.date(byAdding: .day, value: 2, to: bed.today))
+        let source = bed.seed("Source", on: bed.today)
+        _ = bed.seed("Already there", on: future)
+        _ = bed.seed("Also there", on: future)
+
+        #expect(bed.repository.duplicate(source.id, toDate: future, actor: .user, reason: nil).isApplied)
+
+        #expect(bed.titles(on: future) == ["Already there", "Also there", "Source"],
+                "The copy takes a fresh slot at the end, not the source's slot on another day")
+    }
+
+    @Test("Moving to another day appends there and leaves both days' siblings alone")
+    func moveAppendsToTheTargetDay() throws {
+        let bed = try TestBed()
+        let future = try #require(calendar.date(byAdding: .day, value: 2, to: bed.today))
+        let moved = bed.seed("Move me", on: bed.today)
+        let live = bed.seed("Stay", on: bed.today)
+        _ = bed.seed("Already there", on: future)
+        _ = try #require(bed.repository.startSession(forScheduled: live.id, now: bed.today))
+
+        #expect(bed.repository.move(moved.id, toDate: future, timeOfDay: nil, actor: .user, reason: nil).isApplied)
+
+        #expect(bed.titles(on: bed.today) == ["Stay"])
+        #expect(bed.titles(on: future) == ["Already there", "Move me"])
+        #expect(bed.repository.undo(actor: .user).isApplied,
+                "The gap the move left behind was never closed, so the live session's intent stood still")
+        #expect(bed.titles(on: bed.today) == ["Move me", "Stay"])
+        #expect(bed.titles(on: future) == ["Already there"])
+    }
+
+    /// The long-press menu's "Move to" is the drag's secondary route, so it lands on `reposition` with
+    /// an out-of-range index: appended to the end of the target day, refused on a locked one.
+    @Test("The menu's move route appends to its target and obeys the same locks as the drag")
+    func repositionPastTheEndAppendsAndStillRejectsLockedDays() throws {
+        let bed = try TestBed()
+        let past = try #require(calendar.date(byAdding: .day, value: -1, to: bed.today))
+        let future = try #require(calendar.date(byAdding: .day, value: 1, to: bed.today))
+        let moved = bed.seed("Move me", on: bed.today)
+        _ = bed.seed("Already there", on: future)
+
+        #expect(bed.repository.reposition(
+            moved.id, toDate: past, at: .max, notBefore: bed.today, actor: .user, reason: nil
+        ) == .rejected(.invalidTarget))
+
+        #expect(bed.repository.reposition(
+            moved.id, toDate: future, at: .max, notBefore: bed.today, actor: .user, reason: nil
+        ).isApplied)
+        #expect(bed.titles(on: future) == ["Already there", "Move me"])
+    }
+
     @Test("Geometry resolves before and after slots, past locks, and completed locks")
     func dragTargetResolution() {
         let today = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_774_000_000))
@@ -262,26 +350,41 @@ private final class TestBed {
         programID = repository.addProgram(Program(name: "Test", createdAt: today)).id
     }
 
-    func seed(_ title: String, on date: Date) -> ScheduledWorkout {
+    func workout(_ title: String, on date: Date) -> ScheduledWorkout {
         var exercise = PlannedExercise(exerciseName: "Squat", definitionId: "back-squat")
         exercise.prescription.sets = [PlannedSet(reps: 5, load: 100)]
         let workout = Workout(
             title: title,
             blocks: [WorkoutBlock(name: "", exercises: [exercise], isDefault: true)]
         )
-        return repository.addScheduled(
-            ScheduledWorkout(
-                programID: programID,
-                date: date,
-                origin: .userCreated,
-                workoutID: workout.id,
-                workoutRevisionID: UUID(),
-                workout: workout
-            )
+        return ScheduledWorkout(
+            programID: programID,
+            date: date,
+            origin: .userCreated,
+            workoutID: workout.id,
+            workoutRevisionID: UUID(),
+            workout: workout
         )
+    }
+
+    @discardableResult
+    func seed(_ title: String, on date: Date) -> ScheduledWorkout {
+        repository.addScheduled(workout(title, on: date))
     }
 
     func titles(on date: Date) -> [String] {
         repository.day(date, filter: .allTraining).sessions.map(\.workout.title)
+    }
+
+    func storedDayOrders(on date: Date) -> [Int?] {
+        repository.day(date, filter: .allTraining).sessions.map(\.dayOrder)
+    }
+
+    /// Null out one row's stored order, the way a schedule written before drag ordering shipped looks
+    /// on disk. Unordered rows sort ahead of ordered ones, so the result is still deterministic.
+    func clearStoredDayOrder(for id: UUID) {
+        let rows = (try? container.mainContext.fetch(FetchDescriptor<SDScheduledWorkout>())) ?? []
+        for row in rows where row.id == id { row.dayOrder = nil }
+        try? container.mainContext.save()
     }
 }
