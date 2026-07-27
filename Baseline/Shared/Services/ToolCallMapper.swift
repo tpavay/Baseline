@@ -53,7 +53,7 @@ enum ToolCallMapper {
             let replaceExisting = boolOrNil(input["replace_existing"]) ?? false
             let expectedRevisionToken = uuid(input["expected_revision_token"])
             guard !replaceExisting || expectedRevisionToken != nil else { return nil }
-            return .createWorkout(title: title, goal: input["goal"] as? String,
+            return .createWorkout(title: title, note: workoutNoteKey(in: input),
                                   replaceExisting: replaceExisting,
                                   expectedRevisionToken: expectedRevisionToken)
         case "update_workout_metadata", "update_block_metadata", "update_exercise_metadata",
@@ -311,10 +311,9 @@ enum ToolCallMapper {
         switch op {
         case "update_workout_metadata":
             guard let title = stringPatch(input, key: "title", nullable: false),
-                  let goal = stringPatch(input, key: "goal", nullable: true),
-                  let guidance = stringPatch(input, key: "guidance", nullable: true),
-                  hasChanges(title, goal, guidance) else { return nil }
-            return .updateWorkoutMetadata(title: title, goal: goal, guidance: guidance)
+                  let note = workoutNotePatch(input),
+                  hasChanges(title, note) else { return nil }
+            return .updateWorkoutMetadata(title: title, note: note)
         case "update_block_metadata":
             guard let blockID = requiredUUID(input["block_id"]),
                   let name = stringPatch(input, key: "name", nullable: false),
@@ -580,8 +579,8 @@ enum ToolCallMapper {
         expectedRevisionToken expected: UUID
     ) -> AgentTools.Call {
         switch operation {
-        case .updateWorkoutMetadata(let title, let goal, let guidance):
-            .updateWorkoutMetadata(title: title, goal: goal, guidance: guidance, expectedRevisionToken: expected)
+        case .updateWorkoutMetadata(let title, let note):
+            .updateWorkoutMetadata(title: title, note: note, expectedRevisionToken: expected)
         case .updateBlockMetadata(let blockID, let name, let intent, let guidance):
             .updateBlockMetadata(
                 blockID: blockID,
@@ -818,6 +817,22 @@ enum ToolCallMapper {
             return nullable ? .clear : nil
         }
         return .set(string)
+    }
+
+    /// The workout's one note, from either the served key or the `goal` key an older deployed schema
+    /// still advertises - a functions deploy and an app build reach devices at different times, and a
+    /// skewed pair should still edit the note rather than silently drop the athlete's request. A
+    /// workout-level `guidance` key is deliberately unread: the workout has no such field, so anything
+    /// arriving under that name is discarded here and can never be persisted.
+    private static func workoutNoteKey(in input: [String: Any]) -> String? {
+        (input["note"] ?? input["goal"]) as? String
+    }
+
+    /// See `workoutNoteKey(in:)`. `note` wins when both keys somehow arrive, so the served contract is
+    /// always the one that decides.
+    private static func workoutNotePatch(_ input: [String: Any]) -> MetadataPatch<String>? {
+        let key = input["note"] != nil ? "note" : "goal"
+        return stringPatch(input, key: key, nullable: true)
     }
 
     private static func hasChanges<Value: Equatable & Sendable>(

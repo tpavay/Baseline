@@ -573,8 +573,8 @@ struct WorkoutView: View {
     /// so nothing appears or disappears around it as the athlete types. Until the field has been edited
     /// it shows the plan's own note; the first edit adopts whatever is on screen into the log, which is
     /// the athlete's action rather than a seed `startLog` wrote. From then on it is exactly the performed
-    /// note, independent of later plan changes, and clearing it leaves it cleared. Structured
-    /// `CoachGuidance` never reaches this field: it is coach and planning metadata, not the athlete's note.
+    /// note, independent of later plan changes, and clearing it leaves it cleared. The workout level has
+    /// no `CoachGuidance` for this field to compete with; guidance starts at the block and the exercise.
     private var sessionNotesBinding: Binding<String> {
         Binding(
             get: {

@@ -562,7 +562,7 @@ enum WorkoutImportDraftBuilder {
 
     /// The document's goal and every free-form note it carries, as the one workout note the athlete
     /// reads and edits. Imported prose is the athlete's note, not typed coach metadata, so it lands in
-    /// `Workout.goal` rather than in `CoachGuidance`, whose components stay reserved for structured cues.
+    /// `Workout.goal`; the workout level has no `CoachGuidance` for it to land in instead.
     private static func workoutNote(from notes: [String?]) -> String? {
         let notes = notes.compactMap { note -> String? in
             let value = note?.trimmingCharacters(in: .whitespacesAndNewlines)

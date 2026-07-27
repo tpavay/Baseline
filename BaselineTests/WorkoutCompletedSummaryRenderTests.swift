@@ -24,20 +24,17 @@ extension IdleTimerRenderTests {
             #expect(screen.hasAccessibleText(containing: "Felt stable under load."))
             // The workout-level note the athlete typed is read back into the field they typed it in.
             #expect(screen.hasAccessibleText(containing: "Kept the session short."))
-            // The note the athlete typed stays a performed fact; it is never folded into the plan's guidance.
+            // The note the athlete typed stays a performed fact; it never reaches the plan's own note.
             #expect(screen.performedNotes(forExerciseAt: 0) == ["Felt stable under load."])
             #expect(screen.plannedNotes(forExerciseAt: 0) == ["Existing note for Back Squat."])
             // The plan's own note is read-only context, announced as such rather than as a second Notes field.
             #expect(screen.hasLabel(containing: "Plan note for Back Squat. Existing note for Back Squat."))
             #expect(screen.hasLabel(containing: "Notes for Back Squat. Existing note") == false)
             // The workout-level note the athlete performed wins over the plan's text, and the plan keeps
-            // its goal and structured guidance rather than being rewritten by the completed log.
+            // its own note rather than being rewritten by the completed log.
             #expect(screen.inputText(labelled: "Workout note") == "Kept the session short.")
             #expect(screen.workout?.goal == "Keep the completed log readable.")
-            #expect(screen.workout?.guidance?.formCues == ["Hold the paces we agreed on."])
             #expect(screen.hasLabel(containing: "Workout goal") == false)
-            // Workout-level structured guidance is coach and planning metadata, never a shown note.
-            #expect(screen.hasAccessibleText(containing: "Hold the paces we agreed on.") == false)
             #expect(screen.hasLabel(containing: "Set completed"))
             #expect(screen.canFocusInput(labelled: "Workout note"))
             #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))
@@ -76,9 +73,6 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         self.store = store
         store.create(title: "Logged Cleanup Session", goal: "Keep the completed log readable.")
-        store.edit(.plan) { workout in
-            workout.updateGuidance(CoachGuidance(formCues: ["Hold the paces we agreed on."]))
-        }
         let blockID = try #require(store.current?.blocks.first?.id)
         for exercise in Self.exercises {
             store.addExercise(exercise, toBlockID: blockID, scope: .plan)

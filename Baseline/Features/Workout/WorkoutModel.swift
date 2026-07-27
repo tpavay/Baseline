@@ -238,11 +238,16 @@ struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// A workout carries exactly one free-form text of its own, `goal` - the note the athlete reads and
+/// edits on every workout-level surface. There is deliberately no workout-level `CoachGuidance`:
+/// structured coach metadata exists only where it is actually rendered, on blocks, groups, rests,
+/// and exercises. Decoding drops any `guidance` key an older encoding carried, because the
+/// synthesized decoder ignores keys the type no longer declares, so it can never be persisted or
+/// re-emitted.
 struct Workout: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var goal: String?
-    var guidance: CoachGuidance?
     var scheduledDate: Date?          // the day this workout is for; nil = legacy/unstamped
     var blocks: [WorkoutBlock] = []
 }
@@ -253,7 +258,6 @@ extension Workout {
 
     // Workout level
     mutating func updateGoal(_ goal: String?) { self.goal = goal }
-    mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
 
     /// The workout's note, collapsed to one line. Plan cells and profile subtitles use it as a session
@@ -269,8 +273,8 @@ extension Workout {
     }
 
     /// Store the athlete's one workout-level note. It is a plain free-form field over `goal`, the value
-    /// plan, profile, and agent surfaces already read as the workout's own text. Structured guidance is
-    /// separate plan metadata this path never reads, writes, reconstructs, or flattens.
+    /// plan, profile, and agent surfaces already read as the workout's own text - the workout has no
+    /// second text field to reconstruct or flatten into.
     mutating func updateNotes(_ text: String) {
         goal = CoachGuidance.isMeaningful(text) ? text : nil
     }

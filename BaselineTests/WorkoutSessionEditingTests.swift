@@ -305,7 +305,7 @@ struct WorkoutSessionEditingTests {
 
         let promoted = plan.scheduledWorkout(id)?.workout
         #expect(promoted?.allExercises.map(\.exerciseName) == ["Squat", "Bench press"])
-        #expect(promoted?.guidance == nil)
+        #expect(promoted?.goal == nil)
         #expect(promoted?.allExercises.first?.guidance?.formCues == ["Coach: sit between the hips"])
         #expect(store.currentLog?.notesText == "Shoulder felt off today")
         #expect(store.currentLog?.performed(forPlanned: ex.id)?.notesText == "Kept the last set light")
@@ -845,7 +845,7 @@ struct WorkoutSessionEditingTests {
         }
         #expect(plan.delete(sw.id, proposalID: proposalID).isApplied)
 
-        let response = agentTools(store, plan).dispatch(.createWorkout(title: "Something else", goal: nil,
+        let response = agentTools(store, plan).dispatch(.createWorkout(title: "Something else", note: nil,
                                                                       replaceExisting: true))
 
         #expect(response.text.contains("isn't in your plan any more"))

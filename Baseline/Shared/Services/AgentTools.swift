@@ -199,10 +199,11 @@ struct ExercisePrescriptionPatch: Equatable, Sendable {
 /// every operation validates against the same snapshot before one commit, so a later operation's
 /// failure can never leave the workout half-edited.
 enum WorkoutEditOperation: Equatable, Sendable {
+    /// `note` is the workout's one free-form text and writes `Workout.goal`. The workout level has no
+    /// coach-guidance payload to carry: guidance is per block, group, rest, and exercise.
     case updateWorkoutMetadata(
         title: MetadataPatch<String>,
-        goal: MetadataPatch<String>,
-        guidance: MetadataPatch<String>
+        note: MetadataPatch<String>
     )
     case updateBlockMetadata(
         blockID: UUID,
@@ -377,11 +378,10 @@ final class AgentTools {
         case getHRVReadings(limit: Int)
         case getRestingHeartRate(days: Int)
         // Workout editing. Stable instance IDs from get_current_workout take precedence over names.
-        case createWorkout(title: String, goal: String?, replaceExisting: Bool, expectedRevisionToken: UUID? = nil)
+        case createWorkout(title: String, note: String?, replaceExisting: Bool, expectedRevisionToken: UUID? = nil)
         case updateWorkoutMetadata(
             title: MetadataPatch<String>,
-            goal: MetadataPatch<String>,
-            guidance: MetadataPatch<String>,
+            note: MetadataPatch<String>,
             expectedRevisionToken: UUID
         )
         case updateBlockMetadata(
@@ -562,10 +562,10 @@ final class AgentTools {
             case .getHRVReadings(let l): return "Retrieved \(l) recent HRV readings"
             case .getRestingHeartRate(let d): return "Retrieved resting HR (\(d)-day) from Apple Health"
             case .createWorkout(let t, _, _, _): return "Created workout: \(t)"
-            case .updateWorkoutMetadata(let title, let goal, let guidance, _):
+            case .updateWorkoutMetadata(let title, let note, _):
                 return Self.metadataActivityLabel(
                     subject: "workout",
-                    fields: [("title", title), ("goal", goal), ("guidance", guidance)]
+                    fields: [("title", title), ("note", note)]
                 )
             case .updateBlockMetadata(_, let name, let intent, let guidance, _):
                 return Self.metadataActivityLabel(
@@ -886,23 +886,22 @@ final class AgentTools {
                 return Response(text: "Apple Health isn't available on this device.", decision: nil, plan: nil)
             }
             Task { await health.requestReadAccess() }
-            return Response(text: "Opening Apple Health — grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
-        case .createWorkout(let title, let goal, let replace, let expectedRevisionToken):
+            return Response(text: "Opening Apple Health - grant read access in the sheet and I'll fold your sleep and resting HR into today's plan.", decision: nil, plan: nil)
+        case .createWorkout(let title, let note, let replace, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             if let existing = currentWorkout, !replace {
-                return Response(text: "There's already a workout (\"\(existing.title)\"). Creating a new one will replace it and discard the current one — confirm and I'll do it.", decision: nil, plan: nil)
+                return Response(text: "There's already a workout (\"\(existing.title)\"). Creating a new one will replace it and discard the current one - confirm and I'll do it.", decision: nil, plan: nil)
             }
             return outcome(
-                workouts.create(title: title, goal: goal, expectedRevisionToken: expectedRevisionToken),
+                workouts.create(title: title, goal: note, expectedRevisionToken: expectedRevisionToken),
                 success: "Created workout \"\(title)\"."
             )
-        case .updateWorkoutMetadata(let title, let goal, let guidance, let expectedRevisionToken):
+        case .updateWorkoutMetadata(let title, let note, let expectedRevisionToken):
             guard let workouts else { return workoutUnavailable() }
             return outcome(
                 workouts.updateWorkoutMetadata(
                     title: title,
-                    goal: goal,
-                    guidance: guidance,
+                    note: note,
                     expectedRevisionToken: expectedRevisionToken
                 ),
                 success: "\(call.activityLabel)."

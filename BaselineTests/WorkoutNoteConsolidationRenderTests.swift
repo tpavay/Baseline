@@ -7,14 +7,13 @@ import UIKit
 extension IdleTimerRenderTests {
     @MainActor
     struct WorkoutNoteConsolidationRenderTests {
-        @Test func templateEditorEditsOnePlainNoteAndLeavesGuidanceUntouched() async throws {
-            let screen = try await WorkoutNoteScreen(stage: .editing, includesLegacyNotes: true)
+        @Test func templateEditorEditsOnePlainNote() async throws {
+            let screen = try await WorkoutNoteScreen(stage: .editing, includesExistingNote: true)
             defer { screen.tearDown() }
 
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.")
-            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
 
             try screen.replaceInput(labelled: "Workout note", with: "One consolidated note")
             try await screen.settle()
@@ -23,13 +22,10 @@ extension IdleTimerRenderTests {
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.inputText(labelled: "Workout note") == "One consolidated note")
             #expect(screen.workout?.goal == "One consolidated note")
-            // Structured guidance is coach and planning metadata: kept intact, never shown as the note.
-            #expect(screen.workout?.guidance == CoachGuidance(formCues: [WorkoutNoteScreen.guidanceCue]))
-            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
         }
 
         @Test func loggingShowsThePlanNoteInTheOneFieldAndAdoptsItOnTheFirstEdit() async throws {
-            let screen = try await WorkoutNoteScreen(stage: .logging, includesLegacyNotes: true)
+            let screen = try await WorkoutNoteScreen(stage: .logging, includesExistingNote: true)
             defer { screen.tearDown() }
 
             // One workout-level surface, before and after the first edit: the plan's note is the field's
@@ -39,8 +35,6 @@ extension IdleTimerRenderTests {
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.")
             #expect(screen.hasRenderedText("Add a note here…") == false)
-            // Structured guidance never reaches a workout-level surface, here or anywhere else.
-            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
 
             // Nothing is written until the athlete acts: `startLog` seeded no performed note.
             #expect(screen.log?.athleteNotes == [])
@@ -51,15 +45,13 @@ extension IdleTimerRenderTests {
             try await screen.settle()
 
             // The first edit adopts what was on screen plus the athlete's own words into the log, and
-            // leaves the plan's goal and structured guidance exactly as they were.
+            // leaves the plan's own note exactly as it was.
             #expect(screen.log?.athleteNotes == ["Preserve this goal.\n\nLegs heavy today."])
             #expect(screen.log?.hasAuthoredNotes == true)
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.\n\nLegs heavy today.")
             #expect(screen.hasLabel(containing: "Plan note") == false)
             #expect(screen.workout?.goal == "Preserve this goal.")
-            #expect(screen.workout?.guidance == CoachGuidance(formCues: [WorkoutNoteScreen.guidanceCue]))
-            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
 
             // Clearing it leaves it cleared: the plan's note can no longer reappear under the cursor.
             try screen.replaceInput(labelled: "Workout note", with: "")
@@ -73,7 +65,7 @@ extension IdleTimerRenderTests {
         }
 
         @Test func emptyCompletedWorkoutShowsOneNotePlaceholder() async throws {
-            let screen = try await WorkoutNoteScreen(stage: .completed, includesLegacyNotes: false)
+            let screen = try await WorkoutNoteScreen(stage: .completed, includesExistingNote: false)
             defer { screen.tearDown() }
 
             #expect(screen.inputCount(labelled: "Workout note") == 1)
@@ -92,9 +84,6 @@ private final class WorkoutNoteScreen: HostedScreen {
         case completed
     }
 
-    /// Structured coach guidance the workout carries. No workout-level surface may ever show it.
-    static let guidanceCue = "Preserve this imported note."
-
     let window: UIWindow
     private let store: WorkoutStore
     private let defaults: UserDefaults
@@ -104,7 +93,7 @@ private final class WorkoutNoteScreen: HostedScreen {
     var workout: Workout? { store.current }
     var log: WorkoutLog? { store.currentLog }
 
-    init(stage: Stage, includesLegacyNotes: Bool) async throws {
+    init(stage: Stage, includesExistingNote: Bool) async throws {
         suiteName = "WorkoutNoteConsolidationRenderTests.\(UUID().uuidString)"
         defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -118,11 +107,8 @@ private final class WorkoutNoteScreen: HostedScreen {
         store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
         store.create(
             title: "Workout Note Test",
-            goal: includesLegacyNotes ? "Preserve this goal." : nil
+            goal: includesExistingNote ? "Preserve this goal." : nil
         )
-        if includesLegacyNotes {
-            store.edit(.plan) { $0.updateGuidance(CoachGuidance(formCues: [Self.guidanceCue])) }
-        }
 
         switch stage {
         case .editing:

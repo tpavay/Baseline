@@ -527,14 +527,13 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "update_workout_metadata",
-    description: "Update the current workout's title, goal, or guidance. Include only fields the athlete asked to change. For nullable fields, omit to preserve the current value and pass null to clear it.",
+    description: "Update the current workout's title or note. The note is the workout's single free-form text - there is no separate workout goal or workout-level coach guidance. Include only fields the athlete asked to change. For nullable fields, omit to preserve the current value and pass null to clear it.",
     input_schema: {
       type: "object",
       minProperties: 2,
       properties: {
         title: { type: "string", minLength: 1, description: "New workout title. Omit to leave unchanged." },
-        goal: { type: ["string", "null"], description: "New workout goal, null to clear, or omit to leave unchanged." },
-        guidance: { type: ["string", "null"], description: "Coach guidance or notes for the workout, null to clear, or omit to leave unchanged." },
+        note: { type: ["string", "null"], description: "The workout's one free-form note, null to clear, or omit to leave unchanged. Coach cues for a specific movement belong on that exercise (update_exercise_metadata), not here." },
         expected_revision_token: expectedRevisionToken,
       },
       required: ["expected_revision_token"],
@@ -741,7 +740,7 @@ export const TOOLS: ToolSchema[] = [
       type: "object",
       properties: {
         title: { type: "string" },
-        goal: { type: "string", description: "Optional overall goal." },
+        note: { type: "string", description: "Optional free-form note for the workout - its single note field, not a separate goal." },
         replace_existing: { type: "boolean", description: "Set true ONLY after the athlete confirms replacing an existing workout." },
         expected_revision_token: { ...expectedRevisionToken, description: "Required when replace_existing is true; use revision_token from get_current_workout. Omit only when no workout exists yet." },
       },

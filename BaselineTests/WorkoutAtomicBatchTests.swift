@@ -95,7 +95,7 @@ struct WorkoutAtomicBatchTests {
 
         guard case .mutated(let receipt) = fixture.store.applyWorkoutEdits(
             operations: [
-                .updateWorkoutMetadata(title: .set("Upper Body Day"), goal: .unchanged, guidance: .unchanged),
+                .updateWorkoutMetadata(title: .set("Upper Body Day"), note: .unchanged),
                 .updateBlockMetadata(
                     blockID: fixture.strengthBlockID,
                     name: .set("Upper Body"),
@@ -193,7 +193,7 @@ struct WorkoutAtomicBatchTests {
         let before = fixture.revision
         let outcome = fixture.store.applyWorkoutEdits(
             operations: [
-                .updateWorkoutMetadata(title: .set("New Title"), goal: .unchanged, guidance: .unchanged),
+                .updateWorkoutMetadata(title: .set("New Title"), note: .unchanged),
             ],
             expectedRevisionToken: UUID()
         )

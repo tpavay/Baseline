@@ -617,7 +617,6 @@ struct WorkoutImportTests {
             "Main: \(longBlockNote)",
             "Three rounds: \(groupNote)",
         ].joined(separator: "\n\n"))
-        #expect(workout.guidance == nil)
         #expect(workout.blocks.first?.guidance == nil)
         #expect(workout.allGroups.first?.guidance == nil)
         #expect(workout.allExercises.first?.guidance?.formCues == [exerciseNote])
@@ -627,8 +626,8 @@ struct WorkoutImportTests {
     }
 
     @Test func notesParticipateInDuplicateFingerprinting() {
-        let first = Workout(title: "Intervals", guidance: CoachGuidance(formCues: ["Hold back on round one"]))
-        let second = Workout(title: "Intervals", guidance: CoachGuidance(formCues: ["Attack round one"]))
+        let first = Workout(title: "Intervals", goal: "Hold back on round one")
+        let second = Workout(title: "Intervals", goal: "Attack round one")
         #expect(WorkoutFingerprint.value(for: first) != WorkoutFingerprint.value(for: second))
     }
 
@@ -1746,7 +1745,7 @@ struct WorkoutImportSourcePipelineTests {
         let reviewStore = WorkoutStore(transientWorkout: original, configurationFrom: configuration)
         reviewStore.edit(.plan) { workout in
             workout.rename("Final editor value")
-            workout.guidance = CoachGuidance(formCues: ["Saved from the shared editor"])
+            workout.updateNotes("Saved from the shared editor")
         }
 
         let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
@@ -1761,7 +1760,7 @@ struct WorkoutImportSourcePipelineTests {
         let saved = try #require(model.savedTemplate)
         let persisted = try #require(plan.templateWorkout(saved.id))
         #expect(persisted.title == "Final editor value")
-        #expect(persisted.guidance?.formCues == ["Saved from the shared editor"])
+        #expect(persisted.goal == "Saved from the shared editor")
     }
 
     @Test func protectedTemporaryBatchIsRemovedTogether() throws {
@@ -2120,8 +2119,7 @@ struct ResumableWorkoutImportJobTests {
         // Materialization must preserve exact note text. Block and group notes fold up to the workout
         // tagged with the section they came from, because those two levels have no surface of their own
         // — a note left on one would be preserved into a place the athlete can never read or edit. They
-        // land in the one editable workout note, leaving structured coach guidance to typed cues.
-        #expect(materialized.guidance == nil)
+        // land in the one editable workout note; the workout has no coach-guidance field at all.
         let workoutNote = try #require(materialized.goal)
         var searchStart = workoutNote.startIndex
         for expected in workoutNoteExpected {

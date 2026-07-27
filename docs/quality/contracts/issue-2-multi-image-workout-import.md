@@ -22,6 +22,7 @@ An athlete can select up to 10 workout photos in reading order and land in Basel
 - [ ] AC-2: OCR observations retain their zero-based source image index through the callable payload so parsing and evidence crops cannot confuse coordinates from different images.
 - [ ] AC-3: The parser contract distinguishes workout-level and block-level prose from exercise prescriptions and preserves long notes without converting prose-only lines into exercises.
 - [ ] AC-4: Parsed workout, block, group, and exercise notes materialize into canonical `CoachGuidance`, remain editable in import review, and survive template encode/decode.
+  *(Superseded by issue #79: workout, block, and group prose now folds into the one `Workout.goal` note; only exercise notes become `CoachGuidance`. See `docs/implementation/workout-image-import.md`.)*
 - [ ] AC-5: Selecting zero images, more than 10 images, an unreadable image, or a batch with no readable workout text produces a clear failure and does not save a partial template; a text-free page inside an otherwise readable batch continues to review with an explicit warning.
 - [ ] AC-6: Source image bytes remain local, use complete file protection while temporary, and are removed on cancel or successful save; only bounded OCR observations are sent to the callable parser.
 - [ ] AC-7: Single-image Photos and paste imports keep working through the same ordered-image pipeline.

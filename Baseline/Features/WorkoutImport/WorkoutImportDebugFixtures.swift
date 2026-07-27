@@ -103,13 +103,13 @@ enum WorkoutImportDebugFixtures {
         )
         let workout = Workout(
             title: "Aerobic Capacity - Week 3",
-            goal: "Build aerobic capacity while protecting the surrounding intensity days.",
-            guidance: CoachGuidance(
-                formCues: [
-                    "Use this day to consolidate, not chase stimulus.",
-                    "Finish feeling calm, loose, and ready to train again.",
-                ]
-            ),
+            goal: """
+                Build aerobic capacity while protecting the surrounding intensity days.
+
+                Use this day to consolidate, not chase stimulus.
+
+                Finish feeling calm, loose, and ready to train again.
+                """,
             blocks: [
                 WorkoutBlock(
                     name: "Minimum Effective Dose",

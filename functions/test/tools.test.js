@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   LEGACY_TOOLS,
+  SERVED_TOOLSETS,
   TOOLS,
   WAVE5_TOOLS,
   WAVE6_TOOLS,
@@ -393,8 +394,10 @@ test("metadata tools expose orthogonal patches with nullable clear semantics", (
   assert.equal(workout.input_schema.minProperties, 2);
   assert.equal(block.input_schema.minProperties, 3);
   assert.equal(exercise.input_schema.minProperties, 3);
+  // The workout level has exactly one free-form text, the athlete's note. A separate goal or a
+  // workout-level guidance field would let the model write text no surface ever shows.
   assert.deepEqual(Object.keys(workout.input_schema.properties).sort(), [
-    "expected_revision_token", "goal", "guidance", "title",
+    "expected_revision_token", "note", "title",
   ]);
   assert.deepEqual(Object.keys(block.input_schema.properties).sort(), [
     "block_id", "expected_revision_token", "guidance", "intent", "name",
@@ -405,8 +408,7 @@ test("metadata tools expose orthogonal patches with nullable clear semantics", (
   assert.equal(workout.input_schema.properties.title.type, "string");
   assert.equal(block.input_schema.properties.name.type, "string");
   for (const field of [
-    workout.input_schema.properties.goal,
-    workout.input_schema.properties.guidance,
+    workout.input_schema.properties.note,
     block.input_schema.properties.intent,
     block.input_schema.properties.guidance,
     exercise.input_schema.properties.display_label,
@@ -442,6 +444,22 @@ test("get_exercise looks one movement up by name or id", () => {
   assert.equal(tool.input_schema.properties.name.type, "string");
   assert.equal(tool.input_schema.properties.id.type, "string");
   assert.match(tool.description, /muscles/i);
+});
+
+// The workout carries one free-form text and no CoachGuidance of its own. Every served toolset is a
+// filtered view of the same array, so a workout-level `guidance` or `goal` field reintroduced in one
+// place would reach every client at once - and let the model write text no surface can ever show.
+test("no served toolset lets the model write workout-level guidance or a separate goal", () => {
+  for (const [toolsetName, tools] of Object.entries(SERVED_TOOLSETS)) {
+    for (const name of ["update_workout_metadata", "create_workout"]) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.ok(tool, `${toolsetName}: ${name} is not served`);
+      const fields = Object.keys(tool.input_schema.properties ?? {});
+      assert.ok(!fields.includes("guidance"), `${toolsetName}: ${name} still advertises guidance`);
+      assert.ok(!fields.includes("goal"), `${toolsetName}: ${name} still advertises a goal`);
+      assert.ok(fields.includes("note"), `${toolsetName}: ${name} must expose the workout's one note`);
+    }
+  }
 });
 
 test("tool names are unique and map to the on-device executor", () => {

@@ -223,15 +223,8 @@ struct WorkoutModelTests {
         #expect(CoachGuidance.notes(from: "   \n ") == nil)
     }
 
-    @Test func editingTheWorkoutNoteWritesOnlyTheGoalAndLeavesGuidanceByteForByte() {
-        let guidance = CoachGuidance(
-            goal: "Own the eccentric",
-            tempo: "3-1-1",
-            formCues: ["Preserve the imported note"],
-            commonMistakes: ["Heels lifting"],
-            progressionNotes: "Add 2.5kg next week"
-        )
-        var workout = Workout(title: "Legacy workout", goal: "Preserve the coach goal", guidance: guidance)
+    @Test func editingTheWorkoutNoteWritesTheWorkoutsOneFreeFormField() {
+        var workout = Workout(title: "Legacy workout", goal: "Preserve the coach goal")
 
         // Starting a session only reads the plan: planned text is never recorded as a performed fact.
         #expect(workout.startLog().athleteNotes == [])
@@ -239,11 +232,38 @@ struct WorkoutModelTests {
 
         workout.updateNotes("One athlete-facing note")
         #expect(workout.goal == "One athlete-facing note")
-        #expect(workout.guidance == guidance)
 
         workout.updateNotes("   ")
         #expect(workout.goal == nil)
-        #expect(workout.guidance == guidance)
+    }
+
+    /// The workout level has no `CoachGuidance`, so an encoding written before that was true must not
+    /// be able to smuggle one back in. Per-exercise guidance is a different field and stays intact.
+    @Test func decodingDropsWorkoutLevelGuidanceAndKeepsPerExerciseGuidance() throws {
+        var exercise = PlannedExercise(exerciseName: "Back Squat")
+        exercise.guidance = CoachGuidance(formCues: ["Sit between the hips"])
+        let workout = Workout(
+            title: "Imported day",
+            goal: "The one note",
+            blocks: [WorkoutBlock(name: "Main", exercises: [exercise])]
+        )
+
+        // Reproduce the shape an older build wrote: the same workout plus a workout-level guidance key.
+        var fields = try #require(
+            try JSONSerialization.jsonObject(with: try JSONEncoder().encode(workout)) as? [String: Any]
+        )
+        fields["guidance"] = ["goal": "Old coach goal", "formCues": ["Old cue"], "commonMistakes": []]
+        let legacy = try JSONSerialization.data(withJSONObject: fields)
+        let decoded = try JSONDecoder().decode(Workout.self, from: legacy)
+
+        #expect(decoded.goal == "The one note")
+        #expect(decoded.allExercises.first?.guidance?.formCues == ["Sit between the hips"])
+
+        // Re-encoding cannot emit what the type no longer holds, so the stale text dies at this boundary.
+        let reEncoded = try #require(String(data: try JSONEncoder().encode(decoded), encoding: .utf8))
+        #expect(reEncoded.contains("Old coach goal") == false)
+        #expect(reEncoded.contains("Old cue") == false)
+        #expect(reEncoded.contains("Sit between the hips"))
     }
 
     @Test func goalLineCollapsesAMultiParagraphNoteForLineOrientedSurfaces() {
