@@ -164,6 +164,12 @@ struct Prescription: Codable, Equatable, Sendable {
     }
 }
 
+private extension String {
+    /// Whether this text is anything more than whitespace. Every free-form note field in the workout
+    /// model stores what the athlete typed verbatim and uses this as its only emptiness test.
+    var hasMeaningfulText: Bool { !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
 /// Authored "how and why to do it" — kept separate from the prescription and from Athlete Notes.
 struct CoachGuidance: Codable, Equatable, Sendable {
     var goal: String?
@@ -198,9 +204,7 @@ extension CoachGuidance {
         notes.append(note)
     }
 
-    static func isMeaningful(_ note: String) -> Bool {
-        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    private static func isMeaningful(_ note: String) -> Bool { note.hasMeaningfulText }
 }
 
 struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
@@ -276,7 +280,7 @@ extension Workout {
     /// plan, profile, and agent surfaces already read as the workout's own text - the workout has no
     /// second text field to reconstruct or flatten into.
     mutating func updateNotes(_ text: String) {
-        goal = CoachGuidance.isMeaningful(text) ? text : nil
+        goal = text.hasMeaningfulText ? text : nil
     }
 
     // Block level
@@ -943,7 +947,7 @@ extension WorkoutLog {
     /// is what keeps an in-session note from riding along when a session is promoted to the plan.
     /// Clearing the field never conjures a performed record for an exercise that has none.
     mutating func setNotes(_ text: String, forPlanned plannedID: UUID, name: String) {
-        let isBlank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isBlank = !text.hasMeaningfulText
         guard !isBlank || performed(forPlanned: plannedID) != nil else { return }
         exercises[index(forPlanned: plannedID, name: name)].athleteNotes = isBlank ? [] : [text]
     }
@@ -952,7 +956,7 @@ extension WorkoutLog {
     /// marks it authored even when the text is blank, so clearing the note is a recorded decision the
     /// plan's note can no longer override.
     mutating func setNotes(_ text: String) {
-        athleteNotes = CoachGuidance.isMeaningful(text) ? [text] : []
+        athleteNotes = text.hasMeaningfulText ? [text] : []
         hasAuthoredNotes = true
     }
 
@@ -960,7 +964,7 @@ extension WorkoutLog {
     var notesText: String { Self.notesText(athleteNotes) }
 
     static func notesText(_ notes: [String]) -> String {
-        notes.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        notes.filter(\.hasMeaningfulText)
             .joined(separator: "\n\n")
     }
 
