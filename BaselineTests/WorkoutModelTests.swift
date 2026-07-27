@@ -223,6 +223,95 @@ struct WorkoutModelTests {
         #expect(CoachGuidance.notes(from: "   \n ") == nil)
     }
 
+    @Test func editingTheWorkoutNoteWritesTheWorkoutsOneFreeFormField() {
+        var workout = Workout(title: "Legacy workout", goal: "Preserve the coach goal")
+
+        // Starting a session only reads the plan: planned text is never recorded as a performed fact.
+        #expect(workout.startLog().athleteNotes == [])
+        #expect(workout.startLog().hasAuthoredNotes == false)
+
+        workout.updateNotes("One athlete-facing note")
+        #expect(workout.goal == "One athlete-facing note")
+
+        workout.updateNotes("   ")
+        #expect(workout.goal == nil)
+    }
+
+    /// The workout level has no `CoachGuidance`, so an encoding written before that was true must not
+    /// be able to smuggle one back in. Per-exercise guidance is a different field and stays intact.
+    @Test func decodingDropsWorkoutLevelGuidanceAndKeepsPerExerciseGuidance() throws {
+        var exercise = PlannedExercise(exerciseName: "Back Squat")
+        exercise.guidance = CoachGuidance(formCues: ["Sit between the hips"])
+        let workout = Workout(
+            title: "Imported day",
+            goal: "The one note",
+            blocks: [WorkoutBlock(name: "Main", exercises: [exercise])]
+        )
+
+        // Reproduce the shape an older build wrote: the same workout plus a workout-level guidance key.
+        var fields = try #require(
+            try JSONSerialization.jsonObject(with: try JSONEncoder().encode(workout)) as? [String: Any]
+        )
+        fields["guidance"] = ["goal": "Old coach goal", "formCues": ["Old cue"], "commonMistakes": []]
+        let legacy = try JSONSerialization.data(withJSONObject: fields)
+        let decoded = try JSONDecoder().decode(Workout.self, from: legacy)
+
+        #expect(decoded.goal == "The one note")
+        #expect(decoded.allExercises.first?.guidance?.formCues == ["Sit between the hips"])
+
+        // Re-encoding cannot emit what the type no longer holds, so the stale text dies at this boundary.
+        let reEncoded = try #require(String(data: try JSONEncoder().encode(decoded), encoding: .utf8))
+        #expect(reEncoded.contains("Old coach goal") == false)
+        #expect(reEncoded.contains("Old cue") == false)
+        #expect(reEncoded.contains("Sit between the hips"))
+    }
+
+    @Test func goalLineCollapsesAMultiParagraphNoteForLineOrientedSurfaces() {
+        var workout = Workout(title: "Wordy", goal: "Keep it easy.\n\n  Stop if the knee talks.  ")
+        #expect(workout.goalLine == "Keep it easy. Stop if the knee talks.")
+
+        workout.updateNotes("Single line")
+        #expect(workout.goalLine == "Single line")
+
+        workout.updateNotes(" \n ")
+        #expect(workout.goalLine == nil)
+    }
+
+    @Test func workoutLogNoteSeparatesNeverWrittenFromDeliberatelyCleared() throws {
+        let (w, _, _, _) = sample()
+        var log = w.startLog()
+        #expect(log.athleteNotes == [])
+        #expect(log.hasAuthoredNotes == false)
+
+        log.setNotes("Legs heavy from yesterday")
+        #expect(log.athleteNotes == ["Legs heavy from yesterday"])
+        #expect(log.hasAuthoredNotes)
+
+        // Clearing the field is a decision, not an absence: it stays recorded across persistence.
+        log.setNotes("")
+        #expect(log.athleteNotes == [])
+        #expect(log.hasAuthoredNotes)
+
+        let decoded = try JSONDecoder().decode(WorkoutLog.self, from: JSONEncoder().encode(log))
+        #expect(decoded.hasAuthoredNotes)
+        #expect(decoded.athleteNotes == [])
+    }
+
+    @Test func logsWrittenBeforeTheMarkerDecodeAsNeverWrittenUnlessTheyCarryANote() throws {
+        let decoder = JSONDecoder()
+        let id = UUID().uuidString
+
+        let blank = try decoder.decode(WorkoutLog.self, from: Data(#"{"id":"\#(id)"}"#.utf8))
+        #expect(blank.hasAuthoredNotes == false)
+
+        let noted = try decoder.decode(
+            WorkoutLog.self,
+            from: Data(#"{"id":"\#(id)","athleteNotes":["Felt strong"]}"#.utf8)
+        )
+        #expect(noted.hasAuthoredNotes)
+        #expect(noted.athleteNotes == ["Felt strong"])
+    }
+
     @Test func sessionNotesStayOnTheLogAndNeverTouchPlannedGuidance() {
         var (w, _, _, bench) = sample()
         w.updateExercise(bench) { $0.guidance = CoachGuidance(formCues: ["Coach: pause on the chest"]) }

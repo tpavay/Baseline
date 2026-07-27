@@ -132,20 +132,18 @@ struct AgentToolsTests {
         let tools = AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts)
         let unavailableCall = AgentTools.Call.updateWorkoutMetadata(
             title: .set("Race prep"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: UUID()
         )
         let unavailableResponse = tools.dispatch(unavailableCall)
 
         #expect(ConversationService.shouldRecordActivity(unavailableCall, response: unavailableResponse) == false)
 
-        _ = tools.dispatch(.createWorkout(title: "Original", goal: nil, replaceExisting: false))
+        _ = tools.dispatch(.createWorkout(title: "Original", note: nil, replaceExisting: false))
         let revision = try #require(workouts.mutationTarget(.plan)?.revisionToken)
         let appliedCall = AgentTools.Call.updateWorkoutMetadata(
             title: .set("Race prep"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: revision
         )
         let appliedResponse = tools.dispatch(appliedCall)
@@ -160,7 +158,7 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.createWorkout(title: "Push", note: nil, replaceExisting: false))
         _ = t.dispatch(.searchExercises(query: "bench", muscle: nil, equipment: nil, modality: nil,
                                         pattern: nil, tag: nil, level: nil))
         _ = t.dispatch(.getExercise(name: "deadlift", id: nil))
@@ -183,7 +181,7 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.createWorkout(title: "Push", note: nil, replaceExisting: false))
 
         let neverStarted = t.dispatch(.completeWorkout(confirm: false)).text
         #expect(neverStarted.localizedCaseInsensitiveContains("hasn't been started"))
@@ -201,7 +199,7 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        _ = t.dispatch(.createWorkout(title: "Push", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.createWorkout(title: "Push", note: nil, replaceExisting: false))
         let createToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
         _ = t.dispatch(.addBlock(
             name: "Strength",
@@ -238,7 +236,7 @@ struct AgentToolsTests {
         let context = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let workouts = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let tools = AgentTools(store: context, base: DecisionEngine.Inputs(), workouts: workouts)
-        _ = tools.dispatch(.createWorkout(title: "Intervals", goal: nil, replaceExisting: false))
+        _ = tools.dispatch(.createWorkout(title: "Intervals", note: nil, replaceExisting: false))
         let createToken = try #require(workouts.mutationTarget(.plan)?.revisionToken)
         _ = tools.dispatch(.addBlock(
             name: "Overload",
@@ -287,13 +285,13 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let t = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        _ = t.dispatch(.createWorkout(title: "First", goal: nil, replaceExisting: false))
+        _ = t.dispatch(.createWorkout(title: "First", note: nil, replaceExisting: false))
         // Second create without confirmation → refused; existing workout preserved.
-        let r = t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: false))
+        let r = t.dispatch(.createWorkout(title: "Second", note: nil, replaceExisting: false))
         #expect(r.text.localizedCaseInsensitiveContains("already"))
         #expect(wk.current?.title == "First")
         // With confirmation → replaced.
-        _ = t.dispatch(.createWorkout(title: "Second", goal: nil, replaceExisting: true))
+        _ = t.dispatch(.createWorkout(title: "Second", note: nil, replaceExisting: true))
         #expect(wk.current?.title == "Second")
     }
 
@@ -301,7 +299,7 @@ struct AgentToolsTests {
         let ctx = TrainingContextStore(defaults: UserDefaults(suiteName: "ctx-\(UUID().uuidString)")!)
         let wk = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
         let tools = AgentTools(store: ctx, base: DecisionEngine.Inputs(), workouts: wk)
-        _ = tools.dispatch(.createWorkout(title: "Outdoor Run", goal: nil, replaceExisting: false))
+        _ = tools.dispatch(.createWorkout(title: "Outdoor Run", note: nil, replaceExisting: false))
         let createToken = try #require(wk.mutationTarget(.plan)?.revisionToken)
         _ = tools.dispatch(.addBlock(
             name: "Warm-up", intent: nil, guidance: nil, atIndex: nil,
@@ -401,8 +399,7 @@ struct AgentToolsTests {
         )))
         #expect(service.permits(.updateWorkoutMetadata(
             title: .set("Imported workout"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: UUID()
         )))
         #expect(service.permits(.updateBlockMetadata(

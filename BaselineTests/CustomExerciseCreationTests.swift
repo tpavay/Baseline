@@ -389,7 +389,7 @@ struct CustomExerciseCreationTests {
         // A later mutation makes the creation receipt no longer the head; undo must reject
         // truthfully and leave the definition (it may already be in use).
         let later = store.updateWorkoutMetadata(
-            title: .set("Renamed"), goal: .unchanged, guidance: .unchanged,
+            title: .set("Renamed"), note: .unchanged,
             expectedRevisionToken: try token(store)
         )
         #expect(later.succeeded)
@@ -562,8 +562,7 @@ struct CustomExerciseImportReviewTests {
         let retitleToken = try #require(review.mutationTarget(review.agentScope)?.revisionToken)
         #expect(review.updateWorkoutMetadata(
             title: .set("Imported Sprint Day"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: retitleToken
         ).succeeded)
         let fixToken = try #require(review.mutationTarget(review.agentScope)?.revisionToken)

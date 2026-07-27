@@ -21,6 +21,7 @@ Every edit targets the revision and stable instance IDs returned by `get_current
 ## Acceptance criteria
 
 - [ ] AC-1: `update_workout_metadata` independently patches title, goal, and guidance through the versioned mutation envelope.
+  *(Superseded by issue #79: the workout level now has one note and no `CoachGuidance`, so the tool patches `title` and `note` only. See the workout-note invariant in `CLAUDE.md`.)*
 - [ ] AC-2: `update_block_metadata` targets one block by stable block ID and independently patches name, intent, and guidance through the versioned mutation envelope.
 - [ ] AC-3: `update_exercise_metadata` targets one exercise by stable exercise instance ID and independently patches display label and guidance through the versioned mutation envelope.
 - [ ] AC-4: Every nullable metadata field preserves three states from JSON through the domain write: omitted leaves the field unchanged, a value sets it, and JSON `null` clears it.
@@ -41,7 +42,7 @@ Every edit targets the revision and stable instance IDs returned by `get_current
 
 | Acceptance criterion | Automated test or evidence | Why it proves the behavior |
 |---|---|---|
-| AC-1 | `WorkoutMetadataToolTests/updateWorkoutMetadataReturnsReceiptAndUndoRestoresPriorState` | Exercises workout title, goal, and guidance through the public call and undo path. |
+| AC-1 | `WorkoutMetadataToolTests/updateWorkoutMetadataReturnsReceiptAndUndoRestoresPriorState` | Exercises the workout title and, since issue #79, the workout's one note through the public call and undo path. |
 | AC-2 | `WorkoutMetadataToolTests/updateBlockMetadataTargetsDuplicateNameByIDAndUndoRestoresPriorState` | Proves stable block targeting, receipt creation, and restoration. |
 | AC-3 | `WorkoutMetadataToolTests/updateExerciseMetadataTargetsDuplicateNameByIDAndUndoRestoresPriorState` | Proves stable exercise-instance targeting, receipt creation, and restoration. |
 | AC-4 | `ToolCallMapperTests/mapsMetadataPatchesWithoutCollapsingOmittedAndNull` and `WorkoutMetadataToolTests/nullableMetadataSupportsSetClearAndOmitted` | Proves all three JSON states survive mapping and produce distinct domain outcomes. |

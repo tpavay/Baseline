@@ -450,41 +450,19 @@ struct WorkoutView: View {
                 .foregroundStyle(BaselineColor.textHi)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let goal = workout.goal, !goal.isEmpty {
-                if mode.usesPerformedData {
-                    WorkoutPlanNote(
-                        text: goal,
-                        caption: "GOAL",
-                        font: .body,
-                        accessibilityLabel: "Workout goal"
-                    )
-                } else {
-                    Text(goal)
-                        .font(.body)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            if let notes = workout.guidance?.notesText, !notes.isEmpty {
-                if mode.usesPerformedData {
-                    WorkoutPlanNote(text: notes, font: .body, accessibilityLabel: "Plan note")
-                } else {
-                    Text(notes)
-                        .font(.body)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
             if mode.usesPerformedData {
                 WorkoutNotesField(
-                    prompt: "Add notes here...",
+                    prompt: "Add a note here…",
                     text: sessionNotesBinding,
                     font: .body,
                     lineLimit: 2...,
-                    accessibilityLabel: "Workout notes"
+                    accessibilityLabel: "Workout note"
                 )
+            } else if let note = workout.goal, !note.isEmpty {
+                Text(note)
+                    .font(.body)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
@@ -591,11 +569,18 @@ struct WorkoutView: View {
         isEditingTemplate = false
     }
 
-    /// Workout-level notes typed while logging or reviewing a session. They belong to the log, so
-    /// promoting the session's shape to the plan can never carry them into a saved plan revision.
+    /// The one workout-level note during and after a session — the only workout-level text surface here,
+    /// so nothing appears or disappears around it as the athlete types. Until the field has been edited
+    /// it shows the plan's own note; the first edit adopts whatever is on screen into the log, which is
+    /// the athlete's action rather than a seed `startLog` wrote. From then on it is exactly the performed
+    /// note, independent of later plan changes, and clearing it leaves it cleared. The workout level has
+    /// no `CoachGuidance` for this field to compete with; guidance starts at the block and the exercise.
     private var sessionNotesBinding: Binding<String> {
         Binding(
-            get: { store.currentLog?.notesText ?? "" },
+            get: {
+                guard store.currentLog?.hasAuthoredNotes == true else { return store.current?.goal ?? "" }
+                return store.currentLog?.notesText ?? ""
+            },
             set: { value in
                 store.editLog { $0.setNotes(value) }
             }

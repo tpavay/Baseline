@@ -144,8 +144,7 @@ struct WorkoutMutationEnvelopeTests {
 
         record(try #require(store.updateWorkoutMetadata(
             title: .set("Updated strength"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: token
         ).mutationReceipt))
         let mainBlock = try #require(plan.scheduledWorkout(scheduled.id)?.workout.blocks.first)
@@ -453,8 +452,7 @@ struct WorkoutMetadataToolTests {
 
         let response = tools.dispatch(.updateWorkoutMetadata(
             title: .set("Race prep"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: scheduled.workoutRevisionID
         ))
         let receipt = try #require(response.mutationReceipt)
@@ -541,36 +539,23 @@ struct WorkoutMetadataToolTests {
 
         let workoutSet = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .unchanged,
-            goal: .set("Set goal"),
-            guidance: .unchanged,
+            note: .set("Set note"),
             expectedRevisionToken: token
         )).mutationReceipt)
         token = workoutSet.afterRevisionToken
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.guidance?.formCues == ["Original workout guidance"])
-        let workoutGuidanceSet = try #require(tools.dispatch(.updateWorkoutMetadata(
-            title: .unchanged,
-            goal: .unchanged,
-            guidance: .set("Set workout guidance"),
-            expectedRevisionToken: token
-        )).mutationReceipt)
-        token = workoutGuidanceSet.afterRevisionToken
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.goal == "Set goal")
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.guidance?.formCues == ["Set workout guidance"])
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.goal == "Set note")
         let workoutClear = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .unchanged,
-            goal: .clear,
-            guidance: .clear,
+            note: .clear,
             expectedRevisionToken: token
         )).mutationReceipt)
         #expect(plan.scheduledWorkout(scheduled.id)?.workout.goal == nil)
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.guidance == nil)
         let workoutUndo = try #require(tools.dispatch(.undoWorkoutMutation(
             mutationID: workoutClear.mutationID,
             expectedRevisionToken: workoutClear.afterRevisionToken
         )).mutationReceipt)
         token = workoutUndo.afterRevisionToken
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.goal == "Set goal")
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.guidance?.formCues == ["Set workout guidance"])
+        #expect(plan.scheduledWorkout(scheduled.id)?.workout.goal == "Set note")
 
         let blockIntentSet = try #require(tools.dispatch(.updateBlockMetadata(
             blockID: blockID,
@@ -654,22 +639,11 @@ struct WorkoutMetadataToolTests {
             progressionNotes: "Old progression"
         )
         _ = plan.editContent(scheduled.id) { workout in
-            workout.updateGuidance(rich)
             _ = workout.setBlockGuidance(blockID, rich)
             _ = workout.updateExercise(exerciseID) { $0.guidance = rich }
         }
         workouts.reloadFromPlan()
         var token = try #require(workouts.mutationTarget(.plan)?.revisionToken)
-
-        let workoutSet = try #require(tools.dispatch(.updateWorkoutMetadata(
-            title: .unchanged,
-            goal: .unchanged,
-            guidance: .set("New workout guidance"),
-            expectedRevisionToken: token
-        )).mutationReceipt)
-        token = workoutSet.afterRevisionToken
-        #expect(plan.scheduledWorkout(scheduled.id)?.workout.guidance
-                == CoachGuidance(formCues: ["New workout guidance"]))
 
         let blockSet = try #require(tools.dispatch(.updateBlockMetadata(
             blockID: blockID,
@@ -703,8 +677,7 @@ struct WorkoutMetadataToolTests {
 
         let response = tools.dispatch(.updateWorkoutMetadata(
             title: .set("Session-only title"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: sessionToken
         ))
         let receipt = try #require(response.mutationReceipt)
@@ -746,8 +719,7 @@ struct WorkoutMetadataToolTests {
 
         let edit = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .set("Imported workout"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: token
         )).mutationReceipt)
         #expect(edit.scope == .transient)
@@ -765,14 +737,12 @@ struct WorkoutMetadataToolTests {
 
         let first = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .set("First title"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: token
         )).mutationReceipt)
         let second = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .set("Second title"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: first.afterRevisionToken
         )).mutationReceipt)
         let staleUndo = tools.dispatch(.undoWorkoutMutation(
@@ -793,8 +763,7 @@ struct WorkoutMetadataToolTests {
         let manualPredecessorToken = try #require(review.mutationTarget(.plan)?.revisionToken)
         let beforeManualEdit = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .set("Agent title before manual edit"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: manualPredecessorToken
         )).mutationReceipt)
         #expect(review.edit(.plan) { workout in
@@ -820,8 +789,7 @@ struct WorkoutMetadataToolTests {
         let token = try #require(workouts.mutationTarget(.session)?.revisionToken)
         let edit = try #require(tools.dispatch(.updateWorkoutMetadata(
             title: .set("Discarded session title"),
-            goal: .unchanged,
-            guidance: .unchanged,
+            note: .unchanged,
             expectedRevisionToken: token
         )).mutationReceipt)
 
@@ -853,8 +821,7 @@ struct WorkoutMetadataToolTests {
         let responses = [
             tools.dispatch(.updateWorkoutMetadata(
                 title: .set("Stale title"),
-                goal: .unchanged,
-                guidance: .unchanged,
+                note: .unchanged,
                 expectedRevisionToken: stale
             )),
             tools.dispatch(.updateBlockMetadata(
@@ -885,8 +852,7 @@ struct WorkoutMetadataToolTests {
             )),
             tools.dispatch(.updateWorkoutMetadata(
                 title: .unchanged,
-                goal: .unchanged,
-                guidance: .unchanged,
+                note: .unchanged,
                 expectedRevisionToken: scheduled.workoutRevisionID
             )),
         ]
@@ -895,8 +861,7 @@ struct WorkoutMetadataToolTests {
         #expect(responses.allSatisfy { ConversationService.shouldRecordActivity(
             .updateWorkoutMetadata(
                 title: .set("Representative rejection"),
-                goal: .unchanged,
-                guidance: .unchanged,
+                note: .unchanged,
                 expectedRevisionToken: stale
             ),
             response: $0
@@ -1940,8 +1905,7 @@ private final class WorkoutMutationHarness {
         )
         let workout = Workout(
             title: "Original workout",
-            goal: "Original goal",
-            guidance: CoachGuidance(formCues: ["Original workout guidance"]),
+            goal: "Original note",
             blocks: [firstBlock, secondBlock]
         )
         let scheduled = plan.addScheduled(ScheduledWorkout(

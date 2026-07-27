@@ -27,7 +27,7 @@ Today            Plan                  Train            Profile
 
 **Why this matters:** "Today's Workout — NOT TODAY" feels wrong because it forces one screen to be planning *and* execution. In this model, tapping today's workout enters a **Training Session** (no dates, no "not today"); dates only matter while browsing the **Plan** calendar. The date-scoping banner is a stopgap that this modes split removes.
 
-- **Plan** — Programs (open the only one automatically; show cards if several) → week → **workout cards** (FITR-style, cleaner than a grid) → **Workout Detail** (purpose · today's adaptation · coach notes · blocks · Talk to Baseline · **Start Session** / Edit).
+- **Plan** — Programs (open the only one automatically; show cards if several) → week → **workout cards** (FITR-style, cleaner than a grid) → **Workout Detail** (the workout's one note · today's adaptation · blocks · Talk to Baseline · **Start Session** / Edit).
 - **Train** — Hevy-style execution: exercise → log → complete → next → reflection → Decision Engine → history. Includes **Start Empty Session** (walk in, no plan needed).
 - **AI is everywhere**, scoped to the surface: Plan ("build next week"), Workout Detail ("swap sled pushes"), Train ("I skipped these"), History ("why has my deadlift stalled?").
 
@@ -42,13 +42,13 @@ Today            Plan                  Train            Profile
 **The chat never navigates away.** "Talk to Baseline" is always a **bottom sheet / floating panel** over the current screen — drag-to-peek, dismiss back to where you were — so you can ask "should I add weight?" on Set 3 without leaving the workout.
 
 **Four screens, four flows:**
-- **Today → Workout Detail** — *understanding*: opens **Goal → Today's Context → Coach Guidance → Blocks** (why am I doing this today comes first, before the coach note).
+- **Today → Workout Detail** — *understanding*: opens **Note → Today's Context → Blocks** (why am I doing this today comes first). The workout level carries one athlete-owned note, not a stacked goal plus coach block; coach guidance stays plan metadata and surfaces per exercise.
 - **Workout (execution)** — blocks **collapsed by default** (long sessions don't become enormous), one expanded at a time; each exercise `•••` → Talk about this exercise · Skip · Substitute · Move · Coach Notes · History · Delete · Duplicate. So the chat doesn't have to do everything.
 - **Exercise Detail** (the missing screen) — tap an exercise → History · Best · Recent · Coach Guidance · Current Prescription · Video · Notes · Progression · Talk to Baseline. The home for "how much did I deadlift last month? compare today. should I increase?" — cleaner than burying it in a History tab.
 
 **Naming:** the execution tab is named **Train** - "Workout" sounds static and is overloaded; "Train" reads as intent. Landed with the taxonomy shell.
 
-*Status: the Today, Plan, Train (execution), and Profile tabs and the Workout Detail screen exist. The goal/context ordering above and Exercise Detail remain designed-only and build on the Plan Engine + workout-history persistence.*
+*Status: the Today, Plan, Train (execution), and Profile tabs and the Workout Detail screen exist, and the workout note is one field there. Today's Context ordering above and Exercise Detail remain designed-only and build on the Plan Engine + workout-history persistence.*
 
 ### Interaction density — steal Hevy's muscle memory
 Copy Hevy's *interaction density*, not its product. **Exercises are collapsible document rows, not cards** — a name row separated by whitespace/thin rules; collapsed by default, expanding inline into a **logging table** (`# · TIME · DIST · ⋯` — columns generated from the exercise's selected metrics). A 40-exercise workout is 40 rows, not 40 giant cards. **Blocks are lightweight section headers** (Apple-Notes style: a label + hairline rule), *not* cards — organization, not decoration; they let the exercises breathe, and the implicit default block shows nothing at all. Baseline layers its value *on expand*: today's goal · context · coach guidance appear only when an exercise is open (not always). *(Built: light rows, section-header blocks, collapse-by-default, dynamic metric columns, drag reorder via the workout ⋯ → **Reorder Workout** sheet. Follow-ons: coach-guidance-on-expand — needs the guidance model; per-row thumbnails.)*

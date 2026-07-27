@@ -25,8 +25,8 @@ struct ToolCallMapperTests {
         let blockID = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
         let exerciseID = UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!
         let inputRevision = revision.uuidString
-        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", goal: nil, replaceExisting: false))
-        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "replace_existing": true, "expected_revision_token": inputRevision]) == .createWorkout(title: "Push", goal: nil, replaceExisting: true, expectedRevisionToken: revision))
+        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push"]) == .createWorkout(title: "Push", note: nil, replaceExisting: false))
+        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "replace_existing": true, "expected_revision_token": inputRevision]) == .createWorkout(title: "Push", note: nil, replaceExisting: true, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "add_block", input: ["name": "Strength", "expected_revision_token": inputRevision]) == .addBlock(name: "Strength", intent: nil, guidance: nil, atIndex: nil, expectedRevisionToken: revision))
         #expect(ToolCallMapper.map(name: "add_exercise", input: ["block_id": blockID.uuidString, "name": "Overhead carry", "distance_m": 150, "expected_revision_token": inputRevision])
                 == .addExercise(containerID: blockID, name: "Overhead carry", atIndex: nil, sets: nil, reps: nil, load: nil, durationSeconds: nil, distanceMeters: 150, expectedRevisionToken: revision))
@@ -384,12 +384,11 @@ struct ToolCallMapperTests {
 
         #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
             "title": "Race prep",
-            "goal": NSNull(),
+            "note": NSNull(),
             "expected_revision_token": revision.uuidString,
         ]) == .updateWorkoutMetadata(
             title: .set("Race prep"),
-            goal: .clear,
-            guidance: .unchanged,
+            note: .clear,
             expectedRevisionToken: revision
         ))
         #expect(ToolCallMapper.map(name: "update_block_metadata", input: [
@@ -422,12 +421,12 @@ struct ToolCallMapperTests {
         let exerciseID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
         let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
 
-        func workoutPatches(_ fields: [String: Any]) -> (MetadataPatch<String>, MetadataPatch<String>)? {
+        func workoutNotePatch(_ fields: [String: Any]) -> MetadataPatch<String>? {
             var input = fields
             input["expected_revision_token"] = revision.uuidString
-            guard case .updateWorkoutMetadata(_, let goal, let guidance, _)? =
+            guard case .updateWorkoutMetadata(_, let note, _)? =
                     ToolCallMapper.map(name: "update_workout_metadata", input: input) else { return nil }
-            return (goal, guidance)
+            return note
         }
 
         func blockPatches(_ fields: [String: Any]) -> (MetadataPatch<String>, MetadataPatch<String>)? {
@@ -448,12 +447,8 @@ struct ToolCallMapperTests {
             return (displayLabel, guidance)
         }
 
-        #expect(workoutPatches(["guidance": "Keep steady"])?.0 == .unchanged)
-        #expect(workoutPatches(["goal": "Build capacity"])?.0 == .set("Build capacity"))
-        #expect(workoutPatches(["goal": NSNull()])?.0 == .clear)
-        #expect(workoutPatches(["goal": "Build capacity"])?.1 == .unchanged)
-        #expect(workoutPatches(["guidance": "Keep steady"])?.1 == .set("Keep steady"))
-        #expect(workoutPatches(["guidance": NSNull()])?.1 == .clear)
+        #expect(workoutNotePatch(["note": "Build capacity"]) == .set("Build capacity"))
+        #expect(workoutNotePatch(["note": NSNull()]) == .clear)
 
         #expect(blockPatches(["guidance": "Stay aerobic"])?.0 == .unchanged)
         #expect(blockPatches(["intent": "threshold"])?.0 == .set("threshold"))
@@ -471,8 +466,7 @@ struct ToolCallMapperTests {
 
         // Blank strings on nullable fields normalize to clear, matching the manual editor,
         // so an agent write can never store a value the UI treats as absent.
-        #expect(workoutPatches(["goal": ""])?.0 == .clear)
-        #expect(workoutPatches(["guidance": "  "])?.1 == .clear)
+        #expect(workoutNotePatch(["note": ""]) == .clear)
         #expect(blockPatches(["intent": ""])?.0 == .clear)
         #expect(blockPatches(["guidance": " \n"])?.1 == .clear)
         #expect(exercisePatches(["display_label": ""])?.0 == .clear)
@@ -508,6 +502,39 @@ struct ToolCallMapperTests {
             "guidance": 42,
             "expected_revision_token": id,
         ]) == nil)
+    }
+
+    /// The workout has one note and no guidance of its own. A payload naming workout-level guidance can
+    /// only come from a schema older than the served one, so it is discarded rather than stored - while
+    /// that same older schema's `goal` key still edits the note, because a functions deploy and an app
+    /// build reach a device at different times.
+    @Test func workoutMetadataDiscardsGuidanceAndStillAcceptsTheOlderGoalKey() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "guidance": "Coach text the athlete would never see",
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "goal": "Written by an older served schema",
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateWorkoutMetadata(
+            title: .unchanged,
+            note: .set("Written by an older served schema"),
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "update_workout_metadata", input: [
+            "note": "The served key wins",
+            "goal": "The older key loses",
+            "guidance": "Discarded",
+            "expected_revision_token": revision.uuidString,
+        ]) == .updateWorkoutMetadata(
+            title: .unchanged,
+            note: .set("The served key wins"),
+            expectedRevisionToken: revision
+        ))
+        #expect(ToolCallMapper.map(name: "create_workout", input: ["title": "Push", "note": "Easy day"])
+                == .createWorkout(title: "Push", note: "Easy day", replaceExisting: false))
     }
 
     @Test func mapsExerciseCatalogTools() {

@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Text the plan owns — a goal, a coach note — rendered as quiet read-only context beside the
-/// athlete's editable session note. The caption, the rule, and the fainter treatment are
-/// load-bearing: they are what tells the athlete — by sight and through VoiceOver — which of the
-/// stacked blocks accepts what they type.
+/// A coach note the plan owns for one exercise, rendered as quiet read-only context beside the
+/// athlete's editable session note. The workout-level note is one editable field with nothing
+/// stacked beside it, so this treatment is per-exercise only. The caption, the rule, and the fainter
+/// treatment are load-bearing: they are what tells the athlete - by sight and through VoiceOver -
+/// which of the stacked blocks accepts what they type.
 struct WorkoutPlanNote: View {
     let text: String
     var caption: String = "FROM YOUR PLAN"

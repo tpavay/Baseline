@@ -450,7 +450,6 @@ enum WorkoutImportMaterializer {
 enum WorkoutFingerprint {
     static func value(for workout: Workout) -> String {
         var parts = [normalized(workout.title), normalized(workout.goal ?? "")]
-        append(workout.guidance, to: &parts)
         for block in workout.blocks {
             parts += ["block", normalized(block.name), normalized(block.intent ?? "")]
             append(block.guidance, to: &parts)

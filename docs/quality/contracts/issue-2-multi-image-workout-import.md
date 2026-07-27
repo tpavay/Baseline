@@ -22,6 +22,7 @@ An athlete can select up to 10 workout photos in reading order and land in Basel
 - [ ] AC-2: OCR observations retain their zero-based source image index through the callable payload so parsing and evidence crops cannot confuse coordinates from different images.
 - [ ] AC-3: The parser contract distinguishes workout-level and block-level prose from exercise prescriptions and preserves long notes without converting prose-only lines into exercises.
 - [ ] AC-4: Parsed workout, block, group, and exercise notes materialize into canonical `CoachGuidance`, remain editable in import review, and survive template encode/decode.
+  *(Superseded by issue #79: workout, block, and group prose now folds into the one `Workout.goal` note; only exercise notes become `CoachGuidance`. See `docs/implementation/workout-image-import.md`.)*
 - [ ] AC-5: Selecting zero images, more than 10 images, an unreadable image, or a batch with no readable workout text produces a clear failure and does not save a partial template; a text-free page inside an otherwise readable batch continues to review with an explicit warning.
 - [ ] AC-6: Source image bytes remain local, use complete file protection while temporary, and are removed on cancel or successful save; only bounded OCR observations are sent to the callable parser.
 - [ ] AC-7: Single-image Photos and paste imports keep working through the same ordered-image pipeline.
@@ -60,7 +61,7 @@ An athlete can select up to 10 workout photos in reading order and land in Basel
 | AC-1 | `WorkoutImportViewModelTests.importsImagesInSourceOrder`; simulator source preview | Captures ordered recognizer input and verifies all sources reach review. |
 | AC-2 | `WorkoutTextObservationTests.roundTripsSourceImageIndex`; callable payload test | Proves page identity survives Codable and server validation. |
 | AC-3 | Callable validator test for document/block notes and prompt-contract assertions | Proves the response schema accepts bounded long notes and tells the model how to classify prose. |
-| AC-4 | `WorkoutImportTests.materializesAndRoundTripsNotesAtEveryLevel` | Verifies canonical guidance and backward-compatible Codable behavior. |
+| AC-4 | `WorkoutImportTests.foldsBlockAndGroupNotesIntoTheWorkoutNotesItCanShow` | Verifies workout, block, and group prose folding into the one `Workout.goal` note, exercise notes staying canonical `CoachGuidance`, and Codable round-tripping. |
 | AC-5 | View-model empty/limit/failure tests | Verifies invalid batches fail atomically before save. |
 | AC-6 | Temporary-file batch removal test and payload shape inspection | Verifies protected local lifecycle and the absence of image bytes from the remote contract. |
 | AC-7 | Existing builder tests plus `importImage` convenience-path test | Proves the single-image entry point delegates without changing behavior. |
@@ -85,7 +86,7 @@ An athlete can select up to 10 workout photos in reading order and land in Basel
 
 ## Risk and rollout
 
-- Data compatibility: `guidance` is optional on `Workout` and decoded with a default on `WorkoutBlock`, so existing templates remain readable.
+- Data compatibility: `guidance` is decoded with a default on `WorkoutBlock`, so existing templates remain readable; since issue #79 `Workout` declares no `guidance` at all and decoding drops the key an older encoding carried.
 - Data compatibility: the workout-specific exercise display label is optional, so existing templates decode without migration.
 - Backend compatibility: deploy the callable schema/prompt before or with the app; old single-image clients remain valid because `sourceImageIndex` defaults to zero server-side.
 - Privacy/security: normalized images remain in protected temporary files and never enter Firebase, logs, diagnostics, or parser payloads.

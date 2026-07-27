@@ -164,6 +164,12 @@ struct Prescription: Codable, Equatable, Sendable {
     }
 }
 
+private extension String {
+    /// Whether this text is anything more than whitespace. Every free-form note field in the workout
+    /// model stores what the athlete typed verbatim and uses this as its only emptiness test.
+    var hasMeaningfulText: Bool { !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
 /// Authored "how and why to do it" — kept separate from the prescription and from Athlete Notes.
 struct CoachGuidance: Codable, Equatable, Sendable {
     var goal: String?
@@ -198,9 +204,7 @@ extension CoachGuidance {
         notes.append(note)
     }
 
-    private static func isMeaningful(_ note: String) -> Bool {
-        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    private static func isMeaningful(_ note: String) -> Bool { note.hasMeaningfulText }
 }
 
 struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
@@ -238,11 +242,16 @@ struct PlannedExercise: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// A workout carries exactly one free-form text of its own, `goal` - the note the athlete reads and
+/// edits on every workout-level surface. There is deliberately no workout-level `CoachGuidance`:
+/// structured coach metadata exists only where it is actually rendered, on blocks, groups, rests,
+/// and exercises. Decoding drops any `guidance` key an older encoding carried, because the
+/// synthesized decoder ignores keys the type no longer declares, so it can never be persisted or
+/// re-emitted.
 struct Workout: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var goal: String?
-    var guidance: CoachGuidance?
     var scheduledDate: Date?          // the day this workout is for; nil = legacy/unstamped
     var blocks: [WorkoutBlock] = []
 }
@@ -253,8 +262,26 @@ extension Workout {
 
     // Workout level
     mutating func updateGoal(_ goal: String?) { self.goal = goal }
-    mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
+
+    /// The workout's note, collapsed to one line. Plan cells and profile subtitles use it as a session
+    /// descriptor, and a free-form note may run to several paragraphs — a raw newline would break either
+    /// layout.
+    var goalLine: String? {
+        guard let goal else { return nil }
+        let line = goal.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return line.isEmpty ? nil : line
+    }
+
+    /// Store the athlete's one workout-level note. It is a plain free-form field over `goal`, the value
+    /// plan, profile, and agent surfaces already read as the workout's own text - the workout has no
+    /// second text field to reconstruct or flatten into.
+    mutating func updateNotes(_ text: String) {
+        goal = text.hasMeaningfulText ? text : nil
+    }
 
     // Block level
     @discardableResult
@@ -776,6 +803,10 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     var choices: [ChoiceLog] = []
     var exerciseAdjustments: [ExerciseLogAdjustment] = []
     var athleteNotes: [String] = []
+    /// Whether the athlete has ever committed the workout-level note field — including committing it
+    /// empty. Empty `athleteNotes` alone cannot tell "never touched" from "deliberately cleared", and a
+    /// session that predates this field only borrows the plan's note for display until it is touched.
+    var hasAuthoredNotes = false
     var isComplete = false
     /// Measured heart rate for this session: average, max, sample count, seconds per zone, and the
     /// zone boundaries in force at completion. Small by construction — the sample array itself lives
@@ -786,7 +817,8 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     init(id: UUID = UUID(), plannedWorkoutID: UUID? = nil, exercises: [PerformedExercise] = [],
          groups: [GroupLog] = [], choices: [ChoiceLog] = [],
          exerciseAdjustments: [ExerciseLogAdjustment] = [], athleteNotes: [String] = [],
-         isComplete: Bool = false, heartRateSummary: WorkoutHeartRateSummary? = nil) {
+         hasAuthoredNotes: Bool = false, isComplete: Bool = false,
+         heartRateSummary: WorkoutHeartRateSummary? = nil) {
         self.id = id
         self.plannedWorkoutID = plannedWorkoutID
         self.exercises = exercises
@@ -794,13 +826,14 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
         self.choices = choices
         self.exerciseAdjustments = exerciseAdjustments
         self.athleteNotes = athleteNotes
+        self.hasAuthoredNotes = hasAuthoredNotes
         self.isComplete = isComplete
         self.heartRateSummary = heartRateSummary
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, plannedWorkoutID, exercises, groups, choices, exerciseAdjustments, athleteNotes, isComplete
-        case heartRateSummary
+        case id, plannedWorkoutID, exercises, groups, choices, exerciseAdjustments, athleteNotes
+        case hasAuthoredNotes, isComplete, heartRateSummary
     }
 
     init(from decoder: Decoder) throws {
@@ -815,6 +848,10 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
             forKey: .exerciseAdjustments
         ) ?? []
         athleteNotes = try container.decodeIfPresent([String].self, forKey: .athleteNotes) ?? []
+        // A log written before the marker existed counts as authored exactly when it already carries a
+        // note; anything else decodes as never-written and so still shows the plan's note.
+        hasAuthoredNotes = try container.decodeIfPresent(Bool.self, forKey: .hasAuthoredNotes)
+            ?? !athleteNotes.isEmpty
         isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? false
         heartRateSummary = try container.decodeIfPresent(WorkoutHeartRateSummary.self, forKey: .heartRateSummary)
     }
@@ -910,21 +947,24 @@ extension WorkoutLog {
     /// is what keeps an in-session note from riding along when a session is promoted to the plan.
     /// Clearing the field never conjures a performed record for an exercise that has none.
     mutating func setNotes(_ text: String, forPlanned plannedID: UUID, name: String) {
-        let isBlank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isBlank = !text.hasMeaningfulText
         guard !isBlank || performed(forPlanned: plannedID) != nil else { return }
         exercises[index(forPlanned: plannedID, name: name)].athleteNotes = isBlank ? [] : [text]
     }
 
-    /// Replace the workout-level session notes with the athlete's edited text.
+    /// Replace the workout-level session notes with the athlete's edited text. Committing the field
+    /// marks it authored even when the text is blank, so clearing the note is a recorded decision the
+    /// plan's note can no longer override.
     mutating func setNotes(_ text: String) {
-        athleteNotes = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [text]
+        athleteNotes = text.hasMeaningfulText ? [text] : []
+        hasAuthoredNotes = true
     }
 
     /// The workout-level session notes as one block of editable text.
     var notesText: String { Self.notesText(athleteNotes) }
 
     static func notesText(_ notes: [String]) -> String {
-        notes.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        notes.filter(\.hasMeaningfulText)
             .joined(separator: "\n\n")
     }
 

@@ -1111,12 +1111,11 @@ final class WorkoutStore {
     @discardableResult
     func updateWorkoutMetadata(
         title: MetadataPatch<String>,
-        goal: MetadataPatch<String>,
-        guidance: MetadataPatch<String>,
+        note: MetadataPatch<String>,
         expectedRevisionToken: UUID
     ) -> EditOutcome {
         perform(
-            .updateWorkoutMetadata(title: title, goal: goal, guidance: guidance),
+            .updateWorkoutMetadata(title: title, note: note),
             expectedRevisionToken: expectedRevisionToken
         )
     }
@@ -1944,8 +1943,8 @@ final class WorkoutStore {
     /// the one authoritative workout value the envelope supplies.
     private func preparedEdit(for operation: WorkoutEditOperation) -> Prepared {
         switch operation {
-        case .updateWorkoutMetadata(let title, let goal, let guidance):
-            guard !title.isUnchanged || !goal.isUnchanged || !guidance.isUnchanged else {
+        case .updateWorkoutMetadata(let title, let note):
+            guard !title.isUnchanged || !note.isUnchanged else {
                 return .failure(.notFound("Include at least one workout detail to change."))
             }
             guard title != .clear else {
@@ -1954,17 +1953,16 @@ final class WorkoutStore {
             return .success(PreparedEdit(
                 reason: "Update workout metadata",
                 changes: metadataChanges(
-                    fields: [("workout title", title), ("workout goal", goal), ("workout guidance", guidance)],
+                    fields: [("workout title", title), ("workout note", note)],
                     entityID: current?.id
                 ),
-                transform: { [self] workout in
+                transform: { workout in
                     if case .set(let value) = title { workout.rename(value) }
-                    switch goal {
+                    switch note {
                     case .unchanged: break
                     case .set(let value): workout.updateGoal(value)
                     case .clear: workout.updateGoal(nil)
                     }
-                    workout.updateGuidance(applyingGuidance(guidance, to: workout.guidance))
                     return nil
                 }
             ))
@@ -4201,9 +4199,11 @@ final class WorkoutStore {
         }
         var lines = [
             "MUTATION TARGET: scope=\(target.scope.rawValue), scheduled_workout_id=\(target.scheduledWorkoutID?.uuidString ?? "null"), session_id=\(target.sessionID?.uuidString ?? "null"), workout_id=\(target.workoutID.uuidString), revision_token=\(target.revisionToken.uuidString)",
-            "WORKOUT [id: \(w.id.uuidString)]: \(w.title)" + (w.goal.map { " - goal: \($0)" } ?? ""),
+            "WORKOUT [id: \(w.id.uuidString)]: \(w.title)",
         ]
-        lines.append(contentsOf: guidanceSummary(w.guidance, indent: "  "))
+        // The workout's one note, under the same name the tool schema and the athlete's field use.
+        // There is no workout-level guidance line to follow it - guidance starts at the block.
+        lines.append(contentsOf: noteSummary(w.goal, label: "Note", indent: "  "))
         if w.blocks.isEmpty { lines.append("(no blocks yet)") }
         for (index, block) in w.blocks.enumerated() {
             lines.append("BLOCK \(index + 1) [id: \(block.id.uuidString)]: \(block.name)" + (block.intent.map { " - intent: \($0)" } ?? ""))
@@ -4323,6 +4323,17 @@ final class WorkoutStore {
             lines.append("\(indent)REST [id: \(rest.id.uuidString)]: \(rest.label) — \(duration), \(rest.placement.rawValue)")
             if let guidance = rest.guidance, !guidance.isEmpty { lines.append("\(indent)  Note: \(guidance)") }
         }
+    }
+
+    /// A free-form note inside a line-oriented summary: one labelled line, then the note's remaining
+    /// lines indented under it. The athlete's note may run to several paragraphs, and a model asked to
+    /// revise it echoes back what it read — flattening the breaks here would silently destroy them.
+    private func noteSummary(_ note: String?, label: String, indent: String) -> [String] {
+        guard let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        let noteLines = note.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let first = noteLines.first else { return [] }
+        return ["\(indent)\(label): \(first)"]
+            + noteLines.dropFirst().map { $0.isEmpty ? "" : "\(indent)  \($0)" }
     }
 
     private func guidanceSummary(_ guidance: CoachGuidance?, indent: String) -> [String] {

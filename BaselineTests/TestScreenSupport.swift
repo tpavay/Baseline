@@ -35,8 +35,53 @@ extension HostedScreen {
             .first { $0.accessibilityLabel?.contains(text) ?? false }
     }
 
+    func hasLabel(containing text: String) -> Bool {
+        element(labelled: text) != nil
+    }
+
     func activate(labelled text: String) -> Bool {
         element(labelled: text)?.accessibilityActivate() ?? false
+    }
+
+    /// Every view in the hosted hierarchy — the text-input lookups below need views UIKit publishes no
+    /// accessibility element for, which `AccessibilityElementWalker` deliberately skips.
+    func views() -> [UIView] {
+        func walk(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(walk) }
+        return walk(window)
+    }
+
+    func textInputs(labelled label: String) -> [UIView & UITextInput] {
+        views()
+            .compactMap { $0 as? (UIView & UITextInput) }
+            .filter { $0.accessibilityLabel?.contains(label) ?? false }
+    }
+
+    func inputCount(labelled label: String) -> Int {
+        textInputs(labelled: label).count
+    }
+
+    func inputText(labelled label: String) -> String? {
+        guard let input = textInputs(labelled: label).first,
+              let range = input.textRange(from: input.beginningOfDocument, to: input.endOfDocument)
+        else { return nil }
+        return input.text(in: range)
+    }
+
+    func replaceInput(labelled label: String, with text: String) throws {
+        let input = try #require(textInputs(labelled: label).first)
+        input.becomeFirstResponder()
+        let range = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
+        input.replace(range, withText: text)
+        input.resignFirstResponder()
+        window.layoutIfNeeded()
+    }
+
+    func canFocusInput(labelled label: String) -> Bool {
+        guard let input = textInputs(labelled: label).first else { return false }
+        input.becomeFirstResponder()
+        let isFocused = input.isFirstResponder
+        input.resignFirstResponder()
+        return isFocused
     }
 
     /// Pin the tallest scroll view to its bottom, then lay out. Content inside a `LazyVStack` below the

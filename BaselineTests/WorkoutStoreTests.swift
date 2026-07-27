@@ -558,7 +558,7 @@ struct WorkoutStoreTests {
             .exercise(PlannedExercise(exerciseName: "Concept2 Bike", definitionId: "concept2_bike")),
         ])
         s.edit(.plan) { workout in
-            workout.guidance = CoachGuidance(formCues: ["Protect the next intensity day"])
+            workout.updateNotes("Protect the next intensity day")
             workout.blocks[0].guidance = CoachGuidance(formCues: ["Stay aerobic"])
             workout.blocks[0].nodes = [.group(group), .choice(choice)]
         }
@@ -587,6 +587,25 @@ struct WorkoutStoreTests {
         #expect(summary.contains("Protect the next intensity day"))
         #expect(summary.contains("Complete every movement"))
         #expect(summary.contains("Keep the rope tight"))
+    }
+
+    @Test func summaryKeepsAMultiParagraphWorkoutNoteIntactUnderTheNoteLabel() {
+        let s = WorkoutStore(units: StubUnitSystem(), defaults: UserDefaults(suiteName: "wk-\(UUID().uuidString)")!)
+        let note = "Keep it easy.\n\nStop if the knee talks."
+        s.create(title: "Aerobic day", goal: note)
+
+        let summary = s.summary(.plan)
+
+        // The model echoes back what it reads, so the note's paragraph breaks must survive the
+        // line-oriented summary rather than being flattened into one line. It is labelled the same
+        // way the tool schema and the athlete's field name it, so the model edits what it reads.
+        #expect(summary.contains("""
+          Note: Keep it easy.
+
+            Stop if the knee talks.
+        """))
+        #expect(!summary.contains("Goal:"))
+        #expect(summary.components(separatedBy: "Keep it easy.").count == 2)
     }
 
     @Test func transientReviewStoreKeepsDraftEditsIsolatedButSharesDeliberateDefaults() {
