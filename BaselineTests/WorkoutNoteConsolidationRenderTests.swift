@@ -14,6 +14,9 @@ extension IdleTimerRenderTests {
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.")
+            // The editor is where the second field used to live, so it is worth a look as well as an
+            // assertion: one note, carrying the old goal text.
+            try screen.capture("workout-note-editor")
 
             try screen.replaceInput(labelled: "Workout note", with: "One consolidated note")
             try await screen.settle()

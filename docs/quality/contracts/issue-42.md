@@ -42,7 +42,7 @@ Every edit targets the revision and stable instance IDs returned by `get_current
 
 | Acceptance criterion | Automated test or evidence | Why it proves the behavior |
 |---|---|---|
-| AC-1 | `WorkoutMetadataToolTests/updateWorkoutMetadataReturnsReceiptAndUndoRestoresPriorState` | Exercises workout title, goal, and guidance through the public call and undo path. |
+| AC-1 | `WorkoutMetadataToolTests/updateWorkoutMetadataReturnsReceiptAndUndoRestoresPriorState` | Exercises the workout title and, since issue #79, the workout's one note through the public call and undo path. |
 | AC-2 | `WorkoutMetadataToolTests/updateBlockMetadataTargetsDuplicateNameByIDAndUndoRestoresPriorState` | Proves stable block targeting, receipt creation, and restoration. |
 | AC-3 | `WorkoutMetadataToolTests/updateExerciseMetadataTargetsDuplicateNameByIDAndUndoRestoresPriorState` | Proves stable exercise-instance targeting, receipt creation, and restoration. |
 | AC-4 | `ToolCallMapperTests/mapsMetadataPatchesWithoutCollapsingOmittedAndNull` and `WorkoutMetadataToolTests/nullableMetadataSupportsSetClearAndOmitted` | Proves all three JSON states survive mapping and produce distinct domain outcomes. |
