@@ -13,7 +13,8 @@ import UIKit
 /// subtree, so nesting is all a member suite has to do.
 ///
 /// Current members: `WorkoutKeepAwakeRenderTests`, `WorkoutImportKeepAwakeRenderTests`,
-/// `WorkoutSessionEditingE2ERenderTests`.
+/// `WorkoutSessionEditingE2ERenderTests`, `WorkoutCompletedSummaryRenderTests`, and
+/// `WorkoutNoteConsolidationRenderTests`.
 @Suite(.serialized)
 struct IdleTimerRenderTests {}
 

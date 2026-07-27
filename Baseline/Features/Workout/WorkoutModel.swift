@@ -256,6 +256,27 @@ extension Workout {
     mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
 
+    /// The one workout-level note shown to the athlete. Older workouts may carry text in both the
+    /// coach-facing goal and guidance fields, so fold both into the editable note without losing
+    /// imported or generated content.
+    var notesText: String {
+        var notes: [String] = []
+        for note in [goal, guidance?.notesText].compactMap({ $0 }) {
+            guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !notes.contains(note) else { continue }
+            notes.append(note)
+        }
+        return notes.joined(separator: "\n\n")
+    }
+
+    /// Normalize the athlete's single edited note back into the existing goal path. The goal remains
+    /// available to coach and planning tools, while legacy guidance text has already been folded into
+    /// `notesText` before this edit and can be removed without dropping content.
+    mutating func updateNotes(_ text: String) {
+        goal = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+        guidance = nil
+    }
+
     // Block level
     @discardableResult
     mutating func addBlock(name: String, intent: String? = nil) -> UUID {
@@ -1319,6 +1340,13 @@ extension Workout {
         let choiceLogs = allChoices.map {
             ChoiceLog(plannedChoiceID: $0.id, selectedOptionIDs: Array($0.options.prefix($0.selectionCount).map(\.id)))
         }
-        return WorkoutLog(plannedWorkoutID: id, exercises: performed, groups: groupLogs, choices: choiceLogs)
+        let workoutNotes = notesText
+        return WorkoutLog(
+            plannedWorkoutID: id,
+            exercises: performed,
+            groups: groupLogs,
+            choices: choiceLogs,
+            athleteNotes: workoutNotes.isEmpty ? [] : [workoutNotes]
+        )
     }
 }

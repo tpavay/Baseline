@@ -43,17 +43,12 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
                 .foregroundStyle(BaselineColor.textHi)
                 .textInputAutocapitalization(.sentences)
 
-            TextField("Workout goal", text: workoutGoalBinding, axis: .vertical)
-                .font(.body)
-                .foregroundStyle(BaselineColor.textMid)
-                .lineLimit(2...6)
-
             WorkoutNotesField(
-                prompt: "Add notes here...",
-                text: workoutGuidanceBinding,
+                prompt: "Add a note here…",
+                text: workoutNotesBinding,
                 font: .body,
                 lineLimit: 2...,
-                accessibilityLabel: "Workout notes"
+                accessibilityLabel: "Workout note"
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,21 +143,10 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
         )
     }
 
-    private var workoutGoalBinding: Binding<String> {
+    private var workoutNotesBinding: Binding<String> {
         Binding(
-            get: { store.current?.goal ?? "" },
-            set: { value in store.edit(.plan) { $0.updateGoal(value.isEmpty ? nil : value) } }
-        )
-    }
-
-    private var workoutGuidanceBinding: Binding<String> {
-        Binding(
-            get: { store.current?.guidance?.notesText ?? "" },
-            set: { value in
-                store.edit(.plan) { workout in
-                    workout.updateGuidance(CoachGuidance.notes(from: value))
-                }
-            }
+            get: { store.current?.notesText ?? "" },
+            set: { value in store.edit(.plan) { $0.updateNotes(value) } }
         )
     }
 

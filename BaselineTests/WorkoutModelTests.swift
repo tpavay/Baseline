@@ -223,6 +223,22 @@ struct WorkoutModelTests {
         #expect(CoachGuidance.notes(from: "   \n ") == nil)
     }
 
+    @Test func workoutNotesFoldLegacyGoalAndGuidanceIntoThePerformedLog() {
+        var workout = Workout(
+            title: "Legacy workout",
+            goal: "Preserve the coach goal",
+            guidance: CoachGuidance(formCues: ["Preserve the imported note"])
+        )
+
+        #expect(workout.notesText == "Preserve the coach goal\n\nPreserve the imported note")
+        #expect(workout.startLog().notesText == workout.notesText)
+
+        workout.updateNotes("One athlete-facing note")
+        #expect(workout.notesText == "One athlete-facing note")
+        #expect(workout.goal == "One athlete-facing note")
+        #expect(workout.guidance == nil)
+    }
+
     @Test func sessionNotesStayOnTheLogAndNeverTouchPlannedGuidance() {
         var (w, _, _, bench) = sample()
         w.updateExercise(bench) { $0.guidance = CoachGuidance(formCues: ["Coach: pause on the chest"]) }

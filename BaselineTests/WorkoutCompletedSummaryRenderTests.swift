@@ -4,47 +4,48 @@ import Testing
 import UIKit
 @testable import Baseline
 
-@MainActor
-struct WorkoutCompletedSummaryRenderTests {
-    @Test func completedSummaryHidesExerciseStateChipsButKeepsLoggedRows() async throws {
-        let screen = try await CompletedWorkoutSummaryScreen()
-        defer { screen.tearDown() }
+extension IdleTimerRenderTests {
+    @MainActor
+    struct WorkoutCompletedSummaryRenderTests {
+        @Test func completedSummaryShowsOneEditableWorkoutNoteAndKeepsLoggedRows() async throws {
+            let screen = try await CompletedWorkoutSummaryScreen()
+            defer { screen.tearDown() }
 
-        try await screen.settle()
-        try screen.capture("workout-summary-state-chips-after")
+            try await screen.settle()
+            try screen.capture("workout-note-filled")
 
-        #expect(screen.hasLabel(containing: "Logged Cleanup Session"))
-        #expect(screen.hasLabel(containing: "Workout notes"))
-        #expect(screen.hasLabel(containing: "Back Squat"))
-        #expect(screen.hasLabel(containing: "Bench Press"))
-        #expect(screen.hasLabel(containing: "Pull-Up"))
-        #expect(screen.hasLabel(containing: "Run"))
-        #expect(screen.hasLabel(containing: "Notes for Back Squat"))
-        #expect(screen.hasAccessibleText(containing: "Felt stable under load."))
-        // The workout-level note the athlete typed is read back into the field they typed it in.
-        #expect(screen.hasAccessibleText(containing: "Kept the session short."))
-        // The note the athlete typed stays a performed fact; it is never folded into the plan's guidance.
-        #expect(screen.performedNotes(forExerciseAt: 0) == ["Felt stable under load."])
-        #expect(screen.plannedNotes(forExerciseAt: 0) == ["Existing note for Back Squat."])
-        // The plan's own note is read-only context, announced as such rather than as a second Notes field.
-        #expect(screen.hasLabel(containing: "Plan note for Back Squat. Existing note for Back Squat."))
-        #expect(screen.hasLabel(containing: "Notes for Back Squat. Existing note") == false)
-        // Same at the workout level: the goal and the plan note are captioned context, and the session
-        // notes field is the only thing in the header that accepts typing.
-        #expect(screen.hasLabel(containing: "Workout goal. Keep the completed log readable."))
-        #expect(screen.hasLabel(containing: "Plan note. Hold the paces we agreed on."))
-        #expect(screen.hasLabel(containing: "Set completed"))
-        #expect(screen.canFocusInput(labelled: "Workout notes"))
-        #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))
-        #expect(screen.canFocusInput(labelled: "Plan note for Back Squat") == false)
-        #expect(screen.canFocusInput(labelled: "Workout goal") == false)
-        #expect(screen.canFocusInput(labelled: "Plan note.") == false)
+            #expect(screen.hasLabel(containing: "Logged Cleanup Session"))
+            #expect(screen.inputCount(labelled: "Workout note") == 1)
+            #expect(screen.hasLabel(containing: "Back Squat"))
+            #expect(screen.hasLabel(containing: "Bench Press"))
+            #expect(screen.hasLabel(containing: "Pull-Up"))
+            #expect(screen.hasLabel(containing: "Run"))
+            #expect(screen.hasLabel(containing: "Notes for Back Squat"))
+            #expect(screen.hasAccessibleText(containing: "Felt stable under load."))
+            // The workout-level note the athlete typed is read back into the field they typed it in.
+            #expect(screen.hasAccessibleText(containing: "Kept the session short."))
+            // The note the athlete typed stays a performed fact; it is never folded into the plan's guidance.
+            #expect(screen.performedNotes(forExerciseAt: 0) == ["Felt stable under load."])
+            #expect(screen.plannedNotes(forExerciseAt: 0) == ["Existing note for Back Squat."])
+            // The plan's own note is read-only context, announced as such rather than as a second Notes field.
+            #expect(screen.hasLabel(containing: "Plan note for Back Squat. Existing note for Back Squat."))
+            #expect(screen.hasLabel(containing: "Notes for Back Squat. Existing note") == false)
+            // At the workout level, prior goal and guidance text are folded into the one editable note.
+            #expect(screen.hasAccessibleText(containing: "Keep the completed log readable."))
+            #expect(screen.hasAccessibleText(containing: "Hold the paces we agreed on."))
+            #expect(screen.hasLabel(containing: "Workout goal") == false)
+            #expect(screen.hasLabel(containing: "Plan note. Hold the paces we agreed on.") == false)
+            #expect(screen.hasLabel(containing: "Set completed"))
+            #expect(screen.canFocusInput(labelled: "Workout note"))
+            #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))
+            #expect(screen.canFocusInput(labelled: "Plan note for Back Squat") == false)
 
-        #expect(screen.hasLabel(containing: "Done") == false)
-        #expect(screen.hasLabel(containing: "Modified") == false)
-        #expect(screen.hasLabel(containing: "Substituted") == false)
-        #expect(screen.hasLabel(containing: "Subbed") == false)
-        #expect(screen.hasLabel(containing: "Skipped") == false)
+            #expect(screen.hasLabel(containing: "Done") == false)
+            #expect(screen.hasLabel(containing: "Modified") == false)
+            #expect(screen.hasLabel(containing: "Substituted") == false)
+            #expect(screen.hasLabel(containing: "Subbed") == false)
+            #expect(screen.hasLabel(containing: "Skipped") == false)
+        }
     }
 }
 
@@ -122,14 +123,21 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
     }
 
     func canFocusInput(labelled label: String) -> Bool {
-        guard let input = Self.allViews(in: window)
-            .compactMap({ $0 as? (UIView & UITextInput) })
-            .first(where: { $0.accessibilityLabel?.contains(label) ?? false })
-        else { return false }
+        guard let input = textInputs(labelled: label).first else { return false }
         input.becomeFirstResponder()
         let isFocused = input.isFirstResponder
         input.resignFirstResponder()
         return isFocused
+    }
+
+    func inputCount(labelled label: String) -> Int {
+        textInputs(labelled: label).count
+    }
+
+    private func textInputs(labelled label: String) -> [UIView & UITextInput] {
+        Self.allViews(in: window)
+            .compactMap({ $0 as? (UIView & UITextInput) })
+            .filter { $0.accessibilityLabel?.contains(label) ?? false }
     }
 
     private static func allViews(in root: UIView) -> [UIView] {
@@ -146,7 +154,7 @@ private final class CompletedWorkoutSummaryScreen: HostedScreen {
         guard exercises.count == 4 else { return }
 
         store.editLog { log in
-            log.setNotes("Kept the session short.")
+            log.setNotes([log.notesText, "Kept the session short."].filter { !$0.isEmpty }.joined(separator: "\n\n"))
 
             logSet(for: exercises[0], in: &log, outcome: .completed)
             log.setStatus(.completed, forPlanned: exercises[0].id, name: exercises[0].exerciseName)

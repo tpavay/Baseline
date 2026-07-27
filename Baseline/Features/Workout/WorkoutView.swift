@@ -450,41 +450,19 @@ struct WorkoutView: View {
                 .foregroundStyle(BaselineColor.textHi)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let goal = workout.goal, !goal.isEmpty {
-                if mode.usesPerformedData {
-                    WorkoutPlanNote(
-                        text: goal,
-                        caption: "GOAL",
-                        font: .body,
-                        accessibilityLabel: "Workout goal"
-                    )
-                } else {
-                    Text(goal)
-                        .font(.body)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            if let notes = workout.guidance?.notesText, !notes.isEmpty {
-                if mode.usesPerformedData {
-                    WorkoutPlanNote(text: notes, font: .body, accessibilityLabel: "Plan note")
-                } else {
-                    Text(notes)
-                        .font(.body)
-                        .foregroundStyle(BaselineColor.textMid)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
             if mode.usesPerformedData {
                 WorkoutNotesField(
-                    prompt: "Add notes here...",
+                    prompt: "Add a note here…",
                     text: sessionNotesBinding,
                     font: .body,
                     lineLimit: 2...,
-                    accessibilityLabel: "Workout notes"
+                    accessibilityLabel: "Workout note"
                 )
+            } else if !workout.notesText.isEmpty {
+                Text(workout.notesText)
+                    .font(.body)
+                    .foregroundStyle(BaselineColor.textMid)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
