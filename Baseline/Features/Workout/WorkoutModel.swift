@@ -174,21 +174,18 @@ struct CoachGuidance: Codable, Equatable, Sendable {
 }
 
 extension CoachGuidance {
-    /// Every note this guidance carries, in display order. Blank and restated components are dropped;
-    /// the rest is returned exactly as stored, so a field bound to these round-trips whatever the athlete
-    /// typed instead of normalizing it away between keystrokes. Exposed component-wise so a wider fold
-    /// can dedupe against each note rather than against the whole joined block.
-    var notes: [String] {
+    /// Every note this guidance carries, in display order, as one block of text. Blank components are
+    /// dropped; the rest is returned exactly as stored, so a field bound to this value round-trips
+    /// whatever the athlete typed instead of normalizing it away between keystrokes.
+    var notesText: String {
         var notes: [String] = []
         Self.append(goal, to: &notes)
         Self.append(tempo, to: &notes)
-        for cue in formCues { Self.append(cue, to: &notes) }
-        for mistake in commonMistakes { Self.append(mistake, to: &notes) }
+        notes.append(contentsOf: formCues.filter(Self.isMeaningful))
+        notes.append(contentsOf: commonMistakes.filter(Self.isMeaningful))
         Self.append(progressionNotes, to: &notes)
-        return notes
+        return notes.joined(separator: "\n\n")
     }
-
-    var notesText: String { notes.joined(separator: "\n\n") }
 
     /// The guidance one edited notes field represents. The raw text is stored; only the emptiness test
     /// trims, so trailing spaces and newlines survive.
@@ -196,34 +193,8 @@ extension CoachGuidance {
         isMeaningful(text) ? CoachGuidance(formCues: [text]) : nil
     }
 
-    /// The guidance that survives an edit of a notes text this guidance was folded into. Components the
-    /// athlete left in the text keep their structure, so tempo stays tempo and mistakes stay mistakes;
-    /// ones they deleted are dropped, so removing a line through the note field actually removes it.
-    /// Returns nil once nothing is left, rather than an empty shell.
-    func retainingNotes(in text: String) -> CoachGuidance? {
-        var kept = CoachGuidance(
-            goal: Self.retain(goal, in: text),
-            tempo: Self.retain(tempo, in: text),
-            progressionNotes: Self.retain(progressionNotes, in: text)
-        )
-        kept.formCues = formCues.filter { Self.retain($0, in: text) != nil }
-        kept.commonMistakes = commonMistakes.filter { Self.retain($0, in: text) != nil }
-        return kept == CoachGuidance() ? nil : kept
-    }
-
-    private static func retain(_ note: String?, in text: String) -> String? {
-        guard let note, isMeaningful(note),
-              text.contains(note.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
-        return note
-    }
-
-    /// Collect `note` unless it is blank or its trimmed text already reads inside what has been
-    /// collected. Folding overlapping sources is the whole point of a notes text, so the same sentence
-    /// must never render twice because one source restates another or differs only in surrounding space.
-    static func append(_ note: String?, to notes: inout [String]) {
+    private static func append(_ note: String?, to notes: inout [String]) {
         guard let note, isMeaningful(note) else { return }
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !notes.contains(where: { $0.contains(trimmed) }) else { return }
         notes.append(note)
     }
 
@@ -285,23 +256,38 @@ extension Workout {
     mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
 
-    /// The one workout-level note shown to the athlete, read at display time. Workouts may carry text
-    /// in both the coach-facing goal and the structured guidance, so both are folded here rather than
-    /// rewritten into one field — neither source loses content and neither is restated twice.
+    /// Read-only display of everything the workout says at its own level: the note plus whatever an
+    /// import or agent left in structured guidance. This is a rendering, never a storage or edit path —
+    /// the note is stored in `goal` alone and guidance keeps its own shape.
     var notesText: String {
         var notes: [String] = []
-        CoachGuidance.append(goal, to: &notes)
-        for note in guidance?.notes ?? [] { CoachGuidance.append(note, to: &notes) }
+        for note in [goal, guidance?.notesText] {
+            guard let note, CoachGuidance.isMeaningful(note) else { continue }
+            let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !notes.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed })
+            else { continue }
+            notes.append(note)
+        }
         return notes.joined(separator: "\n\n")
     }
 
-    /// Store the athlete's single edited note in `goal`, the field plan, profile, and agent surfaces
-    /// already read as the workout's coach text. Structured guidance stays separate plan metadata and
-    /// keeps its shape: only the components the athlete deleted from the folded text are dropped, so the
-    /// field reads back exactly what was typed without an edit flattening the guidance behind it.
+    /// The workout's note, collapsed to one line. Plan cells, profile subtitles, and the line-oriented
+    /// agent summary all use it as a session descriptor, and a free-form note may run to several
+    /// paragraphs — a raw newline would break every one of those layouts.
+    var goalLine: String? {
+        guard let goal else { return nil }
+        let line = goal.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return line.isEmpty ? nil : line
+    }
+
+    /// Store the athlete's one workout-level note. It is a plain free-form field over `goal`, the value
+    /// plan, profile, and agent surfaces already read as the workout's own text. Structured guidance is
+    /// separate plan metadata this path never reads, writes, reconstructs, or flattens.
     mutating func updateNotes(_ text: String) {
         goal = CoachGuidance.isMeaningful(text) ? text : nil
-        guidance = guidance?.retainingNotes(in: text)
     }
 
     // Block level
@@ -824,6 +810,10 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     var choices: [ChoiceLog] = []
     var exerciseAdjustments: [ExerciseLogAdjustment] = []
     var athleteNotes: [String] = []
+    /// Whether the athlete has ever committed the workout-level note field — including committing it
+    /// empty. Empty `athleteNotes` alone cannot tell "never touched" from "deliberately cleared", and a
+    /// session that predates this field only borrows the plan's note for display until it is touched.
+    var hasAuthoredNotes = false
     var isComplete = false
     /// Measured heart rate for this session: average, max, sample count, seconds per zone, and the
     /// zone boundaries in force at completion. Small by construction — the sample array itself lives
@@ -834,7 +824,8 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     init(id: UUID = UUID(), plannedWorkoutID: UUID? = nil, exercises: [PerformedExercise] = [],
          groups: [GroupLog] = [], choices: [ChoiceLog] = [],
          exerciseAdjustments: [ExerciseLogAdjustment] = [], athleteNotes: [String] = [],
-         isComplete: Bool = false, heartRateSummary: WorkoutHeartRateSummary? = nil) {
+         hasAuthoredNotes: Bool = false, isComplete: Bool = false,
+         heartRateSummary: WorkoutHeartRateSummary? = nil) {
         self.id = id
         self.plannedWorkoutID = plannedWorkoutID
         self.exercises = exercises
@@ -842,13 +833,14 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
         self.choices = choices
         self.exerciseAdjustments = exerciseAdjustments
         self.athleteNotes = athleteNotes
+        self.hasAuthoredNotes = hasAuthoredNotes
         self.isComplete = isComplete
         self.heartRateSummary = heartRateSummary
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, plannedWorkoutID, exercises, groups, choices, exerciseAdjustments, athleteNotes, isComplete
-        case heartRateSummary
+        case id, plannedWorkoutID, exercises, groups, choices, exerciseAdjustments, athleteNotes
+        case hasAuthoredNotes, isComplete, heartRateSummary
     }
 
     init(from decoder: Decoder) throws {
@@ -863,6 +855,10 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
             forKey: .exerciseAdjustments
         ) ?? []
         athleteNotes = try container.decodeIfPresent([String].self, forKey: .athleteNotes) ?? []
+        // A log written before the marker existed counts as authored exactly when it already carries a
+        // note; anything else decodes as never-written and so still shows the plan's note.
+        hasAuthoredNotes = try container.decodeIfPresent(Bool.self, forKey: .hasAuthoredNotes)
+            ?? !athleteNotes.isEmpty
         isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? false
         heartRateSummary = try container.decodeIfPresent(WorkoutHeartRateSummary.self, forKey: .heartRateSummary)
     }
@@ -963,9 +959,12 @@ extension WorkoutLog {
         exercises[index(forPlanned: plannedID, name: name)].athleteNotes = isBlank ? [] : [text]
     }
 
-    /// Replace the workout-level session notes with the athlete's edited text.
+    /// Replace the workout-level session notes with the athlete's edited text. Committing the field
+    /// marks it authored even when the text is blank, so clearing the note is a recorded decision the
+    /// plan's note can no longer override.
     mutating func setNotes(_ text: String) {
-        athleteNotes = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [text]
+        athleteNotes = CoachGuidance.isMeaningful(text) ? [text] : []
+        hasAuthoredNotes = true
     }
 
     /// The workout-level session notes as one block of editable text.

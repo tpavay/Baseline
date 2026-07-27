@@ -143,9 +143,12 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
         )
     }
 
+    /// A plain free-form field over the workout's own note. Structured guidance an import or agent wrote
+    /// is separate plan metadata: the read-only header renders it alongside this note, and editing here
+    /// never reads, rewrites, or decomposes it.
     private var workoutNotesBinding: Binding<String> {
         Binding(
-            get: { store.current?.notesText ?? "" },
+            get: { store.current?.goal ?? "" },
             set: { value in store.edit(.plan) { $0.updateNotes(value) } }
         )
     }

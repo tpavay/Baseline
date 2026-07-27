@@ -4201,7 +4201,7 @@ final class WorkoutStore {
         }
         var lines = [
             "MUTATION TARGET: scope=\(target.scope.rawValue), scheduled_workout_id=\(target.scheduledWorkoutID?.uuidString ?? "null"), session_id=\(target.sessionID?.uuidString ?? "null"), workout_id=\(target.workoutID.uuidString), revision_token=\(target.revisionToken.uuidString)",
-            "WORKOUT [id: \(w.id.uuidString)]: \(w.title)" + (w.goal.map { " - goal: \($0)" } ?? ""),
+            "WORKOUT [id: \(w.id.uuidString)]: \(w.title)" + (w.goalLine.map { " - goal: \($0)" } ?? ""),
         ]
         lines.append(contentsOf: guidanceSummary(w.guidance, indent: "  "))
         if w.blocks.isEmpty { lines.append("(no blocks yet)") }

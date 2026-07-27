@@ -223,43 +223,99 @@ struct WorkoutModelTests {
         #expect(CoachGuidance.notes(from: "   \n ") == nil)
     }
 
-    @Test func workoutNotesFoldGoalAndGuidanceForDisplayWithoutRewritingEither() {
-        var workout = Workout(
-            title: "Legacy workout",
-            goal: "Preserve the coach goal",
-            guidance: CoachGuidance(tempo: "3-1-1", formCues: ["Preserve the imported note"])
+    @Test func editingTheWorkoutNoteWritesOnlyTheGoalAndLeavesGuidanceByteForByte() {
+        let guidance = CoachGuidance(
+            goal: "Own the eccentric",
+            tempo: "3-1-1",
+            formCues: ["Preserve the imported note"],
+            commonMistakes: ["Heels lifting"],
+            progressionNotes: "Add 2.5kg next week"
         )
+        var workout = Workout(title: "Legacy workout", goal: "Preserve the coach goal", guidance: guidance)
 
-        #expect(workout.notesText == "Preserve the coach goal\n\n3-1-1\n\nPreserve the imported note")
+        // The header's read-only fold surfaces both sources without either becoming the other's storage.
+        #expect(workout.notesText == """
+        Preserve the coach goal
+
+        Own the eccentric
+
+        3-1-1
+
+        Preserve the imported note
+
+        Heels lifting
+
+        Add 2.5kg next week
+        """)
 
         // Starting a session only reads the plan: planned text is never recorded as a performed fact.
         #expect(workout.startLog().athleteNotes == [])
+        #expect(workout.startLog().hasAuthoredNotes == false)
 
-        // Editing the one note stores it on the goal and leaves the guidance the athlete kept structured.
-        workout.updateNotes("Preserve the coach goal\n\n3-1-1\n\nPreserve the imported note. And mine.")
-        #expect(workout.guidance?.tempo == "3-1-1")
-        #expect(workout.guidance?.formCues == ["Preserve the imported note"])
-        #expect(workout.notesText == "Preserve the coach goal\n\n3-1-1\n\nPreserve the imported note. And mine.")
-
-        // Text the athlete deleted stays deleted instead of folding back in on the next read.
         workout.updateNotes("One athlete-facing note")
-        #expect(workout.notesText == "One athlete-facing note")
         #expect(workout.goal == "One athlete-facing note")
-        #expect(workout.guidance == nil)
+        #expect(workout.guidance == guidance)
 
         workout.updateNotes("   ")
         #expect(workout.goal == nil)
-        #expect(workout.notesText == "")
+        #expect(workout.guidance == guidance)
     }
 
-    @Test func workoutNotesRenderEachSentenceOnceAcrossGoalAndGuidance() {
-        let workout = Workout(
-            title: "Duplicated sources",
-            goal: "A",
-            guidance: CoachGuidance(formCues: ["A "], progressionNotes: "Add 2.5kg next week")
-        )
+    @Test func workoutNoteFoldDropsAnIdenticalRestatementButNeverADistinctNote() {
+        #expect(Workout(title: "Same text twice", goal: "A", guidance: CoachGuidance(formCues: ["A "])).notesText == "A")
 
-        #expect(workout.notesText == "A\n\nAdd 2.5kg next week")
+        // Substring overlap is not restatement: a coach's "avoid" note still reaches the athlete.
+        let distinct = Workout(
+            title: "Overlapping text",
+            guidance: CoachGuidance(formCues: ["Rest 90s between sets"], commonMistakes: ["Rest 90s"])
+        )
+        #expect(distinct.notesText == "Rest 90s between sets\n\nRest 90s")
+    }
+
+    @Test func goalLineCollapsesAMultiParagraphNoteForLineOrientedSurfaces() {
+        var workout = Workout(title: "Wordy", goal: "Keep it easy.\n\n  Stop if the knee talks.  ")
+        #expect(workout.goalLine == "Keep it easy. Stop if the knee talks.")
+
+        workout.updateNotes("Single line")
+        #expect(workout.goalLine == "Single line")
+
+        workout.updateNotes(" \n ")
+        #expect(workout.goalLine == nil)
+    }
+
+    @Test func workoutLogNoteSeparatesNeverWrittenFromDeliberatelyCleared() throws {
+        let (w, _, _, _) = sample()
+        var log = w.startLog()
+        #expect(log.athleteNotes == [])
+        #expect(log.hasAuthoredNotes == false)
+
+        log.setNotes("Legs heavy from yesterday")
+        #expect(log.athleteNotes == ["Legs heavy from yesterday"])
+        #expect(log.hasAuthoredNotes)
+
+        // Clearing the field is a decision, not an absence: it stays recorded across persistence.
+        log.setNotes("")
+        #expect(log.athleteNotes == [])
+        #expect(log.hasAuthoredNotes)
+
+        let decoded = try JSONDecoder().decode(WorkoutLog.self, from: JSONEncoder().encode(log))
+        #expect(decoded.hasAuthoredNotes)
+        #expect(decoded.athleteNotes == [])
+    }
+
+    @Test func logsWrittenBeforeTheMarkerDecodeAsNeverWrittenUnlessTheyCarryANote() throws {
+        let decoder = JSONDecoder()
+        let id = UUID().uuidString
+
+        let blank = try decoder.decode(WorkoutLog.self, from: Data(#"{"id":"\#(id)"}"#.utf8))
+        #expect(blank.hasAuthoredNotes == false)
+
+        let noted = try decoder.decode(
+            WorkoutLog.self,
+            from: Data(#"{"id":"\#(id)","athleteNotes":["Felt strong"]}"#.utf8)
+        )
+        #expect(noted.hasAuthoredNotes)
+        #expect(noted.athleteNotes == ["Felt strong"])
     }
 
     @Test func sessionNotesStayOnTheLogAndNeverTouchPlannedGuidance() {

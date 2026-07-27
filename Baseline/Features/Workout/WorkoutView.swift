@@ -570,15 +570,17 @@ struct WorkoutView: View {
     }
 
     /// The one workout-level note typed while logging or reviewing a session. It belongs to the log, so
-    /// promoting the session's shape to the plan can never carry it into a saved plan revision. A session
-    /// carrying no performed note falls back to the plan's folded note at read time — a fallback only,
-    /// never seeded into the log, so planned text is never recorded as something the athlete performed.
+    /// promoting the session's shape to the plan can never carry it into a saved plan revision. Until the
+    /// athlete has ever committed the field, a session shows the plan's note so a log started before the
+    /// field was consolidated still reads as it did — a display fallback only, never written to the log.
+    /// From the first commit on, including a deliberate clear, the field is exactly the performed note,
+    /// so backspacing to empty leaves it empty instead of resurrecting plan text under the cursor.
     private var sessionNotesBinding: Binding<String> {
         Binding(
             get: {
-                let logged = store.currentLog?.notesText ?? ""
-                guard !CoachGuidance.isMeaningful(logged) else { return logged }
-                return store.current?.notesText ?? ""
+                guard let log = store.currentLog else { return store.current?.notesText ?? "" }
+                guard log.hasAuthoredNotes else { return store.current?.notesText ?? "" }
+                return log.notesText
             },
             set: { value in
                 store.editLog { $0.setNotes(value) }

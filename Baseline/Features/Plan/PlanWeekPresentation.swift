@@ -142,7 +142,7 @@ struct PlanWeekPresentation: Equatable, Sendable {
     private static func detail(for session: ScheduledWorkout, isCompleted: Bool) -> String {
         if isCompleted { return "View log" }
         let names = session.workout.allExercises.prefix(2).map(\.exerciseName)
-        let work = names.isEmpty ? (session.workout.goal ?? "Training") : names.joined(separator: " + ")
+        let work = names.isEmpty ? (session.workout.goalLine ?? "Training") : names.joined(separator: " + ")
         guard let planned = AggregateProvider.aggregates(for: [session]).first(where: { $0.key == .duration }) else {
             return work
         }

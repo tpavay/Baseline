@@ -7,36 +7,26 @@ import UIKit
 extension IdleTimerRenderTests {
     @MainActor
     struct WorkoutNoteConsolidationRenderTests {
-        @Test func templateEditorShowsOneNoteAndNormalizesLegacyContent() async throws {
+        @Test func templateEditorEditsOnePlainNoteAndLeavesGuidanceUntouched() async throws {
             let screen = try await WorkoutNoteScreen(stage: .editing, includesLegacyNotes: true)
             defer { screen.tearDown() }
 
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.hasLabel(containing: "Workout goal") == false)
-            #expect(screen.inputText(labelled: "Workout note") == """
-            Preserve this goal.
+            #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.")
 
-            Preserve this imported note.
-            """)
-
-            let edited = """
-            Preserve this goal.
-
-            Preserve this imported note. Plus mine.
-            """
-            try screen.replaceInput(labelled: "Workout note", with: edited)
+            try screen.replaceInput(labelled: "Workout note", with: "One consolidated note")
             try await screen.settle()
 
-            // The field reads back exactly what was typed instead of refolding the guidance behind it.
+            // The field is plain free-form storage: it reads back exactly what was typed.
             #expect(screen.inputCount(labelled: "Workout note") == 1)
-            #expect(screen.inputText(labelled: "Workout note") == edited)
-            #expect(screen.workout?.notesText == edited)
-            #expect(screen.workout?.goal == edited)
-            // Structured guidance stays plan metadata; the athlete's edit never flattens it away.
-            #expect(screen.workout?.guidance?.formCues == ["Preserve this imported note."])
+            #expect(screen.inputText(labelled: "Workout note") == "One consolidated note")
+            #expect(screen.workout?.goal == "One consolidated note")
+            // Structured guidance is separate plan metadata the note path never rewrites.
+            #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
         }
 
-        @Test func loggingShowsThePlanNoteWithoutWritingItIntoTheLog() async throws {
+        @Test func loggingShowsThePlanNoteUntilTheAthleteCommitsTheField() async throws {
             let screen = try await WorkoutNoteScreen(stage: .logging, includesLegacyNotes: true)
             defer { screen.tearDown() }
 
@@ -44,14 +34,15 @@ extension IdleTimerRenderTests {
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.hasLabel(containing: "Plan note. Preserve this imported note.") == false)
 
-            // A session carrying no performed note shows the plan's folded note as a read-time fallback,
-            // so nothing that used to render is lost — and the log records no note it did not perform.
+            // A session that has never had the field committed shows the plan's folded note, so nothing
+            // that used to render is lost — and the log still records no note it did not perform.
             #expect(screen.inputText(labelled: "Workout note") == """
             Preserve this goal.
 
             Preserve this imported note.
             """)
             #expect(screen.log?.athleteNotes == [])
+            #expect(screen.log?.hasAuthoredNotes == false)
 
             try screen.replaceInput(labelled: "Workout note", with: "Legs heavy today.")
             try await screen.settle()
@@ -60,7 +51,16 @@ extension IdleTimerRenderTests {
             #expect(screen.log?.athleteNotes == ["Legs heavy today."])
             #expect(screen.inputText(labelled: "Workout note") == "Legs heavy today.")
             #expect(screen.workout?.goal == "Preserve this goal.")
-            #expect(screen.workout?.guidance?.formCues == ["Preserve this imported note."])
+            #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
+
+            // Clearing it leaves it cleared: the plan's note can no longer reappear under the cursor.
+            try screen.replaceInput(labelled: "Workout note", with: "")
+            try await screen.settle()
+
+            #expect(screen.inputText(labelled: "Workout note") == "")
+            #expect(screen.hasRenderedText("Add a note here…"))
+            #expect(screen.log?.athleteNotes == [])
+            #expect(screen.log?.hasAuthoredNotes == true)
         }
 
         @Test func emptyCompletedWorkoutShowsOneNotePlaceholder() async throws {

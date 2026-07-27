@@ -320,7 +320,7 @@ struct ProfileView: View {
 
     private func workoutSubtitle(_ scheduled: ScheduledWorkout) -> String {
         let descriptors = scheduled.workout.allExercises.prefix(2).map(\.exerciseName)
-        let work = descriptors.isEmpty ? (scheduled.workout.goal ?? "Training") : descriptors.joined(separator: " + ")
+        let work = descriptors.isEmpty ? (scheduled.workout.goalLine ?? "Training") : descriptors.joined(separator: " + ")
         let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }
             .map { MetricFormat.durationLong($0.total) } ?? "Planned"
         let weekday = scheduled.date.formatted(.dateTime.weekday(.abbreviated))
