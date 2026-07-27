@@ -113,6 +113,14 @@ final class WorkoutStore {
         let reload: () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?
         let completed: () -> CompletedWorkoutLog?
         let planWorkout: () -> Workout?               // the saved plan revision (for completion diffing)
+        /// Freeze this session's live heart-rate trace into the plan's sidecar entity. Separate from
+        /// `pushLog` because the series must never travel inside the log blob (see
+        /// `SDWorkoutHeartRateSeries`).
+        let pushHeartRateSeries: (WorkoutHeartRateTrace, WorkoutHeartRateSummary) -> Void
+        /// Read the persisted series back. Deliberately *not* called from `reloadFromPlan`: it decodes
+        /// the full sample array, and that runs on ~20 paths. Callers pull it once, when they are about
+        /// to draw it.
+        let heartRateSeries: () -> WorkoutHeartRateSeries?
 
         init(
             pushWorkout: @escaping (Workout) -> Void,
@@ -133,7 +141,9 @@ final class WorkoutStore {
             resolveAbandonedSessionDecision: @escaping () -> Void,
             reload: @escaping () -> (workout: Workout, log: WorkoutLog?, startedAt: Date?)?,
             completed: (() -> CompletedWorkoutLog?)? = nil,
-            planWorkout: @escaping () -> Workout?
+            planWorkout: @escaping () -> Workout?,
+            pushHeartRateSeries: ((WorkoutHeartRateTrace, WorkoutHeartRateSummary) -> Void)? = nil,
+            heartRateSeries: (() -> WorkoutHeartRateSeries?)? = nil
         ) {
             self.pushWorkout = pushWorkout
             self.pushSessionWorkout = pushSessionWorkout
@@ -199,6 +209,8 @@ final class WorkoutStore {
             self.reload = reload
             self.completed = completed ?? { nil }
             self.planWorkout = planWorkout
+            self.pushHeartRateSeries = pushHeartRateSeries ?? { _, _ in }
+            self.heartRateSeries = heartRateSeries ?? { nil }
         }
     }
     private var sink: PlanSink?
@@ -667,6 +679,42 @@ final class WorkoutStore {
             logFinish = LogFinish(logID: log.id, finishedAt: finishedAt)
         }
         if !awaitingReconciliationDecision { sink?.resolveSessionDecision() }
+    }
+
+    // MARK: - Measured heart rate
+
+    /// The session's captured heart rate, cached against the log it belongs to so a rebind or a
+    /// different workout can never show the previous one's trace.
+    private var heartRate: (logID: UUID, capture: WorkoutHeartRateCapture)?
+
+    /// The heart rate already resolved for the current log, without touching persistence.
+    var currentHeartRate: WorkoutHeartRateCapture? {
+        guard let log = currentLog, let heartRate, heartRate.logID == log.id else { return nil }
+        return heartRate.capture
+    }
+
+    /// Freeze the live trace and summary onto this session.
+    ///
+    /// Called from the finish sequence *before* `completeWorkout`, because the live monitor is torn
+    /// down the instant the log reads complete — after that there is nothing left to capture. The
+    /// summary rides on the log (small); the trace goes to its own sidecar entity through the sink.
+    func attachHeartRate(_ capture: WorkoutHeartRateCapture) {
+        guard let log = currentLog else { return }
+        editLog { $0.heartRateSummary = capture.summary }
+        sink?.pushHeartRateSeries(capture.trace, capture.summary)
+        heartRate = (log.id, capture)
+    }
+
+    /// Resolve the persisted heart rate for the current log, decoding the sample array at most once
+    /// per log. Callers do this when they are about to draw it — never from `body`, and never from
+    /// `reloadFromPlan`, which runs on far too many paths to carry a 3600-element decode.
+    @discardableResult
+    func loadHeartRate() -> WorkoutHeartRateCapture? {
+        if let currentHeartRate { return currentHeartRate }
+        guard let log = currentLog, let series = sink?.heartRateSeries(), series.trace.hasSamples else { return nil }
+        let capture = WorkoutHeartRateCapture(trace: series.trace, summary: series.summary)
+        heartRate = (log.id, capture)
+        return capture
     }
 
     // MARK: - Session ⇄ plan reconciliation (mid-workout edits promote to the plan only on opt-in)

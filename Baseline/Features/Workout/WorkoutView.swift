@@ -46,6 +46,12 @@ struct WorkoutView: View {
     /// Live heart-rate monitor for the active log, created only while logging with a saved strap.
     /// The HUD reads it; the workout owns its start/stop lifecycle (this is the go-live wiring).
     @State private var hrMonitor: HeartRateMonitor?
+    /// Captures the live series behind the HUD so the workout keeps its heart rate after the monitor
+    /// is gone. Owned by the view, handed to the monitor, and reset by it on each run.
+    @State private var hrRecorder = WorkoutHeartRateRecorder()
+    /// The completed workout's persisted heart rate, resolved once on entering `.completed` rather
+    /// than in `body`: building it decodes the whole sample array.
+    @State private var completedHeartRate: WorkoutHeartRateCapture?
     /// Whether the log surface is showing the live-HR HUD instead of the exercise log.
     @State private var showLiveHR = false
 
@@ -148,10 +154,12 @@ struct WorkoutView: View {
         .onAppear {
             syncLiveMonitor()
             syncKeepAwake()
+            syncCompletedHeartRate()
         }
         .onChange(of: mode) { _, _ in
             syncLiveMonitor()
             syncKeepAwake()
+            syncCompletedHeartRate()
         }
         // A mid-workout zone edit must reach the *running* monitor: swap its live `zoneModel` so the
         // gauge and current zone re-resolve without tearing down the session. Zone-time is an
@@ -310,6 +318,20 @@ struct WorkoutView: View {
                             workoutHeader(workout)
                                 .padding(.bottom, 18)
 
+                            // The trace is the first thing below the title on a finished workout, and
+                            // renders only when heart rate was actually measured — no placeholder, no
+                            // empty state. While logging, the live HUD is the correct surface.
+                            if mode == .completed, let heartRate = completedHeartRate, heartRate.trace.hasSamples {
+                                BaselineCard {
+                                    WorkoutHeartRateTraceChart(
+                                        capture: heartRate,
+                                        startedAt: store.currentLogStartedAt,
+                                        finishedAt: store.currentLogFinishedAt
+                                    )
+                                }
+                                .padding(.bottom, 18)
+                            }
+
                             if mode == .view {
                                 startButton
                                     .padding(.bottom, 22)
@@ -354,8 +376,20 @@ struct WorkoutView: View {
         }
         guard hrMonitor == nil else { return }
         let monitor = HeartRateMonitor(source: bluetooth, zoneModel: heartRateZones.resolvedModel)
+        // Attach before starting: `startMonitoring` resets the trace along with zone-time and the
+        // session stats, so a new run can never inherit the previous one's samples. Re-entering a
+        // live workout therefore restarts the trace exactly as it already restarts those aggregates —
+        // one run, one consistent set of measurements, rather than a full trace beside partial zone
+        // seconds.
+        monitor.recorder = hrRecorder
         hrMonitor = monitor
         monitor.startMonitoring()
+    }
+
+    /// Resolve the persisted heart rate for a finished workout. Only on entering `.completed`, so the
+    /// sample-array decode happens once per visit and never during logging.
+    private func syncCompletedHeartRate() {
+        completedHeartRate = mode == .completed ? store.loadHeartRate() : nil
     }
 
     private func stopLiveMonitor() {
@@ -580,7 +614,12 @@ struct WorkoutView: View {
     /// The reconciliation is captured *before* completing so the summary describes the session that was
     /// actually performed, and so declining leaves the plan untouched with no further bookkeeping.
     private func finishWorkout() {
-        finishing.finish(store)
+        // Read the monitor while it is still alive: completing flips `mode` to `.completed`, which
+        // tears it down along with every zone-second it accumulated.
+        let heartRate = hrMonitor.flatMap {
+            WorkoutHeartRateCapture(recorder: hrRecorder, monitor: $0)
+        }
+        finishing.finish(store, heartRate: heartRate)
     }
 
     // MARK: - Templates

@@ -777,11 +777,16 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
     var exerciseAdjustments: [ExerciseLogAdjustment] = []
     var athleteNotes: [String] = []
     var isComplete = false
+    /// Measured heart rate for this session: average, max, sample count, seconds per zone, and the
+    /// zone boundaries in force at completion. Small by construction — the sample array itself lives
+    /// in `SDWorkoutHeartRateSeries`, because this whole log is re-encoded on every logged set.
+    /// Nil for a workout performed without a strap, and for every log written before this field.
+    var heartRateSummary: WorkoutHeartRateSummary?
 
     init(id: UUID = UUID(), plannedWorkoutID: UUID? = nil, exercises: [PerformedExercise] = [],
          groups: [GroupLog] = [], choices: [ChoiceLog] = [],
          exerciseAdjustments: [ExerciseLogAdjustment] = [], athleteNotes: [String] = [],
-         isComplete: Bool = false) {
+         isComplete: Bool = false, heartRateSummary: WorkoutHeartRateSummary? = nil) {
         self.id = id
         self.plannedWorkoutID = plannedWorkoutID
         self.exercises = exercises
@@ -790,10 +795,12 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
         self.exerciseAdjustments = exerciseAdjustments
         self.athleteNotes = athleteNotes
         self.isComplete = isComplete
+        self.heartRateSummary = heartRateSummary
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, plannedWorkoutID, exercises, groups, choices, exerciseAdjustments, athleteNotes, isComplete
+        case heartRateSummary
     }
 
     init(from decoder: Decoder) throws {
@@ -809,6 +816,7 @@ struct WorkoutLog: Identifiable, Codable, Equatable, Sendable {
         ) ?? []
         athleteNotes = try container.decodeIfPresent([String].self, forKey: .athleteNotes) ?? []
         isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? false
+        heartRateSummary = try container.decodeIfPresent(WorkoutHeartRateSummary.self, forKey: .heartRateSummary)
     }
 }
 

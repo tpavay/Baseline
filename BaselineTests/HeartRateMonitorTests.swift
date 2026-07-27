@@ -352,4 +352,81 @@ struct HeartRateMonitorTests {
         #expect(monitor.currentBPM == nil)
         #expect(monitor.currentZone == nil)
     }
+
+    // MARK: - Trace capture (the recorder is downstream of the HUD, never in front of it)
+
+    /// The whole point of attaching the recorder here: it sees every sample the HUD sees, using the
+    /// same injected clock.
+    @Test func anAttachedRecorderCapturesEverySampleTheMonitorIngests() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        let recorder = WorkoutHeartRateRecorder()
+        monitor.recorder = recorder
+        monitor.startMonitoring()
+
+        source.emit(bpm: 130)
+        clock.advance(by: 1)
+        source.emit(bpm: 150)
+        clock.advance(by: 1)
+        source.emit(bpm: 165)
+
+        #expect(recorder.trace.points.map(\.bpm) == [130, 150, 165])
+        #expect(recorder.trace.startAt == clock.current.addingTimeInterval(-2))
+    }
+
+    /// The freshness regression guard: a silent strap must still blank the live number, and the trace
+    /// already captured must survive that — the recorder cannot delay, suppress, or resurrect the HUD.
+    @Test func theRecorderKeepsItsTraceWhileTheHUDHonestlyBlanksAStaleReading() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        let recorder = WorkoutHeartRateRecorder()
+        monitor.recorder = recorder
+        monitor.startMonitoring()
+
+        source.emit(bpm: 145)
+        clock.advance(by: 2)
+        source.emit(bpm: 148)
+        #expect(monitor.currentBPM == 148)
+
+        clock.advance(by: HeartRateMonitor.freshnessWindow + 1)
+        monitor.checkLiveness()
+
+        #expect(monitor.freshSample == nil)                       // still honest about the silence
+        #expect(monitor.currentBPM == nil)
+        #expect(monitor.averageBPM != nil)                        // recorded aggregates persist
+        #expect(recorder.trace.points.map(\.bpm) == [145, 148])   // and so does the trace
+    }
+
+    /// A new run resets the trace along with `zoneTime` and `stats`, so one run's samples can never
+    /// leak into the next one's record.
+    @Test func startingAnotherRunClearsTheRecordersBuffer() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        let recorder = WorkoutHeartRateRecorder()
+        monitor.recorder = recorder
+        monitor.startMonitoring()
+        source.emit(bpm: 150)
+        #expect(recorder.trace.count == 1)
+
+        monitor.stopMonitoring()
+        monitor.startMonitoring()
+        #expect(recorder.trace.isEmpty)
+        #expect(monitor.zoneTime.total == 0)
+        #expect(monitor.averageBPM == nil)
+    }
+
+    /// With no recorder attached — every surface that only *shows* the live number — nothing changes.
+    @Test func withNoRecorderAttachedIngestionBehavesExactlyAsBefore() {
+        let clock = ManualClock()
+        let (monitor, source) = makeMonitor(clock)
+        monitor.startMonitoring()
+
+        source.emit(bpm: 130)
+        clock.advance(by: 2)
+        source.emit(bpm: 150)
+
+        #expect(monitor.recorder == nil)
+        #expect(monitor.currentBPM == 150)
+        #expect(monitor.zoneTime.seconds(in: .z2) == 2)
+    }
 }

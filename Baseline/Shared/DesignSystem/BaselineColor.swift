@@ -85,6 +85,9 @@ enum BaselineSize {
     static let miniMuscleMapHeight: CGFloat = 30
     static let muscleMapHeight: CGFloat = 180
     static let chartHeight: CGFloat = 108
+    /// Taller than `chartHeight` because a heart-rate trace carries a real time axis and zone bands,
+    /// not a sparkline. Matches the HRV trend chart on the reading-history screen.
+    static let traceChartHeight: CGFloat = 180
     static let actionSheetHeight: CGFloat = 274
     // Approved sleep-ring geometry: full-width arcs proportional to the 50/30/20 component maxima
     // with wide gaps (28° each → a 276° usable sweep), stroke 12 % of the ring's 92 pt box.

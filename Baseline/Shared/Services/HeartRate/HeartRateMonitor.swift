@@ -61,6 +61,14 @@ final class HeartRateMonitor {
     @ObservationIgnored private let source: any LiveHeartRateSource
     @ObservationIgnored private let now: @MainActor () -> Date
 
+    /// Optional capture of the live series for the workout being logged. Attached by the surface that
+    /// owns the session (`WorkoutView`); nil everywhere the live number is only being *shown*.
+    ///
+    /// `@ObservationIgnored` on purpose: it is a collaborator, not observed state, so appending a
+    /// sample to it can never invalidate a SwiftUI view. It is written to strictly after the HUD's
+    /// own state in `ingest`, so the recorder is downstream of freshness and cannot affect it.
+    @ObservationIgnored var recorder: WorkoutHeartRateRecorder?
+
     /// The athlete's zone boundaries. A `var` so a mid-workout settings edit can be applied live:
     /// `WorkoutView` reassigns this from the shared `HeartRateZoneSettingsStore` when zones change,
     /// and because it is an observed property the gauge and `currentZone` re-resolve against the new
@@ -136,6 +144,9 @@ final class HeartRateMonitor {
         resetRecovery()
         zoneTime = ZoneTimeAccumulator()
         stats = SessionHeartRateStats()
+        // Reset the trace with the other per-run accumulators, so a fresh run can never inherit a
+        // stale series from the previous one.
+        recorder?.prepareForSession()
 
         // `onLiveSample` fires on the main queue (see `LiveHeartRateSource`); `assumeIsolated`
         // bridges that main-confined callback into this main-actor instance without a hop.
@@ -250,5 +261,8 @@ final class HeartRateMonitor {
         freshSample = sample          // a just-arrived sample is fresh by definition
         resetRecovery()               // data is flowing again — reset recovery escalation
         stats.record(bpm: sample.bpm, at: t)
+        // Last, and only after every piece of live state the HUD reads is already settled: capturing
+        // the durable series must never be able to hold up the live number.
+        recorder?.record(sample, at: t)
     }
 }

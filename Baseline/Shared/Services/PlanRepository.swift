@@ -62,6 +62,28 @@ protocol PlanRepository {
     /// never said yes; this writes nothing to the plan.
     func resolveAbandonedSessionDecision(forScheduled id: UUID)
 
+    // Heart-rate sidecar — the durable, full-resolution live trace for one workout. It is stored
+    // apart from the log on purpose (see `SDWorkoutHeartRateSeries`), so the log's hot encode/decode
+    // path never carries thousands of samples.
+
+    /// Write (or replace) the trace + summary for a scheduled workout. Idempotent per workout: a
+    /// re-completion overwrites rather than accumulating a second series.
+    func upsertHeartRateSeries(
+        forScheduled id: UUID,
+        trace: WorkoutHeartRateTrace,
+        summary: WorkoutHeartRateSummary,
+        now: Date
+    )
+    /// The full series, decoding the sample array. Only for something about to draw it.
+    func heartRateSeries(forScheduled id: UUID) -> WorkoutHeartRateSeries?
+    /// "Does this workout have heart rate?" without decoding the series — the gate every list, card,
+    /// and layout decision should use.
+    func hasHeartRateSeries(forScheduled id: UUID) -> Bool
+    /// The summary alone (avg / max / zone seconds / zone model). Decodes tens of bytes, never the
+    /// sample array.
+    func heartRateSummary(forScheduled id: UUID) -> WorkoutHeartRateSummary?
+    func deleteHeartRateSeries(forScheduled id: UUID)
+
     // Slice 2 — typed, versioned mutations (append-only history). Only `delete` is confirmation-gated.
     func versions(limit: Int) -> [PlanVersion]
     func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?) -> MutationResult
@@ -357,10 +379,82 @@ final class SwiftDataPlanRepository: PlanRepository {
             logJSON: PlanCoding.data(completedLog)
         ))
         indexCompletedExercises(completed, plan: sw, resolving: effectivePlan)
+        // The trace is written before completion (the live monitor is torn down the instant the log
+        // reads complete), so this is where it learns which frozen log it belongs to.
+        heartRateSeriesSD(id)?.completedLogID = completed.id
         sd.logJSON = PlanCoding.data(completedLog)
         sd.statusRaw = SessionStatus.completed.rawValue
         save()
         return .completed(completed)
+    }
+
+    // MARK: - Heart-rate sidecar
+
+    func upsertHeartRateSeries(
+        forScheduled id: UUID,
+        trace: WorkoutHeartRateTrace,
+        summary: WorkoutHeartRateSummary,
+        now: Date = Date()
+    ) {
+        // An empty trace is not evidence of anything, so it erases rather than storing a hollow row.
+        guard trace.hasSamples else {
+            deleteHeartRateSeries(forScheduled: id)
+            return
+        }
+
+        let row = heartRateSeriesSD(id) ?? {
+            let created = SDWorkoutHeartRateSeries(scheduledWorkoutID: id)
+            context.insert(created)
+            return created
+        }()
+        row.recordedAt = now
+        row.sampleCount = trace.count
+        row.seriesStartAt = trace.startAt ?? now
+        row.seriesEndAt = trace.endAt ?? now
+        row.seriesJSON = PlanCoding.data(trace.points)
+        row.summaryJSON = PlanCoding.data(summary)
+        // A re-recorded series has never been uploaded, so any previous remote path is stale.
+        row.remoteStoragePath = nil
+        row.completedLogID = completedLog(forScheduled: id)?.id
+        save()
+    }
+
+    func heartRateSeries(forScheduled id: UUID) -> WorkoutHeartRateSeries? {
+        guard let row = heartRateSeriesSD(id),
+              let points = PlanCoding.value([HeartRateTracePoint].self, row.seriesJSON),
+              let summary = PlanCoding.value(WorkoutHeartRateSummary.self, row.summaryJSON)
+        else { return nil }
+        return WorkoutHeartRateSeries(
+            scheduledWorkoutID: row.scheduledWorkoutID,
+            completedLogID: row.completedLogID,
+            recordedAt: row.recordedAt,
+            trace: WorkoutHeartRateTrace(points: points),
+            summary: summary,
+            remoteStoragePath: row.remoteStoragePath
+        )
+    }
+
+    func hasHeartRateSeries(forScheduled id: UUID) -> Bool {
+        (heartRateSeriesSD(id)?.sampleCount ?? 0) > 0
+    }
+
+    func heartRateSummary(forScheduled id: UUID) -> WorkoutHeartRateSummary? {
+        guard let row = heartRateSeriesSD(id) else { return nil }
+        return PlanCoding.value(WorkoutHeartRateSummary.self, row.summaryJSON)
+    }
+
+    func deleteHeartRateSeries(forScheduled id: UUID) {
+        let rows = fetch(SDWorkoutHeartRateSeries.self, where: #Predicate { $0.scheduledWorkoutID == id })
+        guard rows.isEmpty == false else { return }
+        rows.forEach(context.delete)
+        save()
+    }
+
+    /// Newest row for a workout. Duplicates should not exist (the upsert is keyed), but ordering makes
+    /// the read deterministic if a legacy row ever survived alongside a new one.
+    private func heartRateSeriesSD(_ id: UUID) -> SDWorkoutHeartRateSeries? {
+        fetch(SDWorkoutHeartRateSeries.self, where: #Predicate { $0.scheduledWorkoutID == id })
+            .sorted { $0.recordedAt > $1.recordedAt }.first
     }
 
     func discardSession(forScheduled id: UUID) {
@@ -945,6 +1039,9 @@ final class SwiftDataPlanRepository: PlanRepository {
             context.delete(log)
         }
         fetch(SDWorkoutSession.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
+        // The heart-rate sidecar links by the same loose `UUID`, so it strands exactly like the rest
+        // of the performed footprint unless it is removed here.
+        fetch(SDWorkoutHeartRateSeries.self, where: #Predicate { $0.scheduledWorkoutID == id }).forEach(context.delete)
     }
 
     func undo(actor: PlanActor) -> MutationResult {
