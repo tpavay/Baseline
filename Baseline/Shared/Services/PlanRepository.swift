@@ -367,6 +367,11 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date = Date()) -> SessionCompletion {
         guard let sd = latestSession(id), let session = map(sd), let sw = scheduledWorkout(id) else { return .noActiveSession }
+        // Completion is one-way, so a session that already finished has nothing left to complete and is
+        // refused before anything is written. Running it twice would insert a second frozen log, re-index
+        // its exercises against that log, and move the workout's current-log identity out from under the
+        // heart-rate sidecar — turning a stray "mark it complete" into silent data loss.
+        guard sd.statusRaw != SessionStatus.completed.rawValue else { return .noActiveSession }
         // The session may have been edited mid-workout; the athlete performed against that copy, so open
         // work and history indexing resolve against it — not the untouched saved plan.
         let effectivePlan = session.workout ?? sw.workout
@@ -382,12 +387,14 @@ final class SwiftDataPlanRepository: PlanRepository {
 
         var completedLog = session.log
         completedLog.isComplete = true
-        // The summary riding on the log is a copy of the sidecar's, and `session.log` carries whatever
-        // the previous run wrote. Re-deriving it from the series this completion actually owns keeps
-        // the two from disagreeing: a re-completion with nothing streaming freezes no summary, so the
-        // zone card cannot render an earlier run's measured seconds as this session's.
-        completedLog.heartRateSummary = ownedSeries
-            .flatMap { PlanCoding.value(WorkoutHeartRateSummary.self, $0.summaryJSON) }
+        // Writing here is never destructive: the log-borne summary is replaced only when this completion
+        // owns a captured series, and a completion that captured nothing leaves the workout's existing
+        // heart rate exactly as it found it. What a given run *shows* is settled on the read path
+        // (`currentHeartRateSeriesSD`), which scopes the sidecar to the log it was frozen onto —
+        // enforcing that display rule by clearing on write is what destroyed recorded traces.
+        if let ownedSeries {
+            completedLog.heartRateSummary = PlanCoding.value(WorkoutHeartRateSummary.self, ownedSeries.summaryJSON)
+        }
         let completed = CompletedWorkoutLog(scheduledWorkoutID: id, finishedAt: now, log: completedLog)
         context.insert(SDCompletedLog(
             id: completed.id,

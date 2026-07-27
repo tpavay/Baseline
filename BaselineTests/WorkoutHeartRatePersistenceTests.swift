@@ -158,10 +158,10 @@ struct WorkoutHeartRatePersistenceTests {
         #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
     }
 
-    /// The trace belongs to the run that recorded it. Completing the workout a second time without a
-    /// strap must report no heart rate rather than presenting the first run's trace, avg/max and zone
-    /// seconds as this session's measurement.
-    @Test func aReCompletionWithoutAStrapDoesNotInheritTheEarlierRunsTrace() throws {
+    /// The trace belongs to the run that recorded it. Running the workout a second time without a strap
+    /// must report no heart rate rather than presenting the first run's trace, avg/max and zone seconds
+    /// as this session's measurement.
+    @Test func aSecondRunWithoutAStrapDoesNotInheritTheEarlierRunsTrace() throws {
         let repo = try makeRepo()
         let scheduled = seed(repo)
         _ = repo.startSession(forScheduled: scheduled.id, now: start)
@@ -169,16 +169,41 @@ struct WorkoutHeartRatePersistenceTests {
         _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
         #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id))
 
-        // Live again, finished again — this time with nothing streaming, so nothing is written.
-        _ = repo.resumeSession(forScheduled: scheduled.id)
+        // A genuine second run: a fresh session, finished with nothing streaming.
+        _ = repo.startSession(forScheduled: scheduled.id, now: start.addingTimeInterval(900))
         _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(1_200))
 
         #expect(repo.hasHeartRateSeries(forScheduled: scheduled.id) == false)
         #expect(repo.heartRateSeries(forScheduled: scheduled.id) == nil)
         #expect(repo.heartRateSummary(forScheduled: scheduled.id) == nil)
-        // And the copy that rides on the log: the summary is re-derived from the series this
-        // completion owns, so the earlier run's zone seconds cannot reach the zone card either.
+        // And the copy that rides on the log: this run started from a fresh log, so there is no summary
+        // on it either and the zone card has nothing of the earlier run's to render.
         #expect(repo.completedLog(forScheduled: scheduled.id)?.log.heartRateSummary == nil)
+    }
+
+    /// Completion is one-way. Finishing an already-finished workout — reachable from the coach's
+    /// "mark it complete" while the athlete is looking at the completed summary — must be refused
+    /// outright, writing nothing: no second frozen log, and above all no destruction of the heart rate
+    /// the first run recorded.
+    @Test func reCompletingAFinishedSessionIsRefusedAndKeepsItsHeartRate() throws {
+        let container = try makeContainer()
+        let repo = SwiftDataPlanRepository(context: container.mainContext)
+        let scheduled = seed(repo)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start)
+        repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
+        let first = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
+        let firstLog = try #require({ if case .completed(let log) = first { return log } else { return nil } }())
+
+        let again = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(1_200))
+        #expect(again == .noActiveSession)
+
+        #expect(try container.mainContext.fetch(FetchDescriptor<SDCompletedLog>()).count == 1)
+        #expect(repo.completedLog(forScheduled: scheduled.id)?.id == firstLog.id)
+        let stored = try #require(repo.heartRateSeries(forScheduled: scheduled.id))
+        #expect(stored.trace.count == 20)
+        #expect(stored.completedLogID == firstLog.id)
+        #expect(stored.summary == summary(sampleCount: 20))
+        #expect(repo.completedLog(forScheduled: scheduled.id)?.log.heartRateSummary == summary(sampleCount: 20))
     }
 
     /// The reads resolve which run a series belongs to from stored columns alone. Pinned by making the
@@ -202,15 +227,15 @@ struct WorkoutHeartRatePersistenceTests {
         #expect(repo.heartRateSeries(forScheduled: scheduled.id)?.trace.count == 40)
     }
 
-    /// The other half of that rule: a re-completion that *did* record heart rate shows its own trace.
-    @Test func aReCompletionWithAStrapShowsTheNewRunsTrace() throws {
+    /// The other half of that rule: a second run that *did* record heart rate shows its own trace.
+    @Test func aSecondRunWithAStrapShowsItsOwnTrace() throws {
         let repo = try makeRepo()
         let scheduled = seed(repo)
         _ = repo.startSession(forScheduled: scheduled.id, now: start)
         repo.upsertHeartRateSeries(forScheduled: scheduled.id, trace: trace(count: 20), summary: summary(sampleCount: 20), now: start)
         _ = repo.completeSession(forScheduled: scheduled.id, acknowledgingOpenWork: true, now: start.addingTimeInterval(600))
 
-        _ = repo.resumeSession(forScheduled: scheduled.id)
+        _ = repo.startSession(forScheduled: scheduled.id, now: start.addingTimeInterval(3_000))
         repo.upsertHeartRateSeries(
             forScheduled: scheduled.id,
             trace: trace(count: 44, from: start.addingTimeInterval(3_600)),
@@ -402,6 +427,81 @@ struct WorkoutHeartRatePersistenceTests {
         store.attachHeartRate(nil)
         #expect(store.currentHeartRate == nil)
         #expect(store.currentLog?.heartRateSummary == nil)
+    }
+
+    /// The reported data-loss path, end to end: finish a strap-recorded workout, stay on the completed
+    /// summary, and ask for completion again the way the coach's `complete_workout` would. The gate it
+    /// checks must no longer see an active session, and even when completion is called anyway both
+    /// copies of the heart rate have to survive untouched.
+    @Test func askingToCompleteAnAlreadyFinishedWorkoutCannotDestroyItsHeartRate() throws {
+        let container = try makeContainer()
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+        #expect(store.activeSessionID != nil)
+
+        let captured = WorkoutHeartRateCapture(trace: trace(count: 30), summary: summary(sampleCount: 30))
+        WorkoutFinishCoordinator().finish(store, heartRate: captured)
+
+        // The gate the agent tool checks: a finished workout is not a running session.
+        #expect(store.activeSessionID == nil)
+
+        // And the layer beneath it refuses too, so no caller can drive a second completion.
+        store.completeWorkout(awaitingReconciliationDecision: false)
+
+        #expect(try container.mainContext.fetch(FetchDescriptor<SDCompletedLog>()).count == 1)
+        let stored = try #require(plan.heartRateSeries(for: scheduled.id))
+        #expect(stored.trace == captured.trace)
+        #expect(stored.summary == captured.summary)
+        #expect(plan.completed(for: scheduled.id)?.log.heartRateSummary == captured.summary)
+        #expect(store.loadHeartRate()?.trace == captured.trace)
+    }
+
+    /// The other half, which the non-destructive write must not break: a genuine second run with no
+    /// strap starts a fresh session and renders none of the first run's heart rate.
+    @Test func aSecondRunWithoutAStrapRendersNoHeartRate() throws {
+        let container = try makeContainer()
+        let plan = PlanStore(context: container.mainContext)
+        let suiteName = "WorkoutHeartRatePersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let program = plan.addProgram(Program(name: "P", createdAt: start))
+        let scheduled = plan.addScheduled(ScheduledWorkout(
+            programID: program.id, date: start, origin: .userCreated,
+            workoutID: UUID(), workoutRevisionID: UUID(), workout: workout()
+        ))
+
+        let store = WorkoutStore(units: StubUnitSystem(), defaults: defaults)
+        store.bind(plan.sink(forScheduled: scheduled.id), coalesceContent: false)
+        store.startWorkout()
+        WorkoutFinishCoordinator().finish(
+            store,
+            heartRate: WorkoutHeartRateCapture(trace: trace(count: 30), summary: summary(sampleCount: 30))
+        )
+        #expect(plan.hasHeartRateSeries(scheduled.id))
+
+        store.startWorkout()                                   // a new run of the same workout
+        WorkoutFinishCoordinator().finish(store, heartRate: nil)
+
+        #expect(plan.hasHeartRateSeries(scheduled.id) == false)
+        #expect(plan.heartRateSummary(for: scheduled.id) == nil)
+        #expect(plan.completed(for: scheduled.id)?.log.heartRateSummary == nil)
+        #expect(store.loadHeartRate() == nil)
+        // Nothing was destroyed to achieve that — the first run's row is still on disk, scoped to the
+        // log it was frozen onto.
+        #expect(try container.mainContext.fetch(FetchDescriptor<SDWorkoutHeartRateSeries>()).count == 1)
     }
 }
 

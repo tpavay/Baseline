@@ -4168,7 +4168,15 @@ final class WorkoutStore {
     }
 
     /// The active session id (the performed log), or nil if the workout hasn't been started.
-    var activeSessionID: UUID? { sink?.activeSession()?.id ?? currentLog?.id }
+    ///
+    /// The fallback covers a standalone (unbound) session, which has no plan session row to ask — but
+    /// only while its log is still live. A completed log is not an active session: reporting one let
+    /// callers that gate on "is a session running" act on a workout that had already finished.
+    var activeSessionID: UUID? {
+        if let session = sink?.activeSession() { return session.id }
+        guard let log = currentLog, log.isComplete == false else { return nil }
+        return log.id
+    }
 
     /// Sets still unchecked, and how many exercises they span — so complete_workout can warn before
     /// finalizing (and start_workout can tell whether a session is already live).
