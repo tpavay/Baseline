@@ -356,7 +356,7 @@ private struct StateInspectorView: View {
         card(workoutTitle) {
             if let w = workouts.current {
                 Text(w.title).font(.body.weight(.semibold)).foregroundStyle(BaselineColor.textHi)
-                if !w.notesText.isEmpty { row("Note", w.notesText) }
+                if let note = w.goal, !note.isEmpty { row("Note", note) }
                 ForEach(w.blocks) { block in
                     Text(block.name.uppercased() + (block.intent.map { " · \($0)" } ?? ""))
                         .font(.caption2.weight(.semibold)).tracking(0.4).foregroundStyle(BaselineColor.textFaint)

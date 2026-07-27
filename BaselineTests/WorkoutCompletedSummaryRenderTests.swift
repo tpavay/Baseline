@@ -36,7 +36,8 @@ extension IdleTimerRenderTests {
             #expect(screen.workout?.goal == "Keep the completed log readable.")
             #expect(screen.workout?.guidance?.formCues == ["Hold the paces we agreed on."])
             #expect(screen.hasLabel(containing: "Workout goal") == false)
-            #expect(screen.hasLabel(containing: "Plan note. Hold the paces we agreed on.") == false)
+            // Workout-level structured guidance is coach and planning metadata, never a shown note.
+            #expect(screen.hasAccessibleText(containing: "Hold the paces we agreed on.") == false)
             #expect(screen.hasLabel(containing: "Set completed"))
             #expect(screen.canFocusInput(labelled: "Workout note"))
             #expect(screen.canFocusInput(labelled: "Notes for Back Squat"))

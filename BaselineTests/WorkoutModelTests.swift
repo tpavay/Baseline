@@ -233,21 +233,6 @@ struct WorkoutModelTests {
         )
         var workout = Workout(title: "Legacy workout", goal: "Preserve the coach goal", guidance: guidance)
 
-        // The header's read-only fold surfaces both sources without either becoming the other's storage.
-        #expect(workout.notesText == """
-        Preserve the coach goal
-
-        Own the eccentric
-
-        3-1-1
-
-        Preserve the imported note
-
-        Heels lifting
-
-        Add 2.5kg next week
-        """)
-
         // Starting a session only reads the plan: planned text is never recorded as a performed fact.
         #expect(workout.startLog().athleteNotes == [])
         #expect(workout.startLog().hasAuthoredNotes == false)
@@ -259,17 +244,6 @@ struct WorkoutModelTests {
         workout.updateNotes("   ")
         #expect(workout.goal == nil)
         #expect(workout.guidance == guidance)
-    }
-
-    @Test func workoutNoteFoldDropsAnIdenticalRestatementButNeverADistinctNote() {
-        #expect(Workout(title: "Same text twice", goal: "A", guidance: CoachGuidance(formCues: ["A "])).notesText == "A")
-
-        // Substring overlap is not restatement: a coach's "avoid" note still reaches the athlete.
-        let distinct = Workout(
-            title: "Overlapping text",
-            guidance: CoachGuidance(formCues: ["Rest 90s between sets"], commonMistakes: ["Rest 90s"])
-        )
-        #expect(distinct.notesText == "Rest 90s between sets\n\nRest 90s")
     }
 
     @Test func goalLineCollapsesAMultiParagraphNoteForLineOrientedSurfaces() {

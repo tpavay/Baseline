@@ -256,24 +256,9 @@ extension Workout {
     mutating func updateGuidance(_ guidance: CoachGuidance?) { self.guidance = guidance }
     mutating func rename(_ title: String) { self.title = title }
 
-    /// Read-only display of everything the workout says at its own level: the note plus whatever an
-    /// import or agent left in structured guidance. This is a rendering, never a storage or edit path —
-    /// the note is stored in `goal` alone and guidance keeps its own shape.
-    var notesText: String {
-        var notes: [String] = []
-        for note in [goal, guidance?.notesText] {
-            guard let note, CoachGuidance.isMeaningful(note) else { continue }
-            let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !notes.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed })
-            else { continue }
-            notes.append(note)
-        }
-        return notes.joined(separator: "\n\n")
-    }
-
-    /// The workout's note, collapsed to one line. Plan cells, profile subtitles, and the line-oriented
-    /// agent summary all use it as a session descriptor, and a free-form note may run to several
-    /// paragraphs — a raw newline would break every one of those layouts.
+    /// The workout's note, collapsed to one line. Plan cells and profile subtitles use it as a session
+    /// descriptor, and a free-form note may run to several paragraphs — a raw newline would break either
+    /// layout.
     var goalLine: String? {
         guard let goal else { return nil }
         let line = goal.split(whereSeparator: \.isNewline)

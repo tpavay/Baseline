@@ -143,9 +143,10 @@ struct WorkoutTemplateEditor<TopContent: View, BottomContent: View>: View {
         )
     }
 
-    /// A plain free-form field over the workout's own note, which is where imported prose lands too.
-    /// Structured coach guidance is separate plan metadata: this field never reads, rewrites, or
-    /// decomposes it, and it is surfaced read-only rather than as a second editable workout-level field.
+    /// A plain free-form field over the workout's own note, which is where imported prose lands too, and
+    /// the same value every other workout-level surface shows. Structured coach guidance is coach and
+    /// planning metadata that never renders as a workout note anywhere, so this field neither reads it
+    /// nor writes it, and the editor and the header can never disagree about what the note is.
     private var workoutNotesBinding: Binding<String> {
         Binding(
             get: { store.current?.goal ?? "" },

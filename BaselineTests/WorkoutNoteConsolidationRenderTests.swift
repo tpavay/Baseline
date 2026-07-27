@@ -14,6 +14,7 @@ extension IdleTimerRenderTests {
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.")
+            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
 
             try screen.replaceInput(labelled: "Workout note", with: "One consolidated note")
             try await screen.settle()
@@ -22,47 +23,45 @@ extension IdleTimerRenderTests {
             #expect(screen.inputCount(labelled: "Workout note") == 1)
             #expect(screen.inputText(labelled: "Workout note") == "One consolidated note")
             #expect(screen.workout?.goal == "One consolidated note")
-            // Structured guidance is separate plan metadata the note path never rewrites.
-            #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
+            // Structured guidance is coach and planning metadata: kept intact, never shown as the note.
+            #expect(screen.workout?.guidance == CoachGuidance(formCues: [WorkoutNoteScreen.guidanceCue]))
+            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
         }
 
-        @Test func loggingShowsThePlanTextInTheOneFieldAndAdoptsItOnTheFirstEdit() async throws {
+        @Test func loggingShowsThePlanNoteInTheOneFieldAndAdoptsItOnTheFirstEdit() async throws {
             let screen = try await WorkoutNoteScreen(stage: .logging, includesLegacyNotes: true)
             defer { screen.tearDown() }
 
-            let planText = """
-            Preserve this goal.
-
-            Preserve this imported note.
-            """
-
-            // One workout-level surface, before and after the first edit: the plan's text is the field's
+            // One workout-level surface, before and after the first edit: the plan's note is the field's
             // own content rather than a second block that would vanish out from under the cursor.
             #expect(screen.hasLabel(containing: "Workout goal") == false)
             #expect(screen.hasLabel(containing: "Plan note") == false)
             #expect(screen.inputCount(labelled: "Workout note") == 1)
-            #expect(screen.inputText(labelled: "Workout note") == planText)
+            #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.")
             #expect(screen.hasRenderedText("Add a note here…") == false)
+            // Structured guidance never reaches a workout-level surface, here or anywhere else.
+            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
 
             // Nothing is written until the athlete acts: `startLog` seeded no performed note.
             #expect(screen.log?.athleteNotes == [])
             #expect(screen.log?.hasAuthoredNotes == false)
             try screen.capture("workout-note-plan-fallback")
 
-            try screen.replaceInput(labelled: "Workout note", with: "\(planText)\n\nLegs heavy today.")
+            try screen.replaceInput(labelled: "Workout note", with: "Preserve this goal.\n\nLegs heavy today.")
             try await screen.settle()
 
             // The first edit adopts what was on screen plus the athlete's own words into the log, and
             // leaves the plan's goal and structured guidance exactly as they were.
-            #expect(screen.log?.athleteNotes == ["\(planText)\n\nLegs heavy today."])
+            #expect(screen.log?.athleteNotes == ["Preserve this goal.\n\nLegs heavy today."])
             #expect(screen.log?.hasAuthoredNotes == true)
             #expect(screen.inputCount(labelled: "Workout note") == 1)
-            #expect(screen.inputText(labelled: "Workout note") == "\(planText)\n\nLegs heavy today.")
+            #expect(screen.inputText(labelled: "Workout note") == "Preserve this goal.\n\nLegs heavy today.")
             #expect(screen.hasLabel(containing: "Plan note") == false)
             #expect(screen.workout?.goal == "Preserve this goal.")
-            #expect(screen.workout?.guidance == CoachGuidance(formCues: ["Preserve this imported note."]))
+            #expect(screen.workout?.guidance == CoachGuidance(formCues: [WorkoutNoteScreen.guidanceCue]))
+            #expect(screen.shows(WorkoutNoteScreen.guidanceCue) == false)
 
-            // Clearing it leaves it cleared: the plan's text can no longer reappear under the cursor.
+            // Clearing it leaves it cleared: the plan's note can no longer reappear under the cursor.
             try screen.replaceInput(labelled: "Workout note", with: "")
             try await screen.settle()
 
@@ -93,6 +92,9 @@ private final class WorkoutNoteScreen: HostedScreen {
         case completed
     }
 
+    /// Structured coach guidance the workout carries. No workout-level surface may ever show it.
+    static let guidanceCue = "Preserve this imported note."
+
     let window: UIWindow
     private let store: WorkoutStore
     private let defaults: UserDefaults
@@ -119,9 +121,7 @@ private final class WorkoutNoteScreen: HostedScreen {
             goal: includesLegacyNotes ? "Preserve this goal." : nil
         )
         if includesLegacyNotes {
-            store.edit(.plan) {
-                $0.updateGuidance(CoachGuidance(formCues: ["Preserve this imported note."]))
-            }
+            store.edit(.plan) { $0.updateGuidance(CoachGuidance(formCues: [Self.guidanceCue])) }
         }
 
         switch stage {
@@ -158,6 +158,19 @@ private final class WorkoutNoteScreen: HostedScreen {
         window.rootViewController = nil
         defaults.removePersistentDomain(forName: suiteName)
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    /// Whether `text` reaches the athlete at all on this screen — as rendered text, inside an editable
+    /// field, or announced through the accessibility tree.
+    func shows(_ text: String) -> Bool {
+        if hasRenderedText(text) || hasLabel(containing: text) { return true }
+        return views()
+            .compactMap { $0 as? (UIView & UITextInput) }
+            .contains { input in
+                guard let range = input.textRange(from: input.beginningOfDocument, to: input.endOfDocument)
+                else { return false }
+                return input.text(in: range)?.contains(text) ?? false
+            }
     }
 
     /// UIKit keeps a text field's placeholder label in the hierarchy after the field gains text, so a

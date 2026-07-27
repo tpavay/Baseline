@@ -458,8 +458,8 @@ struct WorkoutView: View {
                     lineLimit: 2...,
                     accessibilityLabel: "Workout note"
                 )
-            } else if !workout.notesText.isEmpty {
-                Text(workout.notesText)
+            } else if let note = workout.goal, !note.isEmpty {
+                Text(note)
                     .font(.body)
                     .foregroundStyle(BaselineColor.textMid)
                     .fixedSize(horizontal: false, vertical: true)
@@ -571,13 +571,14 @@ struct WorkoutView: View {
 
     /// The one workout-level note during and after a session — the only workout-level text surface here,
     /// so nothing appears or disappears around it as the athlete types. Until the field has been edited
-    /// it shows the plan's own text; the first edit adopts whatever is on screen into the log, which is
+    /// it shows the plan's own note; the first edit adopts whatever is on screen into the log, which is
     /// the athlete's action rather than a seed `startLog` wrote. From then on it is exactly the performed
-    /// note, independent of later plan changes, and clearing it leaves it cleared.
+    /// note, independent of later plan changes, and clearing it leaves it cleared. Structured
+    /// `CoachGuidance` never reaches this field: it is coach and planning metadata, not the athlete's note.
     private var sessionNotesBinding: Binding<String> {
         Binding(
             get: {
-                guard store.currentLog?.hasAuthoredNotes == true else { return store.current?.notesText ?? "" }
+                guard store.currentLog?.hasAuthoredNotes == true else { return store.current?.goal ?? "" }
                 return store.currentLog?.notesText ?? ""
             },
             set: { value in
