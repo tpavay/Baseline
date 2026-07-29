@@ -8,7 +8,7 @@
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test test/tools.test.js test/toolSchemaContract.test.js test/prompt.test.js test/provider.test.js test/toolSchemaTokens.test.js test/workoutImport.test.js test/workoutImportRuntime.test.js test/llmObservability.test.js test/workoutImportStream.test.js test/providerOutage.test.js test/providerErrors.test.js",
+    "test": "npm run build && node --test test/tools.test.js test/toolSchemaContract.test.js test/prompt.test.js test/provider.test.js test/toolSchemaTokens.test.js test/tokenFixtureTooling.test.js test/workoutImport.test.js test/workoutImportRuntime.test.js test/llmObservability.test.js test/workoutImportStream.test.js test/providerOutage.test.js test/providerErrors.test.js",
     "preflight:providers": "npm run build && node scripts/preflight-tool-schemas.js",
     "tokens:measure": "npm run build && node scripts/measure-tool-schema-tokens.js --write",
     "tokens:check": "npm run build && node scripts/measure-tool-schema-tokens.js --check",
