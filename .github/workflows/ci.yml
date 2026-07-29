@@ -83,7 +83,7 @@ jobs:
           # Anything that feeds the Cloud Functions type-check and test suite.
           # `fixtures/` is in here because the node suite reads it directly
           # (functions/test/*.test.js resolve ../../fixtures/workout-import/).
-          functions_pattern='^(functions/|fixtures/|firebase\.json$|\.github/workflows/ci\.yml$)'
+          functions_pattern='^(functions/|fixtures/|firebase\.json$|\.github/workflows/ci\.yml$|\.github/workflows/regenerate-tool-schema-token-fixture\.yml$)'
 
           if matches "$ios_pattern"; then echo "ios=true" >> "$GITHUB_OUTPUT"; else echo "ios=false" >> "$GITHUB_OUTPUT"; fi
           if matches "$functions_pattern"; then echo "functions=true" >> "$GITHUB_OUTPUT"; else echo "functions=false" >> "$GITHUB_OUTPUT"; fi

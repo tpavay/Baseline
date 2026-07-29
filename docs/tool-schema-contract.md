@@ -16,7 +16,7 @@ PR #59 fixed the schemas and pinned "no top-level combinators"; this contract ge
 | 2. Offline contract lint | `functions/src/toolSchemaContract.ts` + `functions/test/toolSchemaContract.test.js` | Every served tool schema stays inside the documented safe subset (allowlist). Catches most problems in milliseconds with no network. Absorbs the PR #59 regression test. **This is the per-PR provider-rejection guard.** | `npm test` (so also CI job `functions-verify`) - every functions PR, **$0** |
 | 3. Cross-provider profiles | `toolSchemaContract.ts` (`ProviderSchemaProfile`) | The lint is structured per provider: enforced profiles must pass; the conservative cross-provider core reports **advisories** (latent fragility), pinned in the test. | with layer 2 |
 | 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the full wave9 toolset. | **Paid, gated** - CI workflow `provider-live-guard.yml` (same triggers as layer 1); `npm run smoke:conversation` locally. **Not on every PR.** |
-| 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-token-fixture` (`npm run tokens:check`, **free** `count_tokens`) - every functions PR, **$0**; regenerate with `npm run tokens:measure` |
+| 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-token-fixture` (`npm run tokens:check`, **free** `count_tokens`) - every functions PR, **$0**; contributors regenerate through `regenerate-tool-schema-token-fixture.yml` without receiving the key |
 
 The offline lint approximates the provider's validator; the preflight *is* the provider's validator.
 Keep both: the lint gives instant, explained feedback on every PR at no cost and covers providers you cannot cheaply call; the preflight is ground truth and catches anything the lint's model of the provider missed, and it runs deliberately (dispatch / schedule / label) rather than on every PR.
@@ -113,9 +113,13 @@ No real-provider **`messages`** request runs on the per-PR path, so routine CI s
 - To run it on a specific PR, add the `provider-smoke` label; to run it ad hoc, dispatch the workflow from the Actions tab.
 - `schedule` fires only from the default branch, so the weekly canary activates once the workflow file reaches that branch.
 
-**Key** (both workflows): repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together. (This is currently the same key as production; separating keys per environment is a follow-up.)
+**Key** (all three provider-calling workflows): repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together. (This is currently the same key as production; separating keys per environment is a follow-up.)
 
-- The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would give a false "provider accepts these schemas" signal.
+- The provider-calling preflight, smoke, and token-measurement modes **fail hard when the key is missing** rather than skipping.
+  A skipped preflight would give a false "provider accepts these schemas" signal.
+  The keyless request-shape export mode intentionally does not require or read the key.
+- Contributors do not need a local copy of the key to regenerate `toolSchemaTokens.json`.
+  The contributor procedure and workflow trust boundary are authoritative in `functions/scripts/README.md`.
 - One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema".
   The schemas are unverified by such a run; top up the account behind the secret and re-run the workflow.
 - Cost: the gated run is 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ $0.46 in real tokens. The per-PR `tokens:check` is ~90 **free** `count_tokens` requests.
@@ -123,6 +127,7 @@ No real-provider **`messages`** request runs on the per-PR path, so routine CI s
 ## Keeping the contract honest
 
 - Adding or changing a tool schema: `npm test` lints it instantly; the PR's preflight run is the ground truth.
-  Also regenerate the token fixture with `npm run tokens:measure` and commit the diff - `tokens:check` is exact, so any served-schema or system-prompt change makes the fixture stale.
+  Also regenerate the token fixture with the workflow documented in `functions/scripts/README.md` or with `npm run tokens:measure` when a local key is already available, then commit the diff.
+  `tokens:check` is exact, so any served-schema or system-prompt change makes the fixture stale.
 - If a legitimately needed construct fails the lint, extend the relevant profile **and** this document in the same PR, and let the preflight prove the provider accepts it.
 - The advisory pin means new provider-fragile constructs require editing the snapshot test - that edit is the review hook.
