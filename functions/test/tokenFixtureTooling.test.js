@@ -111,14 +111,37 @@ test("regeneration workflow keeps the secret in a read-only trusted job", () => 
   assert.doesNotMatch(workflow, /contents:\s*write/);
   assert.doesNotMatch(workflow, /pull_request_target/);
   assert.doesNotMatch(workflow, /\brun:\s*git push\b/);
-  assert.match(workflow, /if \[\[ "\$TARGET_BRANCH" == "\$DEFAULT_BRANCH" \]\]/);
-  assert.match(workflow, /if \[\[ "\$WORKFLOW_BRANCH" != "\$DEFAULT_BRANCH" \]\]/);
   assert.match(
     workflow,
-    /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/,
+    /group: regenerate-tool-schema-token-fixture-refs\/heads\/\$\{\{ inputs\.branch \}\}/,
   );
+  assert.match(workflow, /if \[\[ "\$TARGET_BRANCH" == "\$DEFAULT_BRANCH" \]\]/);
+  assert.match(
+    workflow,
+    /if \[\[ "\$TARGET_BRANCH" == refs\/\* \|\| "\$TARGET_BRANCH" =~ \^\[0-9A-Fa-f\]\{40\}\$ \]\]/,
+  );
+  assert.match(workflow, /WORKFLOW_REF: \$\{\{ github\.workflow_ref \}\}/);
+  assert.ok(
+    workflow.includes(
+      "EXPECTED_WORKFLOW_REF: ${{ format('{0}/.github/workflows/" +
+        "regenerate-tool-schema-token-fixture.yml@refs/heads/{1}', " +
+        "github.repository, github.event.repository.default_branch) }}",
+    ),
+  );
+  assert.match(workflow, /if \[\[ "\$WORKFLOW_REF" != "\$EXPECTED_WORKFLOW_REF" \]\]/);
+  assert.doesNotMatch(workflow, /github\.ref_name/);
+  assert.match(
+    workflow,
+    /ref: \$\{\{ format\('refs\/heads\/\{0\}', inputs\.branch\) \}\}/,
+  );
+  assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/);
   assert.match(workflow, /--export-inputs/);
   assert.match(workflow, /--measure-inputs/);
+  assert.match(
+    workflow,
+    /path: \$\{\{ runner\.temp \}\}\/token-fixture-inputs\/measurement-inputs\.json/,
+  );
+  assert.doesNotMatch(workflow, /token-fixture-inputs\/source-(?:branch|commit)\.txt/);
   assert.equal(
     workflow.match(/ANTHROPIC_API_KEY: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/g)?.length,
     1,
@@ -127,4 +150,23 @@ test("regeneration workflow keeps the secret in a read-only trusted job", () => 
     workflow.indexOf("measure:\n") <
       workflow.indexOf("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"),
   );
+
+  const metadataStart = workflow.indexOf("- name: Attach immutable source metadata");
+  const metadataEnd = workflow.indexOf(
+    "- name: Upload fixture for the originating feature branch",
+  );
+  assert.notEqual(metadataStart, -1);
+  assert.ok(metadataEnd > metadataStart);
+  const metadataStep = workflow.slice(metadataStart, metadataEnd);
+  assert.match(metadataStep, /SOURCE_BRANCH: \$\{\{ inputs\.branch \}\}/);
+  assert.match(metadataStep, /SOURCE_SHA: \$\{\{ needs\.export-inputs\.outputs\.source_sha \}\}/);
+  assert.match(
+    metadataStep,
+    /generated-fixture\/source-branch\.txt/,
+  );
+  assert.match(
+    metadataStep,
+    /generated-fixture\/source-commit\.txt/,
+  );
+  assert.doesNotMatch(metadataStep, /token-fixture-inputs/);
 });
