@@ -64,6 +64,33 @@ struct WorkoutLoggingCleanupRenderTests {
                 .resolve(.duration)?.value == "24m"
         )
     }
+
+    /// Discard inside the review is a sheet-to-alert handoff, which SwiftUI refuses while the sheet is
+    /// still on screen. Without the deferral the athlete taps Discard and nothing happens at all.
+    @Test func discardingFromTheFinishReviewRaisesTheConfirmation() async throws {
+        let screen = try await LoggingCleanupScreen()
+        defer { screen.tearDown() }
+
+        #expect(screen.activate(labelled: "Finish"))
+        try await screen.settle()
+        #expect(screen.hasLabel(containing: "Discard workout"))
+        #expect(screen.activate(labelled: "Discard workout"))
+        try await screen.settleUntil { screen.hasLabel(containing: "Discard Log") }
+
+        #expect(screen.hasLabel(containing: "Save workout") == false)
+        try await screen.tapAlertButton("Discard Log")
+        #expect(screen.hasLiveLog == false)
+        #expect(screen.completed == nil)
+    }
+
+    /// The wheels are bounded, so the largest duration they can express has to stay inside the
+    /// canonical ceiling — otherwise the picker shows a value storage silently clamps.
+    @Test func theDurationPickerCannotSelectMoreThanTheCanonicalCeiling() {
+        let largest = WorkoutDurationPickerSheet.maxSelectableSeconds + 59
+        #expect(largest < MetricFormat.maxDurationSeconds)
+        #expect(WorkoutDurationPickerSheet.maxSelectableSeconds
+            == TimeInterval(WorkoutDurationPickerSheet.maxMinutes * 60))
+    }
 }
 
 @MainActor
@@ -165,6 +192,10 @@ private final class LoggingCleanupScreen: HostedScreen {
 
     var storeDurationSeconds: TimeInterval? {
         store.currentLogDurationSeconds
+    }
+
+    var hasLiveLog: Bool {
+        store.currentLog != nil
     }
 
     var shareUnits: ShareUnitResolver {

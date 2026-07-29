@@ -729,7 +729,7 @@ struct WorkoutSessionEditingTests {
             pushWorkout: { pushes.workouts.append($0) },
             pushSessionWorkout: { _ in },
             pushLog: { _ in },
-            start: {}, complete: {}, discard: {},
+            start: {}, complete: { _, _ in }, discard: {},
             isSessionDecisionPending: { false },
             resolveSessionDecision: {},
             resolveAbandonedSessionDecision: {},

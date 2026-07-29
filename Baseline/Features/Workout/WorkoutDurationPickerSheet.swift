@@ -6,7 +6,15 @@ import SwiftUI
 struct WorkoutDurationPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    let durationSeconds: TimeInterval
+    /// The wheels top out at 24 hours. `.pickerStyle(.wheel)` bridges to `UIPickerView` and builds
+    /// every row view when the sheet opens, so the range has to be a duration an athlete can
+    /// plausibly select rather than the full `MetricFormat.maxDurationSeconds` span of a week — that
+    /// would be ten thousand styled rows per presentation. It also keeps the largest selectable
+    /// value well inside the canonical ceiling, so nothing the wheels display is silently clamped on
+    /// the way to storage.
+    static let maxMinutes = 1_440
+    static let maxSelectableSeconds = TimeInterval(maxMinutes * 60)
+
     let onDone: (TimeInterval) -> Void
 
     @State private var minutes: Int
@@ -14,9 +22,8 @@ struct WorkoutDurationPickerSheet: View {
 
     init(durationSeconds: TimeInterval, onDone: @escaping (TimeInterval) -> Void) {
         let safeDuration = Int(
-            min(max(0, durationSeconds), MetricFormat.maxDurationSeconds).rounded()
+            min(max(0, durationSeconds), Self.maxSelectableSeconds).rounded()
         )
-        self.durationSeconds = durationSeconds
         self.onDone = onDone
         _minutes = State(initialValue: safeDuration / 60)
         _seconds = State(initialValue: safeDuration % 60)
@@ -54,7 +61,7 @@ struct WorkoutDurationPickerSheet: View {
 
                 HStack(spacing: BaselineSpacing.xSmall) {
                     Picker("Minutes", selection: $minutes) {
-                        ForEach(0...10_080, id: \.self) { value in
+                        ForEach(0...Self.maxMinutes, id: \.self) { value in
                             Text("\(value)")
                                 .font(.bMono(24, .semibold))
                                 .tag(value)

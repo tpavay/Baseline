@@ -34,6 +34,9 @@ struct WorkoutView: View {
     @State private var finishDurationSeconds: TimeInterval = 0
     @State private var finishHeartRate: WorkoutHeartRateCapture?
     @State private var showDiscardConfirmation = false
+    /// Set when Discard is chosen inside the finish review; the review's `onDismiss` raises the
+    /// confirmation alert once the sheet is actually gone.
+    @State private var pendingDiscardFromFinishReview = false
     @State private var showSaveTemplate = false
     @State private var templateName = ""
     @State private var templateConflict: WorkoutTemplate?
@@ -91,10 +94,19 @@ struct WorkoutView: View {
         }
         .sheet(isPresented: $showFinishReview, onDismiss: {
             finishHeartRate = nil
+            // The discard confirmation is an alert, and SwiftUI cannot raise one while the review
+            // sheet is still on screen — so it waits here, where the dismissal has actually finished.
+            if pendingDiscardFromFinishReview {
+                pendingDiscardFromFinishReview = false
+                showDiscardConfirmation = true
+            }
         }) {
             if let workout = store.current,
-               let log = store.currentLog,
-               let startedAt = store.currentLogStartedAt {
+               let log = store.currentLog {
+                // Only the elapsed-time fallback needs the start instant, and the review always
+                // supplies a confirmed duration — so a missing start instant must never withhold the
+                // review, or the athlete would be left with no way to finish the session.
+                let startedAt = store.currentLogStartedAt ?? finishInstant
                 let units = ShareUnitResolver(workout: workout, store: store)
                 WorkoutFinishSheet(
                     workoutTitle: workout.title,
@@ -620,12 +632,16 @@ struct WorkoutView: View {
     /// Capture the finish boundary before review so time spent editing duration does not inflate the
     /// actual persisted finish timestamp or the initial duration.
     private func beginFinishing() {
-        guard let startedAt = store.currentLogStartedAt else { return }
         finishInstant = Date()
-        finishDurationSeconds = min(
-            max(0, finishInstant.timeIntervalSince(startedAt)),
-            MetricFormat.maxDurationSeconds
-        ).rounded()
+        // A session whose start instant failed to restore still has to be finishable; it simply opens
+        // the review at zero for the athlete to set. Clamped to the picker's own ceiling so the value
+        // the review shows is always one the wheels can express.
+        finishDurationSeconds = store.currentLogStartedAt.map {
+            min(
+                max(0, finishInstant.timeIntervalSince($0)),
+                WorkoutDurationPickerSheet.maxSelectableSeconds
+            ).rounded()
+        } ?? 0
         // Read the monitor while it is still alive. Saving flips `mode` to `.completed`, which tears
         // it down along with every zone-second it accumulated.
         finishHeartRate = hrMonitor.flatMap {
@@ -648,11 +664,8 @@ struct WorkoutView: View {
     }
 
     private func requestDiscardFromFinishReview() {
+        pendingDiscardFromFinishReview = true
         showFinishReview = false
-        Task { @MainActor in
-            await Task.yield()
-            showDiscardConfirmation = true
-        }
     }
 
     // MARK: - Templates

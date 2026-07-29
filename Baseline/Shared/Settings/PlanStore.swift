@@ -286,8 +286,7 @@ final class PlanStore {
                 ) ?? .rejected(.notFound)
             },
             start: { [weak self] in _ = self?.start(id) },
-            complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
-            completeAt: { [weak self] finishedAt, durationSeconds in
+            complete: { [weak self] finishedAt, durationSeconds in
                 _ = self?.complete(
                     id,
                     acknowledgingOpenWork: true,

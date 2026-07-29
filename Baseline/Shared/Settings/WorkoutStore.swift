@@ -117,7 +117,10 @@ final class WorkoutStore {
         let undoMutation: (UUID, UUID) -> WorkoutMutationResult
         let undoSessionMutation: (UUID, UUID) -> WorkoutMutationResult
         let start: () -> Void                         // begin the session in the plan
-        let complete: (Date, TimeInterval?) -> Void  // freeze the completed log
+        /// Freeze the completed log at the captured finish instant, with the athlete-confirmed
+        /// duration when one was chosen. Both arguments are required of every sink so neither the
+        /// instant nor the duration can be silently dropped by a sink that forgets them.
+        let complete: (Date, TimeInterval?) -> Void
         let discard: () -> Void
         /// The session's own record of whether its promotion decision is still unanswered — one shared
         /// answer for every store bound to this scheduled workout.
@@ -148,8 +151,7 @@ final class WorkoutStore {
             undoMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
             undoSessionMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
             start: @escaping () -> Void,
-            complete: @escaping () -> Void,
-            completeAt: ((Date, TimeInterval?) -> Void)? = nil,
+            complete: @escaping (Date, TimeInterval?) -> Void,
             discard: @escaping () -> Void,
             isSessionDecisionPending: @escaping () -> Bool,
             resolveSessionDecision: @escaping () -> Void,
@@ -216,7 +218,7 @@ final class WorkoutStore {
             self.undoMutation = undoMutation ?? { _, _ in .rejected(.undoUnavailable) }
             self.undoSessionMutation = undoSessionMutation ?? { _, _ in .rejected(.undoUnavailable) }
             self.start = start
-            self.complete = completeAt ?? { _, _ in complete() }
+            self.complete = complete
             self.discard = discard
             self.isSessionDecisionPending = isSessionDecisionPending
             self.resolveSessionDecision = resolveSessionDecision

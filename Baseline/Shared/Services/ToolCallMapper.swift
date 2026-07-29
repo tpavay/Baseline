@@ -1271,6 +1271,7 @@ enum ToolCallMapper {
         switch normalize(rawValue) {
         case "km", "perkm", "minkm", "secondsperkilometer": return .secondsPerKilometer
         case "mi", "permile", "minmi", "secondspermile": return .secondsPerMile
+        case "500m", "per500m", "per500", "min500m", "secondsper500meters": return .secondsPer500Meters
         case "sm", "secondspermeter": return .secondsPerMeter
         default: return nil
         }
@@ -1284,6 +1285,7 @@ enum ToolCallMapper {
         switch normalize(s) {
         case "minkm", "minperkm", "minutesperkilometer": return (.secondsPerKilometer, 60)
         case "minmi", "minpermile", "minutespermile": return (.secondsPerMile, 60)
+        case "min500m", "minper500m", "minutesper500meters": return (.secondsPer500Meters, 60)
         default: return unit(s).map { ($0, 1) }
         }
     }

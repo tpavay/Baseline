@@ -49,7 +49,7 @@ struct WorkoutFinishSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: BaselineSpacing.xSmall) {
-            Text("Nice work 🚣")
+            Text("Nice work 🎉")
                 .font(.largeTitle.bold())
                 .foregroundStyle(BaselineColor.textHi)
 
