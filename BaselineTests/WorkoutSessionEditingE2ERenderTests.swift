@@ -161,6 +161,10 @@ private final class SessionBed {
 private final class Screen: HostedScreen {
     let window: UIWindow
 
+    /// A whole `WorkoutView` over a real plan store, driving modal alerts: it needs longer to come
+    /// to rest than the single-surface screens the shared default is sized for.
+    let settleBudget: TimeInterval = 2
+
     init(store: WorkoutStore, plan: PlanStore, container: ModelContainer) async throws {
         let scene = try #require(
             UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -242,7 +246,7 @@ private final class Screen: HostedScreen {
         window.layoutIfNeeded()
     }
 
-    func settle(timeout: TimeInterval = 2) async throws {
+    func settle(timeout: TimeInterval) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             spin(0.1)

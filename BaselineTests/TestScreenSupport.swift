@@ -10,12 +10,17 @@ import UIKit
 protocol HostedScreen: AnyObject {
     var window: UIWindow { get }
 
-    /// A protocol requirement rather than an extension-only helper so a screen that needs a longer
-    /// run-loop budget is honoured by the shared helpers that settle on its behalf.
+    /// How long `settle()` lets the run loop turn. A screen hosting a heavier hierarchy raises it,
+    /// and every shared helper that settles on the screen's behalf reads it. This is a requirement
+    /// rather than a default argument because a default argument is bound from the declaration the
+    /// caller can see — inside these helpers that is always the extension's, never the screen's.
+    var settleBudget: TimeInterval { get }
+
     func settle(timeout: TimeInterval) async throws
 }
 
 extension HostedScreen {
+    var settleBudget: TimeInterval { 1 }
     /// Host `rootView` in a key window attached to the app's scene — an unattached window renders
     /// blank and publishes no accessibility elements.
     static func makeWindow(rootView: some View) throws -> UIWindow {
@@ -147,7 +152,11 @@ extension HostedScreen {
             || class_getInstanceVariable(UIAlertAction.self, "_handler") != nil
     }
 
-    func settle(timeout: TimeInterval = 1) async throws {
+    func settle() async throws {
+        try await settle(timeout: settleBudget)
+    }
+
+    func settle(timeout: TimeInterval) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             spin(0.05)
