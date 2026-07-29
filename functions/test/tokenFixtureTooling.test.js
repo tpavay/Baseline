@@ -170,3 +170,21 @@ test("regeneration workflow keeps the secret in a read-only trusted job", () => 
   );
   assert.doesNotMatch(metadataStep, /token-fixture-inputs/);
 });
+
+test("CI runs workflow safety checks for regeneration workflow changes", () => {
+  const ciWorkflowPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    ".github",
+    "workflows",
+    "ci.yml",
+  );
+  const ciWorkflow = fs.readFileSync(ciWorkflowPath, "utf8");
+
+  assert.ok(
+    ciWorkflow.includes(
+      "\\.github/workflows/regenerate-tool-schema-token-fixture\\.yml$",
+    ),
+  );
+});
