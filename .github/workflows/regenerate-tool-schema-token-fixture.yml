@@ -1,0 +1,167 @@
+name: Regenerate Tool-Schema Token Fixture
+
+# Generates the live-tokenizer fixture for a pushed feature branch without giving the contributor
+# the repository's Anthropic key. The feature branch runs only in export-inputs and never receives
+# secrets. A separate job checks out trusted tooling from the default branch, measures the exported
+# request shapes, and returns a downloadable artifact. Repository permissions are read-only, so
+# this workflow cannot push a fixture or bypass pull-request review.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Pushed feature branch whose served prompt and tool schemas should be measured
+        required: true
+        type: string
+
+concurrency:
+  group: regenerate-tool-schema-token-fixture-${{ inputs.branch }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  export-inputs:
+    name: Export Request Shapes Without Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+
+    steps:
+      - name: Require a feature branch and trusted workflow definition
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TARGET_BRANCH: ${{ inputs.branch }}
+          WORKFLOW_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$WORKFLOW_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::Dispatch this workflow from the default branch ($DEFAULT_BRANCH)."
+            exit 1
+          fi
+          if [[ "$TARGET_BRANCH" == "$DEFAULT_BRANCH" ]]; then
+            echo "::error::The fixture must be generated from a feature branch and reviewed in a pull request."
+            exit 1
+          fi
+          git check-ref-format --branch "$TARGET_BRANCH"
+
+      - name: Checkout feature branch without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          persist-credentials: false
+
+      - name: Capture immutable source commit
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix functions ci
+
+      - name: Compile feature-branch request definitions
+        run: npm --prefix functions run build
+
+      - name: Export exact request shapes without a provider key
+        shell: bash
+        env:
+          SOURCE_BRANCH: ${{ inputs.branch }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/token-fixture-inputs"
+          node functions/scripts/measure-tool-schema-tokens.js \
+            --export-inputs "$RUNNER_TEMP/token-fixture-inputs/measurement-inputs.json"
+          printf '%s\n' "$SOURCE_BRANCH" > "$RUNNER_TEMP/token-fixture-inputs/source-branch.txt"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/token-fixture-inputs/source-commit.txt"
+
+      - name: Transfer keyless request shapes to trusted measurement job
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-schema-token-inputs-${{ github.run_id }}
+          path: ${{ runner.temp }}/token-fixture-inputs/
+          retention-days: 1
+          if-no-files-found: error
+
+  measure:
+    name: Measure With Trusted Default-Branch Tooling
+    needs: export-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout trusted tooling without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          path: trusted
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download keyless request shapes
+        uses: actions/download-artifact@v4
+        with:
+          name: tool-schema-token-inputs-${{ github.run_id }}
+          path: ${{ runner.temp }}/token-fixture-inputs
+
+      - name: Measure fixture with repository secret
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/generated-fixture/functions/src"
+          node trusted/functions/scripts/measure-tool-schema-tokens.js \
+            --measure-inputs "$RUNNER_TEMP/token-fixture-inputs/measurement-inputs.json" \
+            --output "$RUNNER_TEMP/generated-fixture/functions/src/toolSchemaTokens.json"
+
+      - name: Attach immutable source metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cp "$RUNNER_TEMP/token-fixture-inputs/source-branch.txt" \
+            "$RUNNER_TEMP/generated-fixture/source-branch.txt"
+          cp "$RUNNER_TEMP/token-fixture-inputs/source-commit.txt" \
+            "$RUNNER_TEMP/generated-fixture/source-commit.txt"
+
+      - name: Upload fixture for the originating feature branch
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-schema-token-fixture
+          path: ${{ runner.temp }}/generated-fixture/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Summarize safe handoff
+        shell: bash
+        env:
+          SOURCE_BRANCH: ${{ inputs.branch }}
+          SOURCE_SHA: ${{ needs.export-inputs.outputs.source_sha }}
+        run: |
+          {
+            echo "### Tool-schema token fixture generated"
+            echo
+            echo "- Source branch: \`$SOURCE_BRANCH\`"
+            echo "- Source commit: \`$SOURCE_SHA\`"
+            echo "- Artifact: \`tool-schema-token-fixture\`"
+            echo
+            echo "Download the artifact on that same commit, copy its nested fixture into the branch,"
+            echo "and commit the visible token delta through the normal pull-request path."
+          } >> "$GITHUB_STEP_SUMMARY"
