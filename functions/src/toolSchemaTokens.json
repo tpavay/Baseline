@@ -5,38 +5,38 @@
     "wave9": {
       "toolCount": 78,
       "promptTokens": 5522,
-      "promptWithToolsTokens": 27821,
-      "toolSchemaTokens": 22299
+      "promptWithToolsTokens": 27802,
+      "toolSchemaTokens": 22280
     },
     "wave8": {
       "toolCount": 77,
       "promptTokens": 5264,
-      "promptWithToolsTokens": 26338,
-      "toolSchemaTokens": 21074
+      "promptWithToolsTokens": 26362,
+      "toolSchemaTokens": 21098
     },
     "wave7": {
       "toolCount": 66,
       "promptTokens": 4596,
-      "promptWithToolsTokens": 19979,
-      "toolSchemaTokens": 15383
+      "promptWithToolsTokens": 20003,
+      "toolSchemaTokens": 15407
     },
     "wave6": {
       "toolCount": 63,
       "promptTokens": 4156,
-      "promptWithToolsTokens": 17713,
-      "toolSchemaTokens": 13557
+      "promptWithToolsTokens": 17725,
+      "toolSchemaTokens": 13569
     },
     "wave5": {
       "toolCount": 55,
       "promptTokens": 3815,
-      "promptWithToolsTokens": 14963,
-      "toolSchemaTokens": 11148
+      "promptWithToolsTokens": 14975,
+      "toolSchemaTokens": 11160
     },
     "legacy": {
       "toolCount": 50,
       "promptTokens": 3741,
-      "promptWithToolsTokens": 13590,
-      "toolSchemaTokens": 9849
+      "promptWithToolsTokens": 13602,
+      "toolSchemaTokens": 9861
     }
   },
   "conversationTools": {
@@ -51,8 +51,8 @@
     "bulk_replace_exercises": 1161,
     "complete_workout": 680,
     "convert_choice_to_group": 681,
-    "convert_workout_units": 1184,
-    "create_custom_exercise": 1722,
+    "convert_workout_units": 1196,
+    "create_custom_exercise": 1679,
     "create_from_template": 643,
     "create_workout": 716,
     "delete_extra_performed_set": 662,
@@ -110,7 +110,7 @@
     "update_exercise_prescription": 1303,
     "update_extra_performed_set": 828,
     "update_group": 1808,
-    "update_logging_config": 824,
+    "update_logging_config": 836,
     "update_rest": 806,
     "update_set": 1680,
     "update_set_alternative": 1289,
