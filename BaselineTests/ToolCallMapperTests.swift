@@ -960,6 +960,38 @@ struct ToolCallMapperTests {
         ))
     }
 
+    @Test func mapsEverySupportedTaxonomyCaseForCustomExercise() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let primaryMuscles: [Muscle] = [.fullBody]
+        let secondaryMuscles = Muscle.allCases.filter { $0 != .fullBody }
+
+        #expect(ToolCallMapper.map(name: "create_custom_exercise", input: [
+            "name": "Taxonomy parity fixture",
+            "equipment": Equipment.allCases.map(\.rawValue),
+            "primary_muscles": primaryMuscles.map(\.rawValue),
+            "secondary_muscles": secondaryMuscles.map(\.rawValue),
+            "metrics": MetricType.allCases.map(\.rawValue),
+            "patterns": [MovementPattern.squat.rawValue, MovementPattern.hold.rawValue],
+            "tags": ExerciseTag.allCases.map(\.rawValue),
+            "level": ExerciseLevel.expert.rawValue,
+            "expected_revision_token": revision.uuidString,
+        ]) == .createCustomExercise(
+            draft: WorkoutStore.CustomExerciseDraft(
+                name: "Taxonomy parity fixture",
+                equipment: Equipment.allCases,
+                primaryMuscles: primaryMuscles,
+                secondaryMuscles: secondaryMuscles,
+                metrics: MetricType.allCases,
+                patterns: [.squat, .hold],
+                tags: ExerciseTag.allCases,
+                level: .expert,
+                units: [:]
+            ),
+            proposalID: nil,
+            expectedRevisionToken: revision
+        ))
+    }
+
     @Test func createCustomExerciseRejectsMissingOrUnknownClassification() throws {
         let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         let complete: [String: Any] = [

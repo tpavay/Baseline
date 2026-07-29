@@ -593,6 +593,32 @@ test("Wave 9 custom exercise creation is two-phase, taxonomy-complete, and capab
   for (const axis of ["equipment", "primary_muscles", "secondary_muscles", "metrics", "patterns", "tags"]) {
     assert.ok(Array.isArray(tool.input_schema.properties[axis].items.enum), `${axis} must be a closed enum`);
   }
+  assert.deepEqual(tool.input_schema.properties.equipment.items.enum, [
+    "bodyweight", "barbell", "barbellPlates", "ezBar", "trapBar", "dumbbell", "kettlebell",
+    "medicineBall", "machine", "cable", "sled", "sandbag", "box", "bench", "band", "rope",
+    "jumpRope", "pullUpBar", "exerciseBall", "bosuBall", "hangboard", "bike", "rower",
+    "skiErg", "treadmill", "stairStepper", "elliptical", "other",
+  ]);
+  const expectedMuscles = [
+    "chest", "lats", "upperBack", "traps", "lowerBack", "frontDelts", "sideDelts",
+    "rearDelts", "biceps", "triceps", "forearms", "abdominals", "obliques", "glutes",
+    "quadriceps", "hamstrings", "adductors", "abductors", "calves", "hipFlexors", "neck",
+    "fullBody",
+  ];
+  assert.deepEqual(tool.input_schema.properties.primary_muscles.items.enum, expectedMuscles);
+  assert.deepEqual(tool.input_schema.properties.secondary_muscles.items.enum, expectedMuscles);
+  assert.deepEqual(tool.input_schema.properties.metrics.items.enum, [
+    "reps", "load", "duration", "distance", "pace", "power", "calories", "cadence",
+    "heartRate", "heartRateZoneTime", "rpe",
+  ]);
+  assert.deepEqual(tool.input_schema.properties.patterns.items.enum, [
+    "squat", "hinge", "lunge", "push", "pull", "carry", "rotation", "gait", "hold",
+  ]);
+  assert.deepEqual(tool.input_schema.properties.tags.items.enum, [
+    "hyrox", "crossFit", "powerlifting", "olympicWeightlifting", "strongman", "calisthenics",
+    "plyometric", "running", "cycling", "rowing", "conditioning", "warmUp", "coolDown",
+    "mobility", "rehab", "unilateral",
+  ]);
   assert.deepEqual(tool.input_schema.properties.level.enum, ["beginner", "intermediate", "expert"]);
   // Units-bearing future defaults reuse the display-unit vocabulary.
   assert.deepEqual(tool.input_schema.properties.distance_unit.enum, ["m", "km", "mi"]);

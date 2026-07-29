@@ -1226,23 +1226,23 @@ export const TOOLS: ToolSchema[] = [
         equipment: {
           type: "array",
           minItems: 1,
-          items: { type: "string", enum: ["barbell", "dumbbell", "kettlebell", "cable", "machine", "bodyweight", "band", "medicineBall", "ezBar", "bench", "sled", "sandbag", "box", "jumpRope", "trapBar", "pullUpBar", "bike", "rower", "skiErg", "treadmill", "stairStepper", "elliptical", "other"] },
+          items: { type: "string", enum: ["bodyweight", "barbell", "barbellPlates", "ezBar", "trapBar", "dumbbell", "kettlebell", "medicineBall", "machine", "cable", "sled", "sandbag", "box", "bench", "band", "rope", "jumpRope", "pullUpBar", "exerciseBall", "bosuBall", "hangboard", "bike", "rower", "skiErg", "treadmill", "stairStepper", "elliptical", "other"] },
           description: "Gear the movement needs. Required, like the manual create form.",
         },
         primary_muscles: {
           type: "array",
           minItems: 1,
-          items: { type: "string", enum: ["abdominals", "abductors", "adductors", "biceps", "calves", "chest", "forearms", "frontDelts", "fullBody", "glutes", "hamstrings", "hipFlexors", "lats", "lowerBack", "neck", "obliques", "quadriceps", "rearDelts", "sideDelts", "traps", "triceps", "upperBack"] },
+          items: { type: "string", enum: ["chest", "lats", "upperBack", "traps", "lowerBack", "frontDelts", "sideDelts", "rearDelts", "biceps", "triceps", "forearms", "abdominals", "obliques", "glutes", "quadriceps", "hamstrings", "adductors", "abductors", "calves", "hipFlexors", "neck", "fullBody"] },
           description: "What it mainly trains. Required, like the manual create form.",
         },
         secondary_muscles: {
           type: "array",
-          items: { type: "string", enum: ["abdominals", "abductors", "adductors", "biceps", "calves", "chest", "forearms", "frontDelts", "fullBody", "glutes", "hamstrings", "hipFlexors", "lats", "lowerBack", "neck", "obliques", "quadriceps", "rearDelts", "sideDelts", "traps", "triceps", "upperBack"] },
+          items: { type: "string", enum: ["chest", "lats", "upperBack", "traps", "lowerBack", "frontDelts", "sideDelts", "rearDelts", "biceps", "triceps", "forearms", "abdominals", "obliques", "glutes", "quadriceps", "hamstrings", "adductors", "abductors", "calves", "hipFlexors", "neck", "fullBody"] },
         },
         metrics: {
           type: "array",
           minItems: 1,
-          items: { type: "string", enum: ["reps", "load", "duration", "distance", "calories", "heartRate", "heartRateZoneTime", "cadence", "power", "pace", "rpe"] },
+          items: { type: "string", enum: ["reps", "load", "duration", "distance", "pace", "power", "calories", "cadence", "heartRate", "heartRateZoneTime", "rpe"] },
           description: "The metrics this movement can log (they also become its logging defaults, and its modality is derived from them).",
         },
         patterns: {
@@ -1253,7 +1253,7 @@ export const TOOLS: ToolSchema[] = [
         },
         tags: {
           type: "array",
-          items: { type: "string", enum: ["hyrox", "olympicWeightlifting", "powerlifting", "calisthenics", "plyometric", "mobility", "strongman"] },
+          items: { type: "string", enum: ["hyrox", "crossFit", "powerlifting", "olympicWeightlifting", "strongman", "calisthenics", "plyometric", "running", "cycling", "rowing", "conditioning", "warmUp", "coolDown", "mobility", "rehab", "unilateral"] },
         },
         level: { type: "string", enum: ["beginner", "intermediate", "expert"], description: "Defaults to intermediate when the athlete doesn't say." },
         distance_unit: { type: "string", enum: ["m", "km", "mi"], description: "Optional future display default for this movement's distance." },

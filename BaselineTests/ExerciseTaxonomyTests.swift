@@ -4,27 +4,31 @@ import Testing
 
 @Suite("Exercise taxonomy")
 struct ExerciseTaxonomyTests {
-    @Test func taxonomyCanExpressEveryApprovedPickerOption() {
+    @Test func customCreationOptionsPreserveApprovedOrderingAndLabels() {
         let approvedEquipmentRawValues = [
-            "bodyweight", "barbell", "barbellPlates", "dumbbell", "kettlebell", "medicineBall",
-            "machine", "cable", "sled", "sandbag", "box", "band", "rope", "exerciseBall",
-            "bosuBall", "hangboard", "bike", "rower", "skiErg", "treadmill", "other"
+            "bodyweight", "barbell", "barbellPlates", "ezBar", "trapBar", "dumbbell", "kettlebell",
+            "medicineBall", "machine", "cable", "sled", "sandbag", "box", "bench", "band", "rope",
+            "jumpRope", "pullUpBar", "exerciseBall", "bosuBall", "hangboard", "bike", "rower",
+            "skiErg", "treadmill", "stairStepper", "elliptical", "other"
         ]
         #expect(Equipment.customCreationOptions.map(\.rawValue) == approvedEquipmentRawValues)
         #expect(Equipment.customCreationOptions.map(\.customCreationDisplayName) == [
-            "None / bodyweight", "Barbell", "Barbell plates", "Dumbbell", "Kettlebell", "Medicine ball",
-            "Machine", "Cable", "Sled", "Sandbag", "Box", "Bands", "Rope", "Exercise ball", "Bosu ball",
-            "Hangboard", "Bike", "Rower", "Ski erg", "Treadmill", "Other"
+            "None / bodyweight", "Barbell", "Barbell plates", "EZ-bar", "Trap bar", "Dumbbell",
+            "Kettlebell", "Medicine ball", "Machine", "Cable", "Sled", "Sandbag", "Box", "Bench",
+            "Bands", "Rope", "Jump rope", "Pull-up bar", "Exercise ball", "Bosu ball", "Hangboard",
+            "Bike", "Rower", "Ski erg", "Treadmill", "Stair stepper", "Elliptical", "Other"
         ])
 
         let approvedTagRawValues = [
-            "hyrox", "crossFit", "powerlifting", "olympicWeightlifting", "strongman", "running",
-            "cycling", "rowing", "conditioning", "warmUp", "coolDown", "mobility", "rehab", "unilateral"
+            "hyrox", "crossFit", "powerlifting", "olympicWeightlifting", "strongman", "calisthenics",
+            "plyometric", "running", "cycling", "rowing", "conditioning", "warmUp", "coolDown",
+            "mobility", "rehab", "unilateral"
         ]
         #expect(ExerciseTag.customCreationOptions.map(\.rawValue) == approvedTagRawValues)
         #expect(ExerciseTag.customCreationOptions.map(\.displayName) == [
-            "HYROX", "CrossFit", "Powerlifting", "Olympic lifting", "Strongman", "Running", "Cycling",
-            "Rowing", "Conditioning", "Warm-up", "Cool-down", "Mobility", "Rehab", "Unilateral"
+            "HYROX", "CrossFit", "Powerlifting", "Olympic lifting", "Strongman", "Calisthenics",
+            "Plyometric", "Running", "Cycling", "Rowing", "Conditioning", "Warm-up", "Cool-down",
+            "Mobility", "Rehab", "Unilateral"
         ])
 
         #expect(Muscle.abdominals.displayName == "Abs")
@@ -34,22 +38,24 @@ struct ExerciseTaxonomyTests {
         #expect(MetricType.heartRate.customCreationDisplayName == "Heart rate")
     }
 
-    @Test func approvedCreationOptionsStayOrderedAndExcludeModelOnlyCases() {
+    @Test func customCreationOptionsStayOrderedAndExhaustive() {
         #expect(Muscle.customCreationOptions.map(\.rawValue) == [
             "chest", "lats", "upperBack", "traps", "lowerBack", "frontDelts", "sideDelts", "rearDelts",
             "biceps", "triceps", "forearms", "abdominals", "obliques", "glutes", "quadriceps",
-            "hamstrings", "adductors", "abductors", "calves"
+            "hamstrings", "adductors", "abductors", "calves", "hipFlexors", "neck", "fullBody"
         ])
         #expect(Muscle.customCreationOptions.map(\.displayName) == [
             "Chest", "Lats", "Upper back", "Traps", "Lower back", "Front delts", "Side delts", "Rear delts",
             "Biceps", "Triceps", "Forearms", "Abs", "Obliques", "Glutes", "Quadriceps", "Hamstrings",
-            "Adductors", "Abductors", "Calves"
+            "Adductors", "Abductors", "Calves", "Hip flexors", "Neck", "Full body"
         ])
         #expect(MetricType.customCreationOptions.map(\.rawValue) == [
-            "reps", "load", "duration", "distance", "pace", "power", "calories", "cadence", "heartRate", "rpe"
+            "reps", "load", "duration", "distance", "pace", "power", "calories", "cadence", "heartRate",
+            "heartRateZoneTime", "rpe"
         ])
         #expect(MetricType.customCreationOptions.map(\.customCreationDisplayName) == [
-            "Reps", "Load", "Duration", "Distance", "Pace", "Power", "Calories", "Cadence", "Heart rate", "RPE"
+            "Reps", "Load", "Duration", "Distance", "Pace", "Power", "Calories", "Cadence", "Heart rate",
+            "Zone time", "RPE"
         ])
         #expect(MovementPattern.customCreationOptions == [
             .squat, .hinge, .lunge, .push, .pull, .carry, .rotation, .gait, .hold
@@ -60,14 +66,18 @@ struct ExerciseTaxonomyTests {
         #expect(ExerciseLevel.customCreationOptions == [.beginner, .intermediate, .expert])
         #expect(ExerciseLevel.customCreationOptions.map(\.displayName) == ["Beginner", "Intermediate", "Advanced"])
 
-        #expect(Equipment.allCases.contains(.ezBar))
-        #expect(Equipment.customCreationOptions.contains(.ezBar) == false)
-        #expect(Muscle.allCases.contains(.fullBody))
-        #expect(Muscle.customCreationOptions.contains(.fullBody) == false)
-        #expect(MetricType.allCases.contains(.heartRateZoneTime))
-        #expect(MetricType.customCreationOptions.contains(.heartRateZoneTime) == false)
-        #expect(ExerciseTag.allCases.contains(.calisthenics))
-        #expect(ExerciseTag.customCreationOptions.contains(.calisthenics) == false)
+        #expect(Set(Equipment.customCreationOptions) == Set(Equipment.allCases))
+        #expect(Equipment.customCreationOptions.count == Equipment.allCases.count)
+        #expect(Set(Muscle.customCreationOptions) == Set(Muscle.allCases))
+        #expect(Muscle.customCreationOptions.count == Muscle.allCases.count)
+        #expect(Set(MetricType.customCreationOptions) == Set(MetricType.allCases))
+        #expect(MetricType.customCreationOptions.count == MetricType.allCases.count)
+        #expect(Set(MovementPattern.customCreationOptions) == Set(MovementPattern.allCases))
+        #expect(MovementPattern.customCreationOptions.count == MovementPattern.allCases.count)
+        #expect(Set(ExerciseTag.customCreationOptions) == Set(ExerciseTag.allCases))
+        #expect(ExerciseTag.customCreationOptions.count == ExerciseTag.allCases.count)
+        #expect(Set(ExerciseLevel.customCreationOptions) == Set(ExerciseLevel.allCases))
+        #expect(ExerciseLevel.customCreationOptions.count == ExerciseLevel.allCases.count)
     }
 
     @Test func everyPreviouslyPersistedTaxonomyRawValueStillDecodes() throws {

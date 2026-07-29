@@ -83,8 +83,8 @@ enum Muscle: String, Codable, Sendable, CaseIterable, Hashable {
         }
     }
 
-    /// Options offered when creating a custom exercise, in the captain-approved picker order.
-    /// `allCases` remains the persisted model superset so older definitions keep decoding.
+    /// Every option offered when creating a custom exercise, in the captain-approved picker order.
+    /// Keep this exhaustive while leaving persisted raw values and enum declaration order unchanged.
     static let customCreationOptions: [Muscle] = [
         .chest,
         .lats,
@@ -104,7 +104,10 @@ enum Muscle: String, Codable, Sendable, CaseIterable, Hashable {
         .hamstrings,
         .adductors,
         .abductors,
-        .calves
+        .calves,
+        .hipFlexors,
+        .neck,
+        .fullBody
     ]
 }
 
@@ -137,7 +140,7 @@ enum MovementPattern: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Options offered when creating a custom exercise, in the captain-approved picker order.
+    /// Every option offered when creating a custom exercise, in the captain-approved picker order.
     static let customCreationOptions: [MovementPattern] = [
         .squat,
         .hinge,
@@ -220,12 +223,14 @@ enum Equipment: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Options offered when creating a custom exercise, in the captain-approved picker order.
-    /// Existing catalog-only cases stay in `allCases` for decode compatibility.
+    /// Every option offered when creating a custom exercise, in the captain-approved picker order.
+    /// Keep this exhaustive while leaving persisted raw values and enum declaration order unchanged.
     static let customCreationOptions: [Equipment] = [
         .bodyweight,
         .barbell,
         .barbellPlates,
+        .ezBar,
+        .trapBar,
         .dumbbell,
         .kettlebell,
         .medicineBall,
@@ -234,8 +239,11 @@ enum Equipment: String, Codable, Sendable, CaseIterable {
         .sled,
         .sandbag,
         .box,
+        .bench,
         .band,
         .rope,
+        .jumpRope,
+        .pullUpBar,
         .exerciseBall,
         .bosuBall,
         .hangboard,
@@ -243,6 +251,8 @@ enum Equipment: String, Codable, Sendable, CaseIterable {
         .rower,
         .skiErg,
         .treadmill,
+        .stairStepper,
+        .elliptical,
         .other
     ]
 
@@ -309,8 +319,7 @@ enum ExerciseLevel: String, Codable, Sendable, CaseIterable {
 }
 
 extension MetricType {
-    /// Options offered when creating a custom exercise. Zone time remains decodable and usable on existing
-    /// definitions, but is intentionally not offered by the approved creation picker.
+    /// Every option offered when creating a custom exercise, in the captain-approved picker order.
     static let customCreationOptions: [MetricType] = [
         .reps,
         .load,
@@ -321,6 +330,7 @@ extension MetricType {
         .calories,
         .cadence,
         .heartRate,
+        .heartRateZoneTime,
         .rpe
     ]
 
@@ -399,14 +409,15 @@ enum ExerciseTag: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Options offered when creating a custom exercise, in the captain-approved picker order.
-    /// Calisthenics and plyometric remain supported for existing and remotely published definitions.
+    /// Every option offered when creating a custom exercise, in the captain-approved picker order.
     static let customCreationOptions: [ExerciseTag] = [
         .hyrox,
         .crossFit,
         .powerlifting,
         .olympicWeightlifting,
         .strongman,
+        .calisthenics,
+        .plyometric,
         .running,
         .cycling,
         .rowing,

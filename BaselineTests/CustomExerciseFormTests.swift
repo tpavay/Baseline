@@ -88,31 +88,37 @@ struct CustomExerciseFormTests {
 
 struct CustomExerciseTaxonomyOrderTests {
     @Test func equipmentOrderCoversEveryCaseExactlyOnce() {
+        #expect(CustomExerciseTaxonomyOrder.equipment == Equipment.customCreationOptions)
         #expect(Set(CustomExerciseTaxonomyOrder.equipment) == Set(Equipment.allCases))
         #expect(CustomExerciseTaxonomyOrder.equipment.count == Equipment.allCases.count)
     }
 
     @Test func muscleOrderCoversEveryCaseExactlyOnce() {
+        #expect(CustomExerciseTaxonomyOrder.muscles == Muscle.customCreationOptions)
         #expect(Set(CustomExerciseTaxonomyOrder.muscles) == Set(Muscle.allCases))
         #expect(CustomExerciseTaxonomyOrder.muscles.count == Muscle.allCases.count)
     }
 
     @Test func metricOrderCoversEveryCaseExactlyOnce() {
+        #expect(CustomExerciseTaxonomyOrder.metrics == MetricType.customCreationOptions)
         #expect(Set(CustomExerciseTaxonomyOrder.metrics) == Set(MetricType.allCases))
         #expect(CustomExerciseTaxonomyOrder.metrics.count == MetricType.allCases.count)
     }
 
     @Test func patternOrderCoversEveryCaseExactlyOnce() {
+        #expect(CustomExerciseTaxonomyOrder.patterns == MovementPattern.customCreationOptions)
         #expect(Set(CustomExerciseTaxonomyOrder.patterns) == Set(MovementPattern.allCases))
         #expect(CustomExerciseTaxonomyOrder.patterns.count == MovementPattern.allCases.count)
     }
 
     @Test func tagOrderCoversEveryCaseExactlyOnce() {
+        #expect(CustomExerciseTaxonomyOrder.tags == ExerciseTag.customCreationOptions)
         #expect(Set(CustomExerciseTaxonomyOrder.tags) == Set(ExerciseTag.allCases))
         #expect(CustomExerciseTaxonomyOrder.tags.count == ExerciseTag.allCases.count)
     }
 
     @Test func levelOrderCoversEveryCaseExactlyOnce() {
+        #expect(CustomExerciseTaxonomyOrder.levels == ExerciseLevel.customCreationOptions)
         #expect(Set(CustomExerciseTaxonomyOrder.levels) == Set(ExerciseLevel.allCases))
         #expect(CustomExerciseTaxonomyOrder.levels.count == ExerciseLevel.allCases.count)
     }
