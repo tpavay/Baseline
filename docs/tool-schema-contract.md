@@ -113,13 +113,13 @@ No real-provider **`messages`** request runs on the per-PR path, so routine CI s
 - To run it on a specific PR, add the `provider-smoke` label; to run it ad hoc, dispatch the workflow from the Actions tab.
 - `schedule` fires only from the default branch, so the weekly canary activates once the workflow file reaches that branch.
 
-**Key** (both workflows): repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together. (This is currently the same key as production; separating keys per environment is a follow-up.)
+**Key** (all three provider-calling workflows): repository Actions secret `ANTHROPIC_API_KEY` - the **dev** Firebase project's key, mirrored from GCP Secret Manager (`firebase functions:secrets:access ANTHROPIC_API_KEY --project baseline-app-dev`). Rotate both together. (This is currently the same key as production; separating keys per environment is a follow-up.)
 
-- The scripts **fail hard when the key is missing** rather than skipping: a skipped preflight would give a false "provider accepts these schemas" signal.
+- The provider-calling preflight, smoke, and token-measurement modes **fail hard when the key is missing** rather than skipping.
+  A skipped preflight would give a false "provider accepts these schemas" signal.
+  The keyless request-shape export mode intentionally does not require or read the key.
 - Contributors do not need a local copy of the key to regenerate `toolSchemaTokens.json`.
-  Follow `functions/scripts/README.md` to dispatch the read-only `regenerate-tool-schema-token-fixture.yml` workflow from `develop` for a pushed feature branch, verify the artifact's captured source commit, and copy the generated fixture back into that branch.
-  Feature-branch code exports request shapes in a keyless job; only reviewed default-branch tooling receives the secret.
-  The workflow cannot target the default branch and has no permission or persisted credentials to push.
+  The contributor procedure and workflow trust boundary are authoritative in `functions/scripts/README.md`.
 - One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema".
   The schemas are unverified by such a run; top up the account behind the secret and re-run the workflow.
 - Cost: the gated run is 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ $0.46 in real tokens. The per-PR `tokens:check` is ~90 **free** `count_tokens` requests.

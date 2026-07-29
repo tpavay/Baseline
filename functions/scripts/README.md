@@ -44,8 +44,9 @@ The pull request's `functions-token-fixture` job runs `npm run tokens:check` aga
 
 The workflow is intentionally split into two jobs.
 Feature-branch code only compiles and exports the exact request shapes in a job with no secrets.
-The secret-bearing job checks out the reviewed script from the default branch, validates the exported JSON, calls only Anthropic's fixed `count_tokens` endpoint, and uploads the result.
-Both jobs have read-only repository permissions, persisted checkout credentials are disabled, and the workflow rejects the default branch as a measurement target.
+The secret-bearing job checks out the reviewed generator at the immutable default-branch workflow commit, validates the exported JSON, calls only Anthropic's fixed `count_tokens` endpoint, and uploads the result.
+Both jobs have read-only repository permissions, and persisted checkout credentials are disabled.
+The workflow accepts only its default-branch dispatch definition and rejects the default branch as a measurement target.
 It cannot push to any branch or bypass pull-request review.
 
 One run is isolated to one captured source commit.
