@@ -37,8 +37,8 @@ extension IdleTimerRenderTests {
             #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
 
             try await screen.tap("Finish")
-            screen.capture("12-finish-confirmation")
-            try await screen.tapAlertButton("Finish Workout")
+            screen.capture("12-finish-review")
+            try await screen.tap("Save workout")
 
             #expect(screen.element(labelled: "Update your plan?") != nil)
             screen.capture("13-update-your-plan-prompt")
@@ -56,7 +56,7 @@ extension IdleTimerRenderTests {
 
             try await bed.editMidSession(on: screen)
             try await screen.tap("Finish")
-            try await screen.tapAlertButton("Finish Workout")
+            try await screen.tap("Save workout")
             #expect(screen.element(labelled: "Update your plan?") != nil)
 
             try await screen.tapAlertButton("Keep Original")
@@ -81,7 +81,7 @@ extension IdleTimerRenderTests {
             try await screen.settle()
 
             try await screen.tap("Finish")
-            try await screen.tapAlertButton("Finish Workout")
+            try await screen.tap("Save workout")
             #expect(screen.element(labelled: "Update your plan?") == nil)
             #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
             screen.capture("16-no-prompt-for-logged-actuals")

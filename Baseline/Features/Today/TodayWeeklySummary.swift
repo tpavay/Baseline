@@ -11,6 +11,19 @@ struct TodayCompletedSessionSample: Equatable {
     let completedLogID: UUID
     let finishedAt: Date
     let startedAt: Date?
+    let durationSeconds: TimeInterval?
+
+    init(
+        completedLogID: UUID,
+        finishedAt: Date,
+        startedAt: Date?,
+        durationSeconds: TimeInterval? = nil
+    ) {
+        self.completedLogID = completedLogID
+        self.finishedAt = finishedAt
+        self.startedAt = startedAt
+        self.durationSeconds = durationSeconds
+    }
 }
 
 struct TodayMovementSummary: Equatable, Identifiable {
@@ -67,6 +80,9 @@ struct TodayWeeklySummary: Equatable {
 
         let fallbackDurations = exerciseDurationByLog(weekExercises)
         let trainingSeconds = weekSessions.reduce(0.0) { total, session in
+            if let duration = session.durationSeconds, duration.isFinite {
+                return total + min(max(0, duration), MetricFormat.maxDurationSeconds)
+            }
             guard let startedAt = session.startedAt, session.finishedAt > startedAt else {
                 return total + fallbackDurations[session.completedLogID, default: 0]
             }

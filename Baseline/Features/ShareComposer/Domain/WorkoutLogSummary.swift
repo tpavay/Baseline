@@ -14,6 +14,7 @@ struct WorkoutLogSummary: Equatable, Sendable {
     var title: String
     var startedAt: Date
     var finishedAt: Date
+    var confirmedDurationSeconds: TimeInterval?
     var exerciseCount: Int
     var totalSets: Int
     var totalReps: Int
@@ -28,7 +29,10 @@ struct WorkoutLogSummary: Equatable, Sendable {
     var exerciseLines: [ExerciseLine]
 
     var elapsedSeconds: TimeInterval {
-        max(0, finishedAt.timeIntervalSince(startedAt))
+        if let confirmedDurationSeconds, confirmedDurationSeconds.isFinite {
+            return min(max(0, confirmedDurationSeconds), MetricFormat.maxDurationSeconds)
+        }
+        return max(0, finishedAt.timeIntervalSince(startedAt))
     }
 
     init(
@@ -36,6 +40,7 @@ struct WorkoutLogSummary: Equatable, Sendable {
         log: WorkoutLog,
         startedAt: Date,
         finishedAt: Date,
+        confirmedDurationSeconds: TimeInterval? = nil,
         averageHeartRate: Int? = nil,
         maxHeartRate: Int? = nil,
         units: ShareUnitResolver
@@ -43,6 +48,7 @@ struct WorkoutLogSummary: Equatable, Sendable {
         self.title = title
         self.startedAt = startedAt
         self.finishedAt = finishedAt
+        self.confirmedDurationSeconds = confirmedDurationSeconds
         self.averageHeartRate = averageHeartRate
         self.maxHeartRate = maxHeartRate
 

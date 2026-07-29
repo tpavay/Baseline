@@ -26,13 +26,13 @@ enum MetricType: String, Codable, Sendable, CaseIterable {
     /// Display units the athlete can choose between. Single-entry = not convertible.
     ///
     /// Pace deliberately does **not** offer its canonical `s/m`: nobody reads a pace that way. The
-    /// two offered forms are the ones athletes speak — minutes per kilometer and per mile.
+    /// offered forms are the ones athletes speak: minutes per 500 meters, kilometer, or mile.
     var displayUnits: [MetricUnit] {
         switch self {
         case .distance: [.meters, .kilometers, .miles]
         case .load: [.kilograms, .pounds]
         case .duration, .heartRateZoneTime: [.seconds, .minutes]
-        case .pace: [.secondsPerKilometer, .secondsPerMile]
+        case .pace: [.secondsPer500Meters, .secondsPerKilometer, .secondsPerMile]
         default: [canonicalUnit]
         }
     }
@@ -149,7 +149,7 @@ protocol UnitSystemSource: AnyObject {
 
 enum MetricUnit: String, Codable, Sendable {
     case count, kilograms, pounds, meters, kilometers, miles, seconds, minutes, kcal, bpm, rpm, watts
-    case secondsPerMeter, secondsPerKilometer, secondsPerMile, rpe
+    case secondsPerMeter, secondsPer500Meters, secondsPerKilometer, secondsPerMile, rpe
 
     var short: String {
         switch self {
@@ -166,6 +166,7 @@ enum MetricUnit: String, Codable, Sendable {
         case .rpm: "rpm"
         case .watts: "W"
         case .secondsPerMeter: "s/m"
+        case .secondsPer500Meters: "/500m"
         case .secondsPerKilometer: "/km"
         case .secondsPerMile: "/mi"
         case .rpe: ""
@@ -173,9 +174,10 @@ enum MetricUnit: String, Codable, Sendable {
     }
 }
 
-/// Canonical ↔ display conversion. Only distance and load have multiple units; everything else is 1:1.
+/// Canonical ↔ display conversion for distance, load, duration, and pace units.
 enum MetricConvert {
     static let metersPerMile = 1609.344
+    static let metersPer500 = 500.0
     static let metersPerKilometer = 1000.0
     static let kgPerPound = 0.45359237
     /// Body height is not a `MetricType`, but its conversion belongs here with the others so the
@@ -190,6 +192,7 @@ enum MetricConvert {
         case (.kilograms, .pounds): value / kgPerPound
         case (.seconds, .minutes): value / 60
         // Pace inverts: seconds *per meter* becomes seconds per a longer distance, so it multiplies.
+        case (.secondsPerMeter, .secondsPer500Meters): value * metersPer500
         case (.secondsPerMeter, .secondsPerKilometer): value * metersPerKilometer
         case (.secondsPerMeter, .secondsPerMile): value * metersPerMile
         default: value   // same unit or non-convertible
@@ -203,6 +206,7 @@ enum MetricConvert {
         case (.miles, .meters): value * metersPerMile
         case (.pounds, .kilograms): value * kgPerPound
         case (.minutes, .seconds): value * 60
+        case (.secondsPer500Meters, .secondsPerMeter): value / metersPer500
         case (.secondsPerKilometer, .secondsPerMeter): value / metersPerKilometer
         case (.secondsPerMile, .secondsPerMeter): value / metersPerMile
         default: value

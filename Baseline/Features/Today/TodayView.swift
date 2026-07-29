@@ -201,7 +201,8 @@ struct TodayView: View {
             return TodayCompletedSessionSample(
                 completedLogID: completed.id,
                 finishedAt: completed.finishedAt,
-                startedAt: startedAt
+                startedAt: startedAt,
+                durationSeconds: completed.durationSeconds
             )
         }
     }

@@ -29,7 +29,10 @@ struct WorkoutView: View {
     /// completed record and re-aggregates every set, and holding it also means the composer cannot be
     /// left on screen with nothing in it if the store's session state changes underneath.
     @State private var shareRequest: ShareComposerRequest?
-    @State private var showFinishConfirmation = false
+    @State private var showFinishReview = false
+    @State private var finishInstant = Date()
+    @State private var finishDurationSeconds: TimeInterval = 0
+    @State private var finishHeartRate: WorkoutHeartRateCapture?
     @State private var showDiscardConfirmation = false
     @State private var showSaveTemplate = false
     @State private var templateName = ""
@@ -39,8 +42,8 @@ struct WorkoutView: View {
     /// and reach the saved plan solely through the completion prompt below.
     @State private var showReorder = false
     @State private var addExerciseRequest: AddExerciseRequest?
-    /// Captures the reconciliation just before completing — so the "update your plan?" decision never
-    /// depends on post-completion store state — and defers the prompt past the finish alert's dismissal.
+    /// Captures the reconciliation just before completing so the "update your plan?" decision never
+    /// depends on post-completion store state, then defers the prompt past the finish review dismissal.
     @State private var finishing = WorkoutFinishCoordinator()
 
     /// Live heart-rate monitor for the active log, created only while logging with a saved strap.
@@ -86,11 +89,31 @@ struct WorkoutView: View {
         } message: {
             Text("Reuse this workout later from Add Workout on the Plan tab.")
         }
-        .alert("Finish workout?", isPresented: $showFinishConfirmation) {
-            Button("Finish Workout") { finishWorkout() }
-            Button("Keep Logging", role: .cancel) {}
-        } message: {
-            Text("Logged work will be kept even if you changed, skipped, or did not finish part of the prescription.")
+        .sheet(isPresented: $showFinishReview, onDismiss: {
+            finishHeartRate = nil
+        }) {
+            if let workout = store.current,
+               let log = store.currentLog,
+               let startedAt = store.currentLogStartedAt {
+                let units = ShareUnitResolver(workout: workout, store: store)
+                WorkoutFinishSheet(
+                    workoutTitle: workout.title,
+                    summary: WorkoutLogSummary(
+                        title: workout.title,
+                        log: log,
+                        startedAt: startedAt,
+                        finishedAt: finishInstant,
+                        confirmedDurationSeconds: finishDurationSeconds,
+                        averageHeartRate: finishHeartRate?.summary.averageBPM,
+                        maxHeartRate: finishHeartRate?.summary.maxBPM,
+                        units: units
+                    ),
+                    units: units,
+                    durationSeconds: $finishDurationSeconds,
+                    onSave: finishWorkout,
+                    onDiscard: requestDiscardFromFinishReview
+                )
+            }
         }
         .sheet(isPresented: $showReorder) { WorkoutReorderSheet() }
         .sheet(item: $addExerciseRequest) { request in
@@ -190,7 +213,7 @@ struct WorkoutView: View {
                 if mode == .view {
                     Button("Edit", action: beginEditing).fontWeight(.semibold)
                 } else if store.currentLog?.isComplete == false {
-                    Button("Finish") { showFinishConfirmation = true }.fontWeight(.semibold)
+                    Button("Finish", action: beginFinishing).fontWeight(.semibold)
                 }
                 Menu {
                     Button { showChat = true } label: {
@@ -251,6 +274,7 @@ struct WorkoutView: View {
                 log: log,
                 startedAt: startedAt,
                 finishedAt: finishedAt,
+                confirmedDurationSeconds: store.currentLogDurationSeconds,
                 units: units
             ),
             units: units
@@ -466,12 +490,10 @@ struct WorkoutView: View {
             }
 
             HStack(spacing: 8) {
-                if mode.usesPerformedData {
-                    let completed = store.currentLog?.isComplete == true
-                    Label(completed ? "Completed" : "In progress",
-                          systemImage: completed ? "checkmark.circle.fill" : "circle.dotted")
+                if mode == .completed {
+                    Label("Completed", systemImage: "checkmark.circle.fill")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(completed ? BaselineColor.zoneGreen : BaselineColor.accent)
+                        .foregroundStyle(BaselineColor.zoneGreen)
                 }
                 if !store.currentIsForToday, let date = workout.scheduledDate {
                     Text("Scheduled \(date.formatted(.dateTime.month().day()))")
@@ -595,16 +617,42 @@ struct WorkoutView: View {
 
     // MARK: - Completing
 
+    /// Capture the finish boundary before review so time spent editing duration does not inflate the
+    /// actual persisted finish timestamp or the initial duration.
+    private func beginFinishing() {
+        guard let startedAt = store.currentLogStartedAt else { return }
+        finishInstant = Date()
+        finishDurationSeconds = min(
+            max(0, finishInstant.timeIntervalSince(startedAt)),
+            MetricFormat.maxDurationSeconds
+        ).rounded()
+        // Read the monitor while it is still alive. Saving flips `mode` to `.completed`, which tears
+        // it down along with every zone-second it accumulated.
+        finishHeartRate = hrMonitor.flatMap {
+            WorkoutHeartRateCapture(recorder: hrRecorder, monitor: $0)
+        }
+        showFinishReview = true
+    }
+
     /// Finish the session, then offer to promote whatever the athlete changed back to the saved plan.
     /// The reconciliation is captured *before* completing so the summary describes the session that was
     /// actually performed, and so declining leaves the plan untouched with no further bookkeeping.
     private func finishWorkout() {
-        // Read the monitor while it is still alive: completing flips `mode` to `.completed`, which
-        // tears it down along with every zone-second it accumulated.
-        let heartRate = hrMonitor.flatMap {
-            WorkoutHeartRateCapture(recorder: hrRecorder, monitor: $0)
+        finishing.finish(
+            store,
+            heartRate: finishHeartRate,
+            durationSeconds: finishDurationSeconds,
+            finishedAt: finishInstant
+        )
+        showFinishReview = false
+    }
+
+    private func requestDiscardFromFinishReview() {
+        showFinishReview = false
+        Task { @MainActor in
+            await Task.yield()
+            showDiscardConfirmation = true
         }
-        finishing.finish(store, heartRate: heartRate)
     }
 
     // MARK: - Templates

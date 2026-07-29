@@ -388,6 +388,9 @@ struct WorkoutDetailView: View {
 
     private func detailDuration(_ scheduled: ScheduledWorkout) -> String {
         if let session = snapshot?.session, let completed = snapshot?.completed {
+            if let duration = completed.durationSeconds {
+                return MetricFormat.durationLong(duration)
+            }
             let elapsed = completed.finishedAt.timeIntervalSince(session.startedAt)
             if elapsed >= 60 { return MetricFormat.durationLong(elapsed) }
         }

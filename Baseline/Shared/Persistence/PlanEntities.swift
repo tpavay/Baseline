@@ -164,9 +164,20 @@ import SwiftData
     var id: UUID = UUID()
     var scheduledWorkoutID: UUID = UUID()
     var finishedAt: Date = Date.distantPast
+    var durationSeconds: Double?
     var logJSON: Data = Data()
-    init(id: UUID = UUID(), scheduledWorkoutID: UUID = UUID(), finishedAt: Date = Date.distantPast, logJSON: Data = Data()) {
-        self.id = id; self.scheduledWorkoutID = scheduledWorkoutID; self.finishedAt = finishedAt; self.logJSON = logJSON
+    init(
+        id: UUID = UUID(),
+        scheduledWorkoutID: UUID = UUID(),
+        finishedAt: Date = Date.distantPast,
+        durationSeconds: Double? = nil,
+        logJSON: Data = Data()
+    ) {
+        self.id = id
+        self.scheduledWorkoutID = scheduledWorkoutID
+        self.finishedAt = finishedAt
+        self.durationSeconds = durationSeconds
+        self.logJSON = logJSON
     }
 }
 

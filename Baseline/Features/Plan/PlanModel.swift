@@ -165,6 +165,9 @@ struct CompletedWorkoutLog: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var scheduledWorkoutID: UUID
     var finishedAt: Date
+    /// The athlete-confirmed active duration. Nil preserves compatibility with completed records
+    /// created before duration became editable; readers then fall back to the start/finish interval.
+    var durationSeconds: TimeInterval? = nil
     var log: WorkoutLog
 }
 

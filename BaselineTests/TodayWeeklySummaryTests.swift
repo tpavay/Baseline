@@ -73,4 +73,23 @@ struct TodayWeeklySummaryTests {
         #expect(TodayWeeklySummary.durationText(2_040) == "34m")
         #expect(TodayWeeklySummary.durationText(8_580) == "2h 23m")
     }
+
+    @Test func athleteConfirmedDurationOverridesClockBookends() {
+        let now = Date()
+        let summary = TodayWeeklySummary.build(
+            sessions: [
+                TodayCompletedSessionSample(
+                    completedLogID: UUID(),
+                    finishedAt: now,
+                    startedAt: now.addingTimeInterval(-3_600),
+                    durationSeconds: 1_458
+                )
+            ],
+            exercises: [],
+            zoneModel: HeartRateZoneModel(maxHR: 200),
+            referenceDate: now
+        )
+
+        #expect(summary.trainingSeconds == 1_458)
+    }
 }
