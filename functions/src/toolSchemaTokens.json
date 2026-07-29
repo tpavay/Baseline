@@ -5,8 +5,8 @@
     "wave9": {
       "toolCount": 78,
       "promptTokens": 5522,
-      "promptWithToolsTokens": 27762,
-      "toolSchemaTokens": 22240
+      "promptWithToolsTokens": 27821,
+      "toolSchemaTokens": 22299
     },
     "wave8": {
       "toolCount": 77,
@@ -52,7 +52,7 @@
     "complete_workout": 680,
     "convert_choice_to_group": 681,
     "convert_workout_units": 1184,
-    "create_custom_exercise": 1663,
+    "create_custom_exercise": 1722,
     "create_from_template": 643,
     "create_workout": 716,
     "delete_extra_performed_set": 662,
