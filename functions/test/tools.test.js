@@ -313,9 +313,21 @@ test("Wave 4 planned-set schemas are ID-only and explicit about clearing", () =>
 test("Wave 4 metric schemas expose pace units and heart-rate zone time", () => {
   const logging = TOOLS.find((candidate) => candidate.name === "update_logging_config");
   const metricValue = TOOLS.find((candidate) => candidate.name === "set_metric_value");
+  const convertUnits = TOOLS.find((candidate) => candidate.name === "convert_workout_units");
+  const customExercise = TOOLS.find((candidate) => candidate.name === "create_custom_exercise");
 
   assert.ok(logging.input_schema.properties.pace_unit);
   assert.match(logging.input_schema.properties.pace_unit.description, /\/km/);
+  // Every unit the athlete can pick in the app has to be offerable by the model too: an option that
+  // exists in the picker but not in the served schema is a setting the coach can never apply.
+  for (const spelling of ["/km", "/mi", "/500m"]) {
+    assert.ok(logging.input_schema.properties.pace_unit.description.includes(spelling),
+      `update_logging_config pace_unit must offer ${spelling}`);
+    assert.ok(convertUnits.input_schema.properties.pace_unit.description.includes(spelling),
+      `convert_workout_units pace_unit must offer ${spelling}`);
+    assert.ok(customExercise.input_schema.properties.pace_unit.enum.includes(spelling),
+      `create_custom_exercise pace_unit enum must offer ${spelling}`);
+  }
   assert.match(logging.description, /heartRateZoneTime/);
   assert.match(metricValue.input_schema.properties.metric.description, /heartRateZoneTime/);
   assert.match(logging.description, /canonical stored values/i);

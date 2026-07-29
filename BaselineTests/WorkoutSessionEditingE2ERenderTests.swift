@@ -158,8 +158,8 @@ private final class SessionBed {
 
 /// `WorkoutView` in a scene-attached window, driven by activating real accessibility elements.
 @MainActor
-private final class Screen {
-    private let window: UIWindow
+private final class Screen: HostedScreen {
+    let window: UIWindow
 
     init(store: WorkoutStore, plan: PlanStore, container: ModelContainer) async throws {
         let scene = try #require(
@@ -204,32 +204,6 @@ private final class Screen {
     func tap(_ label: String) async throws {
         let target = try #require(element(labelled: label), "No element labelled \"\(label)\" on screen.")
         #expect(target.accessibilityActivate(), "\"\(label)\" did not activate.")
-        try await settle()
-    }
-
-    /// The presented alert, if any — SwiftUI's `.alert` is a `UIAlertController` presented over the
-    /// hosting controller.
-    private var presentedAlert: UIAlertController? {
-        var controller = window.rootViewController
-        while let presented = controller?.presentedViewController {
-            if let alert = presented as? UIAlertController { return alert }
-            controller = presented
-        }
-        return nil
-    }
-
-    /// Tap an alert button. `accessibilityActivate()` is a no-op on `UIAlertController` action views,
-    /// so the button's own handler — the SwiftUI `Button` action, i.e. the product code — is invoked
-    /// directly and the alert is dismissed the way the system would.
-    func tapAlertButton(_ title: String) async throws {
-        let alert = try #require(presentedAlert, "No alert on screen when tapping \"\(title)\".")
-        let action = try #require(alert.actions.first { $0.title == title },
-                                  "Alert has no \"\(title)\" button (buttons: \(alert.actions.compactMap(\.title))).")
-        typealias Handler = @convention(block) (UIAlertAction) -> Void
-        if let block = action.value(forKey: "handler") {
-            unsafeBitCast(block as AnyObject, to: Handler.self)(action)
-        }
-        alert.presentingViewController?.dismiss(animated: false)
         try await settle()
     }
 

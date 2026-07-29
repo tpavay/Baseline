@@ -1,3 +1,4 @@
+import ObjectiveC
 import SwiftUI
 import Testing
 import UIKit
@@ -8,6 +9,10 @@ import UIKit
 @MainActor
 protocol HostedScreen: AnyObject {
     var window: UIWindow { get }
+
+    /// A protocol requirement rather than an extension-only helper so a screen that needs a longer
+    /// run-loop budget is honoured by the shared helpers that settle on its behalf.
+    func settle(timeout: TimeInterval) async throws
 }
 
 extension HostedScreen {
@@ -118,10 +123,17 @@ extension HostedScreen {
     /// Tap an alert button. `accessibilityActivate()` is a no-op on `UIAlertController` action views,
     /// so the button's own handler — the SwiftUI `Button` action, i.e. the product code — is invoked
     /// directly and the alert is dismissed the way the system would.
+    ///
+    /// Reaching the handler means KVC against a private `UIAlertAction` ivar, and KVC against a key
+    /// that no longer exists raises an Objective-C exception Swift cannot catch — the runner would
+    /// die rather than report. The key is therefore proven to exist first, so a future OS rename
+    /// fails this one expectation cleanly instead of taking the suite down.
     func tapAlertButton(_ title: String) async throws {
         let alert = try #require(presentedAlert, "No alert on screen when tapping \"\(title)\".")
         let action = try #require(alert.actions.first { $0.title == title },
                                   "Alert has no \"\(title)\" button (buttons: \(alert.actions.compactMap(\.title))).")
+        try #require(Self.alertActionExposesHandler,
+                     "UIAlertAction no longer exposes a `handler` key: this harness needs a new way to invoke an alert button.")
         typealias Handler = @convention(block) (UIAlertAction) -> Void
         if let block = action.value(forKey: "handler") {
             unsafeBitCast(block as AnyObject, to: Handler.self)(action)
@@ -130,8 +142,13 @@ extension HostedScreen {
         try await settle()
     }
 
-    func settle() async throws {
-        let deadline = Date().addingTimeInterval(1)
+    private static var alertActionExposesHandler: Bool {
+        UIAlertAction.instancesRespond(to: Selector(("handler")))
+            || class_getInstanceVariable(UIAlertAction.self, "_handler") != nil
+    }
+
+    func settle(timeout: TimeInterval = 1) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             spin(0.05)
             await Task.yield()
