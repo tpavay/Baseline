@@ -2,41 +2,47 @@
   "note": "Measured by scripts/measure-tool-schema-tokens.js via Anthropic count_tokens; do not edit by hand. toolSchemaTokens = count(prompt+tools) - count(prompt) and includes the provider's fixed tool-use system overhead once; conversationTools rows each include that same overhead and are for relative attribution, not summation.",
   "model": "claude-sonnet-4-5-20250929",
   "conversation": {
+    "wave10": {
+      "toolCount": 78,
+      "promptTokens": 5522,
+      "promptWithToolsTokens": 27861,
+      "toolSchemaTokens": 22339
+    },
     "wave9": {
       "toolCount": 78,
       "promptTokens": 5522,
-      "promptWithToolsTokens": 27802,
-      "toolSchemaTokens": 22280
+      "promptWithToolsTokens": 27821,
+      "toolSchemaTokens": 22299
     },
     "wave8": {
       "toolCount": 77,
       "promptTokens": 5264,
-      "promptWithToolsTokens": 26362,
-      "toolSchemaTokens": 21098
+      "promptWithToolsTokens": 26338,
+      "toolSchemaTokens": 21074
     },
     "wave7": {
       "toolCount": 66,
       "promptTokens": 4596,
-      "promptWithToolsTokens": 20003,
-      "toolSchemaTokens": 15407
+      "promptWithToolsTokens": 19979,
+      "toolSchemaTokens": 15383
     },
     "wave6": {
       "toolCount": 63,
       "promptTokens": 4156,
-      "promptWithToolsTokens": 17725,
-      "toolSchemaTokens": 13569
+      "promptWithToolsTokens": 17713,
+      "toolSchemaTokens": 13557
     },
     "wave5": {
       "toolCount": 55,
       "promptTokens": 3815,
-      "promptWithToolsTokens": 14975,
-      "toolSchemaTokens": 11160
+      "promptWithToolsTokens": 14963,
+      "toolSchemaTokens": 11148
     },
     "legacy": {
       "toolCount": 50,
       "promptTokens": 3741,
-      "promptWithToolsTokens": 13602,
-      "toolSchemaTokens": 9861
+      "promptWithToolsTokens": 13590,
+      "toolSchemaTokens": 9849
     }
   },
   "conversationTools": {
@@ -52,7 +58,7 @@
     "complete_workout": 680,
     "convert_choice_to_group": 681,
     "convert_workout_units": 1196,
-    "create_custom_exercise": 1679,
+    "create_custom_exercise": 1738,
     "create_from_template": 643,
     "create_workout": 716,
     "delete_extra_performed_set": 662,

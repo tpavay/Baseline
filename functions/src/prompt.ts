@@ -5,12 +5,12 @@ import type { ServedToolset } from "./tools";
  * Baseline's conversational persona. Encodes docs/conversation-design.md. The deterministic engine
  * owns truth — this prompt forbids inventing scores and requires tools for state changes.
  *
- * The workout-editing guidance is toolset-matched: the Wave 9 variant adds deliberate custom
- * exercise creation, the Wave 8 variant adds advanced node and prescription editing, the Wave 7
- * variant adds the atomic batch and bulk-selector contract, the Wave 5/6 variants describe the
- * ID-targeted structure and performed-log tools, the legacy variant describes the capability-gated
- * name-based schema, and each request receives the variant that matches the tools it was actually
- * served (see index.ts).
+ * The workout-editing guidance is toolset-matched: the Wave 9 and 10 variants add deliberate
+ * custom exercise creation, the Wave 8 variant adds advanced node and prescription editing, the
+ * Wave 7 variant adds the atomic batch and bulk-selector contract, the Wave 5/6 variants describe
+ * the ID-targeted structure and performed-log tools, the legacy variant describes the
+ * capability-gated name-based schema, and each request receives the variant that matches the tools
+ * it was actually served (see index.ts).
  */
 const BASE = `You are Baseline — a calm, precise training coach that tells athletes what to train today.
 
@@ -98,9 +98,8 @@ After any tool call, base your reply on the tool result — especially the updat
 /**
  * The editing rules that differ between the served toolsets. Each variant must describe exactly the
  * tools and fields it serves; functions/test/prompt.test.js pins the pairing. Wave 8's rules are
- * also Wave 9's baseline: Wave 9 layers deliberate custom exercise creation on top of the full
- * Wave 8 editing surface, so the shared strings live once and Wave 9 overrides only what it
- * extends.
+ * also Wave 9 and 10's baseline: those variants layer deliberate custom exercise creation on top
+ * of the full Wave 8 editing surface, so the shared strings live once.
  */
 const WAVE8_RULES: Record<string, string> = {
   CUSTOM_EXERCISE_RULE: "",
@@ -123,13 +122,16 @@ const WAVE8_RULES: Record<string, string> = {
 - These payloads carry CANONICAL values (kg, meters, seconds). Convert the athlete's stated units before calling ("225 lb" -> 102.06), and keep speaking to the athlete in their display units.`,
 };
 
-const TOOLSET_RULES: Record<ServedToolset, Record<string, string>> = {
-  wave9: {
-    ...WAVE8_RULES,
-    TOOL_INVENTORY: `${WAVE8_RULES.TOOL_INVENTORY} A movement genuinely missing from the catalog can be created as a custom definition with create_custom_exercise.`,
-    CUSTOM_EXERCISE_RULE: `- create_custom_exercise deliberately creates a CUSTOM movement - never a fallback for a name you didn't check. Search first: if search_exercises finds the movement under any spelling, use the catalog entry. The tool is TWO-PHASE: the first call (no proposal_id) creates nothing and returns the exact classification it would commit - equipment, muscles, metrics, patterns, level, plus the modality and category it derives - with a proposal_id. Relay that classification to the athlete and get an explicit yes for every part they did not state themselves (anything YOU inferred counts as unstated - never silently commit a guessed classification), then call again with the same fields plus that proposal_id. If the tool says the movement already exists, use the existing definition instead of creating another.
+const WAVE9_RULES: Record<string, string> = {
+  ...WAVE8_RULES,
+  TOOL_INVENTORY: `${WAVE8_RULES.TOOL_INVENTORY} A movement genuinely missing from the catalog can be created as a custom definition with create_custom_exercise.`,
+  CUSTOM_EXERCISE_RULE: `- create_custom_exercise deliberately creates a CUSTOM movement - never a fallback for a name you didn't check. Search first: if search_exercises finds the movement under any spelling, use the catalog entry. The tool is TWO-PHASE: the first call (no proposal_id) creates nothing and returns the exact classification it would commit - equipment, muscles, metrics, patterns, level, plus the modality and category it derives - with a proposal_id. Relay that classification to the athlete and get an explicit yes for every part they did not state themselves (anything YOU inferred counts as unstated - never silently commit a guessed classification), then call again with the same fields plus that proposal_id. If the tool says the movement already exists, use the existing definition instead of creating another.
 - If the athlete states how they'll log the new movement ("track it in miles"), pass distance_unit / load_unit / duration_unit / pace_unit on the same call as its future display defaults. Once created, the movement is immediately addable by its exact name with add_exercise or replace_exercise.`,
-  },
+};
+
+const TOOLSET_RULES: Record<ServedToolset, Record<string, string>> = {
+  wave10: WAVE9_RULES,
+  wave9: WAVE9_RULES,
   wave8: WAVE8_RULES,
   wave7: {
     CUSTOM_EXERCISE_RULE: "",

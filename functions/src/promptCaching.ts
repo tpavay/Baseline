@@ -2,7 +2,7 @@
  * Anthropic prompt-caching request shaping.
  *
  * Every conversation request re-sends an identical static prefix - the system prompt plus the
- * full served toolset (~27.7k tokens for wave9) - and every workout-import request re-sends its
+ * full served toolset (~27.8k tokens for wave10) - and every workout-import request re-sends its
  * static system prompt and tool schema. Anthropic caches everything up to and including a
  * `cache_control` breakpoint, so marking the LAST tool and the STATIC system block converts that
  * prefix to cache reads at 10% of input price after one 1.25x cache write. Volatile content (the

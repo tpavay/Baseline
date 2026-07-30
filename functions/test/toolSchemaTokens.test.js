@@ -27,7 +27,7 @@ test("every served toolset has a measured, plausible token cost the runtime can 
 });
 
 test("richer toolsets cost monotonically more schema tokens", () => {
-  const order = ["legacy", "wave5", "wave6", "wave7", "wave8", "wave9"];
+  const order = ["legacy", "wave5", "wave6", "wave7", "wave8", "wave9", "wave10"];
   for (let index = 1; index < order.length; index += 1) {
     assert.ok(
       conversationToolSchemaTokens(order[index]) > conversationToolSchemaTokens(order[index - 1]),
@@ -49,7 +49,7 @@ test("the fixture is measured against the model the runtime defaults to", () => 
 
 test("the per-tool attribution table covers exactly the richest toolset", () => {
   const names = Object.keys(fixture.conversationTools).sort();
-  const served = SERVED_TOOLSETS.wave9.map((tool) => tool.name).sort();
+  const served = SERVED_TOOLSETS.wave10.map((tool) => tool.name).sort();
   assert.deepEqual(names, served);
   for (const marginal of Object.values(fixture.conversationTools)) {
     assert.ok(Number.isInteger(marginal) && marginal > 0);

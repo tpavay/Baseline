@@ -6,7 +6,7 @@ enum WorkoutShareTextSummary {
         var lines: [String] = [
             summary.title,
             DateFormatter.shareTextDate.string(from: summary.finishedAt),
-            "Duration: \(WorkoutPresentationFormatter.elapsedDuration(from: summary.startedAt, to: summary.finishedAt))"
+            "Duration: \(WorkoutPresentationFormatter.elapsedDuration(seconds: summary.elapsedSeconds))"
         ]
 
         let resolver = BaselineShareStatResolver(summary: summary, units: units)
