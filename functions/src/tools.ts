@@ -1517,7 +1517,7 @@ export const SERVED_TOOLSETS: Record<ServedToolset, ToolSchema[]> = {
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
-  if (Number(version) >= 10) return RICHEST_SERVED_TOOLSET;
+  if (Number(version) >= 10) return "wave10";
   if (Number(version) >= 9) return "wave9";
   if (Number(version) >= 8) return "wave8";
   if (Number(version) >= 7) return "wave7";
