@@ -95,7 +95,7 @@ struct WorkoutView: View {
         .sheet(isPresented: $showFinishReview, onDismiss: {
             finishHeartRate = nil
             // The discard confirmation is an alert, and SwiftUI cannot raise one while the review
-            // sheet is still on screen — so it waits here, where the dismissal has actually finished.
+            // sheet is still on screen. It waits here, where the dismissal has actually finished.
             if pendingDiscardFromFinishReview {
                 pendingDiscardFromFinishReview = false
                 showDiscardConfirmation = true
@@ -104,7 +104,7 @@ struct WorkoutView: View {
             if let workout = store.current,
                let log = store.currentLog {
                 // Only the elapsed-time fallback needs the start instant, and the review always
-                // supplies a confirmed duration — so a missing start instant must never withhold the
+                // supplies a confirmed duration, so a missing start instant must never withhold the
                 // review, or the athlete would be left with no way to finish the session.
                 let startedAt = store.currentLogStartedAt ?? finishInstant
                 let units = ShareUnitResolver(workout: workout, store: store)

@@ -8,7 +8,7 @@ struct WorkoutDurationPickerSheet: View {
 
     /// The wheels top out at 24 hours. `.pickerStyle(.wheel)` bridges to `UIPickerView` and builds
     /// every row view when the sheet opens, so the range has to be a duration an athlete can
-    /// plausibly select rather than the full `MetricFormat.maxDurationSeconds` span of a week — that
+    /// plausibly select rather than the full `MetricFormat.maxDurationSeconds` span of a week. That
     /// would be ten thousand styled rows per presentation. It also keeps the largest selectable
     /// value well inside the canonical ceiling, so nothing the wheels display is silently clamped on
     /// the way to storage.

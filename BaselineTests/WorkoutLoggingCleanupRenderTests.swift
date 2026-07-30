@@ -31,6 +31,19 @@ struct WorkoutLoggingCleanupRenderTests {
         #expect(screen.hasLabel(containing: "/500m"))
     }
 
+    @Test func finishRemainsAvailableWhenTheStartInstantDidNotRestore() async throws {
+        let screen = try await MissingStartLoggingScreen()
+        defer { screen.tearDown() }
+
+        #expect(screen.startInstantIsMissing)
+        #expect(screen.activate(labelled: "Finish"))
+        try await screen.settle()
+
+        #expect(screen.hasLabel(containing: "Workout complete"))
+        #expect(screen.hasLabel(containing: "Save workout"))
+        try screen.capture("finish-review-without-start-instant")
+    }
+
     @Test func finishDurationCanBeEditedAndPersistsThroughHistoryAndSharing() async throws {
         let screen = try await LoggingCleanupScreen()
         defer { screen.tearDown() }
@@ -63,6 +76,10 @@ struct WorkoutLoggingCleanupRenderTests {
             BaselineShareStatResolver(summary: summary, units: screen.shareUnits)
                 .resolve(.duration)?.value == "24m"
         )
+
+        try await screen.showHistoryDetail()
+        #expect(screen.hasLabel(containing: "24m"))
+        try screen.capture("history-selected-duration")
     }
 
     /// Discard inside the review is a sheet-to-alert handoff, which SwiftUI refuses while the sheet is
@@ -84,12 +101,59 @@ struct WorkoutLoggingCleanupRenderTests {
     }
 
     /// The wheels are bounded, so the largest duration they can express has to stay inside the
-    /// canonical ceiling — otherwise the picker shows a value storage silently clamps.
+    /// canonical ceiling; otherwise the picker shows a value storage silently clamps.
     @Test func theDurationPickerCannotSelectMoreThanTheCanonicalCeiling() {
         let largest = WorkoutDurationPickerSheet.maxSelectableSeconds + 59
         #expect(largest < MetricFormat.maxDurationSeconds)
         #expect(WorkoutDurationPickerSheet.maxSelectableSeconds
             == TimeInterval(WorkoutDurationPickerSheet.maxMinutes * 60))
+    }
+}
+
+@MainActor
+private final class MissingStartLoggingScreen: HostedScreen {
+    let window: UIWindow
+
+    private let defaults: UserDefaults
+    private let suiteName: String
+    private let container: ModelContainer
+    private let store: WorkoutStore
+
+    init() async throws {
+        suiteName = "logging-cleanup-missing-start-\(UUID().uuidString)"
+        defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let firstStore = WorkoutStore(units: StubUnitSystem(.metric), defaults: defaults)
+        firstStore.create(title: "Restored Session", goal: nil)
+        firstStore.startWorkout()
+
+        // Simulate the compatibility state the finish flow must tolerate: the performed log restored,
+        // but its separate start-instant value did not.
+        defaults.removeObject(forKey: "workout.currentLogStartedAt")
+        store = WorkoutStore(units: StubUnitSystem(.metric), defaults: defaults)
+
+        let models: [any PersistentModel.Type] = [Reading.self, ReadinessEntry.self] + PlanSchema.models
+        container = try ModelContainer(
+            for: Schema(models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+
+        let root = WorkoutView()
+            .environment(store)
+            .environment(PlanStore(context: container.mainContext))
+            .environment(BluetoothManager())
+            .environment(OnboardingStore(defaults: defaults))
+            .environment(HeartRateZoneSettingsStore(defaults: .previewEmpty, ageYears: { 35 }))
+            .modelContainer(container)
+            .preferredColorScheme(.dark)
+
+        window = try Self.makeWindow(rootView: root)
+        try await settleUntil { self.hasLabel(containing: "Restored Session") }
+    }
+
+    var startInstantIsMissing: Bool {
+        store.currentLogStartedAt == nil
     }
 }
 
@@ -216,6 +280,20 @@ private final class LoggingCleanupScreen: HostedScreen {
             confirmedDurationSeconds: store.currentLogDurationSeconds,
             units: shareUnits
         )
+    }
+
+    func showHistoryDetail() async throws {
+        let root = WorkoutDetailView(scheduledWorkoutID: scheduledID)
+            .environment(AppSettings(defaults: defaults))
+            .environment(plan)
+            .environment(store)
+            .modelContainer(container)
+            .preferredColorScheme(.dark)
+
+        window.rootViewController = UIHostingController(rootView: root)
+        window.makeKeyAndVisible()
+        try await settleUntil { self.hasLabel(containing: "Tempo Row") }
+        try await settle()
     }
 
     func selectDuration(minutes: Int, seconds: Int) -> Bool {

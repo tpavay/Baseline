@@ -237,12 +237,14 @@ Distinct lifecycle records (kept separate — your requirement):
 ```
 struct WorkoutSession         { id; scheduledWorkoutID; startedAt; status; log: WorkoutLog }  // point 7 — mutable, in-flight
 enum   SessionStatus          { active, paused, completed, discarded }
-struct CompletedWorkoutLog    { id; scheduledWorkoutID; finishedAt; log: WorkoutLog }  // frozen, immutable, append-only
+struct CompletedWorkoutLog    { id; scheduledWorkoutID; finishedAt; durationSeconds?; log: WorkoutLog }  // frozen, immutable, append-only
 ```
 
 `WorkoutSession` (renamed from `WorkoutSession`, point 7) is the mutable in-progress container with a
 status; on completion it **freezes** an immutable `CompletedWorkoutLog` (and the session becomes
 `.completed`). The frozen log is the append-only performed fact that plan restore never touches (§6/point 2).
+`finishedAt` remains the actual finish instant, while optional `durationSeconds` is the athlete-confirmed duration selected during finish review.
+Readers fall back to the session's start/finish interval for completed records created before the duration field existed.
 
 Append-only versioning (§6):
 
@@ -313,7 +315,7 @@ default or is optional; all relationships optional). **No `SDTrainingWeek`/`SDTr
 @Model SDWorkoutSession   { id; scheduledWorkoutID; startedAt; statusRaw; logJSON: Data;   // point 7 (active/paused/…)
                             sessionWorkoutJSON: Data?;      // session's own edited Workout copy; nil ⇒ follows the revision
                             reconciliationPending: Bool? }  // "update your plan?" still unanswered (nil ⇒ not pending)
-@Model SDCompletedLog     { id; scheduledWorkoutID; finishedAt; logJSON: Data }   // append-only, never rewound
+@Model SDCompletedLog     { id; scheduledWorkoutID; finishedAt; durationSeconds?; logJSON: Data }   // append-only, never rewound
 @Model SDPlanVersion      { id; timestamp; actorRaw; operationJSON: Data; snapshotJSON: Data }  // append-only
 @Model SDPendingProposal  { id; operationJSON: Data; expectedHeadVersionID; diffJSON: Data;
                             warningsJSON: Data; createdAt; expiresAt }   // confirmation binding (point 3)
@@ -390,10 +392,9 @@ enum MutationResult {
 }
 func move(_ id: UUID, toDate: Date, timeOfDay: TimeOfDay?, actor: PlanActor, reason: String?, proposalID: UUID?) -> MutationResult
 func swap / reorder / add / duplicate / replace / skip / delete …(…, proposalID: UUID?) -> MutationResult
-// Lifecycle (same typed result; completion warns on unlogged work → confirmationRequired)
+// Lifecycle - read the authoritative shipped API in PlanRepository.swift.
 func startSession(_ id: UUID) -> Result<WorkoutSession, PlanError>
 func resumeSession(_ id: UUID) -> Result<WorkoutSession, PlanError>
-func completeSession(_ id: UUID, proposalID: UUID?) -> MutationResult
 // Session-scoped mid-workout editing + the completion promotion decision
 func setSessionWorkout(forScheduled id: UUID, _ workout: Workout)
 func sessionDecisionPending(forScheduled id: UUID) -> Bool
@@ -452,13 +453,13 @@ func restore(version: UUID) -> MutationResult   // appends a restore version == 
 The typed operations above are the **only** way the schedule changes — for both the UI and the agent.
 Each: validates (exists, dates in range, no illegal cross-program move), computes a `ScheduleDiff`, and
 either applies atomically + appends a `PlanVersion` (`applied`), or — when the blast radius warrants —
-returns `confirmationRequired(warnings, proposedDiff, proposalID)` and applies **nothing** (point 8). No
-Boolean `confirm:` argument anywhere. Built and unit-tested with **no UI** in Slice 2.
+returns `confirmationRequired(warnings, proposedDiff, proposalID)` and applies **nothing** (point 8).
+No Boolean `confirm:` argument is used for those plan mutations.
+They are built and unit-tested with **no UI** in Slice 2.
 
-*Reconciliation:* the already-shipped `complete_workout(confirm:)` on `WorkoutStore` predates the
-repository. When lifecycle moves onto the repository in Slice 1, it is superseded by
-`completeSession(_:proposalID:)` returning `confirmationRequired` for unlogged work; the Boolean path is
-removed at that point (the agent tool switches to the proposalID pattern in §8).
+*Completion:* the shipped UI presents `WorkoutFinishSheet` as a bottom-sheet review with an editable minutes/seconds duration before saving.
+Open work does not add a separate warning in that review.
+The repository keeps its acknowledgement parameter as an internal validation boundary; the current signature and result type are authoritative in `PlanRepository.swift`.
 
 ---
 
@@ -469,11 +470,12 @@ One tool per manual operation, mapped `AgentTools.Call → PlanRepository` (no s
 `add_workout`, `duplicate_workout`, `replace_workout`, `skip_workout`, `delete_workout`, `start_workout`
 (exists), `resume_workout`, `complete_workout` (migrated), `explain_modification`. Behavior:
 retrieve-before-act; ambiguity detection (reuse the name-resolution/`.ambiguous` pattern); **carry an
-optional `proposal_id`** instead of a Boolean confirm — the first call returns the `confirmationRequired`
+optional `proposal_id`** for plan-edit mutations - the first call returns the `confirmationRequired`
 diff + `proposalID`, the model relays it, and on the athlete's yes it re-calls with that `proposal_id`
 (point 8); recompute where required; never write arbitrary plan data; never invent
 readiness/load/constraints/rationale (those come from the engines + stored diffs). Wire through
 `ToolCallMapper` + `functions/src/{tools,prompt}.ts` exactly like the existing workout tools.
+Lifecycle tool payloads, including `complete_workout`'s internal open-work acknowledgement, are owned by `functions/src/tools.ts`.
 
 ---
 
@@ -625,8 +627,8 @@ reduced-motion honored.
 5. `PlanView` shell: program filter, week nav (+ swipe/calendar), 7-day strip.
 6. Weekly aggregates (modality-adaptive, objective).
 7. Timeline + adaptive `ScheduledWorkoutCard` (multi-session/day, inline expand, quiet-completed).
-8. Wire card → `WorkoutView` detail; Start/Resume/Complete via repository lifecycle (typed result;
-   `complete` warns on unlogged work via `confirmationRequired`, replacing the shipped Boolean path).
+8. Wire card → `WorkoutView` detail; Start/Resume/Complete via repository lifecycle.
+   Completion now uses the bottom-sheet review and editable duration, with no separate open-work warning.
 9. Persistent contextual chat bar (context-sensitive prompt); safe-area/keyboard correct. **Nav →
    Today / Plan / Profile** (retire Workout tab; active-workout resume surfaced globally; History
    contextual).

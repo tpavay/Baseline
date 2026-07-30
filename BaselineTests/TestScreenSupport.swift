@@ -13,7 +13,7 @@ protocol HostedScreen: AnyObject {
     /// How long `settle()` lets the run loop turn. A screen hosting a heavier hierarchy raises it,
     /// and every shared helper that settles on the screen's behalf reads it. This is a requirement
     /// rather than a default argument because a default argument is bound from the declaration the
-    /// caller can see — inside these helpers that is always the extension's, never the screen's.
+    /// caller can see. Inside these helpers that is always the extension's, never the screen's.
     var settleBudget: TimeInterval { get }
 
     func settle(timeout: TimeInterval) async throws
@@ -114,7 +114,7 @@ extension HostedScreen {
         return true
     }
 
-    /// The presented alert, if any — SwiftUI's `.alert` is a `UIAlertController` presented over the
+    /// The presented alert, if any. SwiftUI's `.alert` is a `UIAlertController` presented over the
     /// hosting controller.
     var presentedAlert: UIAlertController? {
         var controller = window.rootViewController
@@ -126,11 +126,11 @@ extension HostedScreen {
     }
 
     /// Tap an alert button. `accessibilityActivate()` is a no-op on `UIAlertController` action views,
-    /// so the button's own handler — the SwiftUI `Button` action, i.e. the product code — is invoked
+    /// so the button's own handler, the SwiftUI `Button` action in product code, is invoked
     /// directly and the alert is dismissed the way the system would.
     ///
     /// Reaching the handler means KVC against a private `UIAlertAction` ivar, and KVC against a key
-    /// that no longer exists raises an Objective-C exception Swift cannot catch — the runner would
+    /// that no longer exists raises an Objective-C exception Swift cannot catch. The runner would
     /// die rather than report. The key is therefore proven to exist first, so a future OS rename
     /// fails this one expectation cleanly instead of taking the suite down.
     func tapAlertButton(_ title: String) async throws {
