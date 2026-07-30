@@ -37,8 +37,8 @@ extension IdleTimerRenderTests {
             #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
 
             try await screen.tap("Finish")
-            screen.capture("12-finish-confirmation")
-            try await screen.tapAlertButton("Finish Workout")
+            screen.capture("12-finish-review")
+            try await screen.tap("Save workout")
 
             #expect(screen.element(labelled: "Update your plan?") != nil)
             screen.capture("13-update-your-plan-prompt")
@@ -56,7 +56,7 @@ extension IdleTimerRenderTests {
 
             try await bed.editMidSession(on: screen)
             try await screen.tap("Finish")
-            try await screen.tapAlertButton("Finish Workout")
+            try await screen.tap("Save workout")
             #expect(screen.element(labelled: "Update your plan?") != nil)
 
             try await screen.tapAlertButton("Keep Original")
@@ -81,7 +81,7 @@ extension IdleTimerRenderTests {
             try await screen.settle()
 
             try await screen.tap("Finish")
-            try await screen.tapAlertButton("Finish Workout")
+            try await screen.tap("Save workout")
             #expect(screen.element(labelled: "Update your plan?") == nil)
             #expect(bed.planExerciseNames == ["Squat", "Bench press", "Curl"])
             screen.capture("16-no-prompt-for-logged-actuals")
@@ -158,8 +158,12 @@ private final class SessionBed {
 
 /// `WorkoutView` in a scene-attached window, driven by activating real accessibility elements.
 @MainActor
-private final class Screen {
-    private let window: UIWindow
+private final class Screen: HostedScreen {
+    let window: UIWindow
+
+    /// A whole `WorkoutView` over a real plan store, driving modal alerts: it needs longer to come
+    /// to rest than the single-surface screens the shared default is sized for.
+    let settleBudget: TimeInterval = 2
 
     init(store: WorkoutStore, plan: PlanStore, container: ModelContainer) async throws {
         let scene = try #require(
@@ -207,32 +211,6 @@ private final class Screen {
         try await settle()
     }
 
-    /// The presented alert, if any — SwiftUI's `.alert` is a `UIAlertController` presented over the
-    /// hosting controller.
-    private var presentedAlert: UIAlertController? {
-        var controller = window.rootViewController
-        while let presented = controller?.presentedViewController {
-            if let alert = presented as? UIAlertController { return alert }
-            controller = presented
-        }
-        return nil
-    }
-
-    /// Tap an alert button. `accessibilityActivate()` is a no-op on `UIAlertController` action views,
-    /// so the button's own handler — the SwiftUI `Button` action, i.e. the product code — is invoked
-    /// directly and the alert is dismissed the way the system would.
-    func tapAlertButton(_ title: String) async throws {
-        let alert = try #require(presentedAlert, "No alert on screen when tapping \"\(title)\".")
-        let action = try #require(alert.actions.first { $0.title == title },
-                                  "Alert has no \"\(title)\" button (buttons: \(alert.actions.compactMap(\.title))).")
-        typealias Handler = @convention(block) (UIAlertAction) -> Void
-        if let block = action.value(forKey: "handler") {
-            unsafeBitCast(block as AnyObject, to: Handler.self)(action)
-        }
-        alert.presentingViewController?.dismiss(animated: false)
-        try await settle()
-    }
-
     func capture(_ name: String) {
         // A system alert's blur does not survive an offscreen render, so when the harness is asked to
         // hold, it parks on the live screen long enough for a real device screenshot to be taken.
@@ -268,7 +246,7 @@ private final class Screen {
         window.layoutIfNeeded()
     }
 
-    func settle(timeout: TimeInterval = 2) async throws {
+    func settle(timeout: TimeInterval) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             spin(0.1)

@@ -8,6 +8,7 @@ const {
   WAVE6_TOOLS,
   WAVE7_TOOLS,
   WAVE8_TOOLS,
+  WAVE9_TOOLS,
   servedToolsetForClientSchema,
   toolsForClientSchema,
 } = require("../lib/tools");
@@ -122,7 +123,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(toolsForClientSchema("6"), WAVE6_TOOLS);
   assert.equal(toolsForClientSchema("7"), WAVE7_TOOLS);
   assert.equal(toolsForClientSchema("8"), WAVE8_TOOLS);
-  assert.equal(toolsForClientSchema("9"), TOOLS);
+  assert.equal(toolsForClientSchema("9"), WAVE9_TOOLS);
+  assert.equal(toolsForClientSchema("10"), TOOLS);
   assert.equal(toolsForClientSchema("12"), TOOLS);
   assert.equal(toolsForClientSchema("4"), LEGACY_TOOLS);
   assert.equal(toolsForClientSchema("0"), LEGACY_TOOLS);
@@ -137,7 +139,8 @@ test("Wave 5 schemas are capability-gated for installed clients", () => {
   assert.equal(servedToolsetForClientSchema("7"), "wave7");
   assert.equal(servedToolsetForClientSchema("8"), "wave8");
   assert.equal(servedToolsetForClientSchema("9"), "wave9");
-  assert.equal(servedToolsetForClientSchema("12"), "wave9");
+  assert.equal(servedToolsetForClientSchema("10"), "wave10");
+  assert.equal(servedToolsetForClientSchema("12"), "wave10");
   assert.equal(servedToolsetForClientSchema("4"), "legacy");
   assert.equal(servedToolsetForClientSchema(undefined), "legacy");
 
@@ -310,15 +313,53 @@ test("Wave 4 planned-set schemas are ID-only and explicit about clearing", () =>
   assert.match(duplicate.description, /fresh set ID/i);
 });
 
-test("Wave 4 metric schemas expose pace units and heart-rate zone time", () => {
+test("Wave 10 metric schemas expose pace units and heart-rate zone time", () => {
   const logging = TOOLS.find((candidate) => candidate.name === "update_logging_config");
   const metricValue = TOOLS.find((candidate) => candidate.name === "set_metric_value");
+  const convertUnits = TOOLS.find((candidate) => candidate.name === "convert_workout_units");
+  const customExercise = TOOLS.find((candidate) => candidate.name === "create_custom_exercise");
 
   assert.ok(logging.input_schema.properties.pace_unit);
   assert.match(logging.input_schema.properties.pace_unit.description, /\/km/);
+  // Every unit the athlete can pick in the app has to be offerable by the model too: an option that
+  // exists in the picker but not in the served schema is a setting the coach can never apply.
+  for (const spelling of ["/km", "/mi", "/500m"]) {
+    assert.ok(logging.input_schema.properties.pace_unit.description.includes(spelling),
+      `update_logging_config pace_unit must offer ${spelling}`);
+    assert.ok(convertUnits.input_schema.properties.pace_unit.description.includes(spelling),
+      `convert_workout_units pace_unit must offer ${spelling}`);
+    assert.ok(customExercise.input_schema.properties.pace_unit.enum.includes(spelling),
+      `create_custom_exercise pace_unit enum must offer ${spelling}`);
+  }
   assert.match(logging.description, /heartRateZoneTime/);
   assert.match(metricValue.input_schema.properties.metric.description, /heartRateZoneTime/);
   assert.match(logging.description, /canonical stored values/i);
+});
+
+test("Wave 9 retains its pre-/500m pace schemas while Wave 10 exposes /500m", () => {
+  const wave9 = toolsForClientSchema("9");
+  const wave10 = toolsForClientSchema("10");
+
+  const wave9Logging = wave9.find((tool) => tool.name === "update_logging_config");
+  const wave9Convert = wave9.find((tool) => tool.name === "convert_workout_units");
+  const wave9Custom = wave9.find((tool) => tool.name === "create_custom_exercise");
+  const wave10Logging = wave10.find((tool) => tool.name === "update_logging_config");
+  const wave10Convert = wave10.find((tool) => tool.name === "convert_workout_units");
+  const wave10Custom = wave10.find((tool) => tool.name === "create_custom_exercise");
+
+  assert.equal(wave9Logging.input_schema.properties.pace_unit.description, "/km | /mi");
+  assert.equal(wave9Convert.input_schema.properties.pace_unit.description, "/km | /mi");
+  assert.deepEqual(wave9Custom.input_schema.properties.pace_unit.enum, ["/km", "/mi"]);
+  assert.doesNotMatch(wave9Custom.input_schema.properties.pace_unit.description, /\/500m/);
+
+  assert.match(wave10Logging.input_schema.properties.pace_unit.description, /\/500m/);
+  assert.match(wave10Convert.input_schema.properties.pace_unit.description, /\/500m/);
+  assert.equal(wave10Custom.input_schema.properties.pace_unit.enum.includes("/500m"), true);
+
+  for (const [toolsetName, tools] of Object.entries(SERVED_TOOLSETS)) {
+    if (toolsetName === "wave10") continue;
+    assert.doesNotMatch(JSON.stringify(tools), /\/500m/, `/500m leaked into ${toolsetName}`);
+  }
 });
 
 test("require_all_options preserves an imported choice's children", () => {
@@ -577,7 +618,7 @@ test("Wave 8 advanced node and prescription schemas are ID-only, typed, and capa
 });
 
 test("Wave 9 custom exercise creation is two-phase, taxonomy-complete, and capability-gated", () => {
-  const tool = TOOLS.find((candidate) => candidate.name === "create_custom_exercise");
+  const tool = WAVE9_TOOLS.find((candidate) => candidate.name === "create_custom_exercise");
 
   assert.ok(tool);
   // The manual create form's required set: name, equipment, primary muscle, at least one metric.
@@ -644,8 +685,10 @@ test("Wave 9 custom exercise creation is two-phase, taxonomy-complete, and capab
     .input_schema.properties.operations.items.properties.op.enum;
   assert.equal(batchOps.includes("create_custom_exercise"), false);
 
-  assert.equal(toolsForClientSchema("9"), TOOLS);
+  assert.equal(toolsForClientSchema("9"), WAVE9_TOOLS);
   assert.equal(servedToolsetForClientSchema("9"), "wave9");
+  assert.equal(toolsForClientSchema("10"), TOOLS);
+  assert.equal(servedToolsetForClientSchema("10"), "wave10");
 });
 
 test("Wave 7 and older clients keep exactly the schemas their mappers understand", () => {

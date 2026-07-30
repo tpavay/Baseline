@@ -5,8 +5,8 @@ import type { ServedToolset } from "./tools";
 /**
  * Token costs of the static tool schemas, measured against the live provider's tokenizer.
  *
- * `tool_schema_bytes` is recorded per generation but bytes are not tokens: the wave9 toolset is
- * 75,770 bytes and 22,213 input tokens. These numbers are static per (toolset, model), so they are
+ * `tool_schema_bytes` is recorded per generation but bytes are not tokens: the wave10 toolset is
+ * about 76k bytes and 22,280 input tokens. These numbers are static per (toolset, model), so they are
  * NOT measured per request. `scripts/measure-tool-schema-tokens.js` counts them with Anthropic's
  * free `count_tokens` endpoint and writes the committed fixture `toolSchemaTokens.json`; the free
  * CI `functions-token-fixture` job verifies the fixture matches live counts on every functions PR,

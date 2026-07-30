@@ -15,7 +15,7 @@ PR #59 fixed the schemas and pinned "no top-level combinators"; this contract ge
 | 1. Real-provider preflight | `functions/scripts/preflight-tool-schemas.js` | The live Anthropic API **accepts every served toolset variant** (all schema-version-gated variants, exactly as the runtime serves them, real system prompt included). Minimal `max_tokens: 1` request per variant - a schema-acceptance check, not a generation. | **Paid, gated** - CI workflow `provider-live-guard.yml` (manual dispatch, weekly schedule, or a PR labeled `provider-smoke`); `npm run preflight:providers` locally. **Not on every PR.** |
 | 2. Offline contract lint | `functions/src/toolSchemaContract.ts` + `functions/test/toolSchemaContract.test.js` | Every served tool schema stays inside the documented safe subset (allowlist). Catches most problems in milliseconds with no network. Absorbs the PR #59 regression test. **This is the per-PR provider-rejection guard.** | `npm test` (so also CI job `functions-verify`) - every functions PR, **$0** |
 | 3. Cross-provider profiles | `toolSchemaContract.ts` (`ProviderSchemaProfile`) | The lint is structured per provider: enforced profiles must pass; the conservative cross-provider core reports **advisories** (latent fragility), pinned in the test. | with layer 2 |
-| 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the full wave9 toolset. | **Paid, gated** - CI workflow `provider-live-guard.yml` (same triggers as layer 1); `npm run smoke:conversation` locally. **Not on every PR.** |
+| 4. Conversation smoke | `functions/scripts/conversation-smoke.js` | One real conversation round-trip per provider through the exact provider class the runtime uses (`AnthropicProvider.complete`) with the current richest served toolset, Wave 10. | **Paid, gated** - CI workflow `provider-live-guard.yml` (same triggers as layer 1); `npm run smoke:conversation` locally. **Not on every PR.** |
 | 5. Token-cost fixture | `functions/scripts/measure-tool-schema-tokens.js` + `functions/src/toolSchemaTokens.json` | The measured per-request token cost of every served toolset (recorded as `tool_schema_tokens` on each generation; see `toolSchemaTokens.ts`). Not an acceptance guard - a **cost** guard: a PR that fattens a schema must regenerate the fixture, so the token delta is a visible diff in review. | CI job `functions-token-fixture` (`npm run tokens:check`, **free** `count_tokens`) - every functions PR, **$0**; contributors regenerate through `regenerate-tool-schema-token-fixture.yml` without receiving the key |
 
 The offline lint approximates the provider's validator; the preflight *is* the provider's validator.
@@ -43,7 +43,7 @@ The paid layers (1 real-provider preflight, 4 conversation smoke) moved **off** 
 
 So the free endpoint gives a false pass on the exact construct that took down every conversation in 2026-07.
 Only the `messages` endpoint rejects it.
-And a request the provider *accepts* is billed for its input tokens (~120K across the 6 served variants ≈ $0.36/run), so proving live acceptance on every PR cannot be free.
+And a request the provider *accepts* is billed for its input tokens (roughly 148K across the 7 served variants, about $0.44/run), so proving live acceptance on every PR cannot be free.
 Hence: the offline lint is the per-PR guard, and the live `messages` preflight is a gated backstop.
 **Do not weaken the offline lint on the assumption that `count_tokens` (or any free check) covers acceptance - it does not.**
 
@@ -86,7 +86,8 @@ Current findings, from auditing the full toolset (2026-07):
 | `["X","null"]` type unions | `update_*` patch tools, `set_checkin`, `set_sleep`, `set_equipment`, `set_time_available` | Gemini expresses nullability as `nullable`, not a type union. A Gemini adapter would rewrite these mechanically. |
 | `minProperties` | `update_*` patch tools, `bulk_replace_exercises`, `convert_workout_units` | No equivalent in Gemini's schema; would be ignored/stripped, weakening "non-empty patch" validation to the server-side mapper. |
 
-Nothing currently served violates the enforced profile; all 6 variants return 200 from the live API.
+Nothing currently served violates the enforced offline profile.
+The gated live preflight covers all 7 variants.
 
 ## Adding a provider
 
@@ -122,7 +123,7 @@ No real-provider **`messages`** request runs on the per-PR path, so routine CI s
   The contributor procedure and workflow trust boundary are authoritative in `functions/scripts/README.md`.
 - One deliberate exception: Anthropic reports an **exhausted credit balance** as the same HTTP 400 `invalid_request_error` a schema rejection uses, but it is a billing outage with zero schema signal, so the scripts (`scripts/provider-outage.js`) classify it apart and skip with a `::warning` annotation instead of misreporting "fix the schema".
   The schemas are unverified by such a run; top up the account behind the secret and re-run the workflow.
-- Cost: the gated run is 6 preflight requests (1 output token each) + 1 smoke round-trip ≈ $0.46 in real tokens. The per-PR `tokens:check` is ~90 **free** `count_tokens` requests.
+- Cost: the gated run is 7 preflight requests (1 output token each) plus 1 Wave 10 smoke round-trip, roughly 148K preflight input tokens and about $0.53 total. The per-PR `tokens:check` is ~90 **free** `count_tokens` requests.
 
 ## Keeping the contract honest
 

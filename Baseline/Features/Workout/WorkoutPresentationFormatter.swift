@@ -2,11 +2,15 @@ import Foundation
 
 enum WorkoutPresentationFormatter {
     static func elapsedDuration(from startedAt: Date, to currentDate: Date) -> String {
-        let totalSeconds = max(0, Int(currentDate.timeIntervalSince(startedAt)))
+        elapsedDuration(seconds: currentDate.timeIntervalSince(startedAt))
+    }
+
+    static func elapsedDuration(seconds: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(seconds))
         let hours = totalSeconds / 3_600
         let minutes = totalSeconds % 3_600 / 60
-        let seconds = totalSeconds % 60
-        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        let remainingSeconds = totalSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, remainingSeconds)
     }
 
     static func blockIntent(name: String, intent: String?) -> String? {

@@ -2,6 +2,12 @@
   "note": "Measured by scripts/measure-tool-schema-tokens.js via Anthropic count_tokens; do not edit by hand. toolSchemaTokens = count(prompt+tools) - count(prompt) and includes the provider's fixed tool-use system overhead once; conversationTools rows each include that same overhead and are for relative attribution, not summation.",
   "model": "claude-sonnet-4-5-20250929",
   "conversation": {
+    "wave10": {
+      "toolCount": 78,
+      "promptTokens": 5522,
+      "promptWithToolsTokens": 27861,
+      "toolSchemaTokens": 22339
+    },
     "wave9": {
       "toolCount": 78,
       "promptTokens": 5522,
@@ -51,8 +57,8 @@
     "bulk_replace_exercises": 1161,
     "complete_workout": 680,
     "convert_choice_to_group": 681,
-    "convert_workout_units": 1184,
-    "create_custom_exercise": 1722,
+    "convert_workout_units": 1196,
+    "create_custom_exercise": 1738,
     "create_from_template": 643,
     "create_workout": 716,
     "delete_extra_performed_set": 662,
@@ -110,7 +116,7 @@
     "update_exercise_prescription": 1303,
     "update_extra_performed_set": 828,
     "update_group": 1808,
-    "update_logging_config": 824,
+    "update_logging_config": 836,
     "update_rest": 806,
     "update_set": 1680,
     "update_set_alternative": 1289,

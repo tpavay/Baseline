@@ -1,3 +1,4 @@
+import ObjectiveC
 import SwiftUI
 import Testing
 import UIKit
@@ -8,9 +9,18 @@ import UIKit
 @MainActor
 protocol HostedScreen: AnyObject {
     var window: UIWindow { get }
+
+    /// How long `settle()` lets the run loop turn. A screen hosting a heavier hierarchy raises it,
+    /// and every shared helper that settles on the screen's behalf reads it. This is a requirement
+    /// rather than a default argument because a default argument is bound from the declaration the
+    /// caller can see. Inside these helpers that is always the extension's, never the screen's.
+    var settleBudget: TimeInterval { get }
+
+    func settle(timeout: TimeInterval) async throws
 }
 
 extension HostedScreen {
+    var settleBudget: TimeInterval { 1 }
     /// Host `rootView` in a key window attached to the app's scene — an unattached window renders
     /// blank and publishes no accessibility elements.
     static func makeWindow(rootView: some View) throws -> UIWindow {
@@ -104,8 +114,50 @@ extension HostedScreen {
         return true
     }
 
+    /// The presented alert, if any. SwiftUI's `.alert` is a `UIAlertController` presented over the
+    /// hosting controller.
+    var presentedAlert: UIAlertController? {
+        var controller = window.rootViewController
+        while let presented = controller?.presentedViewController {
+            if let alert = presented as? UIAlertController { return alert }
+            controller = presented
+        }
+        return nil
+    }
+
+    /// Tap an alert button. `accessibilityActivate()` is a no-op on `UIAlertController` action views,
+    /// so the button's own handler, the SwiftUI `Button` action in product code, is invoked
+    /// directly and the alert is dismissed the way the system would.
+    ///
+    /// Reaching the handler means KVC against a private `UIAlertAction` ivar, and KVC against a key
+    /// that no longer exists raises an Objective-C exception Swift cannot catch. The runner would
+    /// die rather than report. The key is therefore proven to exist first, so a future OS rename
+    /// fails this one expectation cleanly instead of taking the suite down.
+    func tapAlertButton(_ title: String) async throws {
+        let alert = try #require(presentedAlert, "No alert on screen when tapping \"\(title)\".")
+        let action = try #require(alert.actions.first { $0.title == title },
+                                  "Alert has no \"\(title)\" button (buttons: \(alert.actions.compactMap(\.title))).")
+        try #require(Self.alertActionExposesHandler,
+                     "UIAlertAction no longer exposes a `handler` key: this harness needs a new way to invoke an alert button.")
+        typealias Handler = @convention(block) (UIAlertAction) -> Void
+        if let block = action.value(forKey: "handler") {
+            unsafeBitCast(block as AnyObject, to: Handler.self)(action)
+        }
+        alert.presentingViewController?.dismiss(animated: false)
+        try await settle()
+    }
+
+    private static var alertActionExposesHandler: Bool {
+        UIAlertAction.instancesRespond(to: Selector(("handler")))
+            || class_getInstanceVariable(UIAlertAction.self, "_handler") != nil
+    }
+
     func settle() async throws {
-        let deadline = Date().addingTimeInterval(1)
+        try await settle(timeout: settleBudget)
+    }
+
+    func settle(timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             spin(0.05)
             await Task.yield()

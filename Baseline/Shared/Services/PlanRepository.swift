@@ -59,7 +59,12 @@ protocol PlanRepository {
     /// is session-scoped only — it never creates a plan revision. Promotion to the plan happens at
     /// completion via the ordinary `updateWorkout` revision path when the athlete opts in.
     func setSessionWorkout(forScheduled id: UUID, _ workout: Workout)
-    func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date) -> SessionCompletion
+    func completeSession(
+        forScheduled id: UUID,
+        acknowledgingOpenWork: Bool,
+        now: Date,
+        durationSeconds: TimeInterval?
+    ) -> SessionCompletion
     func discardSession(forScheduled id: UUID)
     /// Whether this session's promotion decision is still unanswered — the shared answer every bound
     /// editing surface reads on demand.
@@ -401,7 +406,12 @@ final class SwiftDataPlanRepository: PlanRepository {
         save()
     }
 
-    func completeSession(forScheduled id: UUID, acknowledgingOpenWork: Bool, now: Date = Date()) -> SessionCompletion {
+    func completeSession(
+        forScheduled id: UUID,
+        acknowledgingOpenWork: Bool,
+        now: Date = Date(),
+        durationSeconds: TimeInterval? = nil
+    ) -> SessionCompletion {
         guard let sd = latestSession(id), let session = map(sd), let sw = scheduledWorkout(id) else { return .noActiveSession }
         // Completion is one-way, so a session that already finished has nothing left to complete and is
         // refused before anything is written. Running it twice would insert a second frozen log, re-index
@@ -431,11 +441,20 @@ final class SwiftDataPlanRepository: PlanRepository {
         if let ownedSeries {
             completedLog.heartRateSummary = PlanCoding.value(WorkoutHeartRateSummary.self, ownedSeries.summaryJSON)
         }
-        let completed = CompletedWorkoutLog(scheduledWorkoutID: id, finishedAt: now, log: completedLog)
+        let duration = durationSeconds.flatMap { value in
+            value.isFinite ? min(max(0, value), MetricFormat.maxDurationSeconds) : nil
+        }
+        let completed = CompletedWorkoutLog(
+            scheduledWorkoutID: id,
+            finishedAt: now,
+            durationSeconds: duration,
+            log: completedLog
+        )
         context.insert(SDCompletedLog(
             id: completed.id,
             scheduledWorkoutID: id,
             finishedAt: now,
+            durationSeconds: duration,
             logJSON: PlanCoding.data(completedLog)
         ))
         indexCompletedExercises(completed, plan: sw, resolving: effectivePlan)
@@ -1627,7 +1646,13 @@ final class SwiftDataPlanRepository: PlanRepository {
 
     private func map(_ sd: SDCompletedLog) -> CompletedWorkoutLog? {
         guard let log = PlanCoding.value(WorkoutLog.self, sd.logJSON) else { return nil }
-        return CompletedWorkoutLog(id: sd.id, scheduledWorkoutID: sd.scheduledWorkoutID, finishedAt: sd.finishedAt, log: log)
+        return CompletedWorkoutLog(
+            id: sd.id,
+            scheduledWorkoutID: sd.scheduledWorkoutID,
+            finishedAt: sd.finishedAt,
+            durationSeconds: sd.durationSeconds,
+            log: log
+        )
     }
 
     // MARK: - Fetch helpers

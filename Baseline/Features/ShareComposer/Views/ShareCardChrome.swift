@@ -26,7 +26,7 @@ struct ShareCardHeader: View {
                 .lineLimit(3)
                 .minimumScaleFactor(0.45)
                 .padding(.top, 8 * canvasScale)
-            Text(WorkoutPresentationFormatter.elapsedDuration(from: summary.startedAt, to: summary.finishedAt))
+            Text(WorkoutPresentationFormatter.elapsedDuration(seconds: summary.elapsedSeconds))
                 .font(.system(size: 11 * canvasScale, weight: .medium, design: .monospaced))
                 .tracking(canvasScale)
                 .foregroundStyle(BaselineColor.textMid)

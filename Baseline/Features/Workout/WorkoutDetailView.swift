@@ -387,9 +387,17 @@ struct WorkoutDetailView: View {
     }
 
     private func detailDuration(_ scheduled: ScheduledWorkout) -> String {
-        if let session = snapshot?.session, let completed = snapshot?.completed {
-            let elapsed = completed.finishedAt.timeIntervalSince(session.startedAt)
-            if elapsed >= 60 { return MetricFormat.durationLong(elapsed) }
+        if let completed = snapshot?.completed {
+            // The athlete-confirmed duration is a performed fact carried by the completed record
+            // itself, so it stands whether or not the session row survived alongside it. Only the
+            // elapsed-time fallback needs the session's start instant.
+            if let duration = completed.durationSeconds {
+                return MetricFormat.durationLong(duration)
+            }
+            if let session = snapshot?.session {
+                let elapsed = completed.finishedAt.timeIntervalSince(session.startedAt)
+                if elapsed >= 60 { return MetricFormat.durationLong(elapsed) }
+            }
         }
         let duration = AggregateProvider.aggregates(for: [scheduled]).first { $0.key == .duration }?.total ?? 0
         return duration > 0 ? MetricFormat.durationLong(duration) : "Planned"

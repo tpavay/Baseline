@@ -863,6 +863,42 @@ struct ToolCallMapperTests {
         ]) == nil)
     }
 
+    /// Every unit the athlete can pick for pace must also be expressible through the agent facade,
+    /// or a rower who asks for "pace per 500" gets a rejected tool call for a setting the picker
+    /// already offers.
+    @Test func mapsEveryAthleteSelectablePaceUnit() throws {
+        let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let exerciseID = try #require(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
+
+        for (spelling, expected) in [
+            ("/500m", MetricUnit.secondsPer500Meters),
+            ("per 500m", .secondsPer500Meters),
+            ("min/500m", .secondsPer500Meters),
+            ("/km", .secondsPerKilometer),
+            ("/mi", .secondsPerMile),
+        ] {
+            #expect(ToolCallMapper.map(name: "update_logging_config", input: [
+                "exercise_instance_id": exerciseID.uuidString,
+                "enabled_metrics": ["duration", "pace"],
+                "pace_unit": spelling,
+                "expected_revision_token": revision.uuidString,
+            ]) == .updateLoggingConfig(
+                exerciseInstanceID: exerciseID,
+                enabledMetrics: [.duration, .pace],
+                units: [.pace: expected],
+                expectedRevisionToken: revision
+            ), "pace_unit \(spelling)")
+        }
+
+        // Nothing outside the athlete-selectable set is invented.
+        #expect(ToolCallMapper.map(name: "update_logging_config", input: [
+            "exercise_instance_id": exerciseID.uuidString,
+            "enabled_metrics": ["pace"],
+            "pace_unit": "/400m",
+            "expected_revision_token": revision.uuidString,
+        ]) == nil)
+    }
+
     @Test func mapsBulkReplaceExercisesWithDryRunAsTheDefault() throws {
         let revision = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
 

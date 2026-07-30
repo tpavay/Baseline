@@ -42,6 +42,36 @@ struct WorkoutLogSummaryTests {
         #expect(text.contains("Treadmill Run - 2 sets"))
         #expect(text.contains("1. 12:00 · 2.4 km · 5:00/km"))
     }
+
+    @Test func confirmedDurationDrivesShareTextAndCardHeader() async throws {
+        var summary = ShareComposerFixtures.strengthSummary()
+        summary.confirmedDurationSeconds = 1_458
+
+        let text = WorkoutShareTextSummary.make(from: summary, units: ShareComposerFixtures.units)
+        #expect(text.contains("Duration: 00:24:18"))
+        #expect(text.contains("Duration: 01:12:00") == false)
+
+        let screen = try ShareCardHeaderScreen(summary: summary)
+        defer { screen.tearDown() }
+        try await screen.settle()
+
+        #expect(screen.element(labelled: "00:24:18") != nil)
+        #expect(screen.element(labelled: "01:12:00") == nil)
+    }
+}
+
+@MainActor
+struct WorkoutFinishSheetTests {
+
+    @Test func headlineIsPlainAndModalityNeutral() async throws {
+        let screen = try WorkoutFinishSheetScreen(summary: ShareComposerFixtures.strengthSummary())
+        defer { screen.tearDown() }
+        try await screen.settle()
+
+        let headline = try #require(screen.element(labelled: "Workout complete"))
+        #expect(headline.accessibilityLabel == "Workout complete")
+        #expect(screen.element(labelled: "Nice work") == nil)
+    }
 }
 
 @MainActor
@@ -340,5 +370,36 @@ private final class ShareComposerScreen: HostedScreen {
             presenter = presented
         }
         return nil
+    }
+}
+
+@MainActor
+private final class ShareCardHeaderScreen: HostedScreen {
+    let window: UIWindow
+
+    init(summary: WorkoutLogSummary) throws {
+        window = try Self.makeWindow(
+            rootView: ShareCardHeader(summary: summary, canvasScale: 1)
+                .preferredColorScheme(.dark)
+        )
+    }
+}
+
+@MainActor
+private final class WorkoutFinishSheetScreen: HostedScreen {
+    let window: UIWindow
+
+    init(summary: WorkoutLogSummary) throws {
+        window = try Self.makeWindow(
+            rootView: WorkoutFinishSheet(
+                workoutTitle: summary.title,
+                summary: summary,
+                units: ShareComposerFixtures.units,
+                durationSeconds: .constant(summary.elapsedSeconds),
+                onSave: {},
+                onDiscard: {}
+            )
+            .preferredColorScheme(.dark)
+        )
     }
 }

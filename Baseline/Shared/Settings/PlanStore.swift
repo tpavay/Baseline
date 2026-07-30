@@ -99,8 +99,19 @@ final class PlanStore {
 
     @discardableResult func start(_ id: UUID) -> WorkoutSession? { defer { reload() }; return repo.startSession(forScheduled: id, now: Date()) }
     @discardableResult func resume(_ id: UUID) -> WorkoutSession? { defer { reload() }; return repo.resumeSession(forScheduled: id) }
-    @discardableResult func complete(_ id: UUID, acknowledgingOpenWork: Bool) -> SessionCompletion {
-        defer { reload() }; return repo.completeSession(forScheduled: id, acknowledgingOpenWork: acknowledgingOpenWork, now: Date())
+    @discardableResult func complete(
+        _ id: UUID,
+        acknowledgingOpenWork: Bool,
+        finishedAt: Date = Date(),
+        durationSeconds: TimeInterval? = nil
+    ) -> SessionCompletion {
+        defer { reload() }
+        return repo.completeSession(
+            forScheduled: id,
+            acknowledgingOpenWork: acknowledgingOpenWork,
+            now: finishedAt,
+            durationSeconds: durationSeconds
+        )
     }
     func discard(_ id: UUID) { repo.discardSession(forScheduled: id); reload() }
     func sessionDecisionPending(_ id: UUID) -> Bool { repo.sessionDecisionPending(forScheduled: id) }
@@ -275,7 +286,14 @@ final class PlanStore {
                 ) ?? .rejected(.notFound)
             },
             start: { [weak self] in _ = self?.start(id) },
-            complete: { [weak self] in _ = self?.complete(id, acknowledgingOpenWork: true) },
+            complete: { [weak self] finishedAt, durationSeconds in
+                _ = self?.complete(
+                    id,
+                    acknowledgingOpenWork: true,
+                    finishedAt: finishedAt,
+                    durationSeconds: durationSeconds
+                )
+            },
             discard: { [weak self] in self?.discard(id) },
             isSessionDecisionPending: { [weak self] in self?.sessionDecisionPending(id) ?? false },
             resolveSessionDecision: { [weak self] in self?.resolveSessionDecision(id) },

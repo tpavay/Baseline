@@ -682,7 +682,7 @@ export const TOOLS: ToolSchema[] = [
         distance_unit: { type: "string", description: "m | km | mi" },
         load_unit: { type: "string", description: "kg | lb" },
         duration_unit: { type: "string", description: "sec | min" },
-        pace_unit: { type: "string", description: "/km | /mi" },
+        pace_unit: { type: "string", description: "/km | /mi | /500m (the standard rowing and erg pace)" },
         expected_revision_token: expectedRevisionToken,
       },
       required: ["exercise_instance_id", "expected_revision_token"],
@@ -1024,7 +1024,7 @@ export const TOOLS: ToolSchema[] = [
         distance_unit: { type: "string", description: "m | km | mi" },
         load_unit: { type: "string", description: "kg | lb" },
         duration_unit: { type: "string", description: "sec | min" },
-        pace_unit: { type: "string", description: "/km | /mi" },
+        pace_unit: { type: "string", description: "/km | /mi | /500m (the standard rowing and erg pace)" },
         selector: exerciseSelector,
         dry_run: { type: "boolean", description: "true = enumerate the exact matched instance IDs and names and change nothing. Defaults to false." },
         expected_revision_token: expectedRevisionToken,
@@ -1259,7 +1259,7 @@ export const TOOLS: ToolSchema[] = [
         distance_unit: { type: "string", enum: ["m", "km", "mi"], description: "Optional future display default for this movement's distance." },
         load_unit: { type: "string", enum: ["kg", "lb"], description: "Optional future display default for this movement's load." },
         duration_unit: { type: "string", enum: ["sec", "min"], description: "Optional future display default for this movement's duration." },
-        pace_unit: { type: "string", enum: ["/km", "/mi"], description: "Optional future display default for this movement's pace." },
+        pace_unit: { type: "string", enum: ["/km", "/mi", "/500m"], description: "Optional future display default for this movement's pace. /500m is the standard rowing and erg pace." },
         proposal_id: { type: "string", description: "Pass ONLY on the confirming second call, using the id from the first call's proposal." },
         expected_revision_token: expectedRevisionToken,
       },
@@ -1399,6 +1399,31 @@ function cloneSchema(schema: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
 }
 
+const waveNineOverrides = new Map<string, ToolSchema>([
+  ["update_logging_config", (() => {
+    const base = toolNamed("update_logging_config");
+    const schema = cloneSchema(base.input_schema);
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    properties.pace_unit.description = "/km | /mi";
+    return { ...base, input_schema: schema };
+  })()],
+  ["convert_workout_units", (() => {
+    const base = toolNamed("convert_workout_units");
+    const schema = cloneSchema(base.input_schema);
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    properties.pace_unit.description = "/km | /mi";
+    return { ...base, input_schema: schema };
+  })()],
+  ["create_custom_exercise", (() => {
+    const base = toolNamed("create_custom_exercise");
+    const schema = cloneSchema(base.input_schema);
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    properties.pace_unit.enum = ["/km", "/mi"];
+    properties.pace_unit.description = "Optional future display default for this movement's pace.";
+    return { ...base, input_schema: schema };
+  })()],
+]);
+
 /**
  * Wave 8 upgraded three existing schemas (nested add_exercise targets, update_set progressions, and
  * the wider batch op enum). Installed Wave 7 and older clients cannot map those payloads, so their
@@ -1438,7 +1463,11 @@ const waveSevenOverrides = new Map<string, ToolSchema>([
   })()],
 ]);
 
-export const WAVE8_TOOLS: ToolSchema[] = TOOLS.filter(
+export const WAVE9_TOOLS: ToolSchema[] = TOOLS.map(
+  (tool) => waveNineOverrides.get(tool.name) ?? tool,
+);
+
+export const WAVE8_TOOLS: ToolSchema[] = WAVE9_TOOLS.filter(
   (tool) => !waveNineOnlyToolNames.has(tool.name),
 );
 
@@ -1458,16 +1487,20 @@ export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
   .filter((tool) => !waveFiveOnlyToolNames.has(tool.name))
   .map((tool) => legacyWaveFiveOverrides.get(tool.name) ?? tool);
 
-export type ServedToolset = "wave9" | "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
+export type ServedToolset = "wave10" | "wave9" | "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
+
+export const RICHEST_SERVED_TOOLSET = "wave10" satisfies ServedToolset;
 
 /**
  * Every toolset variant the runtime can serve, exactly as `toolsForClientSchema` serves it.
  * This is the single enumeration the schema-contract lint (`toolSchemaContract.ts`), the CI
- * real-provider preflight, and the conversation smoke test all iterate - a new variant added
- * here (the `Record` forces it when `ServedToolset` grows) is guarded automatically.
+ * real-provider preflight, and token measurement all iterate.
+ * The conversation smoke reads `RICHEST_SERVED_TOOLSET` from this module.
+ * A new variant added here (the `Record` forces it when `ServedToolset` grows) is guarded automatically.
  */
 export const SERVED_TOOLSETS: Record<ServedToolset, ToolSchema[]> = {
-  wave9: TOOLS,
+  wave10: TOOLS,
+  wave9: WAVE9_TOOLS,
   wave8: WAVE8_TOOLS,
   wave7: WAVE7_TOOLS,
   wave6: WAVE6_TOOLS,
@@ -1476,13 +1509,15 @@ export const SERVED_TOOLSETS: Record<ServedToolset, ToolSchema[]> = {
 };
 
 /**
- * Monotonic capability gate: Wave 9 clients receive deliberate custom exercise creation, Wave 8
- * clients keep advanced node and prescription editing, Wave 7 clients keep atomic composite/bulk
- * mutations, Wave 6 clients keep performed logging, Wave 5 clients keep their ID-targeted
- * structure schema, and older clients keep the name-based legacy schema.
+ * Monotonic capability gate: Wave 10 clients receive the richest schemas, Wave 9 clients receive
+ * deliberate custom exercise creation, Wave 8 clients keep advanced node and prescription editing,
+ * Wave 7 clients keep atomic composite/bulk mutations, Wave 6 clients keep performed logging,
+ * Wave 5 clients keep their ID-targeted structure schema, and older clients keep the name-based
+ * legacy schema.
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
+  if (Number(version) >= 10) return "wave10";
   if (Number(version) >= 9) return "wave9";
   if (Number(version) >= 8) return "wave8";
   if (Number(version) >= 7) return "wave7";

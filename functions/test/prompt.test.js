@@ -1,10 +1,19 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { buildSystem, buildSystemBlocks } = require("../lib/prompt");
-const { LEGACY_TOOLS, TOOLS, WAVE5_TOOLS, WAVE6_TOOLS, WAVE7_TOOLS, WAVE8_TOOLS } = require("../lib/tools");
+const {
+  LEGACY_TOOLS,
+  TOOLS,
+  WAVE5_TOOLS,
+  WAVE6_TOOLS,
+  WAVE7_TOOLS,
+  WAVE8_TOOLS,
+  WAVE9_TOOLS,
+} = require("../lib/tools");
 
 const SERVED_PAIRS = [
-  ["wave9", TOOLS],
+  ["wave10", TOOLS],
+  ["wave9", WAVE9_TOOLS],
   ["wave8", WAVE8_TOOLS],
   ["wave7", WAVE7_TOOLS],
   ["wave6", WAVE6_TOOLS],
@@ -176,8 +185,9 @@ test("Wave 8 prompt teaches advanced node editing and canonical prescription uni
   }
 });
 
-test("Wave 9 prompt teaches deliberate two-phase custom exercise creation", () => {
+test("Wave 9 and 10 prompts teach identical deliberate two-phase custom exercise creation", () => {
   const prompt = buildSystem("wave9");
+  assert.equal(buildSystem("wave10"), prompt);
 
   assert.match(prompt, /create_custom_exercise/);
   assert.match(prompt, /TWO-PHASE/);

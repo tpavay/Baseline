@@ -590,7 +590,7 @@ final class ConversationService {
             "roundIndex": String(roundIndex),
             "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             "appBuild": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
-            "clientToolSchemaVersion": "9",
+            "clientToolSchemaVersion": "10",
             "iosVersion": Self.operatingSystemVersion,
             "deviceClass": Self.deviceClass,
         ]

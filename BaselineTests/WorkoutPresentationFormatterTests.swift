@@ -5,6 +5,7 @@ import Testing
 struct WorkoutPresentationFormatterTests {
     @Test func elapsedDurationUsesFixedHoursMinutesAndSeconds() {
         let start = Date(timeIntervalSinceReferenceDate: 100)
+        #expect(WorkoutPresentationFormatter.elapsedDuration(seconds: 1_458) == "00:24:18")
         #expect(
             WorkoutPresentationFormatter.elapsedDuration(
                 from: start,

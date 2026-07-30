@@ -22,6 +22,24 @@ struct MetricsTests {
         #expect(abs(MetricConvert.toCanonical(225, .load, from: .pounds) - 102.058) < 0.01)
     }
 
+    @Test func rowingPacePerFiveHundredMetersRoundTripsCanonically() {
+        let canonicalSecondsPerMeter = 102.0 / 500.0
+        let displayed = MetricConvert.fromCanonical(
+            canonicalSecondsPerMeter,
+            .pace,
+            to: .secondsPer500Meters
+        )
+        let restored = MetricConvert.toCanonical(
+            displayed,
+            .pace,
+            from: .secondsPer500Meters
+        )
+
+        #expect(abs(displayed - 102) < 0.000_001)
+        #expect(abs(restored - canonicalSecondsPerMeter) < 0.000_001)
+        #expect(MetricFormat.value(restored, .pace, unit: .secondsPer500Meters) == "1:42/500m")
+    }
+
     @Test func metricValuesStoreTypedAndEncodeAsObject() throws {
         var v = MetricValues()
         v[.distance] = 1000

@@ -74,6 +74,7 @@ final class WorkoutStore {
     private struct LogFinish: Codable, Equatable {
         var logID: UUID
         var finishedAt: Date
+        var durationSeconds: TimeInterval?
     }
     private var logFinish: LogFinish? {
         didSet { persist(logFinish, Self.logFinishKey) }
@@ -83,6 +84,19 @@ final class WorkoutStore {
     var currentLogFinishedAt: Date? {
         guard let logFinish, let log = currentLog, log.isComplete, logFinish.logID == log.id else { return nil }
         return logFinish.finishedAt
+    }
+
+    /// The athlete-confirmed duration for the current completed log.
+    ///
+    /// Older records do not carry an explicit duration, so their persisted start/finish interval
+    /// remains the compatibility fallback.
+    var currentLogDurationSeconds: TimeInterval? {
+        guard let logFinish, let log = currentLog, log.isComplete, logFinish.logID == log.id else { return nil }
+        if let duration = logFinish.durationSeconds, duration.isFinite {
+            return min(max(0, duration), MetricFormat.maxDurationSeconds)
+        }
+        guard let startedAt = currentLogStartedAt else { return nil }
+        return max(0, logFinish.finishedAt.timeIntervalSince(startedAt))
     }
 
     // MARK: - Plan binding (this store is the shared editing surface; a sink write-throughs to the repo)
@@ -103,7 +117,10 @@ final class WorkoutStore {
         let undoMutation: (UUID, UUID) -> WorkoutMutationResult
         let undoSessionMutation: (UUID, UUID) -> WorkoutMutationResult
         let start: () -> Void                         // begin the session in the plan
-        let complete: () -> Void                      // freeze the completed log
+        /// Freeze the completed log at the captured finish instant, with the athlete-confirmed
+        /// duration when one was chosen. Both arguments are required of every sink so neither the
+        /// instant nor the duration can be silently dropped by a sink that forgets them.
+        let complete: (Date, TimeInterval?) -> Void
         let discard: () -> Void
         /// The session's own record of whether its promotion decision is still unanswered — one shared
         /// answer for every store bound to this scheduled workout.
@@ -134,7 +151,7 @@ final class WorkoutStore {
             undoMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
             undoSessionMutation: ((UUID, UUID) -> WorkoutMutationResult)? = nil,
             start: @escaping () -> Void,
-            complete: @escaping () -> Void,
+            complete: @escaping (Date, TimeInterval?) -> Void,
             discard: @escaping () -> Void,
             isSessionDecisionPending: @escaping () -> Bool,
             resolveSessionDecision: @escaping () -> Void,
@@ -268,8 +285,12 @@ final class WorkoutStore {
             return
         }
         guard logFinish?.logID != log.id else { return }
-        guard let finishedAt = sink?.completed()?.finishedAt else { return }
-        logFinish = LogFinish(logID: log.id, finishedAt: finishedAt)
+        guard let completed = sink?.completed() else { return }
+        logFinish = LogFinish(
+            logID: log.id,
+            finishedAt: completed.finishedAt,
+            durationSeconds: completed.durationSeconds
+        )
     }
 
     /// Push the buffered plan edit (the manual editor calls this on dismiss), then clear the buffer.
@@ -667,16 +688,22 @@ final class WorkoutStore {
     /// the only reason the decision stays open past completion — finishing a workout that matched the
     /// plan resolves it here, because no prompt will ever appear to resolve it later. Required, not
     /// defaulted: a caller that omitted it would silently close a prompt that had not been shown yet.
-    func completeWorkout(awaitingReconciliationDecision: Bool) {
-        let finishedAt = Date()
+    func completeWorkout(
+        awaitingReconciliationDecision: Bool,
+        durationSeconds: TimeInterval? = nil,
+        finishedAt: Date = Date()
+    ) {
+        let duration = durationSeconds.flatMap { value in
+            value.isFinite ? min(max(0, value), MetricFormat.maxDurationSeconds) : nil
+        }
         if let log = currentLog, !log.isComplete, logFinish?.logID == log.id { logFinish = nil }
-        if let sink { sink.complete(); reloadFromPlan() }
+        if let sink { sink.complete(finishedAt, duration); reloadFromPlan() }
         else { editLog { $0.isComplete = true } }
         // Completing can be refused — no live session to complete, or no log to mark — so the instant is
         // recorded only for a log that actually came out complete. The plan path has already taken the
         // plan's own instant through `reloadFromPlan`; this is the standalone fallback.
         if let log = currentLog, log.isComplete, logFinish == nil {
-            logFinish = LogFinish(logID: log.id, finishedAt: finishedAt)
+            logFinish = LogFinish(logID: log.id, finishedAt: finishedAt, durationSeconds: duration)
         }
         if !awaitingReconciliationDecision { sink?.resolveSessionDecision() }
     }

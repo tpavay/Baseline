@@ -51,7 +51,8 @@ The performed log links back to the planned prescription, but never overwrites i
 During execution, Baseline consumes both the Prescription and Coach Guidance from the planned exercise. It may also show Context-Aware Guidance for today's readiness and constraints. None of those should be stored as Athlete Notes unless the athlete explicitly records an execution observation.
 
 ## 6. Data model sketch
-- **WorkoutLog:** id, plannedSessionId?, status, startedAt, endedAt, source, summary, overallAthleteNotes, HR-zone summary.
+- **Completion timing:** `WorkoutSession.startedAt` records the start, while immutable `CompletedWorkoutLog` stores the actual `finishedAt` and optional athlete-confirmed `durationSeconds`.
+  Older completed records fall back to the start/finish interval; `docs/implementation/plan-tab.md` owns the domain and persistence schema.
 - **PerformedExercise:** plannedExerciseId?, exerciseId, order, status, substitutionFor?, reason, athleteNotes, modality, intent, environment.
 - **SetLog:** setNumber, reps, load, RPE, rest, completedAt.
 - **IntervalLog:** intervalNumber, duration, distance, pace, power, calories, targetZone, actualZoneSummary.
