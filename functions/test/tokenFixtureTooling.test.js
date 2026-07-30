@@ -10,7 +10,7 @@ const {
   measureInputs,
   validateMeasurementInputs,
 } = require("../scripts/measure-tool-schema-tokens");
-const { SERVED_TOOLSETS } = require("../lib/tools");
+const { RICHEST_SERVED_TOOLSET, SERVED_TOOLSETS } = require("../lib/tools");
 
 test("feature-branch measurement inputs export without reading a provider key", () => {
   const originalKey = process.env.ANTHROPIC_API_KEY;
@@ -21,7 +21,8 @@ test("feature-branch measurement inputs export without reading a provider key", 
 
     assert.equal(inputs.version, INPUT_FORMAT_VERSION);
     assert.deepEqual(Object.keys(inputs.conversation), Object.keys(SERVED_TOOLSETS));
-    assert.equal(inputs.attributionToolset, Object.keys(SERVED_TOOLSETS)[0]);
+    assert.equal(RICHEST_SERVED_TOOLSET, "wave10");
+    assert.equal(inputs.attributionToolset, RICHEST_SERVED_TOOLSET);
     assert.equal(inputs.import.durable.tools.length, 1);
     assert.equal(inputs.import.sketch.tools.length, 1);
     assert.doesNotMatch(serialized, /must-not-appear-in-export/);

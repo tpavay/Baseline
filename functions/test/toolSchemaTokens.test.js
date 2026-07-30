@@ -7,7 +7,7 @@ const {
   conversationToolSchemaTokens,
   importToolSchemaTokens,
 } = require("../lib/toolSchemaTokens");
-const { SERVED_TOOLSETS } = require("../lib/tools");
+const { RICHEST_SERVED_TOOLSET, SERVED_TOOLSETS } = require("../lib/tools");
 const { DEFAULT_CONVERSATION_MODEL } = require("../lib/provider");
 
 // The fixture is measured against the live tokenizer by scripts/measure-tool-schema-tokens.js and
@@ -49,7 +49,7 @@ test("the fixture is measured against the model the runtime defaults to", () => 
 
 test("the per-tool attribution table covers exactly the richest toolset", () => {
   const names = Object.keys(fixture.conversationTools).sort();
-  const served = SERVED_TOOLSETS.wave10.map((tool) => tool.name).sort();
+  const served = SERVED_TOOLSETS[RICHEST_SERVED_TOOLSET].map((tool) => tool.name).sort();
   assert.deepEqual(names, served);
   for (const marginal of Object.values(fixture.conversationTools)) {
     assert.ok(Number.isInteger(marginal) && marginal > 0);

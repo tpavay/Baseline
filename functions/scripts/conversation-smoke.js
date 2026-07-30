@@ -13,7 +13,7 @@
 "use strict";
 
 const { AnthropicProvider } = require("../lib/provider");
-const { SERVED_TOOLSETS } = require("../lib/tools");
+const { RICHEST_SERVED_TOOLSET, SERVED_TOOLSETS } = require("../lib/tools");
 const { buildSystemBlocks } = require("../lib/prompt");
 const { isCreditExhaustion, warnProviderOutage } = require("./provider-outage");
 
@@ -36,8 +36,11 @@ async function smokeProvider({ id, make, keyEnvVar }) {
   }
   const provider = make(process.env);
   const blocks = await provider.complete({
-    system: buildSystemBlocks("wave9", "No plan or workout exists yet. The athlete is just saying hello."),
-    tools: SERVED_TOOLSETS.wave9,
+    system: buildSystemBlocks(
+      RICHEST_SERVED_TOOLSET,
+      "No plan or workout exists yet. The athlete is just saying hello.",
+    ),
+    tools: SERVED_TOOLSETS[RICHEST_SERVED_TOOLSET],
     messages: [{ role: "user", content: "Hi! Just checking in - no plan needed today." }],
     roundIndex: 0,
   });
@@ -57,7 +60,9 @@ async function smokeProvider({ id, make, keyEnvVar }) {
 }
 
 async function main() {
-  console.log(`Smoking ${PROVIDERS.length} provider(s) with the wave9 toolset…`);
+  console.log(
+    `Smoking ${PROVIDERS.length} provider(s) with the ${RICHEST_SERVED_TOOLSET} toolset…`,
+  );
   const failures = [];
   let sawBillingOutage = false;
   for (const provider of PROVIDERS) {

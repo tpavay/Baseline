@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Tool-schema token measurement (companion to the provider preflight; see toolSchemaTokens.ts).
 //
-// Bytes are not tokens: the wave9 toolset is 75,770 bytes of JSON but 22,213 input tokens of
+// Bytes are not tokens: the richest toolset is about 76k bytes of JSON but 22k input tokens of
 // per-request overhead. This script measures the real token cost of every served toolset variant
 // (and both workout-import request shapes) with Anthropic's FREE `count_tokens` endpoint, plus a
 // per-tool marginal table for the richest toolset, and maintains the committed fixture
@@ -181,7 +181,7 @@ function validateMeasurementInputs(inputs) {
 function buildMeasurementInputs() {
   // Load compiled feature-branch code only in the keyless export and local modes. The secret-bearing
   // workflow mode reads a JSON artifact and never imports or executes feature-branch code.
-  const { SERVED_TOOLSETS } = require("../lib/tools");
+  const { RICHEST_SERVED_TOOLSET, SERVED_TOOLSETS } = require("../lib/tools");
   const { buildSystem } = require("../lib/prompt");
   const { DEFAULT_CONVERSATION_MODEL } = require("../lib/provider");
   const { WORKOUT_IMPORT_SYSTEM, WORKOUT_IMPORT_TOOL } = require("../lib/workoutImport");
@@ -200,7 +200,7 @@ function buildMeasurementInputs() {
     version: INPUT_FORMAT_VERSION,
     model: DEFAULT_CONVERSATION_MODEL,
     conversation,
-    attributionToolset: Object.keys(conversation)[0],
+    attributionToolset: RICHEST_SERVED_TOOLSET,
     import: {
       durable: { system: WORKOUT_IMPORT_SYSTEM, tools: [WORKOUT_IMPORT_TOOL] },
       sketch: { system: WORKOUT_IMPORT_SKETCH_SYSTEM, tools: [WORKOUT_IMPORT_SKETCH_TOOL] },

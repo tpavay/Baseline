@@ -1489,11 +1489,14 @@ export const LEGACY_TOOLS: ToolSchema[] = WAVE5_TOOLS
 
 export type ServedToolset = "wave10" | "wave9" | "wave8" | "wave7" | "wave6" | "wave5" | "legacy";
 
+export const RICHEST_SERVED_TOOLSET = "wave10" satisfies ServedToolset;
+
 /**
  * Every toolset variant the runtime can serve, exactly as `toolsForClientSchema` serves it.
  * This is the single enumeration the schema-contract lint (`toolSchemaContract.ts`), the CI
- * real-provider preflight, and the conversation smoke test all iterate - a new variant added
- * here (the `Record` forces it when `ServedToolset` grows) is guarded automatically.
+ * real-provider preflight, and token measurement all iterate.
+ * The conversation smoke reads `RICHEST_SERVED_TOOLSET` from this module.
+ * A new variant added here (the `Record` forces it when `ServedToolset` grows) is guarded automatically.
  */
 export const SERVED_TOOLSETS: Record<ServedToolset, ToolSchema[]> = {
   wave10: TOOLS,
@@ -1514,7 +1517,7 @@ export const SERVED_TOOLSETS: Record<ServedToolset, ToolSchema[]> = {
  */
 export function servedToolsetForClientSchema(version: unknown): ServedToolset {
   if (typeof version !== "string" || !/^\d+$/.test(version)) return "legacy";
-  if (Number(version) >= 10) return "wave10";
+  if (Number(version) >= 10) return RICHEST_SERVED_TOOLSET;
   if (Number(version) >= 9) return "wave9";
   if (Number(version) >= 8) return "wave8";
   if (Number(version) >= 7) return "wave7";
