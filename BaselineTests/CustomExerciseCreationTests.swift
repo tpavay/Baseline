@@ -107,7 +107,7 @@ struct CustomExerciseCreationTests {
             Issue.record("expected a proposal")
             return
         }
-        #expect(text.contains("level: Expert"))
+        #expect(text.contains("level: Advanced"))
         #expect(!text.contains("DEFAULT"))
     }
 

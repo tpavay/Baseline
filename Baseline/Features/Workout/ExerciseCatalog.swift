@@ -18,7 +18,7 @@ struct ExerciseDefinition: Identifiable, Codable, Equatable, Sendable {
     // and retired in a later pass once these axes are proven.
     let primaryMuscles: [Muscle]
     let secondaryMuscles: [Muscle]
-    let patterns: [MovementPattern]     // 1–2 for compounds; empty for pure cyclic cardio
+    let patterns: [MovementPattern]     // multiple for compounds; empty for pure cyclic cardio
     let equipment: [Equipment]
     let mechanic: Mechanic?
     let modality: Modality?
@@ -158,6 +158,11 @@ struct ExerciseCatalogSnapshot: Sendable {
 enum ExerciseCatalog {
     /// The catalog blob schema this build understands. A fetched catalog whose `schemaVersion` differs is
     /// rejected (the app keeps its current catalog) rather than decoded into a shape the code can't trust.
+    ///
+    /// Adding a taxonomy raw value does not change the schema-1 JSON shape, but a schema-1 catalog that uses
+    /// it will fail decoding on older clients. Do not publish definitions containing a newly added taxonomy
+    /// value until the minimum supported app version understands that value. If catalogs must span both client
+    /// generations, introduce a new schema and migration instead of emitting the value under schema 1.
     static let supportedSchemaVersion = 1
 
     /// The live catalog, swappable behind a lock. Defaults to the bundled seed; a fetched catalog is

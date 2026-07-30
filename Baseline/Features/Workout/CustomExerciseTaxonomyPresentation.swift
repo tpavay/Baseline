@@ -8,17 +8,18 @@ enum CustomExerciseTaxonomyPresentation {
 
     static func icon(_ equipment: Equipment) -> Image {
         let symbol = switch equipment {
-        case .barbell, .ezBar, .trapBar: "dumbbell"
+        case .barbell, .barbellPlates, .ezBar, .trapBar: "dumbbell"
         case .dumbbell, .kettlebell, .medicineBall: "figure.strengthtraining.traditional"
         case .cable: "cable.connector"
         case .machine: "gearshape"
         case .bodyweight: "figure.stand"
-        case .band: "scribble.variable"
+        case .band, .rope: "scribble.variable"
         case .bench, .box: "shippingbox"
         case .sled: "square.stack.3d.down.right"
         case .sandbag: "backpack"
         case .jumpRope: "circle.dashed"
-        case .pullUpBar: "rectangle.topthird.inset.filled"
+        case .pullUpBar, .hangboard: "rectangle.topthird.inset.filled"
+        case .exerciseBall, .bosuBall: "circle"
         case .bike: "bicycle"
         case .rower: "figure.rower"
         case .skiErg: "figure.skiing.crosscountry"
